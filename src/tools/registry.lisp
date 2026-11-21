@@ -889,6 +889,17 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
          :uri       (resource-uri resource)
          :operation ':edit))
 
+(-> resource-tool--detail-text (string) string)
+(defun resource-tool--detail-text (text)
+  "Bound a producer-supplied resource result label for presentation."
+  (if (> (length text) 160)
+      (concatenate 'string (subseq text 0 159) "…")
+      text))
+
+(-> resource-tool--stale-edit-details (string) list)
+(defun resource-tool--stale-edit-details (revision)
+  "Identify a stale edit without retaining its model-facing recovery prose."
+  (list :resource-edit (list :stale-revision (resource-tool--detail-text revision))))
 (defmethod resource-tool-edit
     ((resource single-operation-resource) (tool resource-edit-tool)
      (context tool-context) (arguments hash-table))
@@ -917,11 +928,13 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
                     observation)))
             (tool-success
              (format nil "~A~@[~%Exact URI: ~A~]~%~A"
-                     summary exact-uri (resource-item-read-result state)))))
+                     summary exact-uri (resource-item-read-result state))
+             :details (list :resource-edit (list :summary (resource-tool--detail-text summary))))))
       (resource-revision-stale (condition)
         (tool-failure
          (single-operation-resource-stale-message
-          resource condition :uri uri :base-revision base-revision))))))
+          resource condition :uri uri :base-revision base-revision)
+         :details (resource-tool--stale-edit-details base-revision))))))
 
 (-> resource-tool--resolve (resource-tool tool-context json-object) resource)
 (defun resource-tool--resolve (tool context arguments)

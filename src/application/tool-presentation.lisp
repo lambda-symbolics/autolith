@@ -1253,24 +1253,6 @@ structural discriminator as a readable heading instead."
       (push (terminal-span ':failure (subseq text start)) spans))
     (nreverse spans)))
 
-(-> application--resource-edit-failure-summary (string) string)
-(defun application--resource-edit-failure-summary (output)
-  "Return a short lowercase-leading cause without the agent's retry instructions."
-  (let* ((prefix   "resource.edit failed: ")
-         (text     (if (uiop:string-prefix-p prefix output) (subseq output (length prefix)) output))
-         (revision (search "Resource revision " text :test #'char-equal)))
-    (if (and revision (search " is stale" text :start2 revision :test #'char-equal))
-        (let* ((start (+ revision (length "Resource revision ")))
-               (end   (or (position #\Space text :start start) (length text))))
-          (format nil "resource revision ~A is stale" (subseq text start end)))
-        (let* ((end   (min (or (search ". " text) (length text))
-                           (or (position #\Newline text) (length text))))
-               (cause (string-right-trim "." (subseq text 0 end))))
-          (string-downcase (if (> (length cause) 160)
-                               (concatenate 'string (subseq cause 0 159) "…")
-                               cause)
-                           :end (min 1 (length cause)))))))
-
 (-> application--resource-edit-failure-entry (list keyword list) list)
 (defun application--resource-edit-failure-entry (entry state body)
   "Insert the failed outcome beneath each operation heading, ahead of its diff."
@@ -2382,37 +2364,24 @@ Mark reports that repeat an active papercut as already reported."
 
 (defmethod application-tool-result-entry
     ((tool resource-edit-tool) (application application) record)
-  "Present a successful edit as its outcome and a compact delimiter issue count.
-
-The call entry already shows the change. The revision, anchors and line window
-that follow are the model's next observation, not something the user reads."
-  (if (application--tool-result-success-p record)
-      (let* ((output       (or (getf (rest record) :output) ""))
-             (warning      (search "WARNING: " output))
-             (paren-marker "Common Lisp delimiter checking found ")
-             (paren-start  (and warning (search paren-marker output :start2 warning)))
-             (paren-count  (and paren-start
-                                (parse-integer
-                                 (remove #\, (subseq output (+ paren-start (length paren-marker))))
-                                 :junk-allowed t))))
-        (application--tool-result-entry
-         application
-         record
-         :detail (application--first-line-summary output)
-         :rows   (cond
-                   ((and paren-count (plusp paren-count))
-                    (list (list (terminal-span ':notice (format nil "~D paren issue~:P found" paren-count)))))
-                   (warning
-                    (application--preview-rows (subseq output warning)
-                                               ':failure
-                                               *application-tool-output-lines*
-                                               :gutter "│ ")))))
-      (application--tool-result-entry
-       application record
-       :rows (list (cons (terminal-span ':failure "│ ")
-                         (application--resource-failure-spans
-                          (application--resource-edit-failure-summary
-                           (or (getf (rest record) :output) ""))))))))
+  "Present the edit outcome without repeating the model's successor observation."
+  (let* ((details  (getf (getf (rest record) :details) :resource-edit))
+         (summary  (getf details :summary))
+         (revision (getf details :stale-revision)))
+    (cond
+      ((and (application--tool-result-success-p record) summary)
+       (application--tool-result-entry
+        application record :detail summary
+        :rows (when (getf details :delimiter-warning-p)
+                (list (list (terminal-span ':notice "Lisp delimiter warning"))))))
+      ((and (not (application--tool-result-success-p record)) revision)
+       (application--tool-result-entry
+        application record
+        :rows (list (cons (terminal-span ':failure "│ ")
+                          (application--resource-failure-spans
+                           (format nil "resource revision ~A is stale" revision))))))
+      (t
+       (call-next-method)))))
 
 (defmethod application-tool-result-entry
     ((tool lisp-paren-check-tool) (application application) record)
@@ -2482,57 +2451,47 @@ that follow are the model's next observation, not something the user reads."
         (when separator
           (cons (subseq line 0 separator) (subseq line separator)))))))
 
-(-> application--resource-source-rows (string) (option list))
-(defun application--resource-source-rows (output)
-  "Highlight a retained workspace file window without resolving or rereading it."
-  (let* ((lines    (application--display-lines output))
-         (identity (first lines))
-         (content  (member "Content:" lines :test #'string=))
-         (uri      (and identity (uiop:string-prefix-p "URI: " identity) (subseq identity 5)))
-         (path     (and uri (application--file-resource-path uri))))
-    (when (and path content (member "Kind: file" lines :test #'string=))
-      (let* ((parts         (mapcar #'application--numbered-source-line (rest content)))
-             (visible-count (min *application-tool-output-lines* (length parts)))
-             (elision       (find-if (lambda (line)
-                                      (and (uiop:string-prefix-p "Elided: " line)
-                                           (not (string= line "Elided: none"))))
-                                    (ldiff lines content))))
-        (when (and parts (every #'consp parts))
-          (let* ((source      (format nil "~{~A~^~%~}" (mapcar #'rest parts)))
-                 (highlighted (syntax--highlight-lines source :pathname path)))
-            (append
-             (list (list (terminal-span ':dim identity)))
-             (loop for part in parts
-                   for index below visible-count
-                   collect (append
-                            (list (terminal-span ':dim "│ ")
-                                  (terminal-span ':dim (first part)))
-                            (if (and highlighted (< index (length highlighted)))
-                                (aref highlighted index)
-                                (list (terminal-span ':plain (rest part))))))
-             (when (> (length parts) visible-count)
-               (list (list (terminal-span ':dim
-                                          (format nil "… +~D more source lines"
-                                                  (- (length parts) visible-count))))))
-             (when elision
-               (list (list (terminal-span ':dim elision)))))))))))
+(-> application--resource-source-rows (list) (option list))
+(defun application--resource-source-rows (details)
+  "Highlight retained source lines without resolving or rereading their file."
+  (let* ((uri   (getf details :uri))
+         (path  (and uri (application--file-resource-path uri)))
+         (lines (getf details :lines)))
+    (when (and path lines)
+      (let* ((visible-count (min *application-tool-output-lines* (length lines)))
+             (elisions      (getf details :elisions))
+             (source        (format nil "~{~A~^~%~}" (mapcar #'third lines)))
+             (highlighted   (syntax--highlight-lines source :pathname path)))
+        (append
+         (list (list (terminal-span ':dim (format nil "URI: ~A" uri))))
+         (loop for (number anchor text) in lines
+               for index below visible-count
+               collect (append
+                        (list (terminal-span ':dim "│ ")
+                              (terminal-span ':dim (format nil "~6D:~A  " number anchor)))
+                        (if (and highlighted (< index (length highlighted)))
+                            (aref highlighted index)
+                            (list (terminal-span ':plain text)))))
+         (when (> (length lines) visible-count)
+           (list (list (terminal-span ':dim
+                                      (format nil "… +~D more source lines" (- (length lines) visible-count))))))
+         (when elisions
+           (list (list (terminal-span ':dim (format nil "Elided: ~{~A~^; ~}" elisions))))))))))
 
 (defmethod application-tool-result-entry
     ((tool resource-read-tool) (application application) record)
-  "Present numbered file contents with their path's source language and anchors.
-
-A failure shows only its cause, not the observation the model receives."
-  (let ((output (or (getf (rest record) :output) "")))
-    (if (application--tool-result-success-p record)
-        (let ((rows (application--resource-source-rows output)))
-          (if rows
-              (application--tool-result-entry application record :rows rows)
-              (call-next-method)))
-        (application--tool-result-entry
-         application record
-         :rows (application--failure-result-rows
-                (tool-failure-summary tool output)
-                :tool-name (getf (rest record) :tool))))))
+  "Present the retained source window or a structured failure cause."
+  (let* ((details (getf (getf (rest record) :details) :resource-read))
+         (rows    (and (application--tool-result-success-p record)
+                       (application--resource-source-rows details)))
+         (cause   (getf details :cause)))
+    (cond
+      (rows
+       (application--tool-result-entry application record :rows rows))
+      ((and (not (application--tool-result-success-p record)) cause)
+       (application--tool-result-entry application record :rows (application--failure-result-rows cause)))
+      (t
+       (call-next-method)))))
 
 
 ;;;; -- Search Source Matches --

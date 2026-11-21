@@ -282,14 +282,17 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
                          (tool-context-conversation context) reports
                          :generation (tool-context-rule-generation context))
                         (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
-                                              (tool-result-content result) (lsp-tool--render reports 6000))))
+                                              (tool-result-content result) (lsp-tool--render reports 6000))
+                                      :details (tool-result-details result)))
                       result))))
           (sb-sys:deadline-timeout ()
             (tool-success
              (format nil "~A~%~%LSP diagnostics timed out; use lsp.diagnostics for the full server timeout."
-                     (tool-result-content result))))
+                     (tool-result-content result))
+             :details (tool-result-details result)))
           (error (condition)
-            (tool-success (format nil "~A~%~%LSP: ~A" (tool-result-content result) condition))))
+            (tool-success (format nil "~A~%~%LSP: ~A" (tool-result-content result) condition)
+                          :details (tool-result-details result))))
         result)))
 
 

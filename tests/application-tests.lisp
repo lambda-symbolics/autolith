@@ -2652,15 +2652,10 @@
                     ("task.sh" "echo \"hello\"" :syntax-string)
                     ("notes.txt" "plain text" :plain)))
       (destructuring-bind (path source role) case
-        (let* ((body   (text--numbered-line-window
-                        (vector source)
-                        :start-line           1
-                        :line-count           1
-                        :maximum-characters   10000
-                        :line-anchor-function #'cl-hashline:line-anchor))
-               (output (format nil "URI: workspace:~A~%Revision: Rfixture~%Kind: file~%Visible lines: 1 of 1~%Elided: none~%Content:~%~A"
-                               path body))
-               (record (list :tool-result :tool "resource.read" :status ':ok :output output))
+        (let* ((details (list :uri (format nil "workspace:~A" path)
+                              :lines (list (list 1 (cl-hashline:line-anchor source) source))))
+               (record  (list :tool-result :tool "resource.read" :status ':ok
+                              :details (list :resource-read details)))
                (entry  (conversation-record-entry expanded record))
                (text   (test-terminal-row-text entry)))
           (test-assert (and (search source text)
@@ -3218,15 +3213,11 @@
                    (application-tests--ui-application :columns 100 :compact-view-p nil)
                    (list :tool-result :seq 8 :time 0 :call-id "edit"
                          :tool "resource.edit" :status ':ok
-                         :output (format nil "Applied replace-lines 3-4.~%URI: workspace:a.lisp~%~
-                                              Revision: R1~%Content:~%     3:AB12  (foo)~%~%~
-                                               WARNING: The edit succeeded, but Common Lisp delimiter checking found 1 ~
-                                               unmatched or mismatched delimiter in /work/a.lisp.~%~
-                                               - line 20, column 1: opening `(` has no matching `)`.~%~
-                                               Review and correct the resulting file before loading or compiling it."))))
+                         :details (list :resource-edit (list :summary "Applied replace-lines 3-4."
+                                                             :delimiter-warning-p t)))))
            (text  (test-terminal-row-text entry)))
       (test-assert (and (search "Applied replace-lines 3-4" text)
-                        (search "1 paren issue found" text)
+                        (search "Lisp delimiter warning" text)
                         (= (count #\Newline text) 1))
                    "resource.edit shows one compact delimiter notice after the edit outcome"))
     (let* ((entry (conversation-record-entry
@@ -3301,6 +3292,7 @@
                        (conversation-record-entry
                         application
                         (list :tool-result :tool "resource.read" :status ':error
+                              :details (list :resource-read (list :cause "No file exists at workspace:gone.lisp"))
                               :output (format nil "resource.read failed: ~A~%URI: workspace:gone.lisp~%Revision: R1~%Kind: missing~%Elided: none~%Content:~%"
                                               cause)))))
            (text     (test-terminal-row-text entry)))
