@@ -528,7 +528,7 @@ let
     pname = "cl-resources";
     version = qlotVersion "cl-resources";
     src = qlotSource "cl-resources";
-    lispLibs = [ lispPackages.bordeaux-threads ];
+    lispLibs = with lispPackages; [ babel bordeaux-threads ];
   };
 
   clWorktree = pkgs.sbcl.buildASDFSystem {

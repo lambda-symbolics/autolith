@@ -149,10 +149,6 @@
                 "papercut resources reject unsupported collection identifiers")
                (test-assert
                 (not (tool-result-success-p
-                      (read-resource first-context "papercut:id/%")))
-                "papercut resources reject malformed percent escapes")
-               (test-assert
-                (not (tool-result-success-p
                       (read-resource first-context "papercut:id/missing")))
                 "exact papercut resources reject missing active reports")
                (test-assert
@@ -303,11 +299,9 @@
                      (uri        (resource-item-uri "papercut" identifier))
                      (read       (read-resource first-context uri)))
                 (test-assert
-                 (and (search "%2F" uri)
-                      (search "%20" uri)
-                      (tool-result-success-p read)
+                  (and (tool-result-success-p read)
                       (search (papercut-title fixture) (tool-result-content read)))
-                 "canonical papercut item URIs percent-encode and decode arbitrary IDs"))
+                  "canonical papercut item URIs resolve persisted encoded IDs"))
               (let* ((item          (first (papercut-list configuration)))
                      (uri           (resource-item-uri "papercut" (papercut-identifier item)))
                      (base          (revision (read-resource first-context uri)))

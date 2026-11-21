@@ -2,32 +2,6 @@
 
 ;;;; -- Resource Failure Integration --
 
-(-> resource-uri-malformed-uri (resource-uri-malformed) t)
-(defun resource-uri-malformed-uri (condition)
-  "Return the rejected identity from a generic resource CONDITION."
-  (cl-resources:resource-error-uri condition))
-
-(-> resource-scheme-unknown-uri (resource-scheme-unknown) non-empty-string)
-(defun resource-scheme-unknown-uri (condition)
-  "Return the unresolved identity from a generic resource CONDITION."
-  (cl-resources:resource-error-uri condition))
-
-(-> resource-access-denied-uri (resource-access-denied) non-empty-string)
-(defun resource-access-denied-uri (condition)
-  "Return the denied identity from a generic resource CONDITION."
-  (cl-resources:resource-error-uri condition))
-
-(-> resource-operation-unsupported-uri
-    (resource-operation-unsupported) non-empty-string)
-(defun resource-operation-unsupported-uri (condition)
-  "Return the unsupported identity from a generic resource CONDITION."
-  (cl-resources:resource-error-uri condition))
-
-(-> resource-revision-stale-uri (resource-revision-stale) non-empty-string)
-(defun resource-revision-stale-uri (condition)
-  "Return the changed identity from a generic resource CONDITION."
-  (cl-resources:resource-error-uri condition))
-
 (defmethod tool-failure-code ((condition resource-access-denied))
   "Expose generic authority denials through the tool transport."
   ':access-denied)
@@ -276,15 +250,13 @@ for REGISTRY's resolvers in scheme order."
 (-> resource-registry-resolve (resource-registry t t) resource)
 (defun resource-registry-resolve (registry uri context)
   "Resolve URI after enforcing Autolith's scheme and child authority policy."
-  (multiple-value-bind (scheme identifier)
-      (resource-uri-parse uri)
-    (declare (ignore identifier))
-    (when (and *resource-readable-schemes*
-               (not (member scheme *resource-readable-schemes* :test #'string=)))
-      (error 'resource-access-denied :uri uri))
-    (let ((resolver (cl-resources:resource-registry-find registry scheme)))
-      (when (and resolver
-                 (resource-context-child-agent-p context)
-                 (not (resource-resolver-child-safe-p resolver context)))
-        (error 'resource-access-denied :uri uri)))
-    (cl-resources:resource-registry-resolve registry uri context)))
+  (cl-resources:resource-registry-resolve
+   registry uri context
+   :before-resolve
+   (lambda (scheme resolver)
+     (when (or (and *resource-readable-schemes*
+                    (not (member scheme *resource-readable-schemes* :test #'string=)))
+               (and resolver
+                    (resource-context-child-agent-p context)
+                    (not (resource-resolver-child-safe-p resolver context))))
+       (error 'resource-access-denied :uri uri)))))
