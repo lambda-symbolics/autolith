@@ -42,7 +42,6 @@
   test-context-admission-measured-invalidation
   test-context-admission-measured-high-usage
   test-context-admission-measured-resume
-  test-context-admission-header-byte-diff
   test-context-admission-measured-header-resume
   test-context-admission-measured-header-identity
   test-context-admission-final-request
@@ -1200,7 +1199,6 @@
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity
-  test-provider-sse-bounds
   test-openai-compatible-provider)
 
 (define-test-suite gemini-code-assist-provider

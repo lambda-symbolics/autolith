@@ -420,66 +420,18 @@
                              (class-name (class-of provider))))))))))))
   nil)
 
-(-> prompt-cache-tests--wire-request (&key (:tools string) (:texts list) (:ttl (option string)))
-    json-object)
-(defun prompt-cache-tests--wire-request (&key (tools "read") (texts '("a" "b" "c")) ttl)
-  "Return a Messages-shaped request with TOOLS, one message per text and a marker on the last."
-  (let ((messages (mapcar (lambda (text)
-                            (json-object "role" "user"
-                                         "content" (json-array
-                                                    (json-object "type" "text" "text" text))))
-                          texts)))
-    (setf (gethash "cache_control"
-                   (aref (json-get (first (last messages)) "content") 0))
-          (if ttl
-              (json-object "type" "ephemeral" "ttl" ttl)
-              (json-object "type" "ephemeral")))
-    (json-object "model"    "claude-test"
-                 "tools"    (json-array (json-object "name" tools))
-                 "messages" (coerce messages 'vector))))
-
 (-> test-prompt-cache-wire-plan () null)
 (defun test-prompt-cache-wire-plan ()
-  "Name the final-request fields, first changed item and markers that differ."
-  (let* ((base (provider-cache-wire-plan (make-instance 'anthropic-messages-provider) (prompt-cache-tests--wire-request)))
-         (code-assist
-           (provider-cache-wire-plan (make-instance 'gemini-code-assist-provider) (json-object "project" "p" "request" (json-object "contents" #("a" "b" "c"))))))
-    (test-assert (and (equal (mapcar #'first (getf base :fields)) '("model" "tools"))
-                      (= (length (getf base :items)) 3)
-                      (equal (getf base :breakpoints) '((("messages" 2 "content" 0) nil))))
-                 "a plan fingerprints fields, items and cache markers")
-    (test-assert (equal (provider-cache-wire-plan (make-instance 'cl-llm-provider-api:gemini-generate-content-provider) (json-object "contents" #("a" "b" "c"))) code-assist) "a declared Code Assist envelope is measured through its GenerateContent body")    (dolist (case '((()                              nil         nil nil "repeated requests")
-                                                                                                                                                                                                                                                                                 ((:texts ("a" "b" "c" "d"))      nil         2   t   "appended items behind a moved marker")
-                                                                                                                                                                                                                                                                                 ((:texts ("a" "x" "c"))          nil         1   nil "an edited item")
-                                                                                                                                                                                                                                                                                 ((:texts ("a" "b"))              nil         1   t   "removed items")
-                                                                                                                                                                                                                                                                                 ((:tools "write")                ("tools")   nil nil "changed tools")
-                                                                                                                                                                                                                                                                                 ((:ttl "1h")                     nil         2   t   "a new marker lifetime")))
-                                                                                                                                                                                                                                                                  (destructuring-bind (arguments fields first-changed moved-p description) case
-                                                                                                                                                                                                                                                                    (let ((change (provider-cache-wire-change
-                                                                                                                                                                                                                                                                                   base
-                                                                                                                                                                                                                                                                                   (provider-cache-wire-plan (make-instance 'anthropic-messages-provider) (apply #'prompt-cache-tests--wire-request arguments)))))
-                                                                                                                                                                                                                                                                      (test-assert (and (equal (getf change :fields) fields)
-                                                                                                                                                                                                                                                                                        (eql (getf change :first-changed-item) first-changed)
-                                                                                                                                                                                                                                                                                        (eq (getf change :breakpoints-moved-p) moved-p))
-                                                                                                                                                                                                                                                                                   (format nil "the change describes ~A" description)))))
-    (test-assert (null (provider-cache-wire-change nil base))
-                 "a request without a previous plan reports no change")
-    (flet ((plain (texts &key (volatile-items 0))
-             "Return the plan of a marker-free request with one message per text."
-             (provider-cache-wire-plan (make-instance 'anthropic-messages-provider) (json-object "model" "claude-test" "messages" (map 'vector (lambda (text) (json-object "role" "user" "content" text)) texts)) :volatile-items volatile-items)))
-      (let ((bounded (plain '("a" "b" "c") :volatile-items 1)))
-        (test-assert (and (= (getf base :prefix-items) 3)
-                          (= (getf bounded :prefix-items) 2))
-                     "a volatile tail shortens the reusable prefix")
-        (dolist (case '((("a" "b" "c" "d") nil "a new item behind the volatile tail")
-                        (("a" "b" "x")     nil "a changed volatile item")
-                        (("a" "y" "c")     1   "a changed reusable item")
-                        (("a")             1   "a prefix cut short")))
-          (destructuring-bind (texts first-changed description) case
-            (test-assert (eql (getf (provider-cache-wire-change bounded (plain texts))
-                                    :first-changed-item)
-                              first-changed)
-                         (format nil "the bounded change describes ~A" description)))))))
+  "Measure the declared Code Assist envelope through its generic wire body."
+  (let ((contents #("a" "b" "c")))
+    (test-assert
+     (equal (provider-cache-wire-plan
+             (make-instance 'cl-llm-provider-api:gemini-generate-content-provider)
+             (json-object "contents" contents))
+            (provider-cache-wire-plan
+             (make-instance 'gemini-code-assist-provider)
+             (json-object "project" "p" "request" (json-object "contents" contents))))
+     "a declared Code Assist envelope is measured through its GenerateContent body"))
   nil)
 
 (-> test-prompt-cache-miss-notices () null)

@@ -396,32 +396,6 @@ chunk."
         :stream-usage-p               stream-usage-p))
      :source                   source)))
 
-(-> openai-compatible--cache-stable-prefix
-    (hash-table list list &key (:shared-count (integer 0)))
-    null)
-(defun openai-compatible--cache-stable-prefix (request durable-items fields &key (shared-count 0))
-  "Cache only the wire prefix unchanged by one-response exchanges.
-
-Encode the complete exchange together so reasoning and parallel calls share
-one assistant message. A partial durable projection can change that message,
-so stop at the first wire difference instead of splitting its source items.
-The first SHARED-COUNT durable items also end at their own breakpoint."
-  (let ((messages (json-get request "messages"))
-        (shared   (length (cl-llm-provider-api::openai-compatible--chat-input-messages
-                           (subseq durable-items 0 shared-count))))
-        (stable   nil))
-    (loop for durable in (cl-llm-provider-api::openai-compatible--chat-input-messages durable-items)
-          for index from 1 below (length messages)
-          for message = (aref messages index)
-          while (string= (json-encode durable) (json-encode message))
-          do (push message stable))
-    (cl-llm-provider-api::openai-compatible--chat-cache-breakpoint (aref messages 0) fields)
-    (when (<= 1 shared (length stable))
-      (cl-llm-provider-api::openai-compatible--chat-cache-breakpoint (aref messages shared) fields))
-    (some (lambda (message)
-            (cl-llm-provider-api::openai-compatible--chat-cache-breakpoint message fields))
-          stable))
-  nil)
 
 (defmethod provider-request-object
            ((provider openai-compatible-provider) (conversation conversation)
@@ -451,49 +425,44 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
          (ephemeral-p     (/= (length history) (length durable-history)))
          (cache-fields    (openai-compatible-provider-cache-breakpoint-fields provider configuration))
          (projection
-          ;; Keep the complete assistant exchange intact when encoding Chat.
-          ;; Choose its stable cache boundary afterward if it contains ephemera.
+          ;; Project the complete exchange; the wire encoder chooses whole-message cache boundaries.
           (multiple-value-bind (items context)
               (if (openai-compatible-provider-anchored-context-p provider)
                   (values (context-delivery-project-items delivery conversation history)
                           (context-delivery-rendered-tail delivery))
                   (values history (and delivery (context-delivery-rendered delivery))))
-           (multiple-value-bind (shared items)
-               (provider-shared-items-split items durable-history)
-            (make-instance 'cl-llm-provider-api::wire-request :model
-                         (config :model configuration) :items items
-                         :prefix
-                         (list (system-prompt configuration))
-                         :suffix
-                         (if compaction-p
-                             (list *compaction-instructions*)
-                             (list goal-context context))
-                         :options
-                         (list :shared-items shared
-                               :tool-choice  *provider-tool-choice*
-                               :stream-usage-p
-                               (openai-compatible-provider-stream-usage-p provider)
-                               :reasoning-parameter
-                               (openai-compatible-provider-reasoning-parameter
-                                provider)
-                               :reasoning-effort
-                               (config :reasoning-effort configuration)
-                               :maximum-output-tokens
-                               (and (provider-output-ceiling-p provider)
-                                    *provider-maximum-output-tokens*)
-                               :output-ceiling-field
-                               (openai-compatible-provider-output-ceiling-field
-                                provider)
-                               :cache-breakpoint-fields
-                               (unless ephemeral-p cache-fields))))))
+            (multiple-value-bind (shared items)
+                (provider-shared-items-split items durable-history)
+              (make-instance
+               'cl-llm-provider-api:wire-request
+               :model (config :model configuration)
+               :items items
+               :prefix (list (system-prompt configuration))
+               :suffix (if compaction-p
+                           (list *compaction-instructions*)
+                           (list goal-context context))
+               :options
+               (list :shared-items shared
+                     :tool-choice  *provider-tool-choice*
+                     :stream-usage-p
+                     (openai-compatible-provider-stream-usage-p provider)
+                     :reasoning-parameter
+                     (openai-compatible-provider-reasoning-parameter provider)
+                     :reasoning-effort
+                     (config :reasoning-effort configuration)
+                     :maximum-output-tokens
+                     (and (provider-output-ceiling-p provider)
+                          *provider-maximum-output-tokens*)
+                     :output-ceiling-field
+                     (openai-compatible-provider-output-ceiling-field provider)
+                     :cache-breakpoint-fields cache-fields
+                     :durable-items
+                     (if ephemeral-p
+                         (if (openai-compatible-provider-anchored-context-p provider)
+                             (context-delivery-project-items delivery conversation durable-history)
+                             durable-history)
+                         (append shared items)))))))
          (request         (provider-request-object provider projection effective-tools)))
-    (when (and ephemeral-p cache-fields)
-      (let ((durable (if (openai-compatible-provider-anchored-context-p provider)
-                         (context-delivery-project-items delivery conversation durable-history)
-                         durable-history)))
-        (openai-compatible--cache-stable-prefix
-         request durable cache-fields
-         :shared-count (length (provider-shared-items-split durable durable-history)))))
     (values request (and (not compaction-p) delivery))))
 
 

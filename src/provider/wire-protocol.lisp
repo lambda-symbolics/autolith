@@ -280,63 +280,13 @@ adjacent source items into one message. Do not move items in the sent request."
 
 (-> provider-cache-wire-plan (model-provider json-object &key (:volatile-items (integer 0))) list)
 (defun provider-cache-wire-plan (provider request &key (volatile-items 0))
-  "Fingerprint PROVIDER's final REQUEST without retaining prompt text.
-
-:FIELDS pairs each non-history field name with its digest and character count.
-:ITEMS fingerprints declared history in order. :PREFIX-ITEMS excludes the
-VOLATILE-ITEMS tail. :BREAKPOINTS records explicit cache marker paths and lifetimes.
-Unknown transports retain opaque fields and have no assumed history or markers."
-  (let ((body (provider-request-body provider request)))
-    (multiple-value-bind (history sequence) (provider-request-history provider request)
-      (let ((items (and history (map 'list #'provider-cache-prefix--entry history))))
-        (list :fields
-              (sort (loop for name being the hash-keys of body using (hash-value value)
-                          unless (equal name sequence)
-                            collect (cons name (provider-cache-prefix--entry value)))
-                    #'string< :key #'first)
-              :items        items
-              :prefix-items (max 0 (- (length items) volatile-items))
-              :breakpoints  (provider-request-cache-breakpoints provider request))))))
+  "Fingerprint the final request using the owning wire protocol."
+  (cl-llm-provider-api:provider-cache-wire-plan provider request :volatile-items volatile-items))
 
 (-> provider-cache-wire-change (list list) list)
 (defun provider-cache-wire-change (previous current)
-  "Describe how CURRENT's final request departs from PREVIOUS's.
-
-Both arguments are wire plans. Return a property list: :FIELDS names the
-top-level fields that changed, appeared or disappeared; :FIRST-CHANGED-ITEM is
-the index of the first item of PREVIOUS's reusable prefix that CURRENT changes
-or lacks, or NIL when CURRENT repeats that whole prefix, so appended history
-and a changed volatile tail are no change; :ITEMS is CURRENT's item count; and
-:BREAKPOINTS-MOVED-P is true when marker positions or lifetimes differ.
-Return NIL when either plan is missing."
-  (when (and previous current)
-    (let* ((old-fields (getf previous :fields))
-           (new-fields (getf current :fields))
-           (old-items  (getf previous :items))
-           (reusable   (subseq old-items
-                               0
-                               (min (getf previous :prefix-items (length old-items))
-                                    (length old-items))))
-           (new-items  (getf current :items))
-           (names      (remove-duplicates (mapcar #'first (append old-fields new-fields))
-                                          :test #'string=)))
-      (list :fields
-            (sort (remove-if (lambda (name)
-                               (equal (assoc name old-fields :test #'string=)
-                                      (assoc name new-fields :test #'string=)))
-                             names)
-                  #'string<)
-            :first-changed-item
-            (or (loop for old in reusable
-                      for new in new-items
-                      for index from 0
-                      unless (equal old new)
-                        return index)
-                (and (< (length new-items) (length reusable))
-                     (length new-items)))
-            :items               (length new-items)
-            :breakpoints-moved-p (not (equal (getf previous :breakpoints)
-                                             (getf current :breakpoints)))))))
+  "Describe reusable wire changes using the owning request analysis."
+  (cl-llm-provider-api:provider-cache-wire-change previous current))
 
 (-> provider-cache-wire--array-p (t) boolean)
 (defun provider-cache-wire--array-p (value)
@@ -345,11 +295,8 @@ Return NIL when either plan is missing."
 
 (-> provider-cache-prefix--entry (t) list)
 (defun provider-cache-prefix--entry (value)
-  "Return VALUE's JSON digest and character count without retaining the encoded text."
-  (let ((text (json-encode value)))
-    (list (ironclad:byte-array-to-hex-string
-           (ironclad:digest-sequence ':sha256 (utf8-string-to-octets text)))
-          (length text))))
+  "Return a detached fingerprint without retaining encoded prompt text."
+  (cl-llm-provider-api:provider-request-fingerprint value))
 
 
 ;;;; -- Request Tool Filtering --

@@ -1157,28 +1157,6 @@
           "a small envelope cannot erase authoritative measured occupancy")))))
   nil)
 
-(-> test-context-admission-header-byte-diff () null)
-(defun test-context-admission-header-byte-diff ()
-  "Price inserted and replacement UTF-8 bytes while retaining unchanged islands."
-  (dolist (case '(("" "" 0) ("abc" "" 0) ("" "č😊" 6)
-                  ("abc" "axc" 1) ("abc" "ačc" 2) ("x" "😊" 4)
-                  ("aXislandYz" "aBislandCz" 2) ("axbcyd" "abXcd" 1)
-                  ("aaaa" "aa" 0) ("ab" "ba" 1)))
-    (destructuring-bind (before after expected) case
-      (test-assert (= expected (provider-context--inserted-bytes before after))
-                   "the edit script charges new bytes and gives no deletion credits")))
-  (let* ((text   "Autolith retains measured context across prompt and tool changes. ")
-         (before (make-string 200000))
-         (after  nil))
-    (dotimes (index (length before))
-      (setf (char before index) (char text (mod index (length text)))))
-    (setf after (copy-seq before))
-    (dotimes (index 20)
-      (setf (char after (+ 1000 (* index 10000))) #\#))
-    (test-assert (= 20 (provider-context--inserted-bytes before after))
-                 "dispersed edits to a large header retain the unchanged islands"))
-  nil)
-
 (-> test-context-admission-measured-header-resume () null)
 (defun test-context-admission-measured-header-resume ()
   "Keep opaque measured history through disk resume and changed environment policy."

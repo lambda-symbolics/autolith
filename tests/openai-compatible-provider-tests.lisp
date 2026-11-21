@@ -860,47 +860,10 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-provider-sse-bounds () null)
-(defun test-provider-sse-bounds ()
-  "Test SSE line and joined-event bounds at and above their limits."
-  (let ((*sse-maximum-line-characters*  7)
-        (*sse-maximum-event-characters* 16))
-    (test-assert
-     (string= (read-sse-data
-               (make-string-input-stream (format nil "data: x~%~%")))
-              "x")
-     "an SSE line at the configured limit is accepted")
-    (test-assert
-     (handler-case
-         (progn
-           (read-sse-data
-            (make-string-input-stream (format nil "data: xx~%~%")))
-           nil)
-       (response-stream-error () t))
-     "an SSE line above the configured limit is rejected"))
-  (let ((*sse-maximum-line-characters*  32)
-        (*sse-maximum-event-characters* 3))
-    (test-assert
-     (string= (read-sse-data
-               (make-string-input-stream
-                (format nil "data: a~%data: b~%~%")))
-              (format nil "a~%b"))
-     "an SSE event at the configured joined-data limit is accepted")
-    (let ((*sse-maximum-event-characters* 2))
-      (test-assert
-       (handler-case
-           (progn
-             (read-sse-data
-              (make-string-input-stream
-               (format nil "data: a~%data: b~%~%")))
-             nil)
-         (response-stream-error () t))
-       "an SSE event above the configured joined-data limit is rejected")))
-  nil)
 
 (-> test-openai-compatible-provider () null)
 (defun test-openai-compatible-provider ()
-  "Test registration, request projection, authentication, and stream decoding."
+  "Test registration, product projection, authentication and request policy."
   (let ((registry-snapshot (provider--registry-snapshot))
         (built-in-models   (provider-model-identifiers))
         (configuration     nil)
@@ -1073,19 +1036,11 @@
              (multiple-value-bind (request delivery)
                  (provider-request-object provider conversation tools :goal-context
                                           "keep the active goal" :compaction-p nil)
-               (let* ((messages       (json-get request "messages"))
-                      (stream-options (json-get request "stream_options"))
-                      (wire-tools     (json-get request "tools"))
-                      (wire-tool      (aref wire-tools 0))
-                      (wire-function  (json-get wire-tool "function")))
+               (let ((messages (json-get request "messages")))
                  (test-assert
                   (and (vectorp messages)
                        (search "Read the file" (json-encode messages)))
                   "Chat Completions requests carry projected conversation messages")
-                 (test-assert
-                  (and (json-object-p stream-options)
-                       (eq (json-get stream-options "include_usage") t))
-                  "Chat Completions requests ask for final streaming usage")
                  (test-assert
                   (let* ((system-message  (aref messages 0))
                          (context-message (aref messages (1- (length messages))))
@@ -1102,14 +1057,7 @@
                          (search "Temporary context" context-content)))
                   "goal and mutable context trail cacheable conversation history")
                  (test-assert (null (json-get request "prompt_cache_key"))
-                  "generic OpenAI-compatible requests omit unsupported cache fields")
-                 (test-assert
-                  (and (vectorp wire-tools)
-                       (string= (json-get wire-tool "type") "function")
-                       (json-object-p wire-function)
-                       (not (find #\FULL_STOP (json-get wire-function "name")))
-                       (json-object-p (json-get wire-function "parameters")))
-                  "namespaced tools use a grammar-safe Chat Completions function wrapper"))))
+                  "generic OpenAI-compatible requests omit unsupported cache fields"))))
            (register-openai-compatible-provider :name           "test-openai-no-stream-usage"
                                                 :models         '("test/no-stream-usage")
                                                 :endpoint
@@ -1225,37 +1173,7 @@
 
 (-> test-openai-compatible-tool-name-recovery () null)
 (defun test-openai-compatible-tool-name-recovery ()
-  "Test readable, legacy, bounded, and fallback tool-name recovery."
-  (let ((wire-name
-          (openai-compatible--wire-tool-name "mcp__demo" "call_name")))
-    (multiple-value-bind (namespace name)
-        (openai-compatible--decode-wire-tool-name wire-name)
-      (test-assert
-       (and (equal namespace "mcp__demo") (equal name "call_name"))
-       "readable OpenAI-compatible wire names round-trip")))
-  (let ((wire-name
-          (openai-compatible--wire-tool-name "mcp__server" "get__status")))
-    (multiple-value-bind (namespace name)
-        (openai-compatible--decode-wire-tool-name wire-name)
-      (test-assert
-       (and (equal namespace "mcp__server") (equal name "get__status"))
-       "namespaced wire names with double underscores in both halves round-trip")))
-  (multiple-value-bind (namespace name)
-      (openai-compatible--decode-wire-tool-name "acmVzb3VyY2UAcmVhZA")
-    (test-assert
-     (and (equal namespace "resource") (equal name "read"))
-     "legacy Base64 wire names remain decodable"))
-  (let* ((component (make-string 20 :initial-element #\_))
-         (wire-name (openai-compatible--wire-tool-name component component)))
-    (test-assert
-     (<= (length wire-name)
-         *openai-compatible-wire-tool-name-maximum-length*)
-     "OpenAI-compatible wire names respect the protocol limit"))
-  (multiple-value-bind (namespace name)
-      (openai-compatible--fallback-tool-name "fs.view-image")
-    (test-assert
-     (and (equal namespace "fs") (equal name "view-image"))
-     "canonical dotted echoes recover their namespace"))
+  "Dispatch unique, ambiguous and unknown wire tool names through the product registry."
   (let* ((configuration (test-configuration))
          (registry      (make-instance 'tool-registry))
          (context       (make-instance 'tool-context
