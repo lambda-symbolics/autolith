@@ -12,7 +12,7 @@
          (let* ((configuration (application-configuration application))
                 (conversation  (application-conversation application)))
            (conversation-append-user-message conversation "delete command fixture")
-            (world-register-conversation configuration conversation)
+           (world-register-conversation configuration conversation)
            (setf (application-conversation-lease application)
                  (conversation-lease-acquire configuration (conversation-identifier conversation))
                  (terminal-interactive-p terminal) t)
