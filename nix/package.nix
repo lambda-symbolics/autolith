@@ -380,7 +380,7 @@ let
     version = qlotVersion "lisp-em";
     src = qlotSource "lisp-em";
     systems = [ "lisp-em" ];
-    lispLibs = [ ];
+    lispLibs = [ argo lispPackages.cl-base64 ];
   };
 
   clTermdown = pkgs.sbcl.buildASDFSystem {
