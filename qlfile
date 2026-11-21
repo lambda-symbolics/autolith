@@ -29,9 +29,9 @@ git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref cf57c465dcd0b489f
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref d17ecf154443fae229e4218120f995efa78a3c6e
 git clasted https://github.com/lambda-symbolics/clasted.git :ref 06ef23e675164b14044d5af0802f7f06789dc0be
 git daphne https://github.com/lambda-symbolics/daphne.git :ref 3c043bdb691d1ef5fb0c7d2b72cc5c10a465357c
-git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 3c064d06d0a13fc58dd5cfd84f79af1eaedca2c4
+git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref cd66f1016fb6515d6170ab2e8ca9198a15855d8d
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 17249edda7cd28cd90ce4c9788f5ede77453fed7
-git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref fd99c6db6b869f07d2e4122d001bfb3311ad0752
+git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref 28fd18d9c50faf783390b0c1246f8dc7950a2aea
 git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 95d15f2a97e4ff965fbd57e7ec30130b25421101
 git cl-hashline https://github.com/lambda-symbolics/cl-hashline.git :ref 582986f8ccbd0bd206dde022f9f65837ae82357c
 git clifff https://github.com/lambda-symbolics/clifff.git :ref f6882b8bb7dc2e4b0808c2de0d48d0f87f398996

@@ -93,13 +93,13 @@ Only tools declared by exact name enter the host bridge."
                                :context (autolith:worker-tool-context))))))
             (cl-skills:skill-executable-error (condition)
               (let ((diagnostic (cl-skills:skill-executable-error-diagnostic condition)))
-                (list :success-p nil :code (cl-skills:skill-executable-error-kind condition)
-                      :identity ',identity
+                (list :success-p   nil :code (cl-skills:skill-executable-error-kind condition)
+                      :identity    ',identity
                       :diagnostics (when diagnostic
-                                     (list (list :kind (cl-skills:skill-diagnostic-kind diagnostic)
+                                     (list (list :kind     (cl-skills:skill-diagnostic-kind diagnostic)
                                                  :pathname (namestring (cl-skills:skill-diagnostic-pathname diagnostic))
-                                                 :message (cl-skills:skill-diagnostic-message diagnostic))))
-                      :message (princ-to-string condition))))))))))
+                                                 :message  (cl-skills:skill-diagnostic-message diagnostic))))
+                      :message     (princ-to-string condition))))))))))
 
 (defparameter *executable-skill-result-byte-limit* (* 1024 1024)
   "Maximum bytes in one executable result envelope, independently of tool previews.")

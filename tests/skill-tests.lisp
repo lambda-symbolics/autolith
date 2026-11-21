@@ -162,7 +162,7 @@
            (let* ((catalog
                     (skill-catalog-for-configuration configuration))
                   (winner   (skill-catalog-find catalog "winner"))
-                   (standard (skill-catalog-find catalog "standard")))
+                  (standard (skill-catalog-find catalog "standard")))
              (test-assert
               (equal
                (skill-metadata-pathname winner)
@@ -176,9 +176,9 @@
                    (string= (skill-metadata-read standard)
                             "Standard instructions."))
               "Autolith discovers and reads standard Skills through cl-skills")
-              (test-assert
-               (search "call `skill.load`" (skill-catalog-render catalog))
-               "Autolith adapts the provider-neutral catalog to skill.load")))
+             (test-assert
+              (search "call `skill.load`" (skill-catalog-render catalog))
+              "Autolith adapts the provider-neutral catalog to skill.load")))
       (skill-tests--delete-root root)
       (skill-tests--delete-root site-root)))
   nil)
@@ -263,10 +263,10 @@
             (test-assert (and (= 1 (count extra-a roots :test #'equal))
                               (= 1 (count bundled roots :test #'equal)))
                          "repeated root designators retain their first position"))
-            (let* ((catalog  (skill-catalog-for-configuration configuration))
-                   (metadata (skill-catalog-find catalog "bundled-over-extra")))
-              (test-assert (and metadata (string= (skill-metadata-read metadata) "Bundled instructions."))
-                           "a configured extra root does not override bundled skills"))
+          (let* ((catalog  (skill-catalog-for-configuration configuration))
+                 (metadata (skill-catalog-find catalog "bundled-over-extra")))
+            (test-assert (and metadata (string= (skill-metadata-read metadata) "Bundled instructions."))
+                         "a configured extra root does not override bundled skills"))
           (setf (config :extra-skill-roots configuration) '("~/extra-a/"))
           (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration) "extra-only")
                        "a string root expands the isolated user home")

@@ -124,16 +124,16 @@
   :version "git-3c043bdb691d1ef5fb0c7d2b72cc5c10a465357c"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "3c064d06d0a13fc58dd5cfd84f79af1eaedca2c4")
-  :version "git-3c064d06d0a13fc58dd5cfd84f79af1eaedca2c4"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "cd66f1016fb6515d6170ab2e8ca9198a15855d8d")
+  :version "git-cd66f1016fb6515d6170ab2e8ca9198a15855d8d"))
 ("cl-termdown" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "17249edda7cd28cd90ce4c9788f5ede77453fed7")
   :version "git-17249edda7cd28cd90ce4c9788f5ede77453fed7"))
 ("cl-worktree" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-worktree.git" :ref "fd99c6db6b869f07d2e4122d001bfb3311ad0752")
-  :version "git-fd99c6db6b869f07d2e4122d001bfb3311ad0752"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-worktree.git" :ref "28fd18d9c50faf783390b0c1246f8dc7950a2aea")
+  :version "git-28fd18d9c50faf783390b0c1246f8dc7950a2aea"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "95d15f2a97e4ff965fbd57e7ec30130b25421101")
