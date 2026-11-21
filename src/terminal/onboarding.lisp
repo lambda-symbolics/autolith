@@ -195,12 +195,8 @@ shown spelling exactly."
   (let ((output (funcall help-function)))
     (cond
       ((stringp output)
-       (let ((renderer (termdown:markdown-renderer-create :width width)))
-         (with-input-from-string (stream output)
-           (loop for line = (read-line stream nil nil)
-                 while line
-                 append (loop for row in (terminal-markdown-render-line renderer line)
-                              append (append row (list (terminal-span ':plain (string #\Newline)))))))))
+       (loop for row in (termdown:markdown-render-source (terminal-markdown-renderer width) output)
+             append (append row (list (terminal-span ':plain (string #\Newline))))))
       ((terminal-styled-text-p output)
        output)
       (t
@@ -330,22 +326,25 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
              (shown          (subseq wrapped offset (min (length wrapped) (+ offset body-height))))
              (padding        (floor (max 0 (- body-height (length shown))) 2))
              (source-offset  0)
-             (widget-regions (termdown:widget-regions spans))
+             (cell-offset    0)
+             (widget-regions (termdown:widget-regions spans :unit ':cell))
              (body-row       (+ (length header) padding)))
-        ;; Source offsets survive omitted boundary whitespace during word wrap.
+        ;; Character offsets locate wrapped text; hit regions use rendered cells.
         (loop for (plain nil) in wrapped
               for row from 0
               for start = (or (search plain text :start2 source-offset) source-offset)
               for end = (+ start (length plain))
-              do (setf source-offset end)
+              for cell-start = (+ cell-offset (text-cell-width text :start source-offset :end start))
+              for cell-end = (+ cell-start (text-cell-width plain))
+              do (setf source-offset end
+                       cell-offset   cell-end)
                  (when (and (<= offset row) (< row (+ offset body-height)))
                    (loop for (region-start region-end action) in widget-regions
-                         for a = (max start region-start)
-                         for b = (min end region-end)
+                         for a = (max cell-start region-start)
+                         for b = (min cell-end region-end)
                          when (< a b)
                            do (push (list (+ body-row (- row offset))
-                                          (+ left (text-cell-width text :start start :end a))
-                                          (+ left (text-cell-width text :start start :end b)) action)
+                                          (+ left (- a cell-start)) (+ left (- b cell-start)) action)
                                     regions))))
         (let* ((content    (append header
                                    (make-list padding :initial-element "")

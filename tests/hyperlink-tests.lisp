@@ -32,11 +32,11 @@
                       "**[documentation](https://target.test/path?q=1)**"
                       "1. **[https://label.test/long-link-text](https://target.test/path?q=1)**"
                       "1. *[documentation](https://target.test/path?q=1)*"))
-      (let* ((renderer (termdown:markdown-renderer-create :width 24))
-             (rows     (terminal-markdown-render-line renderer source)))
+      (let* ((renderer (terminal-markdown-renderer 24))
+             (rows     (termdown:markdown-render-line renderer source)))
         (test-assert (every #'terminal-styled-text-p rows)
                      "ordinary and heading link widgets use registered styles")
-        (test-assert (every (lambda (row) (<= (terminal--spans-width row) 24)) rows)
+        (test-assert (every (lambda (row) (<= (termdown:spans-width row) 24)) rows)
                      "wrapped links occupy only their visible label width")
         (multiple-value-bind (text display regions)
             (terminal-ui--stream-output styled rows)

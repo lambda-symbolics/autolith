@@ -349,9 +349,9 @@ The layouts a resident record needs are rebuilt from its data."
                                      unless first-p
                                        collect (terminal-span ':dim ", ")
                                      collect (terminal-span ':syntax-function name)))))
-      (if (<= (terminal--spans-width row) maximum-width)
+      (if (<= (termdown:spans-width row) maximum-width)
           row
-          (append (terminal--clip-spans row (max 0 (1- maximum-width)))
+          (append (termdown:fit-spans row (max 0 (1- maximum-width)))
                   (list (terminal-span ':dim "…")))))))
 
 (-> presentation--markdown->wire (list) list)

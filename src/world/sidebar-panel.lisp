@@ -62,11 +62,11 @@ a refresh is due."
 (defun world-sidebar--justify (left right width)
   "Return LEFT clipped so RIGHT ends at cell WIDTH, or LEFT alone when RIGHT is empty."
   (if right
-      (let ((room (max 0 (- width (terminal--spans-width right) 1))))
-        (append (terminal--pad-spans left room)
+      (let ((room (max 0 (- width (termdown:spans-width right) 1))))
+        (append (termdown:pad-spans left room)
                 (list (terminal-span ':plain " "))
                 right))
-      (terminal--clip-spans left width)))
+      (termdown:fit-spans left width)))
 
 (defmethod sidebar-entry-current-p ((entry sidebar-workspace))
   "A workspace is never the channel a terminal shows."
@@ -243,14 +243,14 @@ the title beside the name and the identifier and workspace on the second row."
       width)
      (cond
        (filter-p
-        (list (terminal--clip-spans
+        (list (termdown:fit-spans
                (append below
                        (list (terminal-span ':code (conversation-identifier-display
                                                     (sidebar-entry-identifier entry)))
                              (terminal-span ':dim (format nil "  ~A" (sidebar-channel-path entry)))))
                width)))
        ((and name title)
-        (list (terminal--clip-spans
+        (list (termdown:fit-spans
                (append below (list (terminal-span ':dim title)))
                width)))))))
 
@@ -316,7 +316,7 @@ the sidebar is FOCUSED-P."
                        do (push (if (and focused-p (= index (world-sidebar-selected sidebar)))
                                     (list (terminal-span ':selected
                                                          (terminal-ui--raw-spans-text
-                                                          (terminal--pad-spans spans width))))
+                                                          (termdown:pad-spans spans width))))
                                     spans)
                                 rows)
                           (push index indices)))
@@ -437,7 +437,7 @@ something they show changed."
                                                                            (getf button :label))))))
                                  (when (plusp legend-count)
                                    (list (world-sidebar--legend focused-p))))
-            collect (terminal--render-spans terminal (terminal--pad-spans spans width))))))
+            collect (terminal--render-spans terminal (termdown:pad-spans spans width))))))
 
 
 ;;;; -- Keys and Clicks --

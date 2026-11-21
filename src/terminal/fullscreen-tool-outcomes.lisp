@@ -26,9 +26,7 @@
                        (let ((label (if (uiop:string-prefix-p "▸ " text)
                                         (concatenate 'string (string marker) (subseq text 1))
                                         text)))
-                         (if (termdown:widget-p span)
-                             (termdown:make-widget style label (termdown:widget-action span))
-                             (terminal-span style label)))
+                          (termdown:item-with-text span label :role style))
                        span)
            when (find #\Newline text)
              do (setf header-p nil))
@@ -38,7 +36,7 @@
 (defun terminal-ui-fullscreen--annotate (entry annotations)
   "Return call ENTRY with ANNOTATIONS on its first line, after the call's closing parenthesis."
   (if annotations
-      (multiple-value-bind (header body) (terminal--split-first-line entry)
+      (multiple-value-bind (header body) (termdown:split-first-line entry)
         (append header annotations body))
       entry))
 

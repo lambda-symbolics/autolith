@@ -500,7 +500,7 @@ highlight AGENT-NAME when known."
                collect (list row
                              (terminal--render-spans
                               (world-terminal-screen-terminal screen)
-                              (terminal--clip-spans
+                              (termdown:fit-spans
                                (cons (terminal-span ':plain left) spans) width))))
          :height height :width width :complete-p t)))))
 

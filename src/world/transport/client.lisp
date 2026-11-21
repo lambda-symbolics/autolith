@@ -411,7 +411,7 @@ HEADER-P renders field labels rather than status values."
         collect
         (terminal-span
          (if header-p ':strong (world-terminal--status-field-style status field))
-         (layout-fit-text
+         (termdown:fit-text
           (if header-p
               (world-terminal--status-field-label field)
               (world-terminal--status-field-text status field))
@@ -433,18 +433,18 @@ HEADER-P renders field labels rather than status values."
                   (world-terminal--status-field-text status ':started)
                   (world-terminal--status-field-text status ':activity)))
          (conversation (world-terminal--status-field-text status ':conversation)))
-    (list (terminal-span ':code (layout-fit-text identifier session-width))
+    (list (terminal-span ':code (termdown:fit-text identifier session-width))
           (terminal-span ':plain "  ")
           (terminal-span (world-terminal--status-state-style status)
-                         (layout-fit-text state state-width))
+                         (termdown:fit-text state state-width))
           (terminal-span ':plain (string #\Newline))
-          (terminal-span ':timestamp-time (layout-fit-text detail columns))
+          (terminal-span ':timestamp-time (termdown:fit-text detail columns))
           (terminal-span ':plain (string #\Newline))
           (terminal-span (world-terminal--status-field-style status ':conversation)
-                         (layout-fit-text conversation columns))
+                         (termdown:fit-text conversation columns))
           (terminal-span ':plain (string #\Newline))
           (terminal-span ':plain
-                         (layout-fit-text
+                         (termdown:fit-text
                           (world-terminal--status-field-text status ':workspace)
                           columns)))))
 
@@ -467,7 +467,7 @@ HEADER-P renders field labels rather than status values."
              (title   "Hosted channels"))
         (world-terminal--write-styled-line
          stream
-         (list (terminal-span ':brand (layout-fit-text title columns)))
+         (list (terminal-span ':brand (termdown:fit-text title columns)))
          styled-p)
         (if fields
             (let* ((rows
@@ -481,7 +481,7 @@ HEADER-P renders field labels rather than status values."
                           fields))
                        statuses)))
                    (widths
-                     (layout-column-widths
+                     (termdown:column-widths
                       rows columns
                       :gap-width 1
                       :minimum-widths

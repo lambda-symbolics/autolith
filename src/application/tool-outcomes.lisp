@@ -13,7 +13,7 @@
 (-> application--entry-body (list) list)
 (defun application--entry-body (entry)
   "Return ENTRY from its first body newline, preserving styled widgets."
-  (nth-value 1 (terminal--split-first-line entry)))
+  (nth-value 1 (termdown:split-first-line entry)))
 
 (-> application--tool-outcome-body (application list) list)
 (defun application--tool-outcome-body (application rows)

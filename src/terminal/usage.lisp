@@ -98,11 +98,11 @@
                                 (push (terminal-span ':plain "   ") spans))
                               (push (terminal-span ':dim
                                                    (concatenate 'string
-                                                                (layout-fit-text (first field) label-width)
+                                                                (termdown:fit-text (first field) label-width)
                                                                 "  ")) spans)
                               (push (terminal-span (or (third field) ':strong)
                                                    (if (and (< index (1- count)) (rest tail))
-                                                       (layout-fit-text (second field) value-width)
+                                                       (termdown:fit-text (second field) value-width)
                                                        (second field))) spans))
                      (usage--line stream (nreverse spans) styled-p))))))
   nil)
@@ -145,9 +145,9 @@
                                                   ':brand)
                                                  (t
                                                   ':plain))
-                                               (layout-fit-text cell width
-                                                                :alignment (if (<= 1 index 3)
-                                                                               ':right ':left))) spans))
+                                               (termdown:fit-text cell width
+                                                                  :alignment (if (<= 1 index 3)
+                                                                                 ':right ':left))) spans))
                  (usage--line stream (nreverse spans) styled-p)))
       t)))
 

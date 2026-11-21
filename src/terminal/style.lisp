@@ -433,16 +433,12 @@ A theme that does not define STYLE renders it plainly instead of failing the row
 (-> terminal-span-style ((or cons termdown:widget)) terminal-style)
 (defun terminal-span-style (span)
   "Return SPAN's semantic style, or the role styling a widget's label."
-  (if (termdown:widget-p span)
-      (termdown:widget-role span)
-      (first span)))
+  (termdown:item-role span))
 
 (-> terminal-span-text ((or cons termdown:widget)) string)
 (defun terminal-span-text (span)
   "Return SPAN's untrusted text, or a widget's label."
-  (if (termdown:widget-p span)
-      (termdown:widget-label span)
-      (rest span)))
+  (termdown:item-text span))
 
 (-> terminal-styled-text-p (t) boolean)
 (defun terminal-styled-text-p (value)
@@ -466,48 +462,6 @@ A theme that does not define STYLE renders it plainly instead of failing the row
   (text    "" :type string :read-only t)
   (display "" :type string :read-only t))
 
-(-> terminal--spans-width (list) (integer 0))
-(defun terminal--spans-width (spans)
-  "Return the single-row cell width of sanitized SPANS."
-  (text-cell-width (termdown:spans-text spans :single-line-p t)))
-
-(-> terminal--clip-spans (list integer) list)
-(defun terminal--clip-spans (spans maximum-width)
-  "Fit semantic SPANS to one terminal row."
-  (termdown:fit-spans spans maximum-width))
-
-(-> terminal--pad-spans (list (integer 0) &key (:style terminal-style)) list)
-(defun terminal--pad-spans (spans width &key (style ':plain))
-  "Return SPANS clipped or padded with STYLE to exactly WIDTH cells."
-  (let* ((clipped   (terminal--clip-spans spans width))
-         (remaining (- width (terminal--spans-width clipped))))
-    (if (plusp remaining)
-        (append clipped
-                (list (terminal-span style
-                                     (make-string remaining :initial-element #\Space))))
-        clipped)))
-
-(-> terminal--split-first-line (list) (values list list))
-(defun terminal--split-first-line (spans)
-  "Return SPANS up to their first newline, and the rest from that newline on.
-
-A span the newline falls in is cut in two, a widget keeping its action in both."
-  (loop for (span . more) on spans
-        for text = (terminal-span-text span)
-        for newline = (position #\Newline text)
-        if newline
-          return (flet ((part (start end)
-                          (let ((piece (subseq text start end)))
-                            (if (termdown:widget-p span)
-                                (termdown:make-widget (terminal-span-style span) piece
-                                                      (termdown:widget-action span))
-                                (terminal-span (terminal-span-style span) piece)))))
-                   (values (append head (when (plusp newline) (list (part 0 newline))))
-                           (cons (part newline nil) more)))
-        else
-          collect span into head
-        finally (return (values head nil))))
-
 (-> terminal--bar-spans
     ((integer 0) (integer 0) (integer 0) &key (:track-style terminal-style) (:fill-style terminal-style))
     list)
@@ -523,46 +477,23 @@ A span the newline falls in is cut in two, a widget keeping its action in both."
               (segment track-style #\─ (- width end))))))
 
 
-;;;; -- Markdown Heading Styles --
+;;;; -- Markdown Presentation --
 
-(-> terminal--markdown-heading-p (string) boolean)
-(defun terminal--markdown-heading-p (line)
-  "Return true when LINE begins an ATX heading of level one through six."
-  (let* ((start (or (position-if-not (lambda (character) (char= character #\Space))
-                                    line)
-                    (length line)))
-         (end   (or (position-if-not (lambda (character) (char= character #\#))
-                                    line :start start)
-                    (length line))))
-    (and (<= start 3)
-         (<= 1 (- end start) 6)
-         (or (= end (length line))
-             (not (null (find (char line end) '(#\Space #\Tab))))))))
-
-(-> terminal-markdown-render-line (termdown:markdown-renderer string) list)
-(defun terminal-markdown-render-line (renderer line)
-  "Render LINE through RENDERER with theme colors for Markdown headings.
-
-Color heading spans while retaining widget labels and actions."
-  ;; The pinned renderer exposes fence state only through this internal accessor.
-  (let* ((heading-p (and (not (termdown::markdown-renderer-code-open-p renderer))
-                         (terminal--markdown-heading-p line)))
-         (rows      (termdown:markdown-render-line renderer line)))
-    (if heading-p
-        (loop for row in rows
-              collect (loop for span in row
-                            collect (if (termdown:widget-p span)
-                                        span
-                                        (terminal-span
-                                         (case (terminal-span-style span)
-                                           ((:plain :strong)
-                                            ':syntax-heading)
-                                           (:emphasis
-                                            ':heading-emphasis)
-                                           (otherwise
-                                            (terminal-span-style span)))
-                                         (terminal-span-text span)))))
-        rows)))
+(-> terminal-markdown-renderer (integer) termdown:markdown-renderer)
+(defun terminal-markdown-renderer (width)
+  "Create a renderer using the terminal's heading roles and fenced-source actions."
+  (termdown:markdown-renderer-create
+   :width                 width
+   :heading-role-function (lambda (role)
+                            (case role
+                              ((:plain :strong)
+                               ':syntax-heading)
+                              (:emphasis
+                               ':heading-emphasis)
+                              (otherwise
+                               role)))
+   :fence-widget-function (lambda (source label)
+                            (termdown:make-widget ':code-copy label (list ':copy source)))))
 
 
 ;;;; -- Conditions --

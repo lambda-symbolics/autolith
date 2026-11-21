@@ -551,7 +551,7 @@ the draft is exact."
       (if (and (zerop (length display-content))
                (non-empty-string-p (terminal-ui-placeholder ui)))
           (let ((spans
-                  (terminal--clip-spans
+                  (termdown:fit-spans
                    (append prompt-spans
                            (list (terminal-span :hint
                                                 (terminal-ui-placeholder ui))))
@@ -1056,7 +1056,7 @@ its parenthesis open, and are dropped once the name closes it itself."
      (loop for input in (subseq inputs 0 visible-count)
            for index from 1
            collect
-           (terminal--clip-spans
+           (termdown:fit-spans
             (list (terminal-span ':brand "∙ ")
                   (terminal-span ':dim
                                  (format nil "~A ~D/~D  "
@@ -1067,7 +1067,7 @@ its parenthesis open, and are dropped once the name closes it itself."
             row-width))
      (when (plusp omitted)
        (list
-        (terminal--clip-spans
+        (termdown:fit-spans
          (list (terminal-span ':brand "∙ ")
                (terminal-span ':dim
                               (format nil "~D more ~A input~:P"
@@ -1198,7 +1198,7 @@ its parenthesis open, and are dropped once the name closes it itself."
   (let* ((running-p (eq (getf activity :state) ':running))
          (detail-spans
            (terminal-ui--agent-primary-detail-spans-at activity now)))
-    (terminal--clip-spans
+    (termdown:fit-spans
      (append
       (list
        (terminal-span ':dim "  ")
@@ -1210,7 +1210,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                           (terminal-ui--agent-spinner-phase-at now))))
            (terminal-span ':dim "○ "))
        (terminal-span ':agent-name
-                      (layout-fit-text (getf activity :agent) name-width)))
+                      (termdown:fit-text (getf activity :agent) name-width)))
       (when detail-spans
         (cons (terminal-span ':dim " · ") detail-spans)))
      row-width)))
@@ -1226,7 +1226,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                   (terminal-ui--agent-trace-spans-at
                    activity now *terminal-ui-agent-expanded-trace-limit*))))
       (when (or trace-spans (non-empty-string-p assignment))
-        (terminal--clip-spans
+        (termdown:fit-spans
          (append
           (list (terminal-span ':dim "      ")
                 (terminal-span ':brand "↳ "))
@@ -1293,37 +1293,37 @@ its parenthesis open, and are dropped once the name closes it itself."
                 (terminal-span ':dim "○ "))
             (terminal-span
              ':command-id
-             (layout-fit-text (getf activity :id) identity-width))
+             (termdown:fit-text (getf activity :id) identity-width))
             (terminal-span ':dim " · ")
             (terminal-span
              ':command-tool
-             (layout-fit-text (getf activity :tool) tool-width))
+             (termdown:fit-text (getf activity :tool) tool-width))
             (terminal-span ':dim " · ")))
          (cancel-text
            (when (member (getf activity :state) '(:queued :running))
              (terminal-ui--job-cancel-text (getf activity :id))))
          (cancel-spans
            (when (and cancel-text
-                      (<= (+ (terminal--spans-width prefix)
-                             (terminal--spans-width state-spans)
-                             (terminal--spans-width
+                      (<= (+ (termdown:spans-width prefix)
+                             (termdown:spans-width state-spans)
+                             (termdown:spans-width
                               (list (terminal-span ':dim cancel-text))) 3)
                           row-width))
              (list (terminal-span ':dim (format nil " · ~A" cancel-text)))))
          (description-width
            (max 0
                 (- row-width
-                   (terminal--spans-width prefix)
-                   (terminal--spans-width state-spans)
-                   (terminal--spans-width cancel-spans)))))
+                   (termdown:spans-width prefix)
+                   (termdown:spans-width state-spans)
+                   (termdown:spans-width cancel-spans)))))
     (terminal-ui--job-cancel-widget
-     (terminal--clip-spans
+     (termdown:fit-spans
       (append
        prefix
        (list
         (terminal-span
          ':plain
-         (layout-fit-text (getf activity :description) description-width)))
+         (termdown:fit-text (getf activity :description) description-width)))
        state-spans
        cancel-spans)
       row-width)
@@ -1478,7 +1478,7 @@ its parenthesis open, and are dropped once the name closes it itself."
         (activities visible-activities header-row-count overflow-row-p omitted-count)
       (terminal-ui--command-activity-selection ui inference-p)
     (let* ((column-widths
-             (layout-column-widths
+             (termdown:column-widths
               (loop for activity in visible-activities
                     collect
                     (list (getf activity :id)
@@ -1492,7 +1492,7 @@ its parenthesis open, and are dropped once the name closes it itself."
            (identity-width (or (first column-widths) 0))
            (tool-width     (or (second column-widths) 0))
            (header-row
-             (terminal--clip-spans
+             (termdown:fit-spans
               (list (terminal-span ':tool (if inference-p "RLM" "commands"))
                     (terminal-span ':dim
                                    (format nil " ~D" (length activities))))
@@ -1511,7 +1511,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                 :tool-width     tool-width))
          (when overflow-row-p
            (list
-            (terminal--clip-spans
+            (termdown:fit-spans
              (list (terminal-span ':dim "  ")
                    (terminal-span
                     ':dim
@@ -1572,7 +1572,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                 (loop for activity in visible-activities
                       maximize (text-cell-width (getf activity :agent)))))
          (header-row
-           (terminal--clip-spans
+           (termdown:fit-spans
             (list (terminal-span ':agent-name "agents")
                   (terminal-span ':dim
                                  (format nil " ~D" (length activities))))
@@ -1596,7 +1596,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                     (list expanded-row))))))
        (when overflow-row-p
          (list
-          (terminal--clip-spans
+          (termdown:fit-spans
            (list (terminal-span ':dim "  ")
                  (terminal-span ':dim
                                 (format nil "… ~D more agent~:P"
@@ -1879,7 +1879,7 @@ its parenthesis open, and are dropped once the name closes it itself."
              (list (terminal-span ':status-dim
                                   (subseq compact-suffix 1))))
             (t
-             (terminal--clip-spans
+             (termdown:fit-spans
               (list (terminal-span ':status-dim
                                    (format nil "ctx~A" compact-suffix)))
               maximum-width))))))))
@@ -1889,7 +1889,7 @@ its parenthesis open, and are dropped once the name closes it itself."
   "Return UI's clipped indeterminate compaction spans at monotonic NOW."
   (let ((track-width (terminal-ui--compaction-track-width row-width))
         (head-at     (terminal-ui--compaction-phase-at ui now row-width)))
-    (terminal--clip-spans
+    (termdown:fit-spans
      (cons (terminal-span ':compaction-label "COMPACTING")
            (when (plusp track-width)
             (cons (terminal-span ':status-progress-track "  ")
@@ -1945,16 +1945,16 @@ Total worked time joins the meter when every segment fits."
                          row-width)))))
          (worked                 (and content (terminal-ui--worked-spans-at ui now))))
     (if context
-        (let* ((context-width (terminal--spans-width context))
+        (let* ((context-width (termdown:spans-width context))
                (activity-p    (and content
                                    (>= (- row-width context-width context-gap)
                                        minimum-activity-width)))
                (right
                  (if (and activity-p
                           worked
-                          (<= (+ (terminal--spans-width content)
+                          (<= (+ (termdown:spans-width content)
                                  2
-                                 (terminal--spans-width worked)
+                                 (termdown:spans-width worked)
                                  2
                                  context-width)
                               row-width))
@@ -1963,16 +1963,16 @@ Total worked time joins the meter when every segment fits."
                              context)
                      context)))
           (values (and activity-p
-                       (terminal--clip-spans
+                       (termdown:fit-spans
                         content
-                        (max 0 (- row-width (terminal--spans-width right) context-gap))))
+                        (max 0 (- row-width (termdown:spans-width right) context-gap))))
                   right))
-        (let ((left (terminal--clip-spans content row-width)))
+        (let ((left (termdown:fit-spans content row-width)))
           (values left
                   (and worked
                        (>= (- row-width
-                              (terminal--spans-width left)
-                              (terminal--spans-width worked))
+                              (termdown:spans-width left)
+                              (termdown:spans-width worked))
                            2)
                        worked))))))
 
@@ -2000,7 +2000,7 @@ Total worked time joins the meter when every segment fits."
 Activity is on the left. The transcript position, the worked time and the
 context meter or compaction bar are right-aligned, in that order."
   (let* ((position (terminal-ui--status-position-spans ui row-width))
-         (reserved (if position (+ (terminal--spans-width position) 2) 0)))
+         (reserved (if position (+ (termdown:spans-width position) 2) 0)))
     (multiple-value-bind (left right)
         (terminal-ui--status-sides-at ui now (- row-width reserved))
       (let* ((right   (append position
@@ -2008,8 +2008,8 @@ context meter or compaction bar are right-aligned, in that order."
                                 (list (terminal-span ':status-plain "  ")))
                               right))
              (padding (- row-width
-                         (terminal--spans-width left)
-                         (terminal--spans-width right))))
+                         (termdown:spans-width left)
+                         (termdown:spans-width right))))
         (append left
                 (when (and (plusp padding)
                            (or right (terminal-styled-p (terminal-ui-terminal ui))))
@@ -2020,7 +2020,7 @@ context meter or compaction bar are right-aligned, in that order."
 (-> terminal-ui--local-activity-row (terminal-ui integer) list)
 (defun terminal-ui--local-activity-row (ui row-width)
   "Return UI's explicit local Lisp activity row clipped to ROW-WIDTH."
-  (terminal--clip-spans
+  (termdown:fit-spans
    (list (terminal-span ':lisp-prompt "* ")
          (terminal-span ':plain (terminal-ui-local-activity ui)))
    row-width))
@@ -2153,7 +2153,7 @@ form keeps every speculative Markdown wrap live until the logical line commits."
       (setf rows
             (append rows
                     (list
-                     (terminal--clip-spans
+                     (termdown:fit-spans
                       (list (terminal-span ':hint (terminal-ui-notice ui)))
                       row-width)))))
     (let ((steering-inputs (terminal-ui-steering-input-previews ui)))
@@ -2177,7 +2177,7 @@ form keeps every speculative Markdown wrap live until the logical line commits."
                 :count     (length queued-inputs)
                 :row-width row-width)
                (list
-                (terminal--clip-spans
+                (termdown:fit-spans
                  (list
                   (terminal-span ':hint "  ")
                   (terminal-span ':lisp-prompt "Empty Tab")
@@ -2229,7 +2229,7 @@ and the modeline last, so the response being received stays in view."
                                  (list (terminal-span ':hint hint))
                                  hint))
                  (title-spans
-                   (terminal--clip-spans
+                   (termdown:fit-spans
                     (append (list (terminal-span ':brand "∙ ")
                                   (terminal-span ':plain (terminal-ui-selector-title ui))
                                   (terminal-span ':hint "  "))
@@ -2266,21 +2266,6 @@ and the modeline last, so the response being received stays in view."
 
 ;;;; -- Semantic Markdown Publications --
 
-(-> terminal-ui--markdown-line (termdown:markdown-renderer string) list)
-(defun terminal-ui--markdown-line (renderer line)
-  "Render LINE and attach the original fenced source to its copy widget."
-  (let ((rows   (terminal-markdown-render-line renderer line))
-        (source (termdown:markdown-renderer-closed-code-source renderer)))
-    (if (null source)
-        rows
-        (loop for row in rows
-              collect (loop for span in row
-                            collect (if (eq (terminal-span-style span) ':code-copy)
-                                        (termdown:make-widget
-                                         ':code-copy (terminal-span-text span)
-                                         (list ':copy source))
-                                        span))))))
-
 (-> terminal-ui--markdown-render (list integer) (values list list))
 (defun terminal-ui--markdown-render (publication width)
   "Replay PUBLICATION's source at WIDTH, returning committed spans and speculative rows.
@@ -2289,39 +2274,24 @@ A fresh renderer reconstructs fence and table state. Only a finished publication
 flushes the renderer; resizing an open stream does not complete its pending line."
   (let* ((stream-p   (getf publication :stream-p))
          (finished-p (getf publication :finished-p))
-         (source     (sanitize-text (getf publication :source)))
+         (source     (getf publication :source))
          (text       (if stream-p source
                          (string-right-trim '(#\Space #\Tab #\Newline #\Return) source)))
-         (renderer   (termdown:markdown-renderer-create :width (max 24 (1- width))))
-         (start      0)
-         (rows       nil)
-         (tail       nil))
-    (loop for newline = (position #\Newline text :start start)
-          while newline
-          do (setf rows (nconc rows (terminal-ui--markdown-line renderer (subseq text start newline)))
-                   start (1+ newline)))
-    (let ((pending (subseq text start)))
-      (if finished-p
-          (setf rows (nconc rows
-                            (when (or (plusp (length pending)) (not stream-p))
-                              (terminal-ui--markdown-line renderer pending))
-                            (termdown:markdown-render-finish renderer)
-                            (when stream-p (list nil))))
-          (multiple-value-bind (committed speculative retained)
-              (termdown:markdown-render-partial renderer pending)
-            (declare (ignore retained))
-            (setf rows (nconc rows committed)
-                  tail speculative))))
-    (values
-     (append (getf publication :header)
-             (loop for row in rows
-                   append (append row (list (terminal-span ':plain (string #\Newline))))))
-     tail)))
+         (renderer   (terminal-markdown-renderer (max 24 (1- width)))))
+    (multiple-value-bind (rows tail)
+        (termdown:markdown-render-chunk renderer text
+                                        :finished-p       finished-p
+                                        :trailing-empty-p (not stream-p))
+      (values
+       (append (getf publication :header)
+               (loop for row in (if (and stream-p finished-p) (append rows (list nil)) rows)
+                     append (append row (list (terminal-span ':plain (string #\Newline))))))
+       tail))))
 
 (defgeneric terminal-ui-stream-markdown (ui identifier &key source header finished-p)
   (:documentation "Publish a semantic Markdown stream under a stable IDENTIFIER at UI's pane width."))
 
-(-> terminal-ui--stream-output (terminal list) (values string string))
+(-> terminal-ui--stream-output (terminal list) (values string string list))
 (defun terminal-ui--stream-output (terminal rows)
   "Return streamed ROWS as plain output, styled output, and click regions.
 
@@ -2333,16 +2303,8 @@ Every row ends on a fresh line and regions index the plain output."
     (dolist (row rows)
       (let* ((safe-row
                (loop for item in row
-                     collect (if (termdown:widget-p item)
-                                 (termdown:make-widget
-                                  (termdown:widget-role item)
-                                  (sanitize-text (termdown:widget-label item)
-                                                 :single-line-p t)
-                                  (termdown:widget-action item))
-                                 (terminal-span
-                                  (terminal-span-style item)
-                                  (sanitize-text (terminal-span-text item)
-                                                 :single-line-p t)))))
+                       collect (termdown:item-with-text
+                                item (sanitize-text (termdown:item-text item) :single-line-p t))))
              (plain (terminal--spans-text safe-row)))
         (write-string plain plain-stream)
         (write-string (terminal--render-spans terminal safe-row) display-stream)

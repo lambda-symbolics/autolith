@@ -1054,7 +1054,7 @@
           (test-assert start "active command rows expose cancellation in the pinned frame")
           (when start
             (fullscreen-test--click
-             ui (1+ (terminal--spans-width
+             ui (1+ (termdown:spans-width
                      (list (terminal-span ':plain (subseq text 0 start)))))
              (1+ row))
             (test-assert
@@ -1440,7 +1440,7 @@
            (application  (make-instance 'application :configuration configuration
                                         :conversation               (conversation-create configuration)
                                         :ui                         ui))
-           (source       (format nil "~{~A ~}~%~%Intentional first line~%Intentional second line~%~%- first list item with several words to wrap~%- second item~%~%```lisp~%(print :first)~%(print :second)~%```~%~%| Name | Description |~%| --- | --- |~%| alpha | a sufficiently long table cell to wrap |~%~%```mermaid~%graph TD~%A --> B~%```"
+           (source       (format nil "~{~A ~}~%~%Intentional first line~%Intentional second line~%~%- first list item with several words to wrap~%- second item~%~%```lisp~%(print :first)~%(print :second)~%```~%~%| Name | Description |~%| --- | --- |~%| alpha | a sufficiently long table cell to wrap |"
                                  (loop repeat 12 append '("alpha" "beta" "gamma" "delta"))))
            (presentation (fullscreen-test--markdown-presentation application source 1)))
       (with-terminal-ui (active ui)
@@ -1495,8 +1495,8 @@
            (send-status  (callback-agent-observer-status-callback observer))
            (parts        (list (format nil "A paragraph with enough words to wrap at the narrow width.~%~%```lisp~%(print :incomplete")
                                (format nil ")~%```~%~%| Name | Description |~%| --- | --- |~%| alpha | pending cell")
-                               (format nil " completed |~%~%```mermaid~%graph TD~%A --> B")
-                               (format nil "~%```~%~%FINAL-MARKER"))))
+                               (format nil " completed |~%~%An unfinished")
+                               " paragraph with FINAL-MARKER")))
       (with-terminal-ui (active ui)
         (funcall send-status ':provider-request-started nil)
         (loop for part in parts

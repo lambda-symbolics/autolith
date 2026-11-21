@@ -301,7 +301,6 @@
                                           (:file "terminal/style")
                                           (:file "terminal/syntax-highlighting")
                                           (:file "terminal/lisp-layout")
-                                          (:file "terminal/layout")
                                           (:file "terminal/stream")
                                           (:file "world/transport/screen")
                                           (:file "terminal/path-completion")

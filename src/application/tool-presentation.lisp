@@ -129,9 +129,9 @@ letters but no lowercase letters."
          (indented      (append (list (terminal-span ':plain "  ")) row))
          (action        (when (and row (every #'termdown:widget-p row))
                           (termdown:widget-action (first row))))
-         (fitted        (if (<= (terminal--spans-width indented) maximum-width)
+         (fitted        (if (<= (termdown:spans-width indented) maximum-width)
                             indented
-                            (append (terminal--clip-spans indented (max 0 (1- maximum-width)))
+                            (append (termdown:fit-spans indented (max 0 (1- maximum-width)))
                                     (list (terminal-span ':dim "…"))))))
     (if (and action
              (every (lambda (span) (equal action (termdown:widget-action span))) row))
@@ -193,7 +193,7 @@ header without participating in compaction."
                 (list (terminal-span style ")"))))
              (available-width
               (max 1 (1- columns))))
-        (when (<= (terminal--spans-width spans) available-width)
+        (when (<= (termdown:spans-width spans) available-width)
           (return-from application--inline-tool-call-header-at-columns
             (values spans (nthcdr (length arguments) rows))))))
     (values nil rows)))
@@ -334,7 +334,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
            (max 0
                  (- columns 3)))
          (column-widths
-           (layout-column-widths
+           (termdown:column-widths
             (loop for field in safe-fields
                   collect (list (getf field :label) (getf field :value)))
             available-width
@@ -355,7 +355,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                   (append
                    (list (terminal-span
                           (if *application-provider-call-presentation* ':syntax-keyword ':dim)
-                          (layout-fit-text
+                          (termdown:fit-text
                            (if first-p (getf field :label) "")
                            label-width)))
                    (when (plusp value-width)
@@ -728,8 +728,8 @@ structural discriminator as a readable heading instead."
   "Fold a highlighted source ROW behind its rail, at grapheme boundaries."
   (let* ((rail  (first row))
          (spans (rest row))
-         (width (- columns 1 2 (terminal--spans-width (list rail)))))
-    (unless (and (plusp width) (> (terminal--spans-width spans) width))
+         (width (- columns 1 2 (termdown:spans-width (list rail)))))
+    (unless (and (plusp width) (> (termdown:spans-width spans) width))
       (return-from application--wrap-source-row (list row)))
     (let ((text        (format nil "~{~A~}" (mapcar #'terminal-span-text spans)))
           (span-offset 0)
@@ -851,8 +851,8 @@ structural discriminator as a readable heading instead."
   (let* ((columns
            (application--transcript-columns application))
          (prefix-width
-           (max (terminal--spans-width initial-prefix)
-                (terminal--spans-width continuation-prefix)))
+           (max (termdown:spans-width initial-prefix)
+                (termdown:spans-width continuation-prefix)))
          (text-width (max 1 (- columns 3 prefix-width)))
          (lines      (or (wrap-text text text-width) (list ""))))
     (loop for line in lines
@@ -1011,7 +1011,7 @@ structural discriminator as a readable heading instead."
                'string
                (text-cell-prefix safe (1- width))
                "…")))))
-    (layout-fit-text visible width)))
+    (termdown:fit-text visible width)))
 
 (-> application--task-run-compact-context-row
     (application string)
@@ -1052,7 +1052,7 @@ structural discriminator as a readable heading instead."
          (columns
            (application--transcript-columns application))
          (widths
-           (layout-column-widths
+           (termdown:column-widths
             values
             (max 0 (- columns 3))
             :gap-width      2

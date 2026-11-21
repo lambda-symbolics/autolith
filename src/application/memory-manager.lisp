@@ -99,10 +99,10 @@
 (-> memory-manager--line (terminal string integer &key (:style keyword)) string)
 (defun memory-manager--line (terminal text width &key (style ':plain))
   "Render one padded, terminal-safe TEXT row with STYLE."
-  (terminal--render-spans
-   terminal (list (terminal-span style
-                                 (layout-fit-text (sanitize-text text :single-line-p t)
-                                                  (max 1 width))))))
+   (terminal--render-spans
+    terminal (list (terminal-span style
+                                  (termdown:fit-text (sanitize-text text :single-line-p t)
+                                                    (max 1 width))))))
 
 (-> memory-manager--pad (string integer) string)
 (defun memory-manager--pad (display width)

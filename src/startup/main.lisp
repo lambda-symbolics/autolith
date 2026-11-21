@@ -72,7 +72,7 @@
          (divider-width
            (min maximum-width
                 (loop for row in detail-rows
-                      maximize (terminal--spans-width row)))))
+                      maximize (termdown:spans-width row)))))
     (append
      (list title
            (list (terminal-span
@@ -109,7 +109,7 @@
               (when metadata-row
                 (append
                  (list (terminal-span :plain *application-banner-gap*))
-                 (terminal--clip-spans metadata-row metadata-width)))))))))
+                 (termdown:fit-spans metadata-row metadata-width)))))))))
 
 (-> application--banner-stacked-spans (list integer) list)
 (defun application--banner-stacked-spans (metadata-rows columns)
@@ -122,7 +122,7 @@
    (list (terminal-span :plain (string #\Newline)))
    (loop for metadata-row in metadata-rows
          append (application--banner-terminate-row
-                 (terminal--clip-spans metadata-row columns)))))
+                 (termdown:fit-spans metadata-row columns)))))
 
 (defparameter *application-startup-tips*
   '(((:plain "Telemetry helps us fix recurring bugs and reduce wasted tokens. Turn it off with ")
@@ -165,14 +165,10 @@
 
 Use the Markdown renderer's inline parser without choosing a width here;
 the terminal wraps the semantic spans."
-  (multiple-value-bind (text styles)
-      (termdown::markdown--parse-inline (application-command-tip entry))
-    (application--tip-spans
-     (list* (terminal-span
-             :code
-             (format nil "(~A)" (application-operation--command-name entry)))
-            (terminal-span ':plain " ")
-            (termdown::markdown--style-runs text styles)))))
+  (application--tip-spans
+   (list* (terminal-span ':code (format nil "(~A)" (application-operation--command-name entry)))
+          (terminal-span ':plain " ")
+          (termdown:markdown-inline-spans (application-command-tip entry)))))
 
 (-> application--startup-tip-spans () terminal-styled-text)
 (defun application--startup-tip-spans ()
@@ -1109,7 +1105,7 @@ still shows the boot panel keeps it until the user starts the session."
                       (list (application--banner-metadata-field "mode" "immutable")))))
            (divider-width
              (min content-width
-                  (loop for row in (cons title details) maximize (terminal--spans-width row))))
+                  (loop for row in (cons title details) maximize (termdown:spans-width row))))
            (metadata
              (list* title (list (terminal-span ':dim (make-string divider-width :initial-element #\─)))
                     details))

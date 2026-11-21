@@ -2440,13 +2440,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
 (-> application--markdown-renderer (application) termdown:markdown-renderer)
 (defun application--markdown-renderer (application)
   "Return a markdown renderer sized to APPLICATION's current terminal width."
-  (termdown:markdown-renderer-create
-   :width (max 1 (1- (application--transcript-columns application)))))
-
-(-> application--markdown-rows (termdown:markdown-renderer string) list)
-(defun application--markdown-rows (renderer line)
-  "Render LINE through RENDERER with fenced-source copy widgets."
-  (terminal-ui--markdown-line renderer line))
+  (terminal-markdown-renderer (max 1 (1- (application--transcript-columns application)))))
 
 (-> application--markdown-body (application string) list)
 (defun application--markdown-body (application text)
@@ -2461,7 +2455,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
 (defun application--markdown-presentation
     (application text timestamp &key (finished-p t) stream-p)
   "Retain TEXT and immutable message decorations without retaining APPLICATION."
-  (list :source (sanitize-text text)
+  (list :source text
         :finished-p finished-p :stream-p stream-p
         :header (application--message-entry application :role ':assistant
                                             :timestamp timestamp :body nil)))
@@ -4417,9 +4411,6 @@ clients as :TEXT, :REASONING and :STATUS events."
                     (return-from stream-text-delta (stream-markdown-delta delta)))
                  (terminal-ui-note-status-progress ui)
                  (text-buffer-append stream-text delta)
-                 (setf stream-pending
-                       (sanitize-text
-                        (concatenate 'string stream-pending delta)))
                  (let ((rows nil))
                    (unless stream-open-p
                      (reasoning-flush)
@@ -4435,21 +4426,12 @@ clients as :TEXT, :REASONING and :STATUS events."
                        :header    (format nil "● ~A" (application-agent-name application))
                        :timestamp stream-started-at)
                       rows))
-                   (loop for newline = (position #\Newline stream-pending)
-                         while newline
-                         do (setf rows
-                                  (append rows
-                                          (application--markdown-rows
-                                           stream-renderer
-                                           (subseq stream-pending 0 newline)))
-                                  stream-pending
-                                  (subseq stream-pending (1+ newline))))
-                   (multiple-value-bind (overflow-rows tail-rows retained)
-                       (termdown:markdown-render-partial stream-renderer stream-pending)
+                   (multiple-value-bind (committed tail-rows retained)
+                       (termdown:markdown-render-chunk stream-renderer delta :pending stream-pending)
                      (setf stream-pending retained)
                      (terminal-ui-stream-update
                       ui
-                      :rows (append rows overflow-rows)
+                      :rows (append rows committed)
                       :tail tail-rows)))))
 
              (stream-flush ()
@@ -4461,9 +4443,9 @@ clients as :TEXT, :REASONING and :STATUS events."
                       :timestamp stream-started-at :finished-p t)
                      (terminal-ui-stream-update
                       ui
-                      :rows (append (when (plusp (length stream-pending))
-                                      (application--markdown-rows stream-renderer stream-pending))
-                                    (termdown:markdown-render-finish stream-renderer)
+                      :rows (append (termdown:markdown-render-chunk stream-renderer ""
+                                                                   :pending    stream-pending
+                                                                   :finished-p t)
                                     (list nil))
                       :tail nil))
                  (text-buffer-clear stream-source)

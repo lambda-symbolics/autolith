@@ -391,12 +391,8 @@ The first rows of a transcript that evicted output also say how to load it."
     (dolist (row (terminal-ui--prompt-prefix-rows ui now))
       (let ((display (terminal-ui-fullscreen--display-rows ui (list row) width)))
         (when (and (listp row) (= (length display) 1))
-          (loop for span in row
-                for start = 1 then end
-                for end = (+ start (terminal--spans-width (list span)))
-                when (termdown:widget-p span)
-                  do (push (list (length rows) start end (termdown:widget-action span))
-                           actions)))
+          (dolist (region (termdown:widget-regions (termdown:fit-spans row width) :unit ':cell :start 1))
+            (push (cons (length rows) region) actions)))
         (setf rows (append rows display))))
     (let* ((leading (position-if (lambda (row) (plusp (length row))) rows))
            (visible (and leading (nthcdr leading rows)))

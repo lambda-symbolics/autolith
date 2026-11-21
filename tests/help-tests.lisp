@@ -251,8 +251,8 @@
       (loop for level from 1 to 6
             for source = (format nil "~A Heading with *emphasis* and `code`"
                                  (make-string level :initial-element #\#))
-            for renderer = (termdown:markdown-renderer-create :width 24)
-            for rows = (terminal-markdown-render-line renderer source)
+            for renderer = (terminal-markdown-renderer 24)
+            for rows = (termdown:markdown-render-line renderer source)
             for spans = (apply #'append rows)
             for styles = (mapcar #'terminal-span-style spans)
             do (test-assert (every #'terminal-styled-text-p rows)
@@ -273,19 +273,19 @@
                  (test-assert (search (terminal-style-sequence ':syntax-heading) display)
                               "styled terminals render heading colors from the current theme"))
                (test-assert
-                (every (lambda (row) (<= (terminal--spans-width row) 24)) rows)
+                (every (lambda (row) (<= (termdown:spans-width row) 24)) rows)
                 "colored heading rows fit narrow viewports"))))
-  (let ((renderer (termdown:markdown-renderer-create :width 40)))
+  (let ((renderer (terminal-markdown-renderer 40)))
     (dolist (source '("ordinary **strong** text" "#not-a-heading" "####### seven"))
       (test-assert
        (not (find ':syntax-heading
-                  (apply #'append (terminal-markdown-render-line renderer source))
+                   (apply #'append (termdown:markdown-render-line renderer source))
                   :key #'terminal-span-style))
        "ordinary prose and nonheading hash prefixes do not receive heading color"))
-    (terminal-markdown-render-line renderer "```text")
+    (termdown:markdown-render-line renderer "```text")
     (test-assert
      (not (find ':syntax-heading
-                (apply #'append (terminal-markdown-render-line renderer "# literal code"))
+                 (apply #'append (termdown:markdown-render-line renderer "# literal code"))
                 :key #'terminal-span-style))
      "hash-prefixed fenced source keeps its code styles"))
   nil)

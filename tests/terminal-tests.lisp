@@ -1349,7 +1349,7 @@
                        "detached state does not add a redundant row label"))
         (test-assert
          (every (lambda (row)
-                  (<= (terminal--spans-width row) 12))
+                  (<= (termdown:spans-width row) 12))
                 (terminal-ui--agent-activity-rows-at
                  active-ui clock 12))
          "expanded and compact child rows remain bounded on narrow terminals")
@@ -1530,7 +1530,7 @@
                    (rows           (append command-rows inference-rows agent-rows)))
               (test-assert
                (and (<= (length rows) (terminal-ui--activity-row-budget active-ui))
-                    (every (lambda (row) (<= (terminal--spans-width row) width)) rows))
+                    (every (lambda (row) (<= (termdown:spans-width row) width)) rows))
                "all three strips fit narrow and short inline/fullscreen viewports"))))
         (setf (terminal-rows terminal) 40
               (terminal-columns terminal) 100)
@@ -1609,7 +1609,7 @@
                              (terminal-ui--command-activity-row-at
                               activity clock width :identity-width 6 :tool-width 9)))
                  (widgets  (remove-if-not #'termdown:widget-p row)))
-            (test-assert (<= (terminal--spans-width row) width)
+            (test-assert (<= (termdown:spans-width row) width)
                          "cancellation actions fit the command row budget")
             (if (and (member state '(:queued :running)) (>= width 90))
                 (test-assert
@@ -3187,20 +3187,4 @@ Resize tests drive size changes through COLUMNS and LINES."
     (test-assert (string= "abcd"
                           (terminal--render-spans terminal spans :background ':surface))
                  "an unstyled terminal receives text without background controls"))
-  nil)
-
-(-> test-terminal-pad-spans () null)
-(defun test-terminal-pad-spans ()
-  "Fill a span row to an exact cell width and clip one that overruns."
-  (let ((spans (list (terminal-span ':plain "ab"))))
-    (test-assert (= 3 (terminal--spans-width (terminal--pad-spans spans 3)))
-                 "a short row is padded to the requested width")
-    (test-assert (= 5 (terminal--spans-width
-                       (terminal--pad-spans (list (terminal-span ':plain "abcdef")) 5)))
-                 "a long row is clipped to the requested width")
-    (test-assert (= 6 (terminal--spans-width
-                       (terminal--pad-spans (list (terminal-span ':plain "日本")) 6)))
-                 "wide characters are measured in cells")
-    (test-assert (equal spans (terminal--pad-spans spans 2))
-                 "an exact row is returned unchanged"))
   nil)

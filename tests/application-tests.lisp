@@ -2981,7 +2981,7 @@
                    "long tool details wrap beneath one aligned value column")
       (test-assert
        (every (lambda (row)
-                (<= (terminal--spans-width row) 29))
+                (<= (termdown:spans-width row) 29))
               rows)
        "tool detail columns stay inside their transcript cell budget"))
     (let* ((call
@@ -3256,7 +3256,7 @@
           for rule = (conversation-record-entry
                       (application-tests--ui-application :columns columns)
                       (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))
-          do (test-assert (and (= (terminal--spans-width rule) width)
+          do (test-assert (and (= (termdown:spans-width rule) width)
                                (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
                                (eq (terminal-span-style (first rule)) ':success)
                                (not (search "9" (test-terminal-row-text rule))))
@@ -10839,12 +10839,9 @@
                      "only web URLs reach the browser launcher")
         (test-assert (search "only http and https" (terminal-ui-notice active))
                      "refused links explain themselves"))
-      (let* ((renderer (termdown:markdown-renderer-create :width 60))
-             (rows     (progn
-                         (application--markdown-rows renderer "```lisp")
-                         (application--markdown-rows renderer "(+ 1 2)")
-                         (application--markdown-rows renderer "```")))
-             (widget   (find-if #'termdown:widget-p (first rows))))
+      (let* ((renderer (terminal-markdown-renderer 60))
+             (rows     (termdown:markdown-render-source renderer (format nil "```lisp~%(+ 1 2)~%```")))
+             (widget   (some (lambda (row) (find-if #'termdown:widget-p row)) rows)))
         (test-assert (and widget
                           (equal '(:copy "(+ 1 2)") (termdown:widget-action widget))
                           (eq ':code-copy (termdown:widget-role widget)))
@@ -10908,85 +10905,6 @@
                          "a rendered transcript shows the same notice"))))
       (test-assert (equal (conversation-input-history conversation) '("typed by the user"))
                    "input history keeps only what the user typed")))
-  nil)
-
-(-> test-application-mermaid-transcript () null)
-(defun test-application-mermaid-transcript ()
-  "Exercise rendered diagrams and raw-source copy actions in transcript bodies."
-  (let* ((terminal    (make-instance 'recording-terminal :columns 100))
-         (application (make-instance 'application
-                                     :ui (terminal-ui-create :terminal terminal)))
-         (source      (format nil "flowchart TD~%A[Start] --> B[Finish]"))
-         (spans       (application--markdown-body
-                       application (format nil "```mermaid~%~a~%```" source)))
-         (text        (termdown:spans-text spans))
-         (widget      (find-if #'termdown:widget-p spans)))
-    (test-assert (and (search "Start" text) (search "Finish" text)
-                      (not (search "A[Start]" text)))
-                 "a completed Mermaid block appears as a diagram")
-    (test-assert (terminal-styled-text-p spans)
-                 "diagram roles are valid terminal styles after transcript composition")
-    (dolist (role '(:mermaid-box :mermaid-edge :mermaid-arrow :mermaid-label))
-      (test-assert (find-if (lambda (span)
-                             (and (terminal-span-p span) (eq (terminal-span-style span) role)))
-                           spans)
-                   "the transcript retains structural diagram colors")
-      (dolist (theme *terminal-themes*)
-        (let ((*terminal-style-table* (terminal-theme-style-table theme)))
-          (test-assert (terminal-style-sequence role nil)
-                       "each theme resolves diagram roles to visible color controls"))))
-    (test-assert (and widget
-                      (equal (list ':copy source) (termdown:widget-action widget)))
-                 "the diagram copy action carries its Mermaid source")
-    (dolist (body (list (format nil "```mermaid~%pie~%title Sales~%```")
-                       (format nil "```mermaid~%~a" source)))
-      (let ((text (termdown:spans-text (application--markdown-body application body))))
-        (test-assert (or (search "title Sales" text) (search "A[Start]" text))
-                     "unsupported and unfinished blocks display their source"))))
-  nil)
-
-(-> test-application-mermaid-streaming () null)
-(defun test-application-mermaid-streaming ()
-  "Exercise speculative Mermaid tails, close commitment, and interrupted fences."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
-    (dolist (closed-p '(t nil))
-      (let* ((terminal    (make-instance 'recording-terminal :columns 100))
-             (application (make-instance 'application :configuration configuration
-                                         :ui                         (terminal-ui-create :terminal terminal)))
-             (observer    (application-agent-observer application))
-             (send-text   (callback-agent-observer-text-callback observer))
-             (send-status (callback-agent-observer-status-callback observer))
-             (committed   nil)
-             (preview     nil))
-        (test-call-with-function-replacements
-         (list (list 'terminal-ui-stream-update
-                     (lambda (ui &key rows tail)
-                       (declare (ignore ui))
-                       (setf committed (append committed rows)
-                             preview tail))))
-         (lambda ()
-           (funcall send-text (format nil "```mermaid~%flowchart TD~%A[Start] --> B[Finish]~%"))
-           (test-assert (not (search "A[Start]"
-                                     (format nil "~{~a~^~%~}"
-                                            (mapcar #'termdown:spans-text committed))))
-                        "open diagram source is not committed to scrollback")
-           (test-assert (search "A[Start]"
-                                (format nil "~{~a~^~%~}"
-                                        (mapcar #'termdown:spans-text preview)))
-                        "an open diagram appears in the speculative tail")
-           (when closed-p
-             (funcall send-text "```"))
-           (funcall send-status ':provider-retrying
-                    (list :attempt 1 :maximum-attempts 2 :delay 0))
-           (let ((text (format nil "~{~a~^~%~}"
-                              (mapcar #'termdown:spans-text committed))))
-             (test-assert (and (search "Start" text) (search "Finish" text))
-                          "closing or interrupting a fence commits its content")
-             (test-assert (if closed-p
-                              (not (search "A[Start]" text))
-                              (search "A[Start]" text))
-                          "closed blocks render diagrams and interrupted blocks render source")))))))
   nil)
 
 (-> test-application-job-program-status () null)

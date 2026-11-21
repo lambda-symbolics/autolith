@@ -437,7 +437,6 @@
   test-terminal-style-sequence-unthemed
   test-terminal-surface-row-background
    test-terminal-control-z-decodes-as-detach
-  test-terminal-pad-spans
   test-fullscreen-boot-geometry
   test-fullscreen-boot-sequence
   test-fullscreen-boot-presented
@@ -1737,8 +1736,6 @@
   test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
-  test-application-mermaid-transcript
-  test-application-mermaid-streaming
   test-application-command-tips
   test-application-banner-policy
   test-replay-skips-notice

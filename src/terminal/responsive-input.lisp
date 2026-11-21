@@ -2864,7 +2864,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                   (list (terminal-span
                          ':dim
                          (concatenate 'string "  "
-                                      (layout-fit-text
+                                      (termdown:fit-text
                                        (if (and first-p (not separate-label-p)) label "")
                                        width)
                                       "  "))

@@ -117,10 +117,10 @@ are centered as one block, so rows of unequal width stay aligned."
       (declare (ignore art))
      (labels ((row (style text)
                 (list (terminal-span ':plain left)
-                      (terminal-span style (layout-fit-text text width))))
+                      (terminal-span style (termdown:fit-text text width))))
 
               (boxed (style text)
-                (let* ((safe    (layout-fit-text (sanitize-text text :single-line-p t) inside))
+                (let* ((safe    (termdown:fit-text (sanitize-text text :single-line-p t) inside))
                        (padding (make-string (max 0 (- inside (text-cell-width safe)))
                                              :initial-element #\Space)))
                   (row style (format nil "│ ~A~A │" safe padding))))
