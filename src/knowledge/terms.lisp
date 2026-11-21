@@ -248,11 +248,17 @@ VALUE cannot be a TYPE."
       (:number
        (or (knowledge--number value)
            (and (stringp value)
-                ; mallet:suppress no-ignore-errors -- reading free text signals many error types
-                (let ((parsed (ignore-errors
-                               (let ((*read-eval* nil))
-                                 (read-from-string value)))))
-                  (knowledge--number parsed)))
+                (handler-case
+                    (knowledge--number
+                     (sexp-config:read-source
+                      value (sexp-config:make-source-grammar
+                              :label                     "numeric term"
+                              :maximum-depth             0
+                              :maximum-nodes             1
+                              :line-comments-permitted-p nil
+                              :allowed-atom-predicate    #'realp
+                              :read-default-float-format *read-default-float-format*)))
+                  (sexp-config:sexp-config-error () nil)))
            (fail "a number")))
       (:boolean
        (cond

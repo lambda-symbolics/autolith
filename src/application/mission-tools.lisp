@@ -75,17 +75,20 @@
 
 (-> mission--read-data (string) t)
 (defun mission--read-data (text)
-  "Read exactly one data form with read-time evaluation disabled."
+  "Read exactly one bounded mission data form."
   (handler-case
-      (let ((*read-eval* nil) (*package* (find-package '#:autolith))
-            (end (gensym "END")))
-        (with-input-from-string (stream text)
-          (let ((value (read stream nil end)))
-            (unless (and (not (eq value end)) (eq (read stream nil end) end))
-              (mission--reject ':invalid "Expected exactly one mission data form."))
-            value)))
-    (mission-error (condition) (error condition))
-    (error () (mission--reject ':invalid "Invalid mission data form."))))
+      (sexp-config:read-source
+       text (sexp-config:make-source-grammar
+             :label                      "mission data"
+             :block-comments-permitted-p t
+             :allowed-atom-predicate     (lambda (value)
+                                           (typep value '(or string real keyword (member nil t))))))
+    (sexp-config:sexp-config-error (condition)
+      (case (sexp-config:sexp-config-error-kind condition)
+        ((:no-form :multiple-forms)
+         (mission--reject ':invalid "Expected exactly one mission data form."))
+        (otherwise
+         (mission--reject ':invalid "Invalid mission data form."))))))
 
 (-> mission--command-specification-p (t) boolean)
 (defun mission--command-specification-p (specification)

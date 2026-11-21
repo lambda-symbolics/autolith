@@ -185,20 +185,16 @@ newlines; decode links within strong text without treating code as markup."
 (defun onboarding-source--choices (text)
   "Return the readable choice values TEXT lists, or NIL when it lists none.
 
-Values are read without evaluation in the project package, so T, NIL, and
-keywords written with their colon keep their usual meaning."
+Names are limited to T, NIL, and keywords. No project symbols are interned."
   (handler-case
-      (let ((*read-eval* nil)
-            (*package*   (find-package '#:autolith))
-            (end         (gensym "END")))
-        (with-input-from-string (stream text)
-          (loop for value = (read stream nil end)
-                until (eq value end)
-                unless (or (symbolp value) (stringp value) (integerp value))
-                  do (return nil)
-                collect value)))
-    (error ()
-      nil)))
+      (sexp-config:read-source
+       (format nil "(~A~%)" text)
+       (sexp-config:make-source-grammar
+        :label                  "onboarding choices"
+        :maximum-depth          1
+        :allowed-atom-predicate (lambda (value)
+                                  (typep value '(or string integer keyword (member nil t))))))
+    (sexp-config:sexp-config-error () nil)))
 
 (-> onboarding-source-pages (string hash-table) list)
 (defun onboarding-source-pages (source variables)

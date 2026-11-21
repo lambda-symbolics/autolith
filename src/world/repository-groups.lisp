@@ -187,14 +187,17 @@ function never writes the world store or changes the supplied channel objects."
         (let* ((buffer (make-string (1+ *world-repository-artifact-characters*)))
                (count  (read-sequence buffer stream)))
           (when (<= count *world-repository-artifact-characters*)
-            (let ((*read-eval* nil))
-              (multiple-value-bind (form end) (read-from-string buffer nil nil :end count)
-                (when (and (sexp-store:plist-schema-p form
-                                                     :required-keys  '(:version :owner :path :source)
-                                                     :keyword-keys-p t)
-                           (every (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return)))
-                                  (subseq buffer end count)))
-                  form))))))
+            (let* ((grammar (sexp-config:make-source-grammar
+                             :label                        "repository metadata"
+                             :line-comments-permitted-p    nil
+                             ;; Readable snapshots may print base strings in array notation.
+                             :readable-strings-permitted-p t
+                             :whitespace-characters        '(#\Space #\Tab #\Newline #\Return)))
+                   (form    (sexp-config:read-source (subseq buffer 0 count) grammar)))
+              (when (sexp-store:plist-schema-p form
+                                              :required-keys  '(:version :owner :path :source)
+                                              :keyword-keys-p t)
+                form)))))
     (error () nil)))
 
 (-> world-repository--task-sources (configuration) hash-table)
