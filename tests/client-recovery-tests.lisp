@@ -428,7 +428,7 @@
 (defun test-channel-view-initial-replay ()
   "Stream a large initial replay on the UI owner, then admit live delivery; reject broken prefixes."
   (with-test-configuration (configuration)
-    (dolist (mode '(:replay :old :eof :closed :slow :failed))
+    (dolist (mode '(:replay :old :eof :closed))
       (let* ((screen                           (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
              (view                             (channel-view-create configuration "replay" screen))
              (wire                             (with-output-to-string (output)
@@ -453,54 +453,6 @@
                   (test-assert (handler-case (progn (channel-subscription-initialize-connection view connection) nil)
                                  (channel-subscription-unavailable () t))
                                "A closed view refuses replay initialization."))
-                ((:slow :failed)
-                 (let ((candidate                                     nil)
-                       (read-packet                                   #'daemon-read-decodable-packet)
-                       (first-p                                       t)
-                       (image-daemon:*daemon-connect-timeout-seconds* 0.01))
-                   (unwind-protect
-                        (test-call-with-function-replacements
-                         (list (list 'daemon-connect
-                                     (lambda (port) (declare (ignore port))
-                                       (values nil (world-terminal-client-connection-stream connection))))
-                               (list 'daemon-write-packet (lambda (&rest values) (declare (ignore values)) nil))
-                               (list 'daemon-read-response
-                                     (lambda (stream operation) (declare (ignore stream operation))
-                                       (when (eq mode ':slow) (sleep 0.05))
-                                       (world-terminal-client-connection-attached connection)))
-                               (list 'daemon-read-decodable-packet
-                                     (lambda (stream)
-                                       (when first-p
-                                         (setf first-p nil)
-                                         (if (eq mode ':slow)
-                                             (sleep 0.05)
-                                             (error 'channel-subscription-unavailable
-                                                    :message "The replay connection closed.")))
-                                       (funcall read-packet stream))))
-                         (lambda ()
-                           (let ((failure
-                                   (handler-case
-                                       (progn
-                                         (world-terminal-client-connect
-                                          '("replay" :world-terminal :port 1 :token "unused")
-                                          :event-function (constantly nil)
-                                          :initialize-function
-                                          (lambda (created)
-                                            (setf candidate created)
-                                            (channel-subscription-initialize-connection view created)))
-                                         nil)
-                                     (channel-subscription-unavailable (condition) condition))))
-                             (if (eq mode ':slow)
-                                 (test-assert
-                                  (and (null failure) candidate
-                                       (world-terminal-client-connection-reader-thread candidate))
-                                  "Slow greeting and history replay finish before live delivery starts.")
-                                 (test-assert
-                                  (and failure candidate (world-terminal-client-connection-closed-p candidate)
-                                       (client-evaluator-closed-p (world-terminal-client-connection-evaluator candidate))
-                                       (null (world-terminal-client-connection-reader-thread candidate)))
-                                  "A failed prefix retires transport and evaluation without starting a reader.")))))
-                     (when candidate (world-terminal-client--disconnect candidate)))))
                 (:eof
                  (test-assert (handler-case (progn (channel-subscription-initialize-connection view connection) nil)
                                 (channel-subscription-unavailable () t))

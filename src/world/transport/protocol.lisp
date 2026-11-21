@@ -85,6 +85,14 @@ Each side reads only the fields it knows, so a peer of another version may add s
 
 (setf image-daemon:*daemon-error-class* 'world-terminal-error)
 
+(-> world-terminal--read-response (stream keyword) list)
+(defun world-terminal--read-response (stream operation)
+  "Read one required startup response without a time limit."
+  (or (daemon-read-packet stream)
+      (error 'world-terminal-error
+             :message   "The channel endpoint closed without a response."
+             :operation operation)))
+
 (-> world-terminal-call (t t keyword &key (:arguments t)) list)
 (defun world-terminal-call (port token operation &key arguments)
   "Send one authenticated channel OPERATION with ARGUMENTS and return its response."

@@ -531,7 +531,7 @@ whatever would change the channel."
     (when (funcall cancelled-p)
       (error 'world-terminal-error :message "Client attachment was cancelled."
                               :operation    ':client)))
-  (daemon-read-response stream ':client))
+  (world-terminal--read-response stream ':client))
 
 (-> world-terminal-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)

@@ -53,17 +53,17 @@ A slow answer means the process is alive, so its record stays."
 
 (-> world-terminal--query-with-progress (list keyword list) list)
 (defun world-terminal--query-with-progress (record operation arguments)
-  "Request OPERATION with optional loading notifications before its final response."
+  "Wait for OPERATION and its loading notifications without a response deadline."
   (multiple-value-bind (socket stream)
       (daemon-connect (world-terminal--record-port record))
     (declare (ignore socket))
     (unwind-protect
-         (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
+         (progn
            (daemon-write-packet
             stream (list :world-terminal-request :version image-daemon:*daemon-protocol-version*
                          :token                  (world-terminal--record-token record)
                          :operation operation :arguments arguments))
-           (loop for packet = (image-daemon:daemon-read-response stream operation)
+           (loop for packet = (world-terminal--read-response stream operation)
                  until (not (eq (first packet) ':progress))
                  do (let ((step        (getf (rest packet) :step))
                           (description (getf (rest packet) :description)))
