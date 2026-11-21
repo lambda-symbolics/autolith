@@ -13,64 +13,13 @@
 
 ;;;; -- Process Observations --
 
-(-> posix--process-query (list) (values (option string) boolean))
-(defun posix--process-query (arguments)
-  "Run a ps query, returning its output and whether it completed successfully."
-  (handler-case
-      (multiple-value-bind (output errors status)
-          (uiop:run-program (cons "ps" arguments)
-                            :output ':string :error-output ':string
-                            :ignore-error-status t)
-        (declare (ignore errors))
-        (values output (eql status 0)))
-    (error ()
-      (values nil nil))))
-
-(-> posix--unsigned-field (string) (option (integer 0)))
-(defun posix--unsigned-field (text)
-  "Parse one unsigned decimal field, allowing only surrounding whitespace."
-  (let ((field (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-    (when (and (plusp (length field))
-               (every (lambda (character) (digit-char-p character 10)) field))
-      (parse-integer field))))
-
 (defmethod platform-process-resident-bytes ((platform posix-platform) process-id)
-  "Observe ps RSS in KiB and return octets; unavailable observations return NIL."
-  (when (typep process-id '(integer 1))
-    (multiple-value-bind (output available-p)
-        (posix--process-query (list "-o" "rss=" "-p" (write-to-string process-id)))
-      (when available-p
-        (let ((kibibytes (posix--unsigned-field output)))
-          (when kibibytes
-            (* kibibytes 1024)))))))
-
-(-> posix--parse-parent-snapshot (string) (values list boolean))
-(defun posix--parse-parent-snapshot (output)
-  "Parse complete ps PID/PPID rows, rejecting malformed or duplicate rows."
-  (let ((parents nil)
-        (seen    (make-hash-table)))
-    (dolist (line (uiop:split-string output :separator '(#\Newline)))
-      (let ((fields (remove "" (uiop:split-string
-                                line :separator '(#\Space #\Tab #\Return))
-                            :test #'string=)))
-        (when fields
-          (unless (= (length fields) 2)
-            (return-from posix--parse-parent-snapshot (values nil nil)))
-          (let ((pid    (posix--unsigned-field (first fields)))
-                (parent (posix--unsigned-field (second fields))))
-            (unless (and pid parent (not (gethash pid seen)))
-              (return-from posix--parse-parent-snapshot (values nil nil)))
-            (setf (gethash pid seen) t)
-            (push (cons pid parent) parents)))))
-    (values (nreverse parents) t)))
+  "Observe the resident bytes of PROCESS-ID."
+  (ls-compat.posix:process-resident-bytes process-id))
 
 (defmethod platform-process-parent-snapshot ((platform posix-platform))
-  "Observe one host-wide ps PID/PPID snapshot, distinguishing failure from empty."
-  (multiple-value-bind (output available-p)
-      (posix--process-query '("-ax" "-o" "pid=" "-o" "ppid="))
-    (if available-p
-        (posix--parse-parent-snapshot output)
-        (values nil nil))))
+  "Observe parent relationships and whether the observation completed."
+  (ls-compat.posix:process-parent-snapshot))
 
 
 ;;;; -- Failure Translation --
@@ -193,14 +142,9 @@
 
 ;;;; -- Environment --
 
-(defmethod platform-set-environment-variable ((platform posix-platform)
-                                              name value)
-  "Set or remove NAME with setenv and unsetenv, which C code and children share."
-  (declare (ignore platform))
-  (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
-  nil)
+(defmethod platform-set-environment-variable ((platform posix-platform) name value)
+  "Set or remove NAME in the environment shared by C code and children."
+  (ls-compat.posix:set-environment-variable name value))
 
 
 ;;;; -- Files --
@@ -329,11 +273,8 @@
       (platform--file-failure ':replace target condition))))
 
 (defmethod platform-executable-file-p ((platform posix-platform) pathname)
-  "Probe PATHNAME with ACCESS for execute permission."
-  (handler-case
-      (zerop (sb-posix:access (posix--namestring pathname) sb-posix:x-ok))
-    (sb-posix:syscall-error ()
-      nil)))
+  "Probe PATHNAME for execute permission."
+  (ls-compat.posix:executable-path-p pathname))
 
 (defmethod platform-make-temporary-directory ((platform posix-platform)
                                             parent prefix)

@@ -164,78 +164,13 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
 
 
-;;; Process observation structures use the native Windows x64 ABI.
-(sb-alien:define-alien-type win32-process-memory-counters
-    (sb-alien:struct win32-process-memory-counters
-      (cb win32-dword)
-      (page-fault-count win32-dword)
-      (peak-working-set-size (sb-alien:unsigned 64))
-      (working-set-size (sb-alien:unsigned 64))
-      (quota-peak-paged-pool-usage (sb-alien:unsigned 64))
-      (quota-paged-pool-usage (sb-alien:unsigned 64))
-      (quota-peak-non-paged-pool-usage (sb-alien:unsigned 64))
-      (quota-non-paged-pool-usage (sb-alien:unsigned 64))
-      (pagefile-usage (sb-alien:unsigned 64))
-      (peak-pagefile-usage (sb-alien:unsigned 64))))
-
-(sb-alien:define-alien-type win32-process-entry
-    (sb-alien:struct win32-process-entry
-      (size win32-dword)
-      (usage win32-dword)
-      (process-id win32-dword)
-      (default-heap-id (sb-alien:unsigned 64))
-      (module-id win32-dword)
-      (threads win32-dword)
-      (parent-process-id win32-dword)
-      (priority-base (sb-alien:signed 32))
-      (flags win32-dword)
-      (executable (array (sb-alien:unsigned 16) 260))))
-
-(win32--define win32--get-process-memory-info "K32GetProcessMemoryInfo" win32-bool
-  (process win32-handle) (counters (* win32-process-memory-counters))
-  (size win32-dword))
-(win32--define win32--create-process-snapshot "CreateToolhelp32Snapshot" win32-handle
-  (flags win32-dword) (process-id win32-dword))
-(win32--define win32--process-first "Process32FirstW" win32-bool
-  (snapshot win32-handle) (entry (* win32-process-entry)))
-(win32--define win32--process-next "Process32NextW" win32-bool
-  (snapshot win32-handle) (entry (* win32-process-entry)))
-
 (defmethod platform-process-resident-bytes ((platform win32-platform) process-id)
-  "Return native WorkingSetSize in bytes, or NIL when the process cannot be queried."
-  (when (typep process-id '(integer 1 4294967295))
-    (let ((handle (win32--open-process #x1000 0 process-id)))
-      (unless (zerop handle)
-        (unwind-protect
-             (sb-alien:with-alien ((counters win32-process-memory-counters))
-               (let ((size (sb-alien:alien-size win32-process-memory-counters :bytes)))
-                 (setf (sb-alien:slot counters 'cb) size)
-                 (unless (zerop (win32--get-process-memory-info
-                                 handle (sb-alien:addr counters) size))
-                   (sb-alien:slot counters 'working-set-size))))
-          (win32--close-handle handle))))))
+  "Observe the native working set of PROCESS-ID."
+  (ls-compat.posix:process-resident-bytes process-id))
 
 (defmethod platform-process-parent-snapshot ((platform win32-platform))
-  "Return a native Toolhelp PID/PPID snapshot and whether enumeration completed."
-  (let ((handle (win32--create-process-snapshot #x2 0)))
-    (if (= handle -1)
-        (values nil nil)
-        (unwind-protect
-             (sb-alien:with-alien ((entry win32-process-entry))
-               (setf (sb-alien:slot entry 'size)
-                     (sb-alien:alien-size win32-process-entry :bytes))
-               (let ((parents nil))
-                 (if (zerop (win32--process-first handle (sb-alien:addr entry)))
-                     (values nil (= (win32--get-last-error) 18))
-                     (loop
-                       (push (cons (sb-alien:slot entry 'process-id)
-                                   (sb-alien:slot entry 'parent-process-id))
-                             parents)
-                       (when (zerop (win32--process-next handle (sb-alien:addr entry)))
-                         (return (if (= (win32--get-last-error) 18)
-                                     (values (nreverse parents) t)
-                                     (values nil nil))))))))
-          (win32--close-handle handle)))))
+  "Observe Toolhelp parent relationships and whether enumeration completed."
+  (ls-compat.posix:process-parent-snapshot))
 
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
@@ -289,7 +224,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (defparameter *win32-error-environment-variable-not-found* 203
   "ERROR_ENVVAR_NOT_FOUND, reported when removing a variable that is absent.")
-
 (defparameter *win32-process-terminate* #x1
   "The OpenProcess access right that allows TerminateProcess.")
 
@@ -517,22 +451,11 @@ protocol."
 
 ;;;; -- Environment --
 
-(defmethod platform-set-environment-variable ((platform win32-platform)
-                                              name value)
-  "Set or remove NAME in the process environment block and the C runtime's copy.
-
-SetEnvironmentVariableW changes what UIOP:GETENV and child processes see, and
-_wputenv keeps the C runtime's environ, which getenv reads, in step: the
-runtime propagates its own changes to the process block only for variables the
-process did not inherit."
-  (declare (ignore platform))
-  (win32--wputenv (format nil "~A=~A" name (or value "")))
-  (when (and (zerop (win32--set-environment-variable name value))
-             (or value
-                 (/= (win32--get-last-error)
-                     *win32-error-environment-variable-not-found*)))
-    (win32--fail ':environment nil))
-  nil)
+(defmethod platform-set-environment-variable ((platform win32-platform) name value)
+  "Set or remove NAME in the OS environment and CRT copy."
+  (handler-case (ls-compat.posix:set-environment-variable name value)
+    (ls-compat.posix:environment-update-failed (condition)
+      (win32--signal ':environment nil (ls-compat.posix:environment-update-failed-code condition)))))
 
 
 ;;;; -- Files --
@@ -692,25 +615,11 @@ Autolith publishes read-only lives below a private root anyway."
     (file-error (condition)
       (platform--file-failure ':replace target condition))))
 
-(-> win32--executable-extensions () list)
-(defun win32--executable-extensions ()
-  "Return the lowercase extensions PATHEXT declares executable."
-  (remove "" (mapcar #'string-downcase
-                     (uiop:split-string (or (uiop:getenv "PATHEXT")
-                                            ".COM;.EXE;.BAT;.CMD")
-                                        :separator '(#\;)))
-          :test #'string=))
-
 (defmethod platform-executable-file-p ((platform win32-platform) pathname)
-  "Accept a regular file whose name carries a PATHEXT extension."
-  (let ((status    (platform-path-status platform pathname :follow-links-p t))
-        (lowercase (string-downcase (win32--namestring pathname))))
-    (and status
-         (eq (platform-file-status-kind status) ':file)
-         (some (lambda (extension)
-                 (uiop:string-suffix-p lowercase extension))
-               (win32--executable-extensions))
-         t)))
+  "Check whether PATHNAME is a regular file with a PATHEXT suffix."
+  (handler-case (ls-compat.posix:executable-path-p pathname)
+    (ls-compat.posix:file-operation-failed (condition)
+      (platform--file-failure ':status pathname condition))))
 
 (defmethod platform-make-temporary-directory ((platform win32-platform)
                                             parent prefix)
