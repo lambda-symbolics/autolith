@@ -287,7 +287,7 @@ line separating lessons. Reject duplicate IDs and malformed metadata."
 The block may be inside the introductory comment or stand alone. Lesson
 parsing ignores these UI templates; expand their placeholders on demand."
   (handler-case
-      (org-templater:render-named-block :template   (onboarding-source--read)
+      (org-templater:render-named-block :template  (onboarding-source--read)
                                        :name       name
                                        :block-type "onboarding_text"
                                        :config     variables)
