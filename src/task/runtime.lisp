@@ -950,7 +950,9 @@ values from either side of a terminal transition."
                   :channel       (session-job-execution-identifier job)
                   :type          ':task
                   :index         (session-job-order job)
-                  :agent         (task-job-agent-name job)
+                  :agent         (if (job-name job)
+                                     (task-job-display-name job)
+                                     (task-job-agent-name job))
                   :state         state
                   :pending-prompt-count
                   (task-job-steering-pending-count job)

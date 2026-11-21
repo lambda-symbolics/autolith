@@ -1196,10 +1196,10 @@ its parenthesis open, and are dropped once the name closes it itself."
         activity now *terminal-ui-agent-compact-trace-limit*)))))
 
 (-> terminal-ui--agent-activity-row-at
-    (list real integer &key (:identity-width integer) (:role-width integer))
+    (list real integer &key (:name-width integer))
     list)
 (defun terminal-ui--agent-activity-row-at
-    (activity now row-width &key (identity-width 0) (role-width 0))
+    (activity now row-width &key (name-width 0))
   "Return one clipped primary child ACTIVITY row at monotonic NOW."
   (let* ((running-p (eq (getf activity :state) ':running))
          (detail-spans
@@ -1216,12 +1216,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                           (terminal-ui--agent-spinner-phase-at now))))
            (terminal-span ':dim "○ "))
        (terminal-span ':agent-name
-                      (layout-fit-text (getf activity :id)
-                                       identity-width))
-       (terminal-span ':dim " · ")
-       (terminal-span ':agent-role
-                      (layout-fit-text (getf activity :agent)
-                                       role-width)))
+                      (layout-fit-text (getf activity :agent) name-width)))
       (when detail-spans
         (cons (terminal-span ':dim " · ") detail-spans)))
      row-width)))
@@ -1578,17 +1573,10 @@ its parenthesis open, and are dropped once the name closes it itself."
                    0
                    (min expanded-row-limit
                         (length expandable-activities))))
-         (column-widths
-           (layout-column-widths
-            (loop for activity in visible-activities
-                  collect
-                  (list (getf activity :id)
-                        (getf activity :agent)))
-            (max 0 (- row-width (text-cell-width "  ○ ")))
-            :gap-width      3
-            :minimum-widths '(1 1)))
-         (identity-width     (or (first column-widths) 0))
-         (role-width         (or (second column-widths) 0))
+         (name-width
+           (min (max 0 (- row-width (text-cell-width "  ○ ")))
+                (loop for activity in visible-activities
+                      maximize (text-cell-width (getf activity :agent)))))
          (header-row
            (terminal--clip-spans
             (list (terminal-span ':agent-name "agents")
@@ -1605,8 +1593,7 @@ its parenthesis open, and are dropped once the name closes it itself."
               (list
                (terminal-ui--agent-activity-row-at
                 activity now row-width
-                :identity-width identity-width
-                :role-width     role-width))
+                :name-width name-width))
               (when (member activity expanded-activities :test #'eq)
                 (let ((expanded-row
                         (terminal-ui--agent-expanded-row-at

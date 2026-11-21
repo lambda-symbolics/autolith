@@ -1140,8 +1140,8 @@
         (test-assert (not (search "no update" text))
                      "running child activity suppresses the stale warning")
         (test-assert (and (search "00:59" text)
-                          (search "active-child" text))
-                     "running child activity keeps compact timing and identity visible"))
+                          (search "reviewer" text))
+                     "running child activity keeps compact timing and name visible"))
       (terminal-ui-set-agent-activities active-ui nil)
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui)
@@ -1292,11 +1292,11 @@
                (header-index  (position "agents 2" lines :test #'string=))
                (search-index
                  (position-if (lambda (line)
-                                (search "search-1" line))
+                                (search "explorer" line))
                               lines))
                (review-index
                  (position-if (lambda (line)
-                                (search "review-agent-2" line))
+                                (search "reviewer" line))
                               lines))
                (expanded-index
                  (position-if (lambda (line)
@@ -1310,10 +1310,6 @@
                (review-line   (and review-index (nth review-index lines)))
                (expanded-line (and expanded-index
                                    (nth expanded-index lines)))
-               (search-role-position
-                 (and search-line (search "explorer" search-line)))
-               (review-role-position
-                 (and review-line (search "reviewer" review-line)))
                (search-detail-position
                  (and search-line (search " · … ›" search-line)))
                (review-detail-position
@@ -1331,12 +1327,8 @@
                 (uiop:string-prefix-p "  " search-line)
                 (uiop:string-prefix-p "  " review-line)
                 (uiop:string-prefix-p "      ↳ " expanded-line)
-                search-role-position
-                review-role-position
-                (= (text-cell-width
-                    (subseq search-line 0 search-role-position))
-                   (text-cell-width
-                    (subseq review-line 0 review-role-position)))
+                (not (search "search-1" text))
+                (not (search "review-agent-2" text))
                 search-detail-position
                 review-detail-position
                 (= (text-cell-width
@@ -1364,7 +1356,6 @@
         (test-assert
          (and (search (terminal-style-sequence ':agent-spinner) display)
               (search (terminal-style-sequence ':agent-name) display)
-              (search (terminal-style-sequence ':agent-role) display)
               (search (terminal-style-sequence ':agent-tool) display))
          "running child traces use distinct basic-palette semantic colors"))
       (setf clock 65.24)
@@ -1383,7 +1374,7 @@
                                 (search "↳ " line))
                               lines)))
           (test-assert
-           (and (search "search-1" text)
+            (and (search "explorer" text)
                 (search "∙ 00:00" text)
                 expanded-index
                 (string= (nth (1+ expanded-index) lines) "")
@@ -1439,7 +1430,7 @@
                  (lambda (line)
                    (uiop:string-prefix-p "  … 2 more agents" line))
                  (uiop:split-string text :separator '(#\Newline)))
-                (not (search "worker-9" text)))
+                (= 8 (terminal-tests--substring-count "worker · queued" text)))
            "the child strip caps agents and summarizes overflow")))
       (terminal-ui-set-agent-activities active-ui nil)
       (test-assert (terminal-ui-refresh-status active-ui)
@@ -1482,7 +1473,7 @@
                        (mapcar #'terminal--spans-text rows))))
         (test-assert
          (and (search "agents 8" text)
-              (search "worker-1" text)
+              (search "reviewer · blocking" text)
               (search "blocking · lisp.eval 01:00" text))
          "short terminals preserve useful blocking rows inside their budget"))
       (terminal-ui-refresh-status active-ui)

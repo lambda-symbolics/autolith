@@ -9262,8 +9262,10 @@
                (terminal-ui--live-content ui clock)
              (declare (ignore display cursor))
              (test-assert
-              (search "search.content 01:00" text)
-              "runtime durations render correctly through an injected UI clock"))
+              (and (search "running-agent" text)
+                   (search "queued-agent" text)
+                   (search "search.content 01:00" text))
+              "named jobs project their names and render runtime durations"))
            (task-tests--publish-terminal
             queued
             ':completed
