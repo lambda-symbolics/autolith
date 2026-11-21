@@ -52,7 +52,5 @@ error is reported through the LSP tools rather than blocking registry creation."
 (defun lsp-manager-configure (manager configuration)
   "Load and cache CONFIGURATION's user-owned server definitions in MANAGER
 until refresh or runtime retirement."
-  (unless (lsp-manager-loaded-p manager)
-    (setf (lsp-manager-configurations manager) (lsp-load-configurations configuration)
-          (lsp-manager-loaded-p manager) t))
-  (lsp-manager-configurations manager))
+  (cl-lsp:lsp-manager-configurations-load
+   manager (lambda () (lsp-load-configurations configuration))))

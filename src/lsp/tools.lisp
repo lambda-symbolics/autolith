@@ -62,10 +62,7 @@ outside the workspace."
 (defun lsp-tool--call-for-file (manager context path &key function)
   "Run FUNCTION for each matching server and return independent success or failure rows."
   (with-recursive-lock-held ((lsp-manager-lock manager))
-    (unless (lsp-configurations-for-path
-             (lsp-manager-configure manager (tool-context-configuration context))
-             path)
-      (error 'lsp-error :message "No enabled language server matches this file; configure lsp.sexp."))
+    (lsp-manager-configure manager (tool-context-configuration context))
     (map 'vector
          (lambda (row)
            (if (getf row :error)
@@ -159,11 +156,9 @@ Bound data before serialization and retain a result and truncation note when spa
   "Execute an advertised read-only operation using native LSP result coordinates."
   (let ((operation (tool-argument arguments "operation" :required t)))
     (lsp-client-query client operation document
-                      :position (and (assoc operation *lsp-query-operations* :test #'equal)
-                                     (not (member operation '("document-symbols" "workspace-symbols")
-                                                  :test #'equal))
+                      :position (and (eq (cl-lsp:lsp-query-input-kind operation) ':position)
                                      (lsp-tool--position document arguments))
-                      :query    (and (equal operation "workspace-symbols")
+                      :query    (and (eq (cl-lsp:lsp-query-input-kind operation) ':query)
                                      (tool-argument arguments "query" :required t)))))
 
 (defmethod tool-execute ((tool lsp-query-tool) (context tool-context) (arguments hash-table))
@@ -190,16 +185,8 @@ Bound data before serialization and retain a result and truncation note when spa
   (declare (ignore arguments))
   (let ((manager (lsp-tool-manager tool)))
     (with-recursive-lock-held ((lsp-manager-lock manager))
-      (let ((clients nil))
-        (maphash (lambda (key client)
-                   (declare (ignore key))
-                   (push (json-object "server" (lsp-server-configuration-name (lsp-client-configuration client))
-                                      "root" (namestring (lsp-client-root client))
-                                      "state" (if (and (lsp-client-transport client)
-                                                       (lsp-transport-live-p (lsp-client-transport client)))
-                                                  "running" "stopped"))
-                         clients))
-                 (lsp-manager-clients manager))
+      (lsp-manager-configure manager (tool-context-configuration context))
+      (let ((status (cl-lsp:lsp-manager-status manager)))
         (tool-success
          (lsp-tool--render
           (json-object
@@ -209,8 +196,13 @@ Bound data before serialization and retain a result and truncation note when spa
                             (json-object "name" (lsp-server-configuration-name configuration)
                                          "extensions" (coerce (lsp-server-configuration-extensions configuration) 'vector)
                                          "disabled" (json-boolean (lsp-server-configuration-disabled-p configuration))))
-                          (lsp-manager-configure manager (tool-context-configuration context)))
-           "clients" (coerce (nreverse clients) 'vector))))))))
+                          (getf status :configurations))
+           "clients" (map 'vector
+                          (lambda (row)
+                            (json-object "server" (getf row :server)
+                                         "root" (namestring (getf row :root))
+                                         "state" (if (getf row :live-p) "running" "stopped")))
+                          (getf status :clients)))))))))
 
 (defmethod tool-execute ((tool lsp-restart-tool) (context tool-context) (arguments hash-table))
   "Stop all clients and reload configuration; restart lazily on the next file request."
@@ -269,22 +261,17 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
             (sb-sys:with-deadline (:seconds *lsp-edit-diagnostics-timeout-seconds*)
               (let* ((manager (lsp-tool-manager diagnostics-tool))
                      (path    (lsp-tool--path context (workspace-file--decode-identifier "workspace" (subseq uri 10)))))
-                (with-recursive-lock-held ((lsp-manager-lock manager))
-                  (if (lsp-configurations-for-path
-                       (lsp-manager-configure manager (tool-context-configuration context))
-                       path)
-                      (let ((reports (lsp-tool--call-for-file
-                                      manager context path
-                                      :function
-                                      (lambda (client document)
-                                        (lsp-client-diagnostics client document :wait-seconds 0.5)))))
-                        (context-rule-note-diagnostics
-                         (tool-context-conversation context) reports
-                         :generation (tool-context-rule-generation context))
-                        (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
-                                              (tool-result-content result) (lsp-tool--render reports 6000))
-                                      :details (tool-result-details result)))
-                      result))))
+                (let ((reports (lsp-tool--call-for-file
+                                manager context path
+                                :function (lambda (client document)
+                                            (lsp-client-diagnostics client document :wait-seconds 0.5)))))
+                  (context-rule-note-diagnostics
+                   (tool-context-conversation context) reports
+                   :generation (tool-context-rule-generation context))
+                  (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
+                                        (tool-result-content result) (lsp-tool--render reports 6000))
+                                :details (tool-result-details result)))))
+          (cl-lsp:lsp-no-matching-server () result)
           (sb-sys:deadline-timeout ()
             (tool-success
              (format nil "~A~%~%LSP diagnostics timed out; use lsp.diagnostics for the full server timeout."

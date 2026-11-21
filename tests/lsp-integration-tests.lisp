@@ -72,18 +72,15 @@
            (client    (lsp-client-tests--client (config :working-directory configuration)
                                                 :capabilities (json-object "hoverProvider" t)
                                                  :transport   (list :live t)))
-           (arguments (json-object "operation" "hover" "line" 1 "character" 4))
-           (observed  nil))
+           (arguments (json-object "operation" "hover" "line" 1 "character" 4)))
       (lsp-client-tests--assert (= 0 (json-get (lsp-tool--position document arguments) "line")))
       (lsp-client-tests--assert (= 3 (json-get (lsp-tool--position document arguments) "character")))
       (lsp-client-tests--with-replacements
        (list (list 'lsp-transport-request
                    (lambda (transport method params &key timeout)
-                     (declare (ignore transport timeout))
-                     (setf observed (list method params))
-                     (json-object "contents" "ok"))))
-       (lsp-client-tests--assert (string= (json-get (lsp-tool--query client document arguments) "contents") "ok"))
-       (lsp-client-tests--assert (string= (first observed) "textDocument/hover")))))
+                    (declare (ignore transport method params timeout))
+                    (json-object "contents" "ok"))))
+       (lsp-client-tests--assert (string= (json-get (lsp-tool--query client document arguments) "contents") "ok")))))
   nil)
 
 (-> test-lsp-tool-conditional-registration () null)

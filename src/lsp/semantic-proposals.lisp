@@ -30,11 +30,16 @@
 (defclass lsp-semantic-state (edit-proposal-store) ()
   (:documentation "Semantic choices with independent entry and snapshot retention budgets."))
 
+(defclass lsp-semantic-observation-state (workspace-file-observation-state)
+  ((stamp :initarg :stamp :reader lsp-semantic-observation-stamp
+          :documentation "Opaque library freshness stamp for this addressed URI."))
+  (:documentation "An owned host baseline with text-free synchronized-document identity."))
+
 (defclass lsp-semantic-entry (edit-proposal)
   ((client :initarg :client :reader lsp-semantic-entry-client
            :documentation "Server that returned this choice.")
    (transport :initarg :transport :reader lsp-semantic-entry-transport
-              :documentation "Exact request transport, invalidated by restart.")
+              :documentation "Opaque library session stamp, invalidated by restart.")
    (value :initarg :value :reader lsp-semantic-entry-value
           :documentation "Normalized proposal or raw action row.")
    (kind :initarg :kind :reader lsp-semantic-entry-kind
@@ -54,7 +59,7 @@
   (unless (and (stringp uri) (uiop:string-prefix-p "file:///" uri)
                (not (find #\? uri)) (not (find #\# uri)))
     (lsp-semantic--fail "Semantic edits require local file URIs without authorities, queries or fragments."))
-  (let* ((name     (workspace-file--decode-identifier "file" (subseq uri 7)))
+  (let* ((name     (cl-lsp:lsp-file-uri-components uri))
          (path     (platform-file-uri-pathname *platform* name))
          (resource (resource-registry-resolve
                     (tool-registry-resource-registry (tool-context-registry context))
@@ -81,13 +86,8 @@
 (-> lsp-semantic--snapshot-function (tool-context lsp-client hash-table) function)
 (defun lsp-semantic--snapshot-function (context client snapshots)
   "Capture bounded authorized resources and synchronized versions before normalization."
-  (let ((versions (make-hash-table :test #'equal))
-        (bytes    (lsp-semantic--snapshot-bytes snapshots)))
-    (with-lock-held ((cl-lsp:lsp-client-lock client))
-      (maphash (lambda (uri document)
-                 (setf (gethash uri versions)
-                       (cons (lsp-document-text document) (cl-lsp:lsp-document-version document))))
-               (cl-lsp:lsp-client-documents client)))
+  (let ((frozen (cl-lsp:lsp-client-document-snapshot client))
+        (bytes  (lsp-semantic--snapshot-bytes snapshots)))
     (lambda (uri)
       (let ((record (gethash uri snapshots)))
         (unless record
@@ -100,13 +100,13 @@
                     resource context ':read
                     :function (lambda () (resource-observe resource context))))
                  (kind     (workspace-file-observation-kind observation))
-                 (version  (gethash uri versions))
+                 (version  (multiple-value-list (funcall frozen uri)))
                  (weight   (workspace-file--observation-retained-bytes observation)))
             (unless (member kind '(:file :missing))
               (lsp-semantic--fail "Semantic edits do not support directories or service resources."))
             (when (> (+ bytes weight) *lsp-semantic-maximum-snapshot-bytes*)
               (lsp-semantic--fail "Semantic snapshots exceed the retained byte limit; narrow the request."))
-            (when (and version
+            (when (and (eq (third version) ':file)
                        (not (and (eq kind ':file)
                                  (equal (first version) (resource-observation-content observation)))))
               (lsp-semantic--fail "Synchronized document differs from the observed file; retry the query."))
@@ -116,10 +116,11 @@
                          (lsp-semantic--fail "A proposal addresses one resource through multiple URI aliases.")))
                      snapshots)
             (setf record (list resource
-                               (make-instance 'workspace-file-observation-state
+                               (make-instance 'lsp-semantic-observation-state
                                               :alias (format nil "P~A" (daemon-random-token))
-                                              :observation observation :visible-ranges nil)
-                               (rest version))
+                                              :observation observation :visible-ranges nil
+                                              :stamp (fourth version))
+                               (second version))
                   (gethash uri snapshots) record)
             (incf bytes weight)))
         (let ((observation (lsp-semantic--observation context record)))
@@ -169,39 +170,38 @@
     entry))
 
 (defmethod edit-proposal-validate :after ((context tool-context) (entry lsp-semantic-entry))
-  "Reject choices if the server has restarted or a synchronized document's version has changed."
+  "Check library session and addressed-URI freshness after host baseline validation."
   (let ((client (lsp-semantic-entry-client entry)))
-    (unless (eq (lsp-semantic-entry-transport entry) (lsp-client-transport client))
+    (unless (cl-lsp:lsp-client-snapshot-current-p client (lsp-semantic-entry-transport entry))
       (lsp-semantic--fail "Language server restarted; request a fresh proposal."))
-    (with-lock-held ((cl-lsp:lsp-client-lock client))
-      (maphash
-       (lambda (uri record)
-         (let ((document (gethash uri (cl-lsp:lsp-client-documents client))))
-           (unless (eql (third record) (and document (cl-lsp:lsp-document-version document)))
-             (lsp-semantic--fail "Document version changed; request a fresh proposal."))))
-       (edit-proposal-snapshots entry)))))
+    (maphash (lambda (uri record)
+               (unless (cl-lsp:lsp-client-snapshot-current-p
+                        client (lsp-semantic-observation-stamp (second record)) :uri uri)
+                 (lsp-semantic--fail "Document version changed; request a fresh proposal.")))
+             (edit-proposal-snapshots entry))))
 
 (-> lsp-semantic--validate (tool-context lsp-semantic-entry) null)
 (defun lsp-semantic--validate (context entry)
   "Validate owned baselines and server identity before resolving a choice."
   (edit-proposal-validate context entry))
 
-(-> lsp-semantic--requests (tool-context lsp-semantic-entry) list)
-(defun lsp-semantic--requests (context entry)
+(-> lsp-semantic--requests (tool-context lsp-semantic-entry &key (:snapshot (or null function))) list)
+(defun lsp-semantic--requests (context entry &key snapshot)
   "Materialize library effects and wrap them in revisioned host publication requests."
   (let* ((snapshots (lsp-semantic-entry-snapshots entry))
          (effects
            (cl-lsp:lsp-materialize-workspace-plan
             (lsp-semantic-entry-value entry)
             :snapshot
-            (lambda (uri)
-              (let ((record (gethash uri snapshots)))
-                (unless record
-                  (lsp-semantic--fail "Proposal contains an unobserved resource."))
-                (let ((base (lsp-semantic--observation context record)))
-                  (values (and (eq (workspace-file-observation-kind base) ':file)
-                               (resource-observation-content base))
-                          (third record) (workspace-file-observation-kind base))))))))
+            (or snapshot
+                (lambda (uri)
+                  (let ((record (gethash uri snapshots)))
+                    (unless record
+                      (lsp-semantic--fail "Proposal contains an unobserved resource."))
+                    (let ((base (lsp-semantic--observation context record)))
+                      (values (and (eq (workspace-file-observation-kind base) ':file)
+                                   (resource-observation-content base))
+                              (third record) (workspace-file-observation-kind base)))))))))
     (loop for effect across effects
           for uri = (json-get effect "uri")
           for record = (gethash uri snapshots)
@@ -227,14 +227,10 @@
 (defun lsp-semantic--capture-plan (context client &key snapshots plan)
   "Authorize all operation paths, retain snapshots and reject unsupported effects before presenting."
   (let ((snapshot (lsp-semantic--snapshot-function context client snapshots)))
-    (loop for operation across (json-get plan "operations")
-          do (dolist (field (if (equal (json-get operation "kind") "rename")
-                               '("oldUri" "newUri") '("uri")))
-               (funcall snapshot (json-get operation field))))
     (let ((entry (make-instance 'lsp-semantic-entry :client client
-                                :transport (lsp-client-transport client) :kind ':proposal
+                                :transport (cl-lsp:lsp-client-session-snapshot client) :kind ':proposal
                                 :value plan :snapshots snapshots)))
-      (lsp-semantic--requests context entry)
+      (lsp-semantic--requests context entry :snapshot snapshot)
       entry)))
 
 (defmethod edit-proposal-requests ((context tool-context) (entry lsp-semantic-entry))
