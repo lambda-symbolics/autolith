@@ -182,20 +182,20 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                       (conversation-ephemeral-input-entries conversation))))
         (clinker-transcript:projection-copy-metadata
          (conversation-projection conversation) projection)
-         (conversation-compaction--mark-checkpoint
-          projection (first (last replacement-items)) (getf (rest record) :continuation))
-         (setf (getf (rest record) :through-seq)
-               (1- (conversation-next-sequence conversation))
-               (getf (rest record) :cutoff-seq)
-               (conversation-compaction-cutoff-sequence compaction)
-               (getf (rest record) :carry-forward)
-               (mapcar (lambda (item)
-                         (conversation-compaction--serialize-item projection item))
-                       (nthcdr (length replacement-items) items))
-               (getf (rest record) :unfinished-work) unfinished-work)
-         ;; Prepare all state before durable publication, including transient items.
-         (clinker-transcript:projection-replace
-          projection (append items ephemeral-items))
+        (conversation-compaction--mark-checkpoint
+         projection (first (last replacement-items)) (getf (rest record) :continuation))
+        (setf (getf (rest record) :through-seq)
+              (1- (conversation-next-sequence conversation))
+              (getf (rest record) :cutoff-seq)
+              (conversation-compaction-cutoff-sequence compaction)
+              (getf (rest record) :carry-forward)
+              (mapcar (lambda (item)
+                        (conversation-compaction--serialize-item projection item))
+                      (nthcdr (length replacement-items) items))
+              (getf (rest record) :unfinished-work) unfinished-work)
+        ;; Prepare all state before durable publication, including transient items.
+        (clinker-transcript:projection-replace
+         projection (append items ephemeral-items))
         (let ((remap (make-hash-table :test #'eq)))
           (dolist (item ephemeral-items) (setf (gethash item remap) item))
           (clinker-transcript:projection-copy-metadata
@@ -415,7 +415,7 @@ handoff, which the family that owns the native window does not read."
             (setf (gethash item
                            (clinker-transcript:projection-metadata-table projection ':family))
                   family)
-          (when (and (encrypted-reasoning-item-p item) (conversation-model conversation))
+            (when (and (encrypted-reasoning-item-p item) (conversation-model conversation))
               (setf (gethash item (clinker-transcript:projection-metadata-table projection ':reasoning-model))
                     (conversation-model conversation))))
           (unless (member :continuation properties)

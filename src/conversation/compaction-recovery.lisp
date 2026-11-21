@@ -124,7 +124,8 @@ configured window. Read existing metadata only, without discovery or preparation
     (let ((protected (position-if (lambda (item) (gethash item (compaction-recovery-protected state))) items)))
       (when protected (setf start (min start protected))))
     (let ((plan (clinker-transcript:make-compaction-plan
-                 (conversation-projection view) :cutoff start
+                 (conversation-projection view)
+                 :cutoff            start
                  :repaired-output-p #'conversation-compaction--repaired-output-p)))
       (min start (clinker-transcript:compaction-plan-retained-start plan)))))
 

@@ -2792,20 +2792,21 @@ an equal hash table containing the last replacement for each rewritten identifie
     (handler-case
         (clinker-transcript:normalize-call-identifiers
          items
-         :occupied-p (lambda (identifier)
-                       (multiple-value-bind (durable ephemeral)
-                           (conversation--call-entry conversation identifier)
-                         (or durable ephemeral)))
+         :occupied-p         (lambda (identifier)
+                               (multiple-value-bind (durable ephemeral)
+                                   (conversation--call-entry conversation identifier)
+                                 (or durable ephemeral)))
          :conflicting-call-p (lambda (item)
                                (eq (conversation--call-status conversation item) ':conflict)))
       (clinker-transcript:reconciliation-error (condition)
         (error 'conversation-invariant-error
-               :message (case (clinker-transcript:projection-error-reason condition)
+               :message  (case (clinker-transcript:projection-error-reason condition)
                           (:repeated-call-object
                            "A provider response repeats one call object; distinct occurrences need distinct objects.")
                           (:ambiguous-call-reference
                            "A provider response references an identifier shared by multiple calls; its output association is ambiguous.")
-                          (otherwise (princ-to-string condition)))
+                          (otherwise
+                           (princ-to-string condition)))
                :pathname (conversation-pathname conversation)
                :sequence (conversation-next-sequence conversation))))))
 

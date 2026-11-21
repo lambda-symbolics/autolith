@@ -92,8 +92,8 @@
   :version "git-005b52f41a9127c77311ae5a7adcab827654e3b3"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "25caecdd16a983120086de7c71825b806eee9310")
-  :version "git-25caecdd16a983120086de7c71825b806eee9310"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "8f1c5b324c4d6befca2604daa41007e43c6ae65a")
+  :version "git-8f1c5b324c4d6befca2604daa41007e43c6ae65a"))
 ("cl-rfc8252" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-rfc8252.git" :ref "74b0c72b34427cb960704e027adc59b0669b58c7")
