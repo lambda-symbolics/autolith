@@ -12,7 +12,7 @@
   "The default one-hour wall-clock cap for one child; zero disables the deadline.")
 
 (defparameter *task-children-maximum* 32
-  "The most children one agent may have; new work goes to an existing child through its channel.")
+  "The most children one agent may have.")
 
 (defparameter *task-maximum-live-jobs* 64
   "The maximum combined queued and running task jobs.")

@@ -221,7 +221,7 @@
                                                    served))
       (let ((children (world-channel-children world identifier)))
         (when children
-          (format stream "Children, ~D of the ~D an agent may have; send work to one through its channel. A busy child runs or is open, and child.* tools wait until it is idle.~%"
+          (format stream "Children, ~D of the ~D an agent may have; send work with channel.send to @child-name. A busy child runs or is open, and child.* tools wait until it is idle.~%"
                   (length children) *task-children-maximum*)
           (dolist (child children)
             (write-string (channel-resource--child-text world child configuration) stream)))))))

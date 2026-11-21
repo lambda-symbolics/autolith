@@ -728,7 +728,7 @@ live runs for AGENT count too."
   (let ((children (length (task-agent-children orchestrator agent))))
     (when (> (+ children count) *task-children-maximum*)
       (error 'task-error
-             :message   (format nil "You have ~D of the ~D children an agent may have, so ~D more do not fit. Send new work to a child with the right role through its channel (channel:current lists your children), or remove one with child.remove."
+             :message   (format nil "You have ~D of the ~D children an agent may have, so ~D more do not fit. Send work with channel.send to @child-name (channel:current lists your children), or remove one with child.remove."
                                 children *task-children-maximum* count)
              :tool-name "child.spawn")))
   nil)
