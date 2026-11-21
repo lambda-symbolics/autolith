@@ -356,3 +356,18 @@ Source precedence, source recording, and value rejection belong to setinka."
                            (config :saved-model-selection-notice created))))
                 "valid aliases retain their selection without a recovery notice"))))))))
   nil)
+
+(-> test-preferences-child-model-aliases () null)
+(defun test-preferences-child-model-aliases ()
+  "Test that child tier aliases survive a preferences round trip."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (with-test-configuration (configuration)
+       (let ((created (preferences-tests--create configuration)))
+         (setf (config :child-model-aliases created)
+               '(("@smol" . "openrouter/tencent/hy4-flash")))
+         (let ((reloaded (preferences-tests--create configuration)))
+           (test-assert
+            (string= "openrouter/tencent/hy4-flash"
+                     (task--model-alias "@smol" reloaded "gpt-6.1-sol"))
+            "a durable tier alias reaches child model resolution")))))))

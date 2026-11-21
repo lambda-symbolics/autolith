@@ -115,6 +115,27 @@ exist yet, and is only put in directory form."
        (every (lambda (root) (typep root '(or non-empty-string pathname))) value)))
 
 
+(-> child-model-alias-table-p (t) boolean)
+(defun child-model-alias-table-p (value)
+  "Return whether VALUE is a proper alist of nonempty alias and model strings."
+  (and (proper-list-p value)
+       (every (lambda (entry)
+                (and (consp entry)
+                     (typep (car entry) 'non-empty-string)
+                     (typep (cdr entry) 'non-empty-string)))
+              value)))
+
+(-> configuration--child-model-aliases-problem (t t) (option string))
+(defun configuration--child-model-aliases-problem (value configuration)
+  "Return why VALUE names a child tier alias outside the built-in table."
+  (declare (ignore configuration))
+  (let ((known (mapcar #'car *default-child-model-alias-table*)))
+    (loop for entry in value
+          for alias = (car entry)
+          thereis (unless (member alias known :test #'string=)
+                    (format nil "Unknown child tier alias ~S; expected ~{~A~^, ~}."
+                            alias known)))))
+
 ;;;; -- Settings --
 
 (define-setting :source-root (directory-setting)
@@ -261,6 +282,17 @@ exist yet, and is only put in directory form."
   :default             (lambda (configuration)
                          (declare (ignore configuration))
                          *default-model*))
+
+(define-setting :child-model-aliases (setting)
+    :label         "Child model aliases"
+    :group         :model
+    :documentation "The child tier models as an alist from @smol, @slow, and @designer to model identifiers. Replacing the value replaces the whole table."
+    :scope         :durable
+    :type          '(satisfies child-model-alias-table-p)
+    :validator     'configuration--child-model-aliases-problem
+    :default       (lambda (configuration)
+                     (declare (ignore configuration))
+                     (copy-alist *default-child-model-alias-table*)))
 
 (define-setting :reasoning-effort (choice-setting)
   :label                          "Reasoning effort"
