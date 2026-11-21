@@ -55,12 +55,12 @@ of the argument written one element per line, for the styles that have them."))
 ;;;; -- Parsing --
 
 (-> lisp-layout--closings (string simple-vector) (option simple-vector))
-(defun lisp-layout--closings (source roles)
+(defun lisp-layout--closings (source depths)
   "Return each opening parenthesis's closing position in SOURCE, or NIL when they do not balance."
   (let ((closings (make-array (length source) :initial-element nil))
         (stack    nil))
     (loop for index below (length source)
-          when (aref roles index)
+          when (svref depths index)
             do (cond
                  ((char= (char source index) #\()
                   (push index stack))
@@ -73,7 +73,7 @@ of the argument written one element per line, for the styles that have them."))
 
 (-> lisp-layout--elements
     (string &key (:start integer) (:end integer) (:closings simple-vector)
-            (:whitespace simple-vector))
+            (:whitespace simple-bit-vector))
     list)
 (defun lisp-layout--elements (source &key start end closings whitespace)
   "Return the elements of SOURCE between START and END."
@@ -86,7 +86,7 @@ of the argument written one element per line, for the styles that have them."))
                (setf pieces nil))))
       (loop while (< index end)
             do (cond
-                 ((aref whitespace index)
+                 ((= 1 (sbit whitespace index))
                   (finish)
                   (incf index))
                  ((aref closings index)
@@ -101,7 +101,7 @@ of the argument written one element per line, for the styles that have them."))
                     (setf index (1+ closing))))
                  (t
                   (let ((next (loop for position from (1+ index) below end
-                                    when (or (aref whitespace position)
+                                    when (or (= 1 (sbit whitespace position))
                                              (aref closings position))
                                       return position
                                     finally (return end))))
@@ -311,9 +311,9 @@ line. Source that already has line breaks, and source whose parentheses do not
 balance, is returned as it is."
   (when (find-if (lambda (character) (find character '(#\Newline #\Return))) source)
     (return-from lisp-source-layout source))
-  (multiple-value-bind (roles whitespace)
-      (syntax--lisp-parenthesis-roles source :whitespace-p t)
-    (let ((closings (lisp-layout--closings source roles)))
+  (multiple-value-bind (depths whitespace)
+      (common-lisp-delimiter-depths source :whitespace-p t)
+    (let ((closings (lisp-layout--closings source depths)))
       (unless closings
         (return-from lisp-source-layout source))
       (let ((*print-pretty*       t)
