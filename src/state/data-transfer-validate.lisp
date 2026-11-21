@@ -284,12 +284,18 @@
 
 (-> data-transfer--validate (t t) list)
 (defun data-transfer--validate (archive pathname)
-  "Validate the entire archive and every destination-bearing field before writes."
+  "Validate generic structure and domain fields of an in-memory archive."
+  (unless (data-transfer--portable-p archive)
+    (data-transfer--fail pathname ':invalid "Malformed or unsupported data archive."))
+  (data-transfer--validate-decoded archive pathname))
+
+(-> data-transfer--validate-decoded (t t) list)
+(defun data-transfer--validate-decoded (archive pathname)
+  "Validate decoded archive fields and ownership before any destination write."
   (handler-case
       (progn
         (unless
-            (and (data-transfer--portable-p archive)
-                 (record-check
+            (and (record-check
                   archive :properties-p t :versions (list *data-transfer-version*)
                   :allow-other-keys nil
                   :fields           (append

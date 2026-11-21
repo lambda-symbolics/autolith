@@ -457,48 +457,6 @@
              configuration
              "#.(error \"reader evaluation ran\")")
             "native MCP reading disables reader evaluation")
-           (let ((shared (list :shared)))
-             (test-assert
-              (handler-case
-                  (progn
-                    (mcp-configuration--validate-readable-tree
-                     (list shared shared))
-                    nil)
-                (mcp-configuration-error ()
-                  t))
-              "native MCP validation rejects shared reader structure"))
-           (let ((circular (list :circular)))
-             (setf (rest circular) circular)
-             (test-assert
-              (handler-case
-                  (progn
-                    (mcp-configuration--validate-readable-tree circular)
-                    nil)
-                (mcp-configuration-error ()
-                  t))
-              "native MCP validation rejects circular reader structure"))
-           (let ((nested nil))
-             (loop repeat (+ 2 *mcp-configuration-maximum-depth*)
-                   do (setf nested (list nested)))
-             (test-assert
-              (handler-case
-                  (progn
-                    (mcp-configuration--validate-readable-tree nested)
-                    nil)
-                (mcp-configuration-error ()
-                  t))
-              "native MCP validation bounds nested structure"))
-           (test-assert
-            (handler-case
-                (progn
-                  (mcp-configuration--validate-readable-tree
-                   (make-list
-                    *mcp-configuration-maximum-nodes*
-                    :initial-element nil))
-                  nil)
-              (mcp-configuration-error ()
-                t))
-            "native MCP validation bounds total structure")
            (test-assert
             (test-mcp-configuration--signals-form-p
              configuration

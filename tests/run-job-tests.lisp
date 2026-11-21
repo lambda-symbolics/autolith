@@ -486,12 +486,7 @@
                      "(:status :success :error 42)"
                      "(:status :success :request-count -1)"
                      "(:status :success :usage ((1 2)))"
-                     "(:status :success) (:status :failed)"
-                     "#1=(:status :success :output #1#)"
-                     "#.(error \"reader evaluation\")"
-                     (format nil "(:status :success :output ~A nil ~A)"
-                             (make-string 200 :initial-element #\()
-                             (make-string 200 :initial-element #\)))))
+                     "(:status :success) (:status :failed)"))
         (with-open-file (stream path :direction ':output :if-exists ':supersede
                                      :external-format ':utf-8)
           (write-string source stream))

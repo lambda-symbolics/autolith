@@ -128,20 +128,11 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
             (unless (platform-file-status-same-object-p
                      before (platform-stream-status *platform* stream))
               (return-from world-terminal-owner-reachability ':unknown))
-            (let* ((buffer (make-array 65537 :element-type '(unsigned-byte 8)))
-                   (count  (read-sequence buffer stream)))
-              (when (> count 65536)
+            (let ((record (image-daemon:daemon-registry-read-stream stream :maximum-octets 65536)))
+              (unless (and record
+                           (string= (world-terminal--record-session-id record) identifier)
+                           (eql (getf (rest record) :pid) owner-pid))
                 (return-from world-terminal-owner-reachability ':unknown))
-              (let* ((*read-eval* nil)
-                     (text        (utf8-octets-to-string (subseq buffer 0 count)))
-                     (eof         (gensym "EOF")))
-                (multiple-value-bind (record end)
-                    (read-from-string text nil eof)
-                  (unless (and (image-daemon:daemon-registry-record-p record)
-                               (eq (read-from-string text nil eof :start end) eof)
-                               (string= (world-terminal--record-session-id record) identifier)
-                               (eql (getf (rest record) :pid) owner-pid))
-                    (return-from world-terminal-owner-reachability ':unknown))
                   (let* ((response (world-terminal-call (world-terminal--record-port record)
                                                 (world-terminal--record-token record) ':status))
                          (status   (and (proper-list-p response)
@@ -152,7 +143,7 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
                              (equal (getf (rest status) :session-id) identifier)
                              (eql (getf (rest status) :pid) owner-pid))
                         ':reachable
-                        ':unknown))))))))
+                        ':unknown))))))
     ((or sb-sys:deadline-timeout error) ()
       ':unknown)))
 

@@ -80,11 +80,9 @@
 (-> run-job-read-string (string) t)
 (defun run-job-read-string (source)
   "Read exactly one bounded safe data-only S-expression from SOURCE."
-  (when (or (> (length source) *run-job-maximum-input-bytes*)
-            (> (utf8-string-length source) *run-job-maximum-input-bytes*))
-    (run-job--error ':invalid-input "The job input exceeds the byte bound."))
   (handler-case
-      (read-source source (run-job--source-grammar))
+      (read-source source (run-job--source-grammar)
+                   :maximum-octets *run-job-maximum-input-bytes*)
     (sexp-config-error (condition)
       (run-job--error ':invalid-input "~A" (sexp-config-error-message condition)))))
 

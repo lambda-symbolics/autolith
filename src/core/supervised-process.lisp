@@ -33,6 +33,25 @@ when the caller also uses it to grant sandbox read access."
                           (notany (lambda (binding) (uiop:string-prefix-p prefix binding)) overrides))
                   collect (concatenate 'string prefix value))))
 
+(-> supervised-process-read-data (stream) t)
+(defun supervised-process-read-data (stream)
+  "Read one bounded printer-compatible data response without owning STREAM.
+
+The process owner retains deadline, EOF handling and teardown authority."
+  (sexp-config:read-next-source
+   stream
+   (make-source-grammar
+    :label "One-shot process data"
+    :maximum-depth 128 :maximum-nodes 65536 :maximum-string-characters (* 16 1024 1024)
+    :improper-lists-permitted-p t :readable-strings-permitted-p t
+    :octet-vectors-permitted-p t :qualified-common-lisp-symbols-permitted-p t
+    :read-default-float-format 'single-float
+    :allowed-atom-predicate
+    (lambda (value)
+      (or (null value) (eq value t) (keywordp value) (stringp value)
+          (numberp value) (typep value '(vector (unsigned-byte 8))))))
+   :maximum-octets (* 32 1024 1024)))
+
 (-> supervised-process-exchange (t t) t)
 (defun supervised-process-exchange (process request)
   "Write REQUEST and read one response without reader evaluation."
@@ -44,8 +63,7 @@ when the caller also uses it to grant sandbox read access."
           (terpri input)
           (finish-output input)
           (close input))
-        (let ((*read-eval* nil))
-          (read (uiop:process-info-output process) nil nil)))
+        (supervised-process-read-data (uiop:process-info-output process)))
     (error () nil)))
 
 (-> supervised-process-terminate (t) null)

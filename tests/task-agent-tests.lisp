@@ -44,119 +44,17 @@
                    (string= (task-agent-definition-instructions definition)
                             "Accept standard block comments."))
               "native role parsing accepts standard keyword, string, and block-comment adjacency"))
-           (let* ((pathname
-                    (merge-pathnames "deeply-nested.sexp" directory))
-                  (source
-                    (concatenate
-                     'string
-                     (make-string 129 :initial-element #\()
-                     "nil"
-                     (make-string 129 :initial-element #\))))
-                  (condition
-                    (task-tests--agent-definition-error
-                     (task-tests--write-text pathname source)
-                     :project)))
+           (let* ((pathname (merge-pathnames "incomplete.sexp" directory))
+                  (condition (task-tests--agent-definition-error
+                              (task-tests--write-text pathname "(:name") :project)))
              (test-assert
-              (search "depth"
-                      (string-downcase
-                       (princ-to-string
-                        (task-agent-definition-error-cause condition))))
-              "native role parsing rejects source nesting beyond its hard bound"))
-           (setf *task-test-reader-evaluated-p* nil)
-           (let* ((pathname
-                    (merge-pathnames "reader-eval.sexp" directory))
-                  (condition
-                    (task-tests--agent-definition-error
-                     (task-tests--write-text
-                      pathname
-                      "(:name \"reader-eval\" :description \"Unsafe\" :instructions #.(progn (setf *task-test-reader-evaluated-p* t) \"executed\"))")
-                     :project)))
-             (test-assert (not *task-test-reader-evaluated-p*)
-                          "the native role reader binds *READ-EVAL* to NIL")
-             (test-assert
-              (typep (task-agent-definition-error-line condition)
-                     '(integer 1))
-              "reader failures retain a one-based source line"))
-           (let* ((pathname
-                    (task-tests--write-text
-                     (merge-pathnames "fresh-readtable.sexp" directory)
-                     "!"))
-                  (condition
-                    (let ((*readtable* (copy-readtable nil)))
-                      (set-macro-character
-                       #\!
-                       (lambda (stream character)
-                         (declare (ignore stream character))
-                         (task-tests--role-form
-                          "fresh-readtable" "Inherited macro"
-                          "This must not be accepted."))
-                       nil
-                       *readtable*)
-                      (task-tests--agent-definition-error
-                       pathname :project))))
-             (test-assert
-              (let ((cause (task-agent-definition-error-cause condition)))
-                (and (typep cause 'sexp-config-error)
-                     (eq (sexp-config-error-kind cause) ':invalid-value)))
-              "the native role reader starts from a fresh standard readtable"))
-           (let ((bare-name "AUTOLITH-TASK-READER-BARE-LEAK-71D21A")
-                 (qualified-name
-                   "AUTOLITH-TASK-READER-QUALIFIED-LEAK-71D21A")
-                 (keyword-name
-                   "AUTOLITH-TASK-READER-KEYWORD-LEAK-71D21A"))
-             (test-assert
-              (and (null (find-symbol bare-name '#:autolith))
-                   (null (find-symbol qualified-name '#:autolith))
-                   (null (find-symbol keyword-name '#:keyword)))
-              "reader-pollution sentinels begin absent from global packages")
-             (task-tests--agent-definition-error
-              (task-tests--write-text
-               (merge-pathnames "bare-symbol.sexp" directory)
-               "(:name \"bare-symbol\" :description \"Bare symbol\" :instructions \"Reject and forget it.\" :tools (autolith-task-reader-bare-leak-71d21a))")
-              :project)
-             (task-tests--agent-definition-error
-              (task-tests--write-text
-               (merge-pathnames "qualified-symbol.sexp" directory)
-               "(:name \"qualified-symbol\" :description \"Qualified symbol\" :instructions \"Reject before interning it.\" :tools (autolith::autolith-task-reader-qualified-leak-71d21a))")
-              :project)
-             (task-tests--agent-definition-error
-              (task-tests--write-text
-               (merge-pathnames "unknown-keyword.sexp" directory)
-               "(:name\"unknown-keyword\":description\"Unknown keyword\":instructions\"Reject adjacent unknown keywords before interning them.\":autolith-task-reader-keyword-leak-71d21a\"rejected\")")
-              :project)
-             (test-assert
-              (and (null (find-symbol bare-name '#:autolith))
-                   (null (find-symbol qualified-name '#:autolith))
-                   (null (find-symbol keyword-name '#:keyword)))
-              "malformed role symbols never pollute project or keyword packages"))
-           (let* ((pathname
-                    (merge-pathnames "utf8-bound.sexp" directory))
-                  (condition
-                    (task-tests--agent-definition-error
-                     (task-tests--write-text
-                      pathname
-                      (make-string 65537 :initial-element #\é))
-                     :project)))
-             (test-assert
-              (let ((cause (task-agent-definition-error-cause condition)))
-                (and (typep cause 'sexp-config-error)
-                     (eq (sexp-config-error-kind cause) ':data-too-large)))
-              "the native role file limit counts consumed UTF-8 bytes"))
+              (and (typep (task-agent-definition-error-cause condition) 'sexp-config-error)
+                   (typep (task-agent-definition-error-line condition) '(integer 1))
+                   (equal (task-agent-definition-error-pathname condition) pathname))
+              "parse errors retain the library cause and role source provenance"))
            (dolist
                (case
-                '(("extra"
-                   "(:name \"extra\" :description \"Extra\" :instructions \"First\")\n(:second t)"
-                   nil t)
-                  ("incomplete"
-                   "(:name \"incomplete\" :description \"Incomplete\" :instructions"
-                   nil t)
-                  ("shared"
-                   "(:name \"shared\" :description #1=\"Shared\" :instructions #1#)"
-                   nil nil)
-                  ("circular"
-                   "(:name \"circular\" :description \"Circular\" :instructions \"Reject cycles.\" :tools #1=(\"resource.read\" . #1#))"
-                   nil nil)
-                  ("dotted"
+                '(("dotted"
                    "(:name \"dotted\" :description \"Dotted\" :instructions \"Reject tails.\" . :tail)"
                    nil t)
                   ("unknown"

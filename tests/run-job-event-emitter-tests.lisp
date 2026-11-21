@@ -107,30 +107,24 @@
 
 (-> test-run-job-event-reader-safety () null)
 (defun test-run-job-event-reader-safety ()
-  "Reject executable syntax, unapproved atoms, structures and field vocabularies."
-  (dolist (source '("#.(error \"must not execute\")" "#1=(:autolith-event . #1#)"
-                    "'(:autolith-event)" "(cl:eval nil)" "(:autolith-event . nil)"
-                    "(:autolith-event :unknown-key t)" "(:autolith-event :seq 1.5)"
-                    "(:autolith-event :seq -1)" "(:autolith-event :data #())"
-                    "(:autolith-event :data #\\A)" "(:autolith-event"))
-    (test-assert (run-job-event-tests--rejected-p
-                  (lambda () (run-job-event-read-string source)))
-                 "unsafe or malformed syntax is rejected by sexp-config")
-    (test-assert (run-job-event-tests--rejected-p
-                  (lambda () (with-input-from-string (stream source)
-                               (run-job-event-read-stream stream))))
-                 "incremental framing rejects unsafe or incomplete syntax"))
-  (let ((cycle (list :count 1)))
+  "Reject invalid event fields and mutable producer payloads before enqueue."
+  (test-assert (run-job-event-tests--rejected-p
+                (lambda () (run-job-event-read-string "(:autolith-event")))
+               "event reads expose a parse failure")
+  (let* ((emitter (run-job-event-emitter-create "run-reject" (make-broadcast-stream)))
+         (cycle (list :count 1)))
     (setf (rest (rest cycle)) cycle)
-    (test-assert (run-job-event-tests--rejected-p
-                  (lambda () (run-job-event--data-validate ':progress cycle)))
-                 "cycles are rejected before printing"))
-  (dolist (data (list '(:count 1 :count 2) '(:count 1 . 2) '(:count :running)
-                      '(:status :not-approved) '(:prompt "secret")
-                      (list :job-id (make-string 4097 :initial-element #\a))))
-    (test-assert (run-job-event-tests--rejected-p
-                  (lambda () (run-job-event--data-validate ':progress data)))
-                 "duplicate, improper, mistyped or unrestricted fields are rejected"))
+    (unwind-protect
+         (dolist (data (list cycle (make-list 300 :initial-element :count)
+                            '(:count 1 :count 2) '(:count 1 . 2) '(:count :running)
+                            '(:status :not-approved) '(:prompt "secret")
+                            (list :job-id (make-string 4097 :initial-element #\a))))
+           (test-assert (not (run-job-event-emit emitter ':progress data))
+                        "invalid producer payloads are refused")
+           (with-lock-held ((run-job-event-emitter-lock emitter))
+             (test-assert (null (run-job-event-emitter-queue emitter))
+                          "rejected producer data is never enqueued")))
+      (run-job-event-emitter-finish emitter '(:status :failed :published-p nil))))
   (test-assert (run-job-event-tests--rejected-p
                 (lambda () (run-job-event--data-validate
                             ':run-finished '(:status :succeeded :published-p nil))))

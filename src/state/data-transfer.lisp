@@ -305,7 +305,7 @@ publication failures roll back all files written by this invocation. Returns
 archive counts and the number of files installed. Imported code is never run."
   (let* ((pathname (uiop:ensure-absolute-pathname (data-transfer--native-pathname pathname)))
          (archive  (data-transfer--read pathname)))
-    (data-transfer--validate archive pathname)
+    (data-transfer--validate-decoded archive pathname)
     (when workspace
       (unless (getf archive :workspace)
         (data-transfer--fail pathname ':invalid

@@ -397,27 +397,6 @@ the static field names."
          (and (floatp value)
               (task-output--json-number-p value))))))
 
-(-> task-agent--validate-readable-tree
-    (t &key (:pathname pathname) (:source keyword) (:definition-name string))
-    null)
-(defun task-agent--validate-readable-tree
-    (form &key pathname source definition-name)
-  "Validate the generic structure of FORM with sexp-config.
-
-Domain-specific diagnostics remain at the task boundary while bounded tree
-walking, cycle detection, node limits, and string limits stay in sexp-config."
-  (handler-case
-      (progn
-        (validate-tree form (task-agent--source-grammar))
-        nil)
-    (sexp-config-error (condition)
-      (task-agent-definition--error
-       :pathname        pathname
-       :source          source
-       :line            (or (sexp-config-error-line condition) 1)
-       :cause           condition
-       :definition-name definition-name))))
-
 (-> task-agent--read-native-form (pathname keyword string) t)
 (defun task-agent--read-native-form (pathname source definition-name)
   "Read one bounded role file, translating library diagnostics with its provenance."

@@ -217,17 +217,6 @@ bound policy takes effect without reloading this file."
    :improper-lists-permitted-p t
    :allowed-atom-predicate     #'mcp-configuration--native-value-p))
 
-(-> mcp-configuration--validate-readable-tree
-    (t &key (:pathname (option pathname)))
-    t)
-(defun mcp-configuration--validate-readable-tree (value &key pathname)
-  "Reject shared, circular, or non-native objects in readable VALUE."
-  (handler-case
-      (validate-tree value (mcp-configuration--source-grammar))
-    (sexp-config-error (condition)
-      (mcp-configuration--error (sexp-config-error-message condition)
-                                :pathname pathname))))
-
 (-> mcp-configuration--validate-plist
     (t list &key (:pathname (option pathname))
                  (:server-name (option string)))

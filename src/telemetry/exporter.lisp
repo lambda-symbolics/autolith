@@ -349,7 +349,7 @@
           (*debug-io*        (make-two-way-stream (make-string-input-stream "") (make-broadcast-stream))))
       (let ((result
               (handler-case
-                  (let* ((*read-eval* nil) (request (read input nil nil)))
+                  (let ((request (supervised-process-read-data input)))
                     (case (first request)
                       (:ping
                        ':ready)

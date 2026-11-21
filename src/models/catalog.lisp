@@ -244,7 +244,7 @@ Native transports without Lisp deadlines must run only in a supervised child."
           (*debug-io*        (make-two-way-stream (make-string-input-stream "") (make-broadcast-stream))))
       (let ((result
               (handler-case
-                  (let* ((*read-eval* nil) (request (read input nil nil)))
+                  (let ((request (supervised-process-read-data input)))
                     (when (and (listp request) (= (length request) 2)
                                (stringp (first request))
                                (typep (second request) `(integer 0 ,*model-catalog-maximum-bytes*)))

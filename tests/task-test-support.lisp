@@ -8,9 +8,6 @@
 (defvar *task-test-effect-count* 0
   "The number of deliberately observable trailing tool executions.")
 
-(defvar *task-test-reader-evaluated-p* nil
-  "Whether unsafe reader evaluation ran while parsing a native role file.")
-
 (defclass task-test-authorization-tool (tool)
   ()
   (:documentation "Ask the supplied tool context to authorize one harmless command."))

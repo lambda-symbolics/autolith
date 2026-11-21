@@ -66,12 +66,17 @@
            *run-job-event-statuses* *run-job-event-categories*
            *run-job-event-warning-codes*)))
 
-(-> run-job-event--grammar () source-grammar)
-(defun run-job-event--grammar ()
+(-> run-job-event--grammar (&key (:stream-p boolean)) source-grammar)
+(defun run-job-event--grammar (&key stream-p)
   "Return the restricted bounded sexp-config event dialect."
   (let ((keywords (run-job-event--keywords)))
     (make-source-grammar
      :label "Headless event" :keywords keywords
+     :top-level-list-required-p stream-p
+     :line-comments-permitted-p (not stream-p)
+     :whitespace-characters (if stream-p
+                                '(#\Space #\Tab #\Newline #\Return)
+                                '(#\Space #\Tab #\Newline #\Return #\Page))
      :maximum-depth 8 :maximum-nodes 256 :maximum-string-characters 4096
      :allowed-atom-predicate
      (lambda (value)
@@ -92,7 +97,6 @@
 (-> run-job-event--data-validate (keyword list) list)
 (defun run-job-event--data-validate (kind data)
   "Validate the fixed field schema for KIND and return DATA."
-  (validate-tree data (run-job-event--grammar))
   (let ((schema (assoc kind *run-job-event-schemas*)))
     (unless (and schema (listp data)
                  (run-job-event--plist-p data (rest schema)))
@@ -128,8 +132,13 @@
 
 (-> run-job-event-validate (t) list)
 (defun run-job-event-validate (record)
-  "Validate one portable version-one event and return it."
+  "Validate the structure and event fields of an in-memory RECORD."
   (validate-tree record (run-job-event--grammar))
+  (run-job-event--validate-fields record))
+
+(-> run-job-event--validate-fields (t) list)
+(defun run-job-event--validate-fields (record)
+  "Validate domain fields after RECORD's generic structure has been checked."
   (unless (and (consp record) (eq (first record) :autolith-event)
                (run-job-event--plist-p (rest record)
                                       '(:version :run-id :seq :time :kind :data))
@@ -182,51 +191,22 @@
 
 (-> run-job-event-read-string (string) list)
 (defun run-job-event-read-string (source)
-  "Read exactly one byte-bounded event through sexp-config with read-eval disabled."
-  (when (or (> (length source) *run-job-event-maximum-bytes*)
-            (> (utf8-string-length source) *run-job-event-maximum-bytes*))
-    (run-job-event--error))
-  (let ((*read-eval* nil))
-    (run-job-event-validate (read-source source (run-job-event--grammar)))))
+  "Read exactly one byte-bounded event with the source grammar."
+  (run-job-event--validate-fields
+   (read-source source (run-job-event--grammar)
+                :maximum-octets *run-job-event-maximum-bytes*)))
 
 (-> run-job-event-read-stream (stream) t)
 (defun run-job-event-read-stream (stream)
-  "Read the next bounded complete event, or NIL at clean EOF between forms.
-This framing scanner never invokes the Lisp reader. sexp-config validates the
-complete form; incomplete forms, dispatch syntax and comments are rejected."
-  (let ((first (loop for character = (read-char stream nil nil)
-                     while (and character (find character '(#\Space #\Tab #\Return #\Newline)))
-                     finally (return character))))
-    (unless first (return-from run-job-event-read-stream nil))
-    (unless (char= first #\() (run-job-event--error))
-    (let ((buffer (make-array 128 :element-type 'character :adjustable t :fill-pointer 0))
-          (depth 1) (in-string nil) (escaped nil))
-      (vector-push-extend first buffer)
-      (loop for character = (read-char stream nil nil)
-            do (unless character (run-job-event--error))
-               (when (>= (length buffer) *run-job-event-maximum-bytes*)
-                 (run-job-event--error))
-               (vector-push-extend character buffer)
-               (cond
-                 (escaped
-                  (setf escaped nil))
-                 (in-string
-                  (case character
-                    (#\\
-                     (setf escaped t))
-                    (#\"
-                     (setf in-string nil))))
-                 ((char= character #\")
-                  (setf in-string t))
-                 ((find character '(#\# #\; #\' #\` #\,))
-                  (run-job-event--error))
-                 ((char= character #\()
-                  (incf depth)
-                  (when (> depth 8) (run-job-event--error)))
-                 ((char= character #\))
-                  (decf depth)))
-            until (zerop depth))
-      (run-job-event-read-string buffer))))
+  "Read one bounded complete event, or NIL at clean EOF between forms."
+  (handler-case
+      (multiple-value-bind (record eof-p)
+          (sexp-config:read-next-source
+           stream (run-job-event--grammar :stream-p t)
+           :maximum-octets *run-job-event-maximum-bytes*)
+        (unless eof-p (run-job-event--validate-fields record)))
+    (sexp-config-error ()
+      (run-job-event--error))))
 
 
 ;;;; -- Bounded Single Writer --

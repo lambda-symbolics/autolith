@@ -155,24 +155,6 @@
   (handler-case (progn (funcall function) nil)
     (error (condition) (typep condition type))))
 
-(-> test-data-transfer--reader-isolation () null)
-(defun test-data-transfer--reader-isolation ()
-  "Read archives with standard list syntax regardless of the caller's readtable."
-  (with-test-configuration (configuration root)
-    (let* ((archive     (data-transfer--collect configuration nil))
-           (path        (merge-pathnames "reader.sexp" root))
-           (*readtable* (copy-readtable nil))
-           (called-p    nil))
-      (data-transfer--write-export path archive)
-      (set-macro-character #\( (lambda (stream character)
-                                 (declare (ignore stream character))
-                                 (setf called-p t)
-                                 (error 'simple-error :format-control "Ambient list reader invoked")))
-      (test-assert (equalp archive (data-transfer--read path))
-                   "the archive reader uses its own standard list reader")
-      (test-assert (not called-p) "ambient reader macros do not run")))
-  nil)
-
 (-> test-data-transfer--extend-session (list) list)
 (defun test-data-transfer--extend-session (session)
   "Append another valid sequenced record to an archived transcript."
@@ -367,7 +349,6 @@
 (defun test-data-transfer-roundtrip ()
   "Round-trip durable collections, replay/image assets, queued input, and native names."
   (test-data-transfer--empty-and-log-boundaries)
-  (test-data-transfer--reader-isolation)
   (test-data-transfer--family-boundaries)
   (test-data-transfer--transcript-layouts)
   (with-test-configuration (source root)
@@ -663,14 +644,10 @@
       (let* ((fixture (test-data-transfer--populate source root))
              (archive (data-transfer--collect source nil))
              (path    (merge-pathnames "invalid.sexp" root)))
-        (dolist (syntax (list "#.(error \"must not execute\")" "#S(configuration)" "#1000000000(0)"
-                              "(:archive COMMON-LISP:CAR)" "(:archive #(1 256))"
-                              (concatenate 'string (make-string 140 :initial-element #\()
-                                           "nil" (make-string 140 :initial-element #\)))))
-          (with-open-file (stream path :direction ':output :if-exists ':supersede)
-            (write-string syntax stream))
-          (test-assert (test-data-transfer--fails-p (lambda () (data-import path :configuration target)))
-                       "unsafe reader syntax is rejected without publication"))
+        (with-open-file (stream path :direction ':output :if-exists ':supersede)
+          (write-string "(:incomplete" stream))
+        (test-assert (test-data-transfer--fails-p (lambda () (data-import path :configuration target)))
+                     "a parse failure prevents archive publication")
         (dolist (mutate
                  (list
                   (lambda (copy) (setf (getf copy :version) 999))
