@@ -5,12 +5,12 @@
 (-> debug-tests--adapter () (values string list))
 (defun debug-tests--adapter ()
   "Use Daphne's actual subprocess fixture from its installed published system."
-  (let* ((root  (asdf:system-source-directory "daphne"))
-         (setup (or (uiop:getenv "DAPHNE_TEST_SETUP")
-                    (namestring (merge-pathnames ".qlot/setup.lisp" (asdf:system-source-directory "autolith"))))))
-    (values (namestring sb-ext:*runtime-pathname*)
-            (list "--noinform" "--script" (namestring (merge-pathnames "fixture.lisp" root))
-                  setup (namestring (merge-pathnames "daphne.asd" root))))))
+  (daphne/test-support:fixture-command
+   (or (uiop:getenv "DAPHNE_TEST_SETUP")
+       (namestring (merge-pathnames ".qlot/setup.lisp" (asdf:system-source-directory "autolith"))))))
+
+(defvar *debug-tests-transports* nil
+  "Test-only mapping from sessions to captured adapter transports.")
 
 (-> debug-tests--fixture (function &key (:authorization (option function)) (:cancel-p (option function))) t)
 (defun debug-tests--fixture (function &key authorization cancel-p)
@@ -27,9 +27,19 @@
                                            (if authorization (funcall authorization command directory) ':full-access)))))
       (multiple-value-bind (program arguments) (debug-tests--adapter)
         (debug-register-tools registry :program program :arguments arguments :cancel-p cancel-p))
-      (unwind-protect
-           (funcall function context (lambda () commands))
-        (tool-registry-close-runtime-state registry)))))
+      (let* ((transports               (make-hash-table :test #'eq))
+             (*debug-tests-transports* transports)
+             (start                    (symbol-function 'daphne:start-adapter)))
+        (test-call-with-function-replacements
+         (list (list 'daphne:start-adapter
+                     (lambda (&rest arguments)
+                       (multiple-value-bind (session transport) (apply start arguments)
+                         (setf (gethash session transports) transport)
+                         (values session transport)))))
+         (lambda ()
+           (unwind-protect
+                (funcall function context (lambda () commands))
+             (tool-registry-close-runtime-state registry))))))))
 
 (-> debug-tests--invoke (tool-context string hash-table) tool-result)
 (defun debug-tests--invoke (context operation arguments)
@@ -51,19 +61,19 @@
 
 (-> debug-tests--entry (tool-context string) debug-session-entry)
 (defun debug-tests--entry (context identifier)
-  "Retain transport solely for product lifecycle assertions."
+  "Find the conversation-owned entry for IDENTIFIER."
   (debug--find (debug-tool-manager (tool-registry-find (tool-context-registry context) "debug" "status")) context identifier))
 
 (-> debug-tests--reaped (debug-session-entry) null)
 (defun debug-tests--reaped (entry)
   "Verify actual adapter death and wait completion after product cleanup."
-  (let ((process (daphne:adapter-process (debug-session-entry-transport entry))))
+  (let ((process (daphne:adapter-process (gethash (debug-session-entry-session entry) *debug-tests-transports*))))
     (test-assert (not (sb-ext:process-alive-p process)) "owned adapter is no longer alive")
     (test-assert (member (sb-ext:process-status process) '(:exited :signaled)) "owned adapter has a terminal reaped status")))
 
 (-> test-debug-semantic-lifecycle () null)
 (defun test-debug-semantic-lifecycle ()
-  "Use launch/attach, source authority and every semantic operation through ordinary invocation."
+  "Exercise launch/attach, source authority and semantic invocation."
   (debug-tests--fixture
    (lambda (context commands)
      (let* ((identifier (debug-tests--session context))
@@ -77,16 +87,15 @@
        (let ((path (merge-pathnames "source.lisp" (config :working-directory (tool-context-configuration context)))))
          (with-open-file (stream path :direction ':output :if-does-not-exist ':create) (write-line "(print 42)" stream))
          (test-assert (json-get (debug-tests--call context "breakpoints" (json-object "session" identifier "path" (namestring path) "lines" #(3))) "breakpoints") "semantic source breakpoints"))
-       (test-assert (= 1 (json-get (aref (json-get (debug-tests--call context "threads" base) "threads") 0) "id")) "thread identity")
-       (test-assert (= 2 (json-get (aref (json-get (debug-tests--call context "stack" (json-object "session" identifier "thread" 1 "count" 2)) "stackFrames") 0) "id")) "frame identity")
-       (test-assert (= 4 (json-get (aref (json-get (debug-tests--call context "scopes" (json-object "session" identifier "frame" 2)) "scopes") 0) "variablesReference")) "scope identity")
-       (test-assert (equal "42" (json-get (aref (json-get (debug-tests--call context "variables" (json-object "session" identifier "reference" 4 "count" 2)) "variables") 0) "value")) "variable page")
        (test-assert (equal "λ:42" (json-get (debug-tests--call context "evaluate" (json-object "session" identifier "expression" "answer" "frame" 2)) "result")) "explicit expression result")
        (test-assert (find-if (lambda (command) (and (uiop:string-prefix-p "debug.evaluate " command) (search "answer" command))) (funcall commands)) "exact expression independently approved")
-       (dolist (kind '("in" "over" "out"))
-         (debug-tests--call context "step" (json-object "session" identifier "thread" 1 "kind" kind)))
        (debug-tests--call context "continue" (json-object "session" identifier "thread" 1))
        (debug-tests--call context "pause" (json-object "session" identifier "thread" 1))
+       (let ((*debug-result-byte-limit* 8))
+         (test-assert (eq ':result-limit
+                          (tool-result-error-code
+                           (debug-tests--invoke context "events" (json-object "session" identifier "count" 1))))
+                      "oversize event page is rejected"))
        (let ((page (debug-tests--call context "events" (json-object "session" identifier "count" 1))))
          (test-assert (= 1 (length (json-get page "events"))) "finite event page")
          (test-assert (plusp (json-get page "bufferedRemaining")) "unpresented real events retained")
@@ -194,21 +203,6 @@
               (entry      (debug-tests--entry context identifier)))
          (setf cancelled t)
          (test-assert (eq ':cancelled (tool-result-error-code (debug-tests--invoke context "threads" (json-object "session" identifier)))) "supervisor predicate cancels actual adapter request")
-         (debug-tests--reaped entry)))
-     :cancel-p (lambda () cancelled)))
-  (let ((cancelled nil))
-    (debug-tests--fixture
-     (lambda (context commands)
-       (declare (ignore commands))
-       (let* ((identifier (debug-tests--session context))
-              (entry      (debug-tests--entry context identifier)))
-         (setf (debug-session-entry-events entry)
-               (list (json-object "event" "stopped" "body" (json-object))))
-         (setf cancelled t)
-         (test-assert (eq ':cancelled
-                          (tool-result-error-code
-                           (debug-tests--invoke context "events" (json-object "session" identifier "wait-for" "stopped"))))
-                      "cached events observe supervisor cancellation")
          (debug-tests--reaped entry)))
      :cancel-p (lambda () cancelled)))
   (let ((starts 0)

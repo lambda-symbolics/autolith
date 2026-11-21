@@ -29,10 +29,6 @@
           :documentation "Exact owning conversation object.")
    (session :initform nil :accessor debug-session-entry-session
             :documentation "Daphne session, or NIL during reserved admission.")
-   (transport :initform nil :accessor debug-session-entry-transport
-              :documentation "Owned adapter transport, retained for lifecycle inspection.")
-   (events :initform nil :accessor debug-session-entry-events
-           :documentation "At most one bounded 128-event batch awaiting paged presentation.")
    (busy-p :initform t :accessor debug-session-entry-busy-p
            :documentation "One semantic operation holds this entry.")
    (cancelled-p :initform nil :accessor debug-session-entry-cancelled-p

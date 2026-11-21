@@ -702,7 +702,7 @@
 
 (asdf:defsystem #:autolith/debug/tests
   :description             "Autolith debug tool boundary checks."
-  :depends-on              (#:autolith/debug #:autolith/tests)
+  :depends-on              (#:autolith/debug #:autolith/tests #:daphne/test-support)
   :default-component-class autolith-source-file
   :serial                  t
   :components              ((:file "tests/debug-tests"))
