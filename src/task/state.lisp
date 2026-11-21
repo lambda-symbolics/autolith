@@ -11,7 +11,6 @@
 (defparameter *task-default-maximum-runtime-milliseconds* 3600000
   "The default one-hour wall-clock cap for one child; zero disables the deadline.")
 
-
 (defparameter *task-children-maximum* 32
   "The most children one agent may have; new work goes to an existing child through its channel.")
 
@@ -546,6 +545,7 @@ parent, and borrowed capabilities are released at terminal state."))
   "Claim normal completion only when the child has no pending steering."
   (and (call-next-method)
        (task-job--claim-normal-completion (task-child-agent-job agent))))
+
 (defclass task-tool-result (tool-result)
   ((details :initarg :details :reader task-tool-result-details
             :reader tool-result-details :type t
@@ -590,7 +590,6 @@ parent, and borrowed capabilities are released at terminal state."))
 (defun task-job-tool-orchestrator (tool)
   "Return TOOL's shared task orchestrator."
   (task-orchestrator-tool-orchestrator tool))
-
 
 (defmethod tool-decode-arguments ((tool task-agents-tool) source)
   "Decode child.roles values without conflating JSON false and null."

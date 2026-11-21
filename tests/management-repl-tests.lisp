@@ -12,13 +12,13 @@
                (address "127.0.0.1") (port 4141))
   "Return a management configuration rooted under ROOT."
   (configuration-create
-   :source-root                            (asdf:system-source-directory :autolith)
-   :working-directory                      (asdf:system-source-directory :autolith)
-   :management-repl-transport              transport
-   :management-repl-unix-socket-path       (merge-pathnames "private/repl.sock" root)
-   :management-repl-tcp-address            address
-   :management-repl-tcp-port               port
-   :management-repl-token-file-path        (merge-pathnames "token" root)))
+   :source-root                      (asdf:system-source-directory :autolith)
+   :working-directory                (asdf:system-source-directory :autolith)
+   :management-repl-transport        transport
+   :management-repl-unix-socket-path (merge-pathnames "private/repl.sock" root)
+   :management-repl-tcp-address      address
+   :management-repl-tcp-port         port
+   :management-repl-token-file-path  (merge-pathnames "token" root)))
 
 (-> management-repl-test-write-token (configuration string) null)
 (defun management-repl-test-write-token (configuration token)

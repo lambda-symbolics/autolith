@@ -299,7 +299,7 @@
                           (config :cache-root immutable))
                    (equal (config :provider-endpoint child-configuration)
                           (config :provider-endpoint immutable)))
-               "task model selection preserves every parent runtime boundary")))
+              "task model selection preserves every parent runtime boundary")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -478,8 +478,8 @@
       (setf (job-state job) ':running))
     (task-job--set-progress-state job ':running)
     (unwind-protect
-         (let* ((result (agent-run-user-turn child "Run the shared loop."
-                                           :observer observer))
+         (let* ((result  (agent-run-user-turn child "Run the shared loop."
+                                            :observer observer))
                 (records (conversation--read-records
                           (conversation-pathname conversation)))
                 (authorization

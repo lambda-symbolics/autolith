@@ -1070,10 +1070,10 @@
                      server
                      :conversation-id (conversation-identifier
                                        (application-conversation application))
-                     :directory (namestring (config :working-directory
-                                                   (application-configuration application)))
-                     :arguments (list :recovery-diagnosis recovery-diagnosis
-                                      :switch-p t))))
+                     :directory       (namestring (config :working-directory
+                                                         (application-configuration application)))
+                     :arguments       (list :recovery-diagnosis recovery-diagnosis
+                                            :switch-p           t))))
           (test-assert
            (task-tests--wait-until
             (lambda () (not (thread-alive-p (world-host-thread host)))) 30)
@@ -1226,7 +1226,7 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                 nil)))
+                nil)))
             (lambda ()
               (recovery-input-vault-tests--serve-startup
                application :recovery-diagnosis "diagnose recovered crash")))
@@ -1394,7 +1394,7 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                 nil)))
+                nil)))
             (lambda ()
               (recovery-input-vault-tests--serve-startup
                application :recovery-diagnosis "diagnose corrupt recovery")))
@@ -1490,7 +1490,7 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                 nil)))
+                nil)))
             (lambda ()
               (recovery-input-vault-tests--serve-startup
                application

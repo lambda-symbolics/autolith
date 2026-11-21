@@ -340,7 +340,7 @@
                          "reconnect preserves a non-approving client's capability")
                         (incf attempts))
                        (error 'world-terminal-client-rejected :message "Replay cursor expired."
-                              :operation                           ':attach))))
+                              :operation                               ':attach))))
               (lambda ()
                 (test-assert (sb-thread:wait-on-semaphore submitted :timeout 3)
                  "the request is awaiting replayed completion")

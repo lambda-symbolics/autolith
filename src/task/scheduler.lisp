@@ -105,20 +105,20 @@
 (defun task--agent-definition-summary (definition)
   "Return compact non-instruction metadata for DEFINITION."
     (let ((pathname (task-agent-definition-pathname definition)))
-    (list :name              (task-agent-definition-name definition)
-          :source            (task-agent-definition-source definition)
-          :pathname          (and pathname (namestring pathname))
-          :tools
-          (task--compact-native-value
-           (task-agent-definition-tools definition) 1000)
-          :spawns
-          (task--compact-native-value
-           (task-agent-definition-spawns definition) 1000)
-          :models
-          (task--compact-native-value
-           (task-agent-definition-models definition) 1000)
-          :reasoning-effort
-          (task-agent-definition-reasoning-effort definition))))
+     (list :name     (task-agent-definition-name definition)
+           :source   (task-agent-definition-source definition)
+           :pathname (and pathname (namestring pathname))
+           :tools
+           (task--compact-native-value
+            (task-agent-definition-tools definition) 1000)
+           :spawns
+           (task--compact-native-value
+            (task-agent-definition-spawns definition) 1000)
+           :models
+           (task--compact-native-value
+            (task-agent-definition-models definition) 1000)
+           :reasoning-effort
+           (task-agent-definition-reasoning-effort definition))))
 
 (-> task-job--lifecycle-event (task-job keyword list) list)
 (defun task-job--lifecycle-event (job state result)

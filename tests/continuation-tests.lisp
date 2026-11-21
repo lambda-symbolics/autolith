@@ -111,7 +111,6 @@
                               "another family reads the text alone")))))
   nil)
 
-
 (-> test-continuation-references () null)
 (defun test-continuation-references ()
   "Offer records and plan steps to a checkpoint, keep what it cites, and report a cited step that changes."

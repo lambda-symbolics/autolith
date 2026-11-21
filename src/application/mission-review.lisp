@@ -184,11 +184,11 @@ across changed snapshots and is not reset by retries or restarts."
   (let ((output (or (getf result :output) "")))
     (unless (non-empty-string-p output)
       (mission--reject ':review-failed "Reviewer returned no findings."))
-    (list (list :id "review-summary"
-                :severity "info"
+    (list (list :id         "review-summary"
+                :severity   "info"
                 :confidence "medium"
-                :summary (mission--bounded-text output)
-                :evidence nil
+                :summary    (mission--bounded-text output)
+                :evidence   nil
                 :decision ':pending :reason nil :decisions nil :decided-at nil))))
 
 (defvar *mission-review-live-runs* (make-hash-table :test #'eq :weakness ':key)

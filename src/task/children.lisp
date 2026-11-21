@@ -23,7 +23,6 @@
   ()
   (:documentation "Compact an idle child's history, as (compact) does for a session."))
 
-
 (defclass child-remove-tool (child-tool)
   ()
   (:documentation "Delete an idle child with its channel, its history and its own children."))
@@ -60,7 +59,6 @@
                                    (make-instance 'agent-observer)))
      :tool-name "child.compact")
     (tool-success (format nil "Compacted @~A's history." (participant-name agent)))))
-
 
 (defmethod tool-execute ((tool child-remove-tool) (context tool-context) arguments)
   "Delete the idle children ARGUMENTS name, with everything they own, in one pass."

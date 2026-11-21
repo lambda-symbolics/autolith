@@ -809,12 +809,12 @@ poll a job whose completion will wake it."
 (-> task--agent-native-record (task-agent-definition) list)
 (defun task--agent-native-record (definition)
   "Return model-visible native metadata for one child role."
-  (list :kind       ':agent
-        :name       (task-agent-definition-name definition)
+  (list :kind   ':agent
+        :name   (task-agent-definition-name definition)
         :description
         (task--retained-prefix
          (task-agent-definition-description definition) 1000)
-        :source     (task-agent-definition-source definition)
+        :source (task-agent-definition-source definition)
         :pathname
         (let ((pathname (task-agent-definition-pathname definition)))
           (and pathname (namestring pathname)))
@@ -828,7 +828,7 @@ poll a job whose completion will wake it."
          (task-agent-definition-tools definition))
         :spawns
         (task--agent-policy-presentation
-        (task-agent-definition-spawns definition))))
+         (task-agent-definition-spawns definition))))
 
 (-> task--agent-diagnostic-native-record (condition) list)
 (defun task--agent-diagnostic-native-record (diagnostic)
@@ -948,7 +948,7 @@ poll a job whose completion will wake it."
         (task-discover-agents (agent-configuration parent))
       (let* ((orchestrator
               (task-orchestrator-refresh (task-run-tool-orchestrator tool)))
-             (items (task-normalize-arguments arguments))
+             (items     (task-normalize-arguments arguments))
              (resolved
               (task--resolve-items
                parent orchestrator definitions

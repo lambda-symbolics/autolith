@@ -18,23 +18,23 @@
          (root               (test-configuration-root base-configuration))
          (configuration
            (configuration-copy base-configuration :working-directory root))
-         (registry (task-augment-tool-registry (make-default-tool-registry)))
+         (registry           (task-augment-tool-registry (make-default-tool-registry)))
          (blocking-tool
            (make-instance 'task-test-blocking-tool
                           :namespace "test" :name "block"
                           :description "Wait until the detachment test releases this call."
-                          :parameters (tool-object-schema (json-object) nil)))
-         (provider (make-instance 'task-test-provider :mode ':blocking-tool))
-         (conversation (conversation-create configuration))
-         (primary (agent-create :configuration configuration
-                                :provider provider :conversation conversation
-                                :tool-registry registry :worker nil))
-         (run-tool (tool-registry-find registry "child" "spawn"))
-         (orchestrator (task-run-tool-orchestrator run-tool))
-         (context (make-instance 'tool-context :configuration configuration
-                                 :worker nil :conversation conversation
-                                 :registry registry :agent primary
-                                 :call-id "default-detached")))
+                          :parameters  (tool-object-schema (json-object) nil)))
+         (provider           (make-instance 'task-test-provider :mode ':blocking-tool))
+         (conversation       (conversation-create configuration))
+         (primary            (agent-create :configuration configuration
+                                           :provider provider :conversation conversation
+                                           :tool-registry registry :worker nil))
+         (run-tool           (tool-registry-find registry "child" "spawn"))
+         (orchestrator       (task-run-tool-orchestrator run-tool))
+         (context            (make-instance 'tool-context :configuration configuration
+                                            :worker nil :conversation conversation
+                                            :registry registry :agent primary
+                                            :call-id                     "default-detached")))
     (unwind-protect
          (progn
            (tool-registry-register registry blocking-tool)
@@ -42,8 +42,8 @@
                            run-tool context
                            (json-object "name" "default-detached" "agent" "task"
                                         "task" "Enter the blocking ordinary tool.")))
-                  (jobs (task-orchestrator-list-jobs orchestrator))
-                  (job (and (= (length jobs) 1) (first jobs))))
+                  (jobs   (task-orchestrator-list-jobs orchestrator))
+                  (job    (and (= (length jobs) 1) (first jobs))))
              (test-assert
               (task-tests--wait-until
                (lambda ()
@@ -67,7 +67,7 @@
           (task-job-cancel job ':test-cleanup)
           (task-job-await job 2)))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (platform-delete-directory-tree *platform* root :validate t
+      (platform-delete-directory-tree *platform* root :validate        t
                                                     :if-does-not-exist ':ignore)))
   nil)
 
@@ -328,7 +328,7 @@
                      ((task-test-blocking-tool-lock blocking-tool))
                    (task-test-blocking-tool-started-p blocking-tool)))
                2)
-               "the descendant reaches its blocking tool")
+              "the descendant reaches its blocking tool")
              (let* ((jobs       (task-orchestrator-list-jobs orchestrator))
                     (parent     (first jobs))
                     (descendant (second jobs))
@@ -1160,15 +1160,15 @@ pool must reject the cancelled parent without creating a descendant."
              configuration
              (conversation-identifier (agent-conversation primary-a)))))
          (durable-result
-           (list :id                          "resumed-child-1"
-                 :name                        "resumed-child"
-                 :agent                       "task"
-                 :status                      ':success
-                 :output                      "Recovered durable child output."
-                 :error                       nil
-                 :duration-ms                 17
-                 :model                       "test-model"
-                 :detached                    t)))
+           (list :id          "resumed-child-1"
+                 :name        "resumed-child"
+                 :agent       "task"
+                 :status      ':success
+                 :output      "Recovered durable child output."
+                 :error       nil
+                 :duration-ms 17
+                 :model       "test-model"
+                 :detached    t)))
     (labels ((execute-get (viewer identifier)
                (tool-execute
                 get-tool
@@ -2702,7 +2702,7 @@ pool must reject the cancelled parent without creating a descendant."
                "content" (json-array
                           (json-object "type" "output_text"
                                        "text" "Parent design is ready.")))))
-           (let* ((result  (tool-execute tool context arguments))
+           (let* ((result        (tool-execute tool context arguments))
                   (admitted-jobs (task-orchestrator-list-jobs orchestrator))
                   (idle-p
                     (progn
@@ -2716,9 +2716,9 @@ pool must reject the cancelled parent without creating a descendant."
                          (and (zerop (task-orchestrator-live-count orchestrator))
                               (zerop (task-orchestrator-active-count orchestrator))))
                        30)))
-                  (jobs (task-orchestrator-list-jobs orchestrator))
-                  (details (tool-result-details result))
-                  (content (tool-result-content result))
+                  (jobs          (task-orchestrator-list-jobs orchestrator))
+                  (details       (tool-result-details result))
+                  (content       (tool-result-content result))
                   (native-content
                     (task-tests--read-exact-native-value content))
                   (artifact-forms
@@ -2790,7 +2790,6 @@ pool must reject the cancelled parent without creating a descendant."
       (platform-delete-directory-tree *platform* root :validate t
                                            :if-does-not-exist   ':ignore))))
 
-
 (-> test-task-closed-runtime-refresh () null)
 (defun test-task-closed-runtime-refresh ()
   "Test ordinary refresh cannot reopen a deliberately closed task runtime."
@@ -2848,7 +2847,7 @@ pool must reject the cancelled parent without creating a descendant."
               (search "inherited reference context"
                       (json-get (aref (json-get (third inputs) "content") 0)
                                 "text"))
-               "the inherited parent turns end at an explicit developer boundary"))
+              "the inherited parent turns end at an explicit developer boundary"))
            (let* ((provider
                     (make-instance 'task-test-provider :mode ':concurrent))
                   (observation

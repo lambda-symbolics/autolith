@@ -441,8 +441,8 @@
              (let* ((snapshot (task-job-snapshot job))
                     (result   (getf snapshot :result)))
                (test-assert (and (eq :completed (getf snapshot :state))
-                                  (eq :success (getf result :status)))
-                             "the child completes its admitted inference after the block"))
+                                 (eq :success (getf result :status)))
+                            "the child completes its admitted inference after the block"))
              (let ((goal (application-goal application)))
                (test-assert (eq :blocked (getf goal :status)) "draining does not reactivate the mission")
                (test-assert (= 1 (getf goal :unknown-usage)) "unknown spend is retained")
@@ -523,7 +523,7 @@
                                   (bt:signal-semaphore (mission-inference-test-drain-release tool))
                                   (task-job-await job nil)
                                   (test-assert (= 1 (getf (application-goal application) :turns-used))
-                                                "the released child cannot admit another provider request"))
+                                               "the released child cannot admit another provider request"))
                                 (funcall record-status published-context status))))
                   (lambda ()
                     (application-mission-stop application ':blocked "Explicit blocker."))))
@@ -613,18 +613,18 @@
              :headers  '(("x-request-id" . "synthetic-quota") ("retry-after" . "1"))
              :raw-body "{\"error\":{\"type\":\"usage_limit_reached\",\"code\":\"insufficient_quota\",\"message\":\"Synthetic local quota exhausted\",\"plan_type\":\"stub\"}}"))
           (funcall callback (make-instance 'assistant-delta-event :text "partial"))
-           (if (or (eq mode ':numeric-success)
-                  (and (eq mode ':retry-success) (= 3 (mission-child-unknown-test-attempts provider))))
-              (agent-test-result
-               "synthetic-numeric"
-                (list (agent-test-message "Child finished."))
-                :turn-completion ':end
-               :usage (json-object "input_tokens" 2 "output_tokens" 3))
-              (cl-llm-provider-api::provider--signal-incomplete-response
-               (json-object "type" "response.incomplete"
-                            "response" (json-object "id" "synthetic-response" "status" "incomplete"
-                                                    "incomplete_details" (json-object "reason" "max_output_tokens")
-                                                    "output" #())))))
+          (if (or (eq mode ':numeric-success)
+                 (and (eq mode ':retry-success) (= 3 (mission-child-unknown-test-attempts provider))))
+             (agent-test-result
+              "synthetic-numeric"
+               (list (agent-test-message "Child finished."))
+               :turn-completion ':end
+              :usage            (json-object "input_tokens" 2 "output_tokens" 3))
+             (cl-llm-provider-api::provider--signal-incomplete-response
+              (json-object "type" "response.incomplete"
+                           "response" (json-object "id" "synthetic-response" "status" "incomplete"
+                                                   "incomplete_details" (json-object "reason" "max_output_tokens")
+                                                   "output" #())))))
         event-callback :maximum-retries 2 :maximum-streaming-retries 2
         :sleep-function (lambda (delay) (declare (ignore delay)) nil))))))
 
@@ -961,7 +961,7 @@
                (let* ((goal    (application-goal application))
                       (result  (getf (task-job-snapshot job) :result))
                       (unknown (member mode '(:provider-error :nested)))
-                       (failed  (eq mode ':provider-error)))
+                      (failed  (eq mode ':provider-error)))
                   (test-assert (eq (if failed ':failed ':success) (getf result :status))
                               "the original native child outcome is retained")
                  (test-assert (eq ':active (getf goal :status))
@@ -992,7 +992,7 @@
                        (test-assert (= (if unknown 1 0) (getf result :unknown-usage 0))
                                     "each actual terminal result retains its own uncertainty")
                        (test-assert (= (if unknown (getf goal :reservation-charged-tokens) 5) (getf goal :tokens-used))
-                                     "success charges reported usage and uncertainty charges the reservation")))))
+                                    "success charges reported usage and uncertainty charges the reservation")))))
           (when job (task-job-await job nil))
           (task-orchestrator-close orchestrator)))))
   nil)

@@ -70,10 +70,10 @@
                       (context-delivery-contributions delivery) "skill-selected-probe"))
                 (format nil "~A injects the selected body on subsequent requests"
                         (class-name (class-of provider))))))
-            (test-assert
-             (not (search body (json-encode
-                                (provider-request-object provider conversation #()))))
-             "requests without skill.load do not receive selected instructions")
+           (test-assert
+            (not (search body (json-encode
+                               (provider-request-object provider conversation #()))))
+            "requests without skill.load do not receive selected instructions")
            (let* ((ordinary   (test-request-history
                                provider (provider-request-object provider conversation namespaces)))
                   (compaction (test-request-history

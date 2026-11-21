@@ -277,7 +277,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
       (refinement--reject ':invalid "Refinement requires completed owner operations, not explicit asynchronous handoffs."))
     (when (and (not (eq scope :global))
                (or (and (equal namespace "self")
-                         (equal name "commit"))
+                        (equal name "commit"))
                    (and (equal namespace "skill") (equal name "edit"))
                    (and (equal namespace "resource") (equal name "edit")
                         (stringp uri) (uiop:string-prefix-p "memory:global" uri))))

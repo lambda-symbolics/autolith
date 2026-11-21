@@ -57,7 +57,7 @@ Every role talks through channels, so any child can answer its parent."
            (tool-child-safe-p tool))
       (and spawn-p
            (string= (tool-namespace tool) "child")
-             (member (tool-name tool) '("spawn" "roles" "rename" "compact" "remove") :test #'string=)
+           (member (tool-name tool) '("spawn" "roles" "rename" "compact" "remove") :test #'string=)
            t)))
 
 (-> task-role-restrict-tool-registry (tool-registry configuration &key (:retain list)) tool-registry)
@@ -223,7 +223,6 @@ boundary cannot fit within that budget."
              (conversation--inherited-reference-wire-byte-length nil))
          limit)))
 
-
 (-> task-child-goal-context (task-job configuration) string)
 (defun task-child-goal-context (job child-configuration)
   "Build child instructions without a terminal output contract."
@@ -340,7 +339,8 @@ the root's cache key. Siblings with matching prefixes still share one key."
    (mapcar (lambda (key)
              (list :indicator key :validate (lambda (value) (typep value 'boolean))))
 
-             '(:detached))))
+           '(:detached))))
+
 (-> task--read-result-artifact
     ((or pathname string) &key (:maximum-octets (integer 1))) list)
 (defun task--read-result-artifact
@@ -454,7 +454,7 @@ the root's cache key. Siblings with matching prefixes still share one key."
 (-> task--assemble-child-result
     (task-job &key (:provider-result provider-result)
                    (:child agent)
-                    (:conversation conversation))
+                   (:conversation conversation))
     list)
 (defun task--assemble-child-result
     (job &key provider-result child conversation)
@@ -477,12 +477,12 @@ the root's cache key. Siblings with matching prefixes still share one key."
                      (copy-seq (task-progress-output-tail progress)))))
     (task--terminal-result
      job
-     (list :status                      status
-           :output                      (if (non-empty-string-p tail)
-                                            (task--bounded-output tail)
-                                            "(no output)")
-           :error                       message
-           :label                       nil))))
+     (list :status status
+           :output (if (non-empty-string-p tail)
+                       (task--bounded-output tail)
+                       "(no output)")
+           :error  message
+           :label  nil))))
 
 (-> task-child-inherit-reference-history
     (task-job conversation model-provider)
@@ -612,7 +612,7 @@ Live executions retain their pool ownership and remain inspectable after return.
            (lambda (status details)
              (when (eq status ':user-message-persisted)
                (setf (participant-state-identity (agent-participant-state child))
-                      (world-register-conversation configuration conversation)))
+                     (world-register-conversation configuration conversation)))
              (task-job-note-agent-status job status details))
            :steering-callback
            (lambda ()
@@ -663,7 +663,7 @@ Live executions retain their pool ownership and remain inspectable after return.
                (task--assemble-child-result
                 job :provider-result result
                     :child           child
-                      :conversation    conversation)))
+                      :conversation  conversation)))
         (unwind-protect
              (progn
                (task-job-cancel-execution-descendants job ':parent-finished)

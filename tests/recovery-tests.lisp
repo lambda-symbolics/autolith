@@ -793,7 +793,7 @@ exit 64
                       (null boot-source))
                  "explicit generation selection bypasses automatic revision policy"))))
            (let ((booted      nil)
-                  (generations (list stale current-a legacy current-b)))
+                 (generations (list stale current-a legacy current-b)))
              (test-call-with-function-replacements
               (list
                (list 'recovery-generation-compatible-p
@@ -833,18 +833,18 @@ exit 64
                  "same-revision retained fallback may reach a healthy core")
                 (test-assert
                  (equal (nreverse booted) '("current-a" "current-b"))
-                  "retained fallback skips cross-revision and pre-world generations"))))
-             (dolist (generation (list legacy
-                                       (recovery-tests--generation
-                                        root "unknown-entry" :commit current-commit :created-at 5
-                                        :world-entry 2)))
-               (dolist (boot (list #'recovery-boot-generation #'recovery-boot-with-source-fallback))
-                 (let ((condition (handler-case (funcall boot context generation nil)
-                                    (error (condition) condition))))
-                   (test-assert
-                    (and (typep condition 'error)
-                         (search current-commit (princ-to-string condition)))
-                    "old or unsupported entry is refused with its source revision")))))
+                 "retained fallback skips cross-revision and pre-world generations"))))
+           (dolist (generation (list legacy
+                                     (recovery-tests--generation
+                                      root "unknown-entry" :commit current-commit :created-at 5
+                                      :world-entry 2)))
+             (dolist (boot (list #'recovery-boot-generation #'recovery-boot-with-source-fallback))
+               (let ((condition (handler-case (funcall boot context generation nil)
+                                  (error (condition) condition))))
+                 (test-assert
+                  (and (typep condition 'error)
+                       (search current-commit (princ-to-string condition)))
+                  "old or unsupported entry is refused with its source revision")))))
       (platform-delete-directory-tree *platform* root
                                       :validate          t
                                       :if-does-not-exist ':ignore)))

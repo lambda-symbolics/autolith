@@ -305,7 +305,6 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-
 (-> test-conversation-compaction () null)
 (defun test-conversation-compaction ()
   "Test summary records, projection replacement, and usage tracking."
@@ -2045,7 +2044,7 @@ process without releasing the lease, exercising kernel cleanup."
                              '(:error :message "owned rejection")
                              (list :ok :status
                                    (list :world-terminal-status :session-id (if (eq kind ':response-session) "other" identifier)
-                                         :pid               (if (eq kind ':response-pid) (1+ pid) pid)))))))
+                                         :pid                   (if (eq kind ':response-pid) (1+ pid) pid)))))))
                 (lambda ()
                   (test-assert
                    (eq (if (eq kind ':earlier)

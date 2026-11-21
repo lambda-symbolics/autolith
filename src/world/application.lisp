@@ -44,7 +44,7 @@
             (error (cause)
               (warn 'world-session-warning
                     :pathname (configuration-world-path (application-configuration application))
-                    :cause cause)))))))
+                    :cause    cause)))))))
   nil)
 
 

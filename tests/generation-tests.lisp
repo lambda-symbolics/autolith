@@ -1002,9 +1002,9 @@
   (let* ((*checkpoint-boot-generation*
            (make-instance 'generation :identifier "saved01"))
          (*world-image-selection* nil)
-         (*active-application* t)
-         (main-arguments nil)
-         (image-selection nil))
+         (*active-application*    t)
+         (main-arguments          nil)
+         (image-selection         nil))
     (test-call-with-function-replacements
      (list (list 'world-server-restart-claim (lambda () nil))
            (list 'main

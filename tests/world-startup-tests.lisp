@@ -305,7 +305,7 @@ With PERSISTED-P its conversation holds a message."
                    "a world launch records its kind and resolves the world endpoint under its token"))
     (let* ((token   (daemon-random-token))
            (runtime (image-daemon:daemon-runtime-create
-                      :class            'channel-endpoint
+                      :class           'channel-endpoint
                      :directory        (world-endpoint-directory configuration)
                      :identifier       "world"
                      :token            token

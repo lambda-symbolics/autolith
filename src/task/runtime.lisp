@@ -53,7 +53,7 @@ claims."
      pool
      :maximum-concurrency          maximum-concurrency
      :maximum-live-jobs            maximum-live-jobs
-     :maximum-batch-size            1
+     :maximum-batch-size           1
      :maximum-runtime-milliseconds maximum-runtime-milliseconds))
   nil)
 
@@ -99,7 +99,6 @@ a no-op, preserving lazy pools before their first job."
 (defun task-orchestrator-maximum-concurrency (orchestrator)
   "Return the child jobs ORCHESTRATOR may run at the same time."
   (job-pool-maximum-concurrency (task-orchestrator-pool orchestrator)))
-
 
 (-> task-orchestrator-maximum-live-jobs (task-orchestrator) (integer 1))
 (defun task-orchestrator-maximum-live-jobs (orchestrator)
@@ -154,7 +153,7 @@ a no-op, preserving lazy pools before their first job."
                                        *task-default-maximum-concurrency*
                                        :minimum 1
                                        :maximum *task-maximum-concurrency*)
-              :maximum-batch-size       1
+            :maximum-batch-size       1
             :maximum-live-jobs        *task-maximum-live-jobs*
             :maximum-runtime-milliseconds
             (task--environment-integer

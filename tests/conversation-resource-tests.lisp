@@ -85,7 +85,7 @@
 (defun conversation-resource-tests--read (context identifier &rest arguments)
   "Read conversation IDENTIFIER under CONTEXT with ARGUMENTS and return its text."
   (let* ((resource (make-instance 'conversation-resource :uri (format nil "channel:~A" identifier)
-                                  :conversation (tool-context-conversation context)))
+                                  :conversation               (tool-context-conversation context)))
          (result   (resource-tool-read resource
                                        (conversation-resource-tests--read-tool)
                                        context

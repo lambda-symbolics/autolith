@@ -42,7 +42,6 @@ bound so the child can adapt instead of silently losing the note."
       (remhash parent-identifier *task-note-queues*)
       pending)))
 
-
 (-> context--task-notes (request-context) (option context-contribution))
 (defun context--task-notes (request)
   "Deliver pending child task notes behind the conversation once.

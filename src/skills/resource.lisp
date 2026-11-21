@@ -86,7 +86,7 @@
          (markdown (merge-pathnames (format nil "~A/SKILL.md" identifier) root))
          (native   (make-pathname :type "sexp" :defaults markdown))
          (resource (make-instance 'skill-source-resource
-                                  :uri (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
+                                  :uri      (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
                                   :pathname (if (platform-path-status *platform* native) native markdown))))
     (workspace-file-check-path resource context)
     resource))
@@ -156,5 +156,5 @@
             (error 'tool-error :tool-name "resource.edit" :message "A global skill name must match its directory.")))
       (cl-skills:skill-validation-error (condition)
         (error 'tool-error :tool-name "resource.edit"
-                           :message (format nil "Skill validation failed: ~A" condition)))))
+                           :message   (format nil "Skill validation failed: ~A" condition)))))
   (call-next-method))

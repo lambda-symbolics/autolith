@@ -496,8 +496,8 @@ from the client")))
          (stream          (make-instance 'client-evaluation-tests-output :gate gate :started started))
          (connection      (make-instance 'world-terminal-client-connection :socket nil :stream stream))
          (other           (make-instance 'world-terminal-client-connection :socket nil
-                                        :stream                                (make-string-input-stream
-                                                                                (image-daemon:daemon-packet-string '(:reply :id 7 :ok t)))))
+                                        :stream                                    (make-string-input-stream
+                                                                                    (image-daemon:daemon-packet-string '(:reply :id 7 :ok t)))))
          (writer          nil)
          (queued          nil)
          (queued-failed-p nil))
@@ -551,8 +551,8 @@ from the client")))
              (daemon-write-packet
               stream (list :world-terminal-request :version *daemon-protocol-version*
                            :token (world-terminal--record-token (rest record)) :operation ':client
-                           :arguments          (append (list :name "compatibility" :evaluates-p t)
-                                                       (when supports-p (list :cancels-evaluation-p t)))))
+                           :arguments              (append (list :name "compatibility" :evaluates-p t)
+                                                           (when supports-p (list :cancels-evaluation-p t)))))
              (test-assert (eq (first (daemon-read-response stream ':client)) ':attached)
                           "An evaluation-only old peer and a cancellation-aware peer both attach.")
              (test-assert (task-tests--wait-until

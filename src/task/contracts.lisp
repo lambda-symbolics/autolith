@@ -257,7 +257,7 @@
       (cl-llm-provider-api:output-json->sexp value)
     (cl-llm-provider-api:output-value-error (condition)
         (error 'task-error :tool-name "task.result"
-               :message                     (cl-llm-provider-api:provider-api-error-message condition)))))
+               :message               (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task-sexp->json (t) json-value)
 (defun task-sexp->json (value)

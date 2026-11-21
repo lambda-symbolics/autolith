@@ -165,8 +165,8 @@
           configuration
           (lambda ()
              (let* ((report (papercut-report configuration :title "Resource diagnostic fixture"
-                                             :content "PRIVATE_RESOURCE_CONTENT"))
-                   (uri    (resource-item-uri "papercut" (papercut-identifier report))))
+                                             :content             "PRIVATE_RESOURCE_CONTENT"))
+                    (uri    (resource-item-uri "papercut" (papercut-identifier report))))
               (test-assert
                (not (tool-result-success-p
                      (edit uri (json-object "op" "papercut-assess" "verdict" "improved" "note" "PRIVATE_RESOURCE_NOTE"

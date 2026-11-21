@@ -452,8 +452,8 @@
                      (test-assert
                       (every
                        (lambda (field) (field-present-p allowed field))
-                         '(:description :source :pathname :models
-                           :reasoning-effort :tools :spawns))
+                       '(:description :source :pathname :models
+                         :reasoning-effort :tools :spawns))
                       "role discovery exposes stable policy and source fields")
                      (test-assert
                       (and (not (field-present-p allowed :instructions))
@@ -748,8 +748,8 @@
                 entries))
 
              (run-claim-race (index)
-               (let* ((fixture          (fixture (format nil "steering-completion-race-~D" index)))
-                      (job              (mark-running (getf fixture :job)))
+               (let* ((fixture           (fixture (format nil "steering-completion-race-~D" index)))
+                      (job               (mark-running (getf fixture :job)))
                       (normal-result
                         (agent-test-result
                          "normal-race"
@@ -817,17 +817,17 @@
                           (setf enqueue-thread nil)
                           (join-thread claim-thread)
                           (setf claim-thread nil)
-                           (let ((enqueue-won-p (eq enqueue-reason ':accepted)))
-                             (test-assert
-                              (and (null enqueue-condition)
-                                   (null claim-condition)
-                                   (not (eq enqueue-won-p claim-result))
-                                   (if enqueue-won-p
-                                       (= (task-job-steering-pending-count job) 1)
-                                       (and (eq enqueue-reason ':closed)
-                                            (task-job-steering-closed-p job)
-                                            (zerop (task-job-steering-pending-count job)))))
-                              "enqueue and normal completion share one atomic winner")))
+                          (let ((enqueue-won-p (eq enqueue-reason ':accepted)))
+                            (test-assert
+                             (and (null enqueue-condition)
+                                  (null claim-condition)
+                                  (not (eq enqueue-won-p claim-result))
+                                  (if enqueue-won-p
+                                      (= (task-job-steering-pending-count job) 1)
+                                      (and (eq enqueue-reason ':closed)
+                                           (task-job-steering-closed-p job)
+                                           (zerop (task-job-steering-pending-count job)))))
+                             "enqueue and normal completion share one atomic winner")))
                      (with-lock-held (gate-lock)
                        (setf released-p t)
                        (task--condition-broadcast gate-condition))
@@ -1498,8 +1498,8 @@
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (definition    (task-agent-definition-create
-                         :name         "messaging-child"
-                         :description  "Exercise child messaging."
+                         :name          "messaging-child"
+                         :description   "Exercise child messaging."
                           :instructions "Send a progress note, then finish."
                           :source       ':test))
          (fixture       (task-tests--child-fixture configuration definition

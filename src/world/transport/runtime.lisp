@@ -314,7 +314,6 @@ between that check and the close."
        (not (channel-endpoint-closing-p session))
        (channel-endpoint-serving-p session)))
 
-
 (-> world-terminal--terminal-event-p (t) boolean)
 (defun world-terminal--terminal-event-p (event)
   "Accept a client's keys, bounded pointer events and the side panel's channel commands."
@@ -420,7 +419,7 @@ clients present it; one that already left costs nothing."
                   :token            token
                   :created-at       created-at
                   :class            'channel-endpoint
-                  :initargs         (list :application application
+                  :initargs         (list :application             application
                                           :checkpoint-reconnect-id checkpoint-reconnect-id)
                   :request-function #'world-terminal--handle-request
                   :error-function   (lambda (condition)

@@ -144,7 +144,7 @@ quiescing, because both touch the private history repository."
      reconstruction-pathname
      :generation-identifier identifier
      :commit                image-commit)
-    (list* :world-entry 1
+    (list* :world-entry    1
            :reconstruction (namestring reconstruction-pathname)
            :image-commit   (and image-commit (image-commit-identifier image-commit))
            :mutation-history-commit
@@ -433,9 +433,9 @@ A supervised exact-heap restart rejoins its existing world endpoint namespace."
       (uiop:quit (world-server-restart-resume restart))))
   (unless *checkpoint-boot-generation*
     (error 'checkpoint-error
-           :stage ':boot
+           :stage    ':boot
            :pathname nil
-           :message "This core does not identify a world-capable retained generation."))
+           :message  "This core does not identify a world-capable retained generation."))
   (setf *world-image-selection*
         (format nil "generation-~A" (generation-identifier *checkpoint-boot-generation*))
         (symbol-value '*active-application*) nil)

@@ -41,10 +41,10 @@ can verify the current active state after a discard."
        (list :mutation
              :kind :exercise
              :id exercise-identifier
-             :lineage    *active-image-lineage-identifier*
-             :mutation   mutation-identifier
-             :proposed   source
-             :result     ':pending))
+             :lineage  *active-image-lineage-identifier*
+             :mutation mutation-identifier
+             :proposed source
+             :result   ':pending))
       (handler-case
           (multiple-value-bind (result-values output)
               (self-capture-evaluation
@@ -55,12 +55,12 @@ can verify the current active state after a discard."
              (list :mutation
                    :kind :exercise
                    :id exercise-identifier
-                   :lineage    *active-image-lineage-identifier*
-                   :mutation   mutation-identifier
-                   :proposed   source
-                   :result     ':passed
-                   :values     result-values
-                   :output     (bounded-string output :limit 2000)))
+                   :lineage  *active-image-lineage-identifier*
+                   :mutation mutation-identifier
+                   :proposed source
+                   :result   ':passed
+                   :values   result-values
+                   :output   (bounded-string output :limit 2000)))
             (format nil
                     "Exercise ~A passed ~:[against the current active state~;for mutation ~:*~A~].~2%~A"
                     exercise-identifier
@@ -72,11 +72,11 @@ can verify the current active state after a discard."
            (list :mutation
                  :kind :exercise
                  :id exercise-identifier
-                 :lineage    *active-image-lineage-identifier*
-                 :mutation   mutation-identifier
-                 :proposed   source
-                 :result     ':failed
-                 :condition  (bounded-string condition :limit 2000)))
+                 :lineage   *active-image-lineage-identifier*
+                 :mutation  mutation-identifier
+                 :proposed  source
+                 :result    ':failed
+                 :condition (bounded-string condition :limit 2000)))
           (error condition))))))
 
 (defmethod tool-execute ((tool self-exercise-tool)

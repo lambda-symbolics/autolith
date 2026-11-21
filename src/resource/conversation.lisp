@@ -41,6 +41,8 @@ to a readable context object rather than truncated.")
   "Allow the channel reader to read its internal history resource."
   (declare (ignore context))
   '(:read))
+
+
 ;;;; -- Model-Facing Reads --
 
 (defmethod resource-tool-read

@@ -253,7 +253,7 @@
   "Return a deterministic final response or nested task call for PROVIDER."
   (declare (ignore tool-namespaces goal-context compaction-p))
   (let* ((request-number nil)
-         (inputs (conversation-input-items-for-request conversation))
+         (inputs         (conversation-input-items-for-request conversation))
          (spawn-output
            (find-if (lambda (item)
                       (and (equal (json-get item "type") "function_call_output")
@@ -307,8 +307,8 @@
                   (json-object "agent" "task"
                                "task" "Return the nested leaf result."))))
                ((and spawn-output (not wait-output))
-                (let* ((form (read-one-form (json-get spawn-output "output")
-                                            :read-eval nil))
+                (let* ((form  (read-one-form (json-get spawn-output "output")
+                                             :read-eval nil))
                        (child (first (getf (rest form) :results))))
                   (agent-test-call
                    :call-id "nested-wait" :namespace "job" :name "wait"
@@ -712,23 +712,23 @@ admission offers no such thing on purpose."
     (job &key (status :success) (output "done") error)
   "Return one portable terminal RESULT for JOB."
   (let ((identifier (job-identifier job)))
-    (list :id                          identifier
-          :name                        identifier
-          :agent                       (task-agent-definition-name (task-job-definition job))
-          :agent-source                (task-agent-definition-source
-                                        (task-job-definition job))
-          :assignment                  (getf (task-job-item job) :task)
-          :status                      status
-          :output                      output
-          :error                       error
-          :label                       nil
-          :request-count               1
-          :usage                       nil
-          :duration-ms                 1
-          :model                       (config :model
-                                        (agent-configuration (task-job-parent-agent job)))
-          :conversation-file           nil
-          :detached                    (task-job-detached-p job))))
+    (list :id                identifier
+          :name              identifier
+          :agent             (task-agent-definition-name (task-job-definition job))
+          :agent-source      (task-agent-definition-source
+                              (task-job-definition job))
+          :assignment        (getf (task-job-item job) :task)
+          :status            status
+          :output            output
+          :error             error
+          :label             nil
+          :request-count     1
+          :usage             nil
+          :duration-ms       1
+          :model             (config :model
+                              (agent-configuration (task-job-parent-agent job)))
+          :conversation-file nil
+          :detached          (task-job-detached-p job))))
 
 (-> task-tests--job-tool-error-report
     (task-orchestrator agent &key (:operation string) (:identifier string))

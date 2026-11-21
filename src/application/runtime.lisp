@@ -4881,7 +4881,7 @@ it once."
                    (>= (application-action-count application)
                        *application-agent-name-action-count*)))
       (let ((participant (world-register-conversation (application-configuration application)
-                                                       conversation)))
+                                                      conversation)))
         (cond
           ((null participant)
            nil)

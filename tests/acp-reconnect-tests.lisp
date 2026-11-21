@@ -112,8 +112,8 @@
           (list (list 'world-terminal--wait-for-checkpoint-entry
                       (lambda (&rest arguments)
                         (declare (ignore arguments))
-                        (error 'world-terminal-error :message  "Injected reconnect refusal."
-                                                :operation ':attach))))
+                        (error 'world-terminal-error :message "Injected reconnect refusal."
+                                                :operation    ':attach))))
           (lambda ()
             (channel-subscription-event session (list :checkpoint-reconnect :id (make-identifier)))
             (world-terminal-client-close (channel-subscription-connection session))

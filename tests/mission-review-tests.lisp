@@ -23,7 +23,7 @@
    (make-identifier)
    (list (agent-test-message text))
    :turn-completion ':end
-   :usage (json-object "input_tokens" 2 "output_tokens" 3)))
+   :usage           (json-object "input_tokens" 2 "output_tokens" 3)))
 
 (-> mission-review-test--policy (&key (:turns integer) (:tokens integer) (:runs integer) (:phase keyword)) list)
 (defun mission-review-test--policy (&key (turns 4) (tokens 100) (runs 4) (phase ':final-acceptance))
@@ -115,7 +115,6 @@
         (mission-review-test--close application))))
   nil)
 
-
 (-> mission-review-test--acceptance-race () null)
 (defun mission-review-test--acceptance-race ()
   "Exercise complete-current-run validation and refused admission at final acceptance."
@@ -183,7 +182,7 @@
                                 (make-identifier)
                                 (list (agent-test-message "Review is still in progress."))
                                 :turn-completion ':continue
-                                :usage (json-object "input_tokens" 2 "output_tokens" 3))
+                                :usage           (json-object "input_tokens" 2 "output_tokens" 3))
                                (mission-review-test--result "Review completed."))))
            (provider    (application-provider application)))
       (unwind-protect

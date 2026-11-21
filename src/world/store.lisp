@@ -353,17 +353,17 @@ records stays plain, portable text."
              :identifier (let ((identifier (getf properties :id)))
                            (and (stringp identifier) identifier))))
     (make-instance 'participant
-                   :identifier    (getf properties :id)
+                   :identifier        (getf properties :id)
                    :legacy-identifier (getf properties :legacy-id)
-                   :kind          (getf properties :kind)
-                   :name          (getf properties :name)
-                   :name-source   (getf properties :name-source ':explicit)
-                   :parent        (getf properties :parent)
-                   :residence     (getf properties :residence)
-                   :subscriptions (copy-list (getf properties :subscriptions))
-                   :settings      (copy-list (getf properties :settings))
-                   :created-at    (getf properties :created-at)
-                   :updated-at    (getf properties :updated-at))))
+                   :kind              (getf properties :kind)
+                   :name              (getf properties :name)
+                   :name-source       (getf properties :name-source ':explicit)
+                   :parent            (getf properties :parent)
+                   :residence         (getf properties :residence)
+                   :subscriptions     (copy-list (getf properties :subscriptions))
+                   :settings          (copy-list (getf properties :settings))
+                   :created-at        (getf properties :created-at)
+                   :updated-at        (getf properties :updated-at))))
 
 (-> world--record->channel (pathname list) channel)
 (defun world--record->channel (pathname record)
@@ -424,17 +424,17 @@ records stays plain, portable text."
   "Return PARTICIPANT with CHANGES, a plist of initargs, applied."
   (apply #'make-instance 'participant
          (append changes
-                 (list :identifier    (participant-identifier participant)
+                 (list :identifier        (participant-identifier participant)
                        :legacy-identifier (participant-legacy-identifier participant)
-                       :kind          (participant-kind participant)
-                       :name          (participant-name participant)
-                       :name-source   (participant-name-source participant)
-                       :parent        (participant-parent participant)
-                       :residence     (participant-residence participant)
-                       :subscriptions (copy-list (participant-subscriptions participant))
-                       :settings      (copy-list (participant-settings participant))
-                       :created-at    (participant-created-at participant)
-                       :updated-at    (participant-updated-at participant)))))
+                       :kind              (participant-kind participant)
+                       :name              (participant-name participant)
+                       :name-source       (participant-name-source participant)
+                       :parent            (participant-parent participant)
+                       :residence         (participant-residence participant)
+                       :subscriptions     (copy-list (participant-subscriptions participant))
+                       :settings          (copy-list (participant-settings participant))
+                       :created-at        (participant-created-at participant)
+                       :updated-at        (participant-updated-at participant)))))
 
 (-> world--copy-channel (channel &rest t) channel)
 (defun world--copy-channel (channel &rest changes)
@@ -1106,6 +1106,7 @@ Compare storage timestamps without reading any conversation records."
                    (setf latest       identifier
                          latest-write written))))
     latest))
+
 (-> world-participant-children (world string) list)
 (defun world-participant-children (world participant-identifier)
   "Return the participants whose parent is PARTICIPANT-IDENTIFIER."
@@ -1168,6 +1169,7 @@ Compare storage timestamps without reading any conversation records."
       (error 'world-error :message (format nil "No active participant has ID ~A." identifier)
              :pathname nil :operation operation :identifier identifier))
     participant))
+
 (-> world--require-channel (world string keyword) channel)
 (defun world--require-channel (world identifier operation)
   "Return channel IDENTIFIER, or signal WORLD-ERROR for OPERATION."
@@ -1329,10 +1331,10 @@ channel ID and records the legacy ID as its alias."
               (when (and (or channel parent) (not (gethash identifier duplicates)))
                 (push (world--participant-record
                        (world--copy-participant participant
-                                                :identifier (or channel identifier)
+                                                :identifier        (or channel identifier)
                                                 :legacy-identifier (if channel identifier
                                                                        (participant-legacy-identifier participant))
-                                                :parent (or parent (participant-parent participant))))
+                                                :parent            (or parent (participant-parent participant))))
                       records))))
           (world--participant-table world))
          (maphash (lambda (identifier channel)
@@ -1372,7 +1374,7 @@ channel ID and records the legacy ID as its alias."
                                (world--participant-record
                                 (if person
                                     (world--copy-participant person :residence identifier
-                                                             :updated-at (max now (participant-updated-at person)))
+                                                             :updated-at       (max now (participant-updated-at person)))
                                     (make-instance 'participant :identifier owner :kind ':human :name "user"
                                                    :residence identifier :created-at now :updated-at now))))
                          inbox))))))))
@@ -1408,14 +1410,14 @@ the channel's history."
                                            :key #'participant-kind))))
         (if resident
             (values nil (list existing resident))
-            (let* ((person (world-human-participant world))
-                   (owner  (if existing
-                               (channel-owner existing)
-                               (or (and parent
-                                        (find ':agent (world-channel-residents world parent)
-                                              :key #'participant-kind))
-                                   person)))
-                   (keeper (if (stringp owner) owner (participant-identifier owner)))
+            (let* ((person  (world-human-participant world))
+                   (owner   (if existing
+                                (channel-owner existing)
+                                (or (and parent
+                                         (find ':agent (world-channel-residents world parent)
+                                               :key #'participant-kind))
+                                    person)))
+                   (keeper  (if (stringp owner) owner (participant-identifier owner)))
                    (channel (or existing
                                 (world--new-channel configuration world
                                                     :home (list :id identifier :workspace workspace
@@ -1429,13 +1431,13 @@ the channel's history."
                        :message "The agent settings are not portable."))
               (let ((agent (make-instance
                             'participant :identifier identifier :kind ':agent
-                            :name (if name
-                                      (world-unique-handle world (world-handle-base name))
-                                      (prezdivka:unique-name
-                                       identifier
-                                       (lambda (handle)
-                                         (or (world-participant-named-p world handle)
-                                             (world-handle-reserved-p handle)))))
+                            :name        (if name
+                                             (world-unique-handle world (world-handle-base name))
+                                             (prezdivka:unique-name
+                                              identifier
+                                              (lambda (handle)
+                                                (or (world-participant-named-p world handle)
+                                                    (world-handle-reserved-p handle)))))
                             :name-source (if name ':explicit ':initial)
                             :parent keeper :residence identifier :settings settings
                             :created-at (channel-created-at channel) :updated-at now)))

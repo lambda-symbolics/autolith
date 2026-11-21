@@ -95,6 +95,7 @@
      (:indicator :columns :validate world-startup--positive-integer-p)
      (:indicator :old-pid :required t :validate world-startup--positive-integer-p)
      (:indicator :replacement-pid :validate world-startup--optional-positive-integer-p))))
+
 (-> world-startup--disk-record (list) list)
 (defun world-startup--disk-record (record)
   "Return RECORD without its in-memory canonical pathname field."
@@ -307,16 +308,16 @@ A nonlocal exit from that callback cancels the launch."
            (record
              (list :world-startup
                    :version *world-startup-version*
-                   :launch-id            launch-id
-                   :token                token
-                   :created-at           created-at
-                   :state                ':pending
-                   :attach-expected-p    (not (null attach-expected-p))
-                   :old-pid              (current-process-id)
-                   :replacement-pid      nil
-                   :rows                 rows
-                   :columns              columns
-                   :styled-p             (not (null (terminal-environment-styling-p)))))
+                   :launch-id         launch-id
+                   :token             token
+                   :created-at        created-at
+                   :state             ':pending
+                   :attach-expected-p (not (null attach-expected-p))
+                   :old-pid           (current-process-id)
+                   :replacement-pid   nil
+                   :rows              rows
+                   :columns           columns
+                   :styled-p          (not (null (terminal-environment-styling-p)))))
            (completed-p nil)
            (process     nil)
            (session-id  nil))
