@@ -142,17 +142,6 @@
   ()
   (:documentation "GitHub's RFC 8628 device login, followed by a Copilot token exchange."))
 
-(-> copilot--device-request
-    (&key (:method keyword) (:url string) (:headers list) (:content string))
-    (values string integer t))
-(defun copilot--device-request (&key method url headers content)
-  "Normalize GitHub's HTTP 200 OAuth errors for the shared RFC 8628 polling loop."
-  (multiple-value-bind (body status response-headers)
-      (device-authentication-request :method method :url url :headers headers :content content)
-    (values body
-            (if (and (= status 200) (oauth-error-code body)) 400 status)
-            response-headers)))
-
 (-> copilot-device-authentication-client-create () copilot-device-authentication-client)
 (defun copilot-device-authentication-client-create ()
   "Create the GitHub device client using the shared polling, timeout, and browser effects."
@@ -161,9 +150,7 @@
                  :client-id        *copilot-oauth-client-id*
                  :device-code-path "/login/device/code"
                  :token-path       "/login/oauth/access_token"
-                 :scope            "read:user"
-                 :request-function #'copilot--device-request
-                 :poll-function    #'rfc8628-device-authentication-poll-for-tokens))
+                 :scope            "read:user"))
 
 (defmethod device-authentication-complete
     ((client copilot-device-authentication-client)

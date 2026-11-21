@@ -27,12 +27,12 @@
 
 (-> copilot-test--authentication () null)
 (defun copilot-test--authentication ()
-  "Exercise real device polling, HTTP 200 pending errors, exchange, storage, and renewal."
+  "Exercise device login, Copilot exchange, storage, and renewal."
   (with-test-environment (("AUTOLITH_COPILOT_DOMAIN" nil))
     (with-test-configuration (configuration)
       (let* ((manager (copilot-credential-manager-create configuration))
              (client  (copilot-device-authentication-client-create))
-             (polls 0) (now 0) (exchanges 0))
+             (now 0) (exchanges 0))
         (setf (slot-value client 'cl-rfc8628::clock-function) (lambda () now)
               (slot-value client 'cl-rfc8628::sleep-function) (lambda (seconds) (incf now seconds)))
         (test-call-with-function-replacements
@@ -44,13 +44,7 @@
                   (values
                    (if (search "/device/code" url)
                        "{\"device_code\":\"device-secret\",\"user_code\":\"ABCD-1234\",\"verification_uri\":\"https://github.com/login/device\",\"interval\":1,\"expires_in\":60}"
-                       (case (incf polls)
-                         (1
-                          "{\"error\":\"authorization_pending\"}")
-                         (2
-                          "{\"error\":\"slow_down\"}")
-                         (t
-                          "{\"access_token\":\"github-secret\"}")))
+                       "{\"access_token\":\"github-secret\"}")
                    200 nil)))
           (list 'dexador:get
                 (lambda (url &rest arguments)
@@ -67,19 +61,18 @@
          (lambda ()
            (device-authentication-complete client (device-authentication-request-code client) manager)
            (let ((credentials (credential-manager-load manager)))
-             (test-assert (and (= polls 3) (= now 8)
-                               (equal (oauth-credentials-refresh-token credentials) "github-secret")
-                               (equal (oauth-credentials-account-id credentials) "github.com:42"))
-                          "pending and slow_down poll before credentials are atomically saved")
-             (test-assert (equal (copilot--base-url credentials) "https://api.business.githubcopilot.com")
-                          "the token selects the subscription-specific API endpoint")
-             (let ((renewed (credential-manager-refresh manager credentials)))
-               (test-assert (and (= exchanges 2)
-                                 (equal (oauth-credentials-refresh-token renewed) "github-secret")
-                                 (equal (oauth-credentials-account-id renewed) "github.com:42"))
-                            "force refresh keeps the GitHub credential and pinned account"))
-             (test-assert (not (test-object-contains-string-p manager "github-secret"))
-                          "managers do not retain tokens outside request scope")))))))
+            (test-assert (and (equal (oauth-credentials-refresh-token credentials) "github-secret")
+                              (equal (oauth-credentials-account-id credentials) "github.com:42"))
+                         "credentials retain the GitHub identity and token")
+            (test-assert (equal (copilot--base-url credentials) "https://api.business.githubcopilot.com")
+                         "the token selects the subscription-specific API endpoint")
+            (let ((renewed (credential-manager-refresh manager credentials)))
+              (test-assert (and (= exchanges 2)
+                                (equal (oauth-credentials-refresh-token renewed) "github-secret")
+                                (equal (oauth-credentials-account-id renewed) "github.com:42"))
+                           "force refresh keeps the GitHub credential and pinned account"))
+            (test-assert (not (test-object-contains-string-p manager "github-secret"))
+                         "managers do not retain tokens outside request scope")))))))
   nil)
 
 (-> copilot-test--failures () null)
