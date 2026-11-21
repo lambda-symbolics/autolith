@@ -2716,7 +2716,7 @@ A frame sends its shared views and its task as consecutive user messages."
       (dotimes (index 3)
         (conversation-append-user-message conversation (format nil "middle ~D" index)))
       (conversation-append-user-message conversation last-text)
-      (world-server--reconcile configuration)
+      (world-register-conversation configuration conversation)
       (let* ((*conversation-resource-maximum-record-count* 2)
              (content                                      (rlm--tool-resource-content context "channel:current"))
              (object                                       (rlm-context-intern configuration "ž界")))

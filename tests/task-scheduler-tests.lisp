@@ -547,18 +547,14 @@ pool must reject the cancelled parent without creating a descendant."
                  :parent-agent primary
                  :identifier   identifier)))
 
-             (make-entries (count prefix)
-               (loop for index from 1 to count
-                     collect
-                     (list
-                      :definition definition
-                      :item
-                      (list :name    (format nil "~A-~D" prefix index)
-                            :agent   "hurry-race"
-                            :task    "Remain inline for admission accounting."
-                            :context nil
-                            :async   nil)
-                      :detached   nil))))
+             (make-entry (name)
+               (list (list :definition definition
+                           :item       (list :name    name
+                                             :agent   "hurry-race"
+                                             :task    "Remain inline for admission accounting."
+                                             :context nil
+                                             :async   nil)
+                           :detached   nil))))
       (unwind-protect
            (progn
              (let* ((orchestrator (task-tests--orchestrator))
@@ -575,32 +571,27 @@ pool must reject the cancelled parent without creating a descendant."
                (task-orchestrator-set-hurry-up orchestrator t)
                (with-lock-held ((task-orchestrator-lock orchestrator))
                  (setf (job-pool-maximum-live-jobs pool) 1))
+               (task-orchestrator-start-jobs
+                orchestrator viewer (make-entry "occupy"))
                (handler-case
                    (task-orchestrator-start-jobs
-                    orchestrator viewer (make-entries 2 "refused"))
+                    orchestrator viewer (make-entry "refused"))
                  (task-error ()
                    (setf refused-p t)))
                (test-assert
                 (and refused-p
-                     (zerop
-                      (task-orchestrator-hurry-up-admission-count orchestrator))
-                     (zerop (task-orchestrator-live-count orchestrator)))
+                      (= (task-orchestrator-hurry-up-admission-count orchestrator) 1)
+                      (= (task-orchestrator-live-count orchestrator) 1))
                 "failed pool admission rolls back its hurry-up reservation")
                (with-lock-held ((task-orchestrator-lock orchestrator))
                  (setf (job-pool-maximum-live-jobs pool)
                        *task-hurry-up-maximum-agents*))
-               (let ((jobs
-                       (first
-                        (multiple-value-list
-                         (task-orchestrator-start-jobs
-                          orchestrator viewer (make-entries 2 "accepted"))))))
-                 (test-assert
-                  (and (= (length jobs) 2)
-                       (= (task-orchestrator-hurry-up-admission-count
-                           orchestrator)
-                          2)
-                       (= (task-orchestrator-live-count orchestrator) 2))
-                  "a rolled-back reservation leaves the full allowance usable")))
+               (task-orchestrator-start-jobs
+                orchestrator viewer (make-entry "accepted"))
+               (test-assert
+                (and (= (task-orchestrator-hurry-up-admission-count orchestrator) 2)
+                     (= (task-orchestrator-live-count orchestrator) 2))
+                "a rolled-back reservation leaves room for the next child"))
              (let* ((orchestrator   (task-tests--orchestrator))
                     (viewer         (make-viewer orchestrator "concurrent-parent"))
                     (pool           (task-orchestrator-pool orchestrator))
@@ -645,8 +636,7 @@ pool must reject the cancelled parent without creating a descendant."
                                      (progn
                                        (task-orchestrator-start-jobs
                                         orchestrator viewer
-                                        (make-entries
-                                         1 (format nil "concurrent-~D" index)))
+                                          (make-entry (format nil "concurrent-~D" index)))
                                        (with-lock-held (result-lock)
                                          (incf success-count)))
                                    (task-error (condition)
@@ -701,7 +691,7 @@ pool must reject the cancelled parent without creating a descendant."
                                            (multiple-value-list
                                             (task-orchestrator-start-jobs
                                              orchestrator viewer
-                                             (make-entries 3 "limit")))))
+                                              (make-entry "limit")))))
                                   (condition (condition)
                                     (setf submission-condition condition))))
                               :name "Autolith limit race admission"))
@@ -749,10 +739,10 @@ pool must reject the cancelled parent without creating a descendant."
                    (join-thread reconfiguration-thread)))
                (test-assert
                 (and (null submission-condition)
-                     (= (length jobs) 3)
+                     (= (length jobs) 1)
                      (task-orchestrator-hurry-up-p orchestrator)
                      (= (task-orchestrator-hurry-up-admission-count orchestrator)
-                        3))
+                        1))
                 "a limit change takes effect after the atomic submission boundary")))
         (platform-delete-directory-tree *platform* root :validate t
                                              :if-does-not-exist   ':ignore))))

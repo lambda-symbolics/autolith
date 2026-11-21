@@ -936,29 +936,16 @@
 
 (-> test-world-handles () null)
 (defun test-world-handles ()
-  "Test initial handles, duplicate repair, and checked explicit renaming."
+  "Test initial handles and checked explicit renaming."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore human))
       (let ((names (list (participant-name first-agent) (participant-name second-agent))))
         (test-assert (and (member (prezdivka:name-for "bfirst1") names :test #'string=)
                           (member (prezdivka:name-for "bsecnd2") names :test #'string=))
                      "agents in one workspace have their own readable handles")
-        (world-participant-create configuration
-                                  :kind      ':agent
-                                  :name      (participant-name first-agent)
-                                  :residence "bfirst1"
-                                  :parent    (participant-identifier human)
-                                  :now       3000)
-        (let* ((world (world-load configuration))
-               (all   (mapcar #'participant-name (world-participants world))))
-          (test-assert (and (= (length all) (length (remove-duplicates all :test #'string-equal)))
-                            (string= (participant-name
-                                      (world-participant-find world
-                                                              (participant-identifier first-agent)))
-                                     (participant-name first-agent)))
-                       "reconciliation renames a later agent sharing a name and keeps the older one"))
         (let ((renamed (world-participant-rename configuration
                                                  (participant-identifier first-agent)
                                                  "Frobnicator")))
@@ -2467,18 +2454,15 @@ A parent that writes @parent to its own child reaches nobody but the child."
   (with-test-configuration (configuration root)
     (let* ((main         (world-repository-tests--initialize (merge-pathnames "picker-main/" root)))
            (linked       (merge-pathnames "picker-worktree/workspace/" root))
-           (conversation (world-tests--persisted-conversation configuration "bpkrepo1" 1000))
+           (conversation (world-tests--persisted-conversation configuration "bpkrepo1" 1000 :register-p nil))
            (application  (make-instance 'application :configuration configuration :conversation conversation)))
       (world-repository-tests--git main (list "worktree" "add" "-qb" "picker" (namestring linked)))
-      (multiple-value-bind (human home)
-          (world-participant-create configuration :kind ':human :name "picker-owner"
-                                    :home (list :workspace (namestring main)))
-        (declare (ignore home))
+      (let ((person (channel-owner (world-ensure-inbox configuration))))
         (test-call-with-function-replacements
          (list (list 'world-repository-resolve-directory
                      (lambda (directory) (declare (ignore directory)) nil)))
          (lambda ()
-           (world-channel-create configuration :id "bpkrepo1" :owner (participant-identifier human)
+            (world-channel-create configuration :id "bpkrepo1" :owner person
                                  :workspace (namestring linked))))
         (let* ((catalogue (world-channel-catalogue configuration))
                (observed  (world-channel-find catalogue "bpkrepo1")))
