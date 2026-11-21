@@ -1057,10 +1057,7 @@
                 #:restart-choice-available-choices
                 #:restart-choice-available-condition
                 #:source-form
-                #:source-form-end
                 #:source-form-form
-                #:source-form-start
-                #:source-read-forms
                 #:surgeon-error-message
                 #:symbol-defined-p
                 #:symbol-definition-pathname

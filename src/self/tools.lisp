@@ -697,21 +697,11 @@ generic function and are not skipped merely because its ownership changed."
     ((option string) (option string) package)
     boolean)
 (defun self--definition-sources-equal-p (recorded current package)
-  "Return true when RECORDED and CURRENT sources read as the same form in PACKAGE.
-
-Two absent sources are equal; formatting and comments do not matter."
-  (cond
-    ((and (null recorded) (null current))
-     t)
-    ((or (null recorded) (null current))
-     nil)
-    (t
-     (handler-case
-         (and (equal (self-read-form recorded :read-eval nil :package package)
-                     (self-read-form current :read-eval nil :package package))
-              t)
-       (error ()
-         (and (string= recorded current) t))))))
+  "Compare RECORDED and CURRENT with Autolith's inert source reader in PACKAGE."
+  (surgeon:source-forms-equal-p
+   recorded current
+   (lambda (source)
+     (self-read-form source :read-eval nil :package package))))
 
 (-> self--replay-stale-reason
     (list package &key (:tracked (option string)) (:tracked-p boolean))
@@ -1016,17 +1006,22 @@ authoritative; entries without the record are judged by source revision."
     :reader        tracked-definition-relative-pathname
     :type          non-empty-string
     :documentation "The definition file relative to Autolith's source root.")
-   (source-form
-    :initarg       :source-form
-    :reader        tracked-definition-source-form
-    :type          source-form
-    :documentation "The parsed definition form and its exact source span.")
-   (source
-    :initarg       :source
-    :reader        tracked-definition-source
-    :type          string
-    :documentation "The complete tracked source text of the definition."))
+   (definition
+    :initarg       :definition
+    :reader        tracked-definition--definition
+    :type          surgeon:source-definition
+    :documentation "The indexed definition and its exact source provenance."))
   (:documentation "One tracked top-level definition exposed for safe self inspection."))
+
+(-> tracked-definition-source-form (tracked-definition) source-form)
+(defun tracked-definition-source-form (tracked)
+  "Return TRACKED's parsed source form and span."
+  (surgeon:source-definition-form (tracked-definition--definition tracked)))
+
+(-> tracked-definition-source (tracked-definition) string)
+(defun tracked-definition-source (tracked)
+  "Return TRACKED's exact source text."
+  (surgeon:source-definition-text (tracked-definition--definition tracked)))
 
 (defclass tracked-definition-snapshot ()
   ((source-root
@@ -1072,61 +1067,25 @@ see the source as it was when first read."
                                :source-root source-root)))
           (funcall function)))))
 
-(-> self-source--tracked-definition
-    (pathname string source-form &key (:root pathname) (:path-prefix string))
-    tracked-definition)
-(defun self-source--tracked-definition
-    (pathname source source-form &key root (path-prefix ""))
-  "Return the tracked definition SOURCE-FORM spans in PATHNAME's SOURCE text."
-  (make-instance 'tracked-definition
-                 :relative-pathname
-                 (format nil "~A~A" path-prefix (enough-namestring pathname root))
-                 :source-form source-form
-                 :source      (subseq source
-                                      (source-form-start source-form)
-                                      (source-form-end source-form))))
+(-> self-source--tracked-definitions (list pathname &key (:path-prefix string)) list)
+(defun self-source--tracked-definitions (definitions root &key (path-prefix ""))
+  "Present indexed DEFINITIONS using ROOT and Autolith's PATH-PREFIX."
+  (loop for definition in definitions
+        collect (make-instance 'tracked-definition
+                               :relative-pathname
+                               (format nil "~A~A" path-prefix
+                                       (enough-namestring
+                                        (surgeon:source-definition-pathname definition) root))
+                               :definition definition)))
 
 (-> self-source--definitions
-    (list &key (:root pathname)
-               (:package package)
-               (:symbol symbol)
-               (:path-prefix string))
+    (list &key (:root pathname) (:package package) (:name t) (:path-prefix string))
     list)
-(defun self-source--definitions
-    (pathnames &key root package symbol (path-prefix ""))
-  "Return SYMBOL definitions read from PATHNAMES relative to ROOT in PACKAGE."
-  (loop for pathname in (sort (copy-list pathnames) #'string< :key #'namestring)
-        for source = (uiop:read-file-string pathname)
-        append
-        (loop for source-form in (source-read-forms source :package package)
-              for form = (source-form-form source-form)
-              when (and (definition-form-p form)
-                        (equal (second form) symbol))
-                collect
-                (self-source--tracked-definition pathname source source-form
-                                                 :root        root
-                                                 :path-prefix path-prefix))))
-
-(-> self-source--definition-table (list &key (:root pathname) (:package package))
-    hash-table)
-(defun self-source--definition-table (pathnames &key root package)
-  "Return every definition read from PATHNAMES in PACKAGE, grouped by name.
-
-The EQUAL table maps each definition name to its definitions in the order
-SELF-SOURCE--DEFINITIONS returns them."
-  (let ((table (make-hash-table :test 'equal)))
-    (loop for pathname in (sort (copy-list pathnames) #'string< :key #'namestring)
-          for source = (uiop:read-file-string pathname)
-          do (loop for source-form in (source-read-forms source :package package)
-                   for form = (source-form-form source-form)
-                   when (definition-form-p form)
-                     do (push (self-source--tracked-definition pathname source source-form
-                                                               :root root)
-                              (gethash (second form) table))))
-    (maphash (lambda (name definitions)
-               (setf (gethash name table) (nreverse definitions)))
-             table)
-    table))
+(defun self-source--definitions (pathnames &key root package name (path-prefix ""))
+  "Return NAME's definitions read from PATHNAMES relative to ROOT in PACKAGE."
+  (self-source--tracked-definitions
+   (gethash name (surgeon:source-definition-index pathnames :package package :name name))
+   root :path-prefix path-prefix))
 
 (-> tracked-definition-snapshot--definitions
     (tracked-definition-snapshot configuration t)
@@ -1141,54 +1100,14 @@ A failed read is remembered and signaled again for every later lookup."
   (unless (tracked-definition-snapshot--table snapshot)
     (handler-case
         (setf (tracked-definition-snapshot--table snapshot)
-              (self-source--definition-table
+              (surgeon:source-definition-index
                (self--tracked-source-pathnames configuration)
-               :root    (config :source-root configuration)
                :package (find-package '#:autolith)))
       (error (condition)
         (setf (tracked-definition-snapshot--failure snapshot) condition)
         (error condition))))
-  (values (gethash name (tracked-definition-snapshot--table snapshot))))
-
-(-> self-source--component-pathnames (t) list)
-(defun self-source--component-pathnames (component)
-  "Return existing Common Lisp source files beneath ASDF COMPONENT.
-Exclude components whose :IF-FEATURE expression is false on this host."
-  (let ((feature (asdf/component:component-if-feature component)))
-    (cond ((and feature (not (uiop:featurep feature)))
-           nil)
-          ((typep component 'asdf:cl-source-file)
-           (let ((pathname (asdf:component-pathname component)))
-             (if (probe-file pathname)
-                 (list pathname)
-                 nil)))
-          ((typep component 'asdf:module)
-           (mapcan #'self-source--component-pathnames
-                   (asdf:component-children component)))
-          (t
-           nil))))
-
-(-> self-source--dependency-names (t) list)
-(defun self-source--dependency-names (system)
-  "Return the names of ASDF SYSTEM's direct dependencies that apply on this host.
-
-A dependency is a plain name, (:VERSION name version), or (:FEATURE expression
-dependency), which counts only when its feature expression holds."
-  (labels ((dependency-name (specification)
-             "Return the system name SPECIFICATION selects here, or NIL."
-             (cond
-               ((or (stringp specification) (symbolp specification))
-                (string-downcase (string specification)))
-               ((and (consp specification)
-                     (eq (first specification) ':version))
-                (dependency-name (second specification)))
-               ((and (consp specification)
-                     (eq (first specification) ':feature))
-                (and (uiop:featurep (second specification))
-                     (dependency-name (third specification))))
-               (t
-                nil))))
-    (remove nil (mapcar #'dependency-name (asdf:system-depends-on system)))))
+  (self-source--tracked-definitions (gethash name (tracked-definition-snapshot--table snapshot))
+                                    (config :source-root configuration)))
 
 (-> self-source--dependency-system (package (option string)) (option t))
 (defun self-source--dependency-system (package requested-name)
@@ -1199,7 +1118,7 @@ dependency), which counts only when its feature expression holds."
                  requested-name
                  (string-downcase (package-name package))))
            (dependencies
-             (self-source--dependency-names (asdf:find-system '#:autolith))))
+              (surgeon:asdf-direct-dependency-names (asdf:find-system '#:autolith))))
       (unless (member name dependencies :test #'string-equal)
         (when (non-empty-string-p requested-name)
           (error 'source-mutation-error
@@ -1224,10 +1143,10 @@ dependency), which counts only when its feature expression holds."
     (when system
       (let ((root (asdf:system-source-directory system)))
         (self-source--definitions
-         (self-source--component-pathnames system)
+         (surgeon:asdf-source-pathnames system)
          :root        root
          :package     package
-         :symbol      symbol
+         :name        symbol
          :path-prefix (format nil "~A:" (asdf:component-name system)))))))
 
 (-> self-source--withheld-files (&key (:root pathname)) list)
@@ -1243,7 +1162,7 @@ Files shared with a loaded system are available through that system."
                           when (or (string= name "autolith")
                                    (uiop:string-prefix-p "autolith/" name))
                             collect (asdf:find-system name)))
-         (available (mapcan #'self-source--component-pathnames
+         (available (mapcan #'surgeon:asdf-source-pathnames
                             (remove-if-not
                              (lambda (component)
                                (member (asdf:component-name component) loaded
@@ -1273,9 +1192,9 @@ Files shared with a loaded system are available through that system."
                systems)
        :test #'string=))))
 
-(-> self-tracked-definitions (configuration symbol) list)
-(defun self-tracked-definitions (configuration symbol)
-  "Return complete tracked top-level definitions whose name is SYMBOL.
+(-> self-tracked-definitions (configuration t) list)
+(defun self-tracked-definitions (configuration name)
+  "Return complete tracked top-level definitions whose original name is NAME.
 
 Files belonging only to unloaded optional systems or withheld features are left out.
 Inside WITH-TRACKED-DEFINITION-SNAPSHOT the source is read once for all lookups."
@@ -1283,11 +1202,11 @@ Inside WITH-TRACKED-DEFINITION-SNAPSHOT the source is read once for all lookups.
     (if (and snapshot
              (uiop:pathname-equal (tracked-definition-snapshot-source-root snapshot)
                                   (config :source-root configuration)))
-        (tracked-definition-snapshot--definitions snapshot configuration symbol)
+        (tracked-definition-snapshot--definitions snapshot configuration name)
         (self-source--definitions (self--tracked-source-pathnames configuration)
                                   :root    (config :source-root configuration)
                                   :package (find-package '#:autolith)
-                                  :symbol  symbol))))
+                                  :name    name))))
 
 (-> self--tracked-source-pathnames (configuration) list)
 (defun self--tracked-source-pathnames (configuration)
@@ -1305,11 +1224,8 @@ Files belonging only to unloaded optional systems or withheld features are left 
 (defun self-tracked-definition (configuration definition)
   "Return the tracked definition sharing DEFINITION's key, if any."
   (let ((key (definition-key definition)))
-    (loop for tracked in (self-tracked-definitions
-                          configuration
-                          (definition-name-symbol (second definition)))
-          for form = (source-form-form (tracked-definition-source-form tracked))
-          when (string= (definition-key form) key)
+    (loop for tracked in (self-tracked-definitions configuration (second definition))
+          when (string= (surgeon:source-definition-key (tracked-definition--definition tracked)) key)
             return tracked)))
 
 (-> self-tracked-definition-source (configuration list) (option string))

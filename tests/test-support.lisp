@@ -47,21 +47,7 @@
 (-> test-call-with-function-replacements (list function) t)
 (defun test-call-with-function-replacements (replacements function)
   "Call FUNCTION while REPLACEMENTS temporarily replace global functions."
-  (let ((originals
-          (mapcar
-           (lambda (replacement)
-             (cons (first replacement)
-                   (symbol-function (first replacement))))
-           replacements)))
-    (unwind-protect
-         (progn
-           (dolist (replacement replacements)
-             (setf (symbol-function (first replacement))
-                   (second replacement)))
-           (funcall function))
-      (dolist (original originals)
-        (setf (symbol-function (first original))
-              (rest original))))))
+  (surgeon:call-with-function-replacements replacements function))
 
 (-> test-request-history (model-provider json-object) list)
 (defun test-request-history (provider request)
