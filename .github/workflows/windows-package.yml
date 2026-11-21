@@ -89,11 +89,17 @@ jobs:
           }
 
       - name: Bootstrap with shared caches
+        id: bootstrap
         uses: ./.github/actions/windows-bootstrap
 
       - name: Check native bundle publication and ACLs
         shell: pwsh
         run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
+      - name: Check upstream ColorLisp native artifacts
+        shell: pwsh
+        env:
+          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
+        run: script\check-windows-colorlisp-upstream.ps1
       - name: Check ColorLisp packaging in Windows PowerShell 5.1
         shell: powershell
         run: script\check-windows-colorlisp.ps1
@@ -207,11 +213,6 @@ jobs:
       - name: Check native bundle publication and ACLs
         shell: pwsh
         run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
-      - name: Check upstream ColorLisp native artifacts
-        shell: pwsh
-        env:
-          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-        run: script\check-windows-colorlisp-upstream.ps1
       - name: Check
         shell: pwsh
         env:
