@@ -34,10 +34,6 @@
 (defparameter *run-job-failure-message-limit* 2000
   "The largest human-readable failure message written to a result artifact.")
 
-(defparameter *run-job-prompt-output-contract*
-  '(:type :object :properties () :required () :additional-properties t)
-  "The permissive output contract used by an inline prompt job.")
-
 (defparameter *run-job-default-role* "task"
   "The default child role for an inline prompt job.")
 
@@ -56,8 +52,6 @@
    (input-present-p :initarg :input-present-p :initform t
                     :reader run-job-request-input-present-p :type boolean
                     :documentation "Whether the caller supplied opaque input, including NIL.")
-   (output-contract :initarg :output-contract :reader run-job-request-output-contract
-                    :type list :documentation "The validated native task output contract.")
    (timeout-seconds :initarg :timeout-seconds :reader run-job-request-timeout-seconds
                     :type (integer 1) :documentation "The wall-clock job deadline."))
   (:documentation "One validated version-one non-interactive job request."))
@@ -143,7 +137,6 @@
         :role            role
         :prompt          prompt
         :input           nil
-        :output-contract (copy-tree *run-job-prompt-output-contract*)
         :timeout-seconds timeout-seconds))
 
 (-> run-job--envelope-pairs (t) list)
@@ -154,7 +147,7 @@
   (handler-case
       (task--plist-alist
        (rest form)
-       '(:version :id :role :prompt :input :output-contract :timeout-seconds)
+       '(:version :id :role :prompt :input :timeout-seconds)
        :source ':programmatic)
     (task-agent-definition-error (condition)
       (run-job--error ':invalid-envelope "~A" condition))))
@@ -168,13 +161,12 @@
                (unless present-p
                  (run-job--error ':invalid-envelope "Required field ~S is missing." key))
                value)))
-      (let* ((version         (required :version))
-             (identifier      (required :id))
-             (role            (required :role))
-             (prompt          (required :prompt))
-             (input           (required :input))
-             (contract-source (required :output-contract))
-             (timeout         (required :timeout-seconds)))
+      (let ((version    (required :version))
+            (identifier (required :id))
+            (role       (required :role))
+            (prompt     (required :prompt))
+            (input      (required :input))
+            (timeout    (required :timeout-seconds)))
         (unless (eql version 1)
           (run-job--error ':unsupported-version "Unsupported job version ~S." version))
         (unless (and (non-empty-string-p identifier) (<= (length identifier) 256))
@@ -186,16 +178,13 @@
           (run-job--error ':invalid-envelope ":PROMPT must be a bounded non-empty string."))
         (unless (and (integerp timeout) (<= 1 timeout *run-job-maximum-timeout-seconds*))
           (run-job--error ':invalid-envelope ":TIMEOUT-SECONDS is outside the supported range."))
-        (let ((contract
-                (handler-case
-                    (task-output-schema-normalize contract-source :source ':programmatic)
-                  (task-agent-definition-error (condition)
-                    (run-job--error ':invalid-contract "~A" condition)))))
-          (make-instance 'run-job-request
-                         :identifier identifier :role (string-downcase role)
-                         :prompt prompt :input input :output-contract contract
-                         :input-present-p input-present-p
-                         :timeout-seconds timeout))))))
+        (make-instance 'run-job-request
+                       :identifier      identifier
+                       :role            (string-downcase role)
+                       :prompt          prompt
+                       :input           input
+                       :input-present-p input-present-p
+                       :timeout-seconds timeout)))))
 
 (-> run-job--recover-identifier (t) string)
 (defun run-job--recover-identifier (form)
@@ -212,7 +201,6 @@
             (first identifiers)
             ""))
       ""))
-
 
 (-> run-job--write-data-sexp (t &key (:pretty-p boolean)) string)
 (defun run-job--write-data-sexp (value &key pretty-p)
@@ -437,9 +425,8 @@
                   (list
                    (list :item
                          (append
-                          (list :agent    (run-job-request-role request)
-                                :task     assignment
-                                :blocking t)
+                           (list :agent (run-job-request-role request)
+                                 :task  assignment)
                           (when *run-job-event-root-name*
                             (list :name *run-job-event-root-name*)))
                          :definition    definition
@@ -493,45 +480,21 @@
                           (status         (getf result :status)))
                      (setf usage (run-job--usage result))
                      (cond
-                       ((and
-                         (eq status ':success)
-                         (getf result :structured-output-present-p)
-                         (task-output-schema-valid-p
-                          (task-sexp->json
-                           (getf result :structured-output))
-                          (run-job-request-output-contract request)))
-                        (values ':succeeded
-                                (getf result :structured-output)
-                                trace-id usage nil nil))
+                       ((eq status ':success)
+                        (values ':succeeded (getf result :output) trace-id usage nil nil))
                        ((eq status ':aborted)
                         (values ':cancelled nil trace-id usage ':cancelled
-                                (or (getf result :error)
-                                    "The job was cancelled.")))
-                       ((eq status ':success)
-                        (values
-                         ':failed nil trace-id usage ':invalid-output
-                         "The child did not yield contract-valid structured data."))
+                                (or (getf result :error) "The job was cancelled.")))
                        (t
-                        (values
-                         ':failed nil trace-id usage
-                           (if (and (not (getf result :yielded-p))
-                                    (plusp (or (getf result :request-count) 0)))
-                               ':provider-failure
-                               ':child-failure)
-                         (or
-                          (getf result :error)
-                          "The child failed before yielding structured data."))))))))))
+                        (values ':failed nil trace-id usage
+                                (if (member (getf compact-result :error-type)
+                                            '(:provider :authentication :rate-limit :transport))
+                                    ':provider-failure
+                                    ':child-failure)
+                                (or (getf result :error) "The child failed."))))))))))
       (when (and event-orchestrator event-listener)
         (task-orchestrator-remove-listener event-orchestrator event-listener))
       (run-job--close-application application))))
-
-(-> run-job--success-result-valid-p (t list) boolean)
-(defun run-job--success-result-valid-p (result contract)
-  "Return true when tagged RESULT round-trips and satisfies CONTRACT."
-  (handler-case
-      (task-output-schema-valid-p (task-sexp->json result) contract)
-    (error ()
-      nil)))
 
 (-> run-job--run-artifact
     ((option (or pathname string)) (or pathname string) keyword
@@ -600,11 +563,6 @@ JOB-IDENTIFIER names failure results when reading or building the form fails."
                       executor
                       configuration
                       request permission-mode)
-                   (when (and (eq status ':succeeded)
-                              (not (run-job--success-result-valid-p
-                                    result (run-job-request-output-contract request))))
-                     (setf status ':failed result nil category ':invalid-output
-                           message "The child result does not satisfy the supplied contract."))
                    (setf terminal-recorded-p t
                          terminal-status status
                          terminal-category (and category (run-job-event--category category))

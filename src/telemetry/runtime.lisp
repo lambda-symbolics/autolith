@@ -869,8 +869,6 @@ Retain one identity per catalog tool until run end. Never replace another report
           ((or (eq state ':timed-out) (eq category ':timeout)
                (eq (getf terminal :cancellation-reason) ':timeout))
            (values ':error ':timeout nil))
-          ((eq category ':invalid-output)
-           (values ':error ':protocol nil))
           ((member state '(:completed :succeeded))
            (values ':success nil nil))
           ((or (member state '(:aborted :cancelled)) (eq (getf terminal :error-type) ':cancelled))
@@ -879,8 +877,6 @@ Retain one identity per catalog tool until run end. Never replace another report
            (values ':error
                    (or (getf terminal :error-type)
                        (and (eq category ':provider-failure) ':provider)
-                       (and (not (getf terminal :yielded-p))
-                            (plusp (or (getf terminal :request-count) 0)) ':provider)
                        ':internal)
                    nil)))))
 

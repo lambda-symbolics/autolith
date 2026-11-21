@@ -268,7 +268,7 @@
                                         "issue-kind" "authorization" "tool" "shell.run")))
                      "The direct report tool accepts explicit metadata.")
                     (let ((papercut (papercut-report configuration :title "Image renderer returns blank pixels"
-                                                    :content "Fixture raster decoding loses every pixel."
+                                                    :content              "Fixture raster decoding loses every pixel."
                                                     :issue-kind ':broken-tool :tool "fs.view-image")))
                         (papercut-assess configuration (papercut-identifier papercut)
                                          :verdict ':improved :note "Private fixture assessment.")

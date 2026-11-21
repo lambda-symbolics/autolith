@@ -365,21 +365,18 @@
                 "child-edit"
                 (list (agent-test-call :call-id "edit" :namespace "resource" :name "edit"
                                        :arguments "{\"uri\":\"papercut:current\",\"base-revision\":\"\",\"operations\":[]}")))
-               (agent-test-result
-                "terminal"
-                (list (agent-test-call :call-id "yield" :namespace "yield" :name "submit"
-                                       :arguments "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}")))))))
+               (agent-test-result "terminal" (list (agent-test-message "Done.")))))))
        (multiple-value-bind (spans results)
            (test-telemetry-hooks--run-job configuration provider :tools '("resource.read" "resource.edit"))
          (let ((tools (remove-if-not
                        (lambda (span) (equal (test-telemetry--attribute span "autolith.event.kind") "tool"))
                        spans)))
            (test-assert (eq (first results) ':succeeded) "The real child recovers from its resource denials.")
-           (test-assert (= (length tools) 3) "Both child-resource denials and terminal yield are exported.")
-           (dolist (span (subseq tools 0 2))
-             (test-assert
-              (and (equal (test-telemetry--attribute span "autolith.tool.outcome") "permission_denied")
-                   (equal (test-telemetry--attribute span "autolith.tool.error_code") "access-denied")
-                   (equal (test-telemetry--attribute span "error.type") "permission"))
-              "The E2E papercut read and edit are child-policy denials even with full command access.")))))))
+           (test-assert (= (length tools) 2) "Both child-resource denials are exported.")
+           (dolist (span tools)
+            (test-assert
+             (and (equal (test-telemetry--attribute span "autolith.tool.outcome") "permission_denied")
+                  (equal (test-telemetry--attribute span "autolith.tool.error_code") "access-denied")
+                  (equal (test-telemetry--attribute span "error.type") "permission"))
+             "The E2E papercut read and edit are child-policy denials even with full command access.")))))))
   nil)

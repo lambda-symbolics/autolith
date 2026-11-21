@@ -123,7 +123,6 @@
   test-telemetry-run-job-zero-request-failure
   test-telemetry-run-job-provider-failure
   test-telemetry-run-job-unregistered-model
-  test-telemetry-run-job-terminal-yields
   test-telemetry-run-job-terminal-failures
   test-telemetry-run-protocol-failure
   test-telemetry-job-cancellation-hooks

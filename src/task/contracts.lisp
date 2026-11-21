@@ -236,11 +236,6 @@
   "Project a validated task output contract into provider JSON Schema."
   (cl-llm-provider-api:output-schema->json schema))
 
-(-> task-output-schema-valid-p (t list) boolean)
-(defun task-output-schema-valid-p (value schema)
-  "Check a provider value against its validated task contract."
-  (cl-llm-provider-api:output-schema-valid-p value schema))
-
 (-> task-json-decode (string &key (:tool-name string)) json-value)
 (defun task-json-decode (source &key (tool-name "task"))
   "Decode exact JSON arguments and attach canonical tool failure metadata."
@@ -248,24 +243,6 @@
       (cl-llm-provider-api:output-json-decode source)
     (cl-llm-provider-api:output-value-error (condition)
       (error 'task-error :tool-name tool-name
-             :message               (cl-llm-provider-api:provider-api-error-message condition)))))
-
-(-> task-json->sexp (t) t)
-(defun task-json->sexp (value)
-  "Project provider output into a portable tagged task result."
-  (handler-case
-      (cl-llm-provider-api:output-json->sexp value)
-    (cl-llm-provider-api:output-value-error (condition)
-        (error 'task-error :tool-name "task.result"
-               :message               (cl-llm-provider-api:provider-api-error-message condition)))))
-
-(-> task-sexp->json (t) json-value)
-(defun task-sexp->json (value)
-  "Restore provider JSON from a durable tagged task result."
-  (handler-case
-      (cl-llm-provider-api:output-sexp->json value)
-    (cl-llm-provider-api:output-value-error (condition)
-      (error 'task-error :tool-name "child.spawn"
              :message               (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task--character-strings (t) t)

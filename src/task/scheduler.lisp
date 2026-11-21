@@ -153,6 +153,10 @@
                                (or (job-cancellation-reason job)
                                    (getf (task-job-telemetry-terminal job) :cancellation-reason)))
                          (task-job-telemetry-terminal job)))
+            ;; The headless caller reads the terminal result after telemetry cleanup.
+           (let ((error-type (getf terminal :error-type)))
+             (when error-type
+               (setf (getf final-result :error-type) error-type)))
            (values final-result final-report final-state))
       (telemetry--call-safely
        (lambda ()

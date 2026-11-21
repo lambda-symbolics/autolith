@@ -3277,12 +3277,7 @@ terminal publication and join the serving owner before restoring the provider."
                                         (make-instance 'assistant-delta-event :text text))
                                (agent-test-result
                                 (if first-p "child-first-turn" "child-follow-up")
-                                (append
-                                 (list (agent-test-message text))
-                                 (when first-p
-                                   (list (agent-test-call
-                                          :call-id "child-yield" :namespace "yield" :name "submit"
-                                          :arguments "{\"status\":\"success\",\"text\":\"Assignment complete.\"}")))))))
+                                (list (agent-test-message text)))))
                          (with-lock-held (statistics-lock) (decf active))))))))
         (lambda ()
           (unwind-protect
@@ -3408,10 +3403,8 @@ terminal publication and join the serving owner before restoring the provider."
                                   (eq (world-host-application host) application)
                                   (eq (application-participant-state application) state)
                                   (not (typep (application-agent application) 'task-child-agent))
-                                  (equal (config :child-role (application-configuration application)) "task")
-                                  (not (find "yield" (tool-registry-tools (application-tool-registry application))
-                                             :key #'tool-namespace :test #'string=)))
-                             "the same host and endpoint adopt ordinary role execution without assignment-only tools")
+                                  (equal (config :child-role (application-configuration application)) "task"))
+                             "the same host and endpoint adopt ordinary role execution")
                 (dolist (events seen)
                   (test-assert
                    (task-tests--wait-until

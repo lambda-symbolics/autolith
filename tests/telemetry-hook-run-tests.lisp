@@ -4,13 +4,12 @@
 
 (-> test-telemetry-terminal-outcomes () null)
 (defun test-telemetry-terminal-outcomes ()
-  "Classify every job state and boundary override with one outcome function."
+  "Classify every job state and boundary outcome with one outcome function."
   (dolist (case '((nil :error :internal "unfinished-run")
                   ((:state :running) :error :internal "unfinished-run")
                   ((:state :completed) :success nil nil)
                   ((:state :succeeded) :success nil nil)
                   ((:state :failed :request-count 1) :error :internal nil)
-                  ((:state :failed :request-count 1) :error :provider nil)
                   ((:state :failed :request-count 0) :error :internal nil)
                   ((:state :aborted) :cancelled :cancelled nil)
                   ((:state :cancelled) :cancelled :cancelled nil)
@@ -18,7 +17,6 @@
                   ((:state :timed-out) :error :timeout nil)
                   ((:state :aborted :cancellation-reason :timeout) :error :timeout nil)
                   ((:state :failed :category :provider-failure) :error :provider nil)
-                  ((:state :failed :category :invalid-output) :error :protocol nil)
                   ((:state :succeeded :published-p nil) :error :internal nil)
                   ((:state :succeeded :category :result-publication-failed) :error :internal nil)
                   ((:state :failed :category :artifact-failure) :error :internal nil)
@@ -689,30 +687,16 @@
 
 (-> test-telemetry-run-job-publication-outcomes () null)
 (defun test-telemetry-run-job-publication-outcomes ()
-  "Finalize real headless traces only after contract checking and result publication."
-  (dolist (case '(:success :missing-data :invalid-data :artifact-failure :result-publication-failed))
+  "Finalize real headless traces after result publication."
+  (dolist (category '(nil :artifact-failure :result-publication-failed))
     (test-telemetry--call
      (lambda (configuration)
-       (let* ((provider
-                (make-instance
-                 'run-job-test-provider :configuration configuration
-                 :results                              (list (agent-test-result
-                                                              "publication-outcome"
-                                                              (list (agent-test-call
-                                                                     :call-id "terminal" :namespace "yield" :name "submit"
-                                                                     :arguments "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}"))))))
-              (assemble (symbol-function 'task--assemble-child-result)))
+       (let ((provider (make-instance 'run-job-test-provider :configuration configuration
+                                      :results                              (list (agent-test-result
+                                                                                   "publication-outcome"
+                                                                                   (list (agent-test-message "publication-outcome")))))))
          (test-call-with-function-replacements
-          (case case
-            ((:missing-data :invalid-data)
-             (list (list 'task--assemble-child-result
-                         (lambda (&rest arguments)
-                           (let ((result (apply assemble arguments)))
-                             (if (eq case ':missing-data)
-                                 (setf (getf result :structured-output-present-p) nil
-                                       (getf result :structured-output) nil)
-                                 (setf (getf result :structured-output) '(:object ("wrong" "value"))))
-                             result)))))
+          (case category
             (:artifact-failure
              (list (list 'run-job--read-task-result-artifact
                          (lambda (path)
@@ -726,47 +710,30 @@
           (lambda ()
             (multiple-value-bind (spans results)
                 (test-telemetry-hooks--run-job configuration provider :publish-p t)
-              (let* ((roots    (remove-if-not
-                                (lambda (span)
-                                  (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
-                                spans))
+              (let* ((roots    (remove-if-not (lambda (span)
+                                               (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
+                                             spans))
                      (terminal (find ':run-finished (third results)
                                      :key (lambda (record) (getf (rest record) :kind))))
                      (data     (getf (rest terminal) :data))
-                     (fields   (rest (second results)))
-                     (category (case case
-                                 ((:missing-data :invalid-data)
-                                  ':invalid-output)
-                                 (:artifact-failure
-                                  ':artifact-failure)
-                                 (:result-publication-failed
-                                  ':result-publication-failed))))
-                (test-assert (= (length roots) 1)
-                             (format nil "~A: Publication exports exactly one root." case))
-                (test-assert (eq (getf data :status) (if category ':failed ':succeeded))
-                             (format nil "~A: The terminal event agrees with boundary classification." case))
-                (test-assert (eql (first results) (if category 1 0))
-                             (format nil "~A: The exit code agrees with publication success." case))
-                (test-assert (eq (getf data :category) category)
-                             (format nil "~A: The terminal failure category is retained." case))
-                (if (eq case ':result-publication-failed)
-                    (test-assert (and (null (second results)) (not (getf data :published-p)))
-                                 (format nil "~A: A publication failure leaves no success artifact." case))
+                     (fields   (rest (second results))))
+                (test-assert (= (length roots) 1) "Publication exports exactly one root.")
+                (test-assert (and (eq (getf data :status) (if category ':failed ':succeeded))
+                                  (eql (first results) (if category 1 0))
+                                  (eq (getf data :category) category))
+                             "The terminal event and exit code agree with the boundary classification.")
+                (if (eq category ':result-publication-failed)
+                    (test-assert (and (null fields) (not (getf data :published-p)))
+                                 "A publication failure leaves no success artifact.")
                     (test-assert (and (eq (getf fields :status) (getf data :status))
-                                      (eq (getf (getf fields :failure) :category) category))
-                                 (format nil "~A: The published envelope agrees with its terminal event." case)))
-                (test-assert (equal (test-telemetry--attribute (first roots) "autolith.run.outcome")
-                                    (if category "error" "success"))
-                             (format nil "~A: The root agrees with the published terminal state." case))
-                (test-assert (equal (test-telemetry--attribute (first roots) "error.type")
-                                    (case case
-                                      (:success
-                                       nil)
-                                      ((:missing-data :invalid-data)
-                                       "protocol")
-                                      (otherwise
-                                       "internal")))
-                             (format nil "~A: Invalid output is protocol failure; persistence failures are internal." case))))))))))
+                                      (eq (getf (getf fields :failure) :category) category)
+                                      (or category (equal (getf fields :result) "publication-outcome")))
+                                 "The atomically published envelope agrees with its terminal event."))
+                (test-assert (and (equal (test-telemetry--attribute (first roots) "autolith.run.outcome")
+                                         (if category "error" "success"))
+                                  (equal (test-telemetry--attribute (first roots) "error.type")
+                                         (when category "internal")))
+                             "The telemetry root agrees with the published terminal state.")))))))))
   nil)
 
 (-> test-telemetry-run-job-zero-request-failure () null)
@@ -868,41 +835,6 @@
                       "A local configuration failure is not relabelled as a provider rejection.")))))
   nil)
 
-(-> test-telemetry-run-job-terminal-yields () null)
-(defun test-telemetry-run-job-terminal-yields ()
-  "Use the published job state even when its agent turn returned normally."
-  (dolist (case '(("success" :succeeded "success" nil)
-                  ("failed" :failed "error" "internal")
-                  ("aborted" :cancelled "cancelled" "cancelled")))
-    (test-telemetry--call
-     (lambda (configuration)
-       (let ((provider
-               (make-instance
-                'run-job-test-provider :configuration configuration
-                :results
-                (list (agent-test-result
-                       "terminal-yield"
-                       (list (agent-test-call
-                              :call-id "terminal" :namespace "yield" :name "submit"
-                              :arguments
-                              (json-encode
-                               (if (equal (first case) "success")
-                                   (json-object "status" "success" "data" (json-object "answer" "yes"))
-                                   (json-object "status" (first case) "error" "The assignment failed."))))))))))
-         (multiple-value-bind (spans results)
-             (test-telemetry-hooks--run-job configuration provider)
-           (let ((roots (remove-if-not
-                         (lambda (span)
-                           (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
-                         spans)))
-             (test-assert (eq (first results) (second case)) "The real job publishes the yielded state.")
-             (test-assert (= (length roots) 1) "One completed job has one root across provider and agent wrappers.")
-             (test-assert (equal (test-telemetry--attribute (first roots) "autolith.run.outcome") (third case))
-                          "The run outcome follows the terminal job rather than the normal function return.")
-             (test-assert (equal (test-telemetry--attribute (first roots) "error.type") (fourth case))
-                          "The terminal state determines the root category.")))))))
-  nil)
-
 (-> test-telemetry-run-job-terminal-failures () null)
 (defun test-telemetry-run-job-terminal-failures ()
   "Export errors for publication failure and deadline cancellation after successful work."
@@ -918,12 +850,10 @@
                 :results
                 (list (agent-test-result
                        "before-terminal-failure"
-                       (list (agent-test-call
-                              :call-id "terminal-failure" :namespace "yield"
-                              :name      (if timeout-p "note" "submit")
-                              :arguments (if timeout-p
-                                             "{\"note\":\"Keep working.\"}"
-                                             "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}"))))))))
+                        (if timeout-p
+                            (list (agent-test-call :call-id "terminal-failure"
+                                                    :namespace "job" :name "list" :arguments "{}"))
+                            (list (agent-test-message "Done."))))))))
          (test-call-with-function-replacements
           (unless timeout-p
             (list (list 'task--write-result-artifact
@@ -934,7 +864,7 @@
           (lambda ()
             (multiple-value-bind (spans results)
                 (if timeout-p
-                    (test-telemetry-hooks--run-job configuration provider :timeout-seconds 1)
+                    (test-telemetry-hooks--run-job configuration provider :timeout-seconds 1 :tools '("job.list"))
                     (test-telemetry-hooks--run-job configuration provider))
               (let ((roots (remove-if-not
                             (lambda (span)

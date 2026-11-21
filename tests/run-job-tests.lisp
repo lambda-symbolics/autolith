@@ -16,7 +16,7 @@
                               :configuration configuration :events events :event-output stream
                               :executor (lambda (configuration request permissions)
                                           (declare (ignore configuration request permissions))
-                                          (values ':succeeded '(:object ("answer" "yes")) "relative-job" nil nil nil))))
+                                          (values ':succeeded "yes" "relative-job" nil nil nil))))
            "Relative input and output publish successfully.")
           (test-assert (eq (getf (rest (run-job-read-file (merge-pathnames "nested/output.sexp" root))) :status)
                            ':succeeded)
@@ -61,85 +61,78 @@
 (-> test-run-job-runtime-usage () null)
 (defun test-run-job-runtime-usage ()
   "Read usage through the real child, publication, compaction and headless boundary."
-  (dolist (case '((nil nil nil) (t nil nil) (nil t nil) (t t nil) (t nil t)))
-    (with-test-configuration (configuration)
-      (let* ((omit-usage-p              (first case))
-             (invalid-calls-p           (second case))
-             (timeout-p                 (third case))
-             (application               (mission-test--application configuration))
-             (compact-result-function   (symbol-function 'task-job--compact-result))
-             (usage-omitted-p           nil)
-             (request                   (run-job-validate-envelope
-                                         (let ((form (run-job-tests--request-form)))
-                                           (when timeout-p (setf (getf (rest form) :timeout-seconds) 1))
-                                           form)))
-              (definition                (task-agent-definition-create
-                                           :name "custom-runner" :description "Return a result."
-                                           :instructions "Return the answer." :tools nil :source ':test))
-             (provider                  (make-instance
-                                         'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
-                                         :results (list (agent-test-result
-                                                         "usage-response"
-                                                         (list (agent-test-call
-                                                                :call-id   (unless invalid-calls-p "yield-usage")
-                                                                :namespace "yield"
-                                                                :name      (if timeout-p "note" "submit")
-                                                                :arguments (if timeout-p
-                                                                               "{\"note\":\"Continue working.\"}"
-                                                                               "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}")))
-                                                         :usage (json-object "input_tokens" 13 "output_tokens" 7)))))
-             (stream                    (make-string-output-stream))
-             (*run-job-event-emitter*   (run-job-event-emitter-create "run-usage" stream))
-             (*run-job-event-root-name* "usage-root"))
-        (setf (application-provider application) provider
-              (agent-provider (application-agent application)) provider)
-        (task-augment-tool-registry (application-tool-registry application))
-        (run-job-event-emit *run-job-event-emitter* ':run-started nil)
-        (unwind-protect
-             (test-call-with-function-replacements
-              (list (list 'application-create
-                          (lambda (&rest arguments) (declare (ignore arguments)) application))
-                    (list 'run-job--resolve-definition
-                          (lambda (&rest arguments) (declare (ignore arguments)) definition))
-                    ;; Keep deadline coverage independent of installed user skills.
-                    (list 'skill-roots
-                          (lambda (configuration)
-                            (list (merge-pathnames "skills/" (config :config-root configuration)))))
-                    (list 'task-job--compact-result
-                          (lambda (result &key artifact-available-p)
-                            (let ((compact (funcall compact-result-function result
-                                                    :artifact-available-p artifact-available-p)))
-                              (when omit-usage-p
-                                (remf compact :usage))
-                              (setf usage-omitted-p (null (getf compact :usage)))
-                              compact))))
-              (lambda ()
-                (multiple-value-bind (status result trace usage category message)
-                    (run-job-execute-with-application configuration request ':full-access)
-                  (declare (ignore result trace category message))
-                  (test-assert (eq status (cond (timeout-p
-                                                 ':timed-out)
-                                               (invalid-calls-p
-                                                ':failed)
-                                               (t
-                                                ':succeeded)))
-                               "Headless execution distinguishes valid, rejected and timed-out responses.")
-                  (test-assert (equal usage (list :input-tokens 13 :output-tokens 7
-                                                  :provider-requests (if timeout-p 2 1)))
-                               "Final usage survives both retained and omitted compact metadata.")
-                  (test-assert (eq usage-omitted-p omit-usage-p)
-                               "The fixture covers both retained summaries and missing usage."))))
-          (run-job-event-emitter-finish *run-job-event-emitter* (run-job-event-tests--terminal)))
-        (let* ((records  (run-job-event-tests--records (get-output-stream-string stream)))
-               (finished (find ':tool-finished records :key (lambda (record) (getf (rest record) :kind)))))
-          (test-assert
-           (if invalid-calls-p
-               (null finished)
-               (and finished
-                    (equal (getf (getf (rest finished) :data) :tool-name)
-                           (if timeout-p "yield.note" "yield.submit"))
-                    (eq (getf (getf (rest finished) :data) :status) ':succeeded)))
-           "Only validated child calls emit tool completion, with their canonical identity.")))))
+  (dolist (case '((nil nil) (t nil) (t t)))
+    (destructuring-bind (omit-usage-p timeout-p) case
+      (with-test-configuration (configuration)
+        (let* ((application               (mission-test--application configuration))
+               (compact-result-function   (symbol-function 'task-job--compact-result))
+               (usage-omitted-p           nil)
+               (request
+                 (run-job-validate-envelope
+                  (let ((form (run-job-tests--request-form)))
+                    (when timeout-p
+                      (setf (getf (rest form) :timeout-seconds) 1))
+                    form)))
+               (definition
+                 (task-agent-definition-create
+                  :name "custom-runner" :description "Return a result."
+                   :instructions "Return the answer." :tools (when timeout-p '("job.list")) :source ':test))
+               (provider
+                 (make-instance 'run-job-test-provider
+                                :configuration configuration :block-on-empty-p timeout-p
+                                :results (list (agent-test-result
+                                                "usage-response"
+                                                (if timeout-p
+                                                    (list (agent-test-call :call-id   "usage-call"
+                                                                            :namespace "job" :name "list"
+                                                                           :arguments "{}"))
+                                                    (list (agent-test-message "usage-response")))
+                                                :usage (json-object "input_tokens" 13 "output_tokens" 7)))))
+               (stream                    (make-string-output-stream))
+               (*run-job-event-emitter*   (run-job-event-emitter-create "run-usage" stream))
+               (*run-job-event-root-name* "usage-root"))
+          (setf (application-provider application) provider
+                (agent-provider (application-agent application)) provider)
+          (task-augment-tool-registry (application-tool-registry application))
+          (run-job-event-emit *run-job-event-emitter* ':run-started nil)
+          (unwind-protect
+               (test-call-with-function-replacements
+                (list (list 'application-create
+                            (lambda (&rest arguments) (declare (ignore arguments)) application))
+                      (list 'run-job--resolve-definition
+                            (lambda (&rest arguments) (declare (ignore arguments)) definition))
+                      (list 'skill-roots
+                            (lambda (configuration)
+                              (list (merge-pathnames "skills/" (config :config-root configuration)))))
+                      (list 'task-job--compact-result
+                            (lambda (result &key artifact-available-p)
+                              (let ((compact (funcall compact-result-function result
+                                                      :artifact-available-p artifact-available-p)))
+                                (when omit-usage-p
+                                  (remf compact :usage))
+                                (setf usage-omitted-p (null (getf compact :usage)))
+                                compact))))
+                (lambda ()
+                  (multiple-value-bind (status result trace usage category message)
+                      (run-job-execute-with-application configuration request ':full-access)
+                    (declare (ignore trace category message))
+                    (test-assert (if timeout-p
+                                     (eq status ':timed-out)
+                                     (and (eq status ':succeeded) (equal result "usage-response")))
+                                 "Headless execution returns ordinary text or reports timeout.")
+                    (test-assert (equal usage (list :input-tokens 13 :output-tokens 7
+                                                   :provider-requests (if timeout-p 2 1)))
+                                 "Final usage survives omitted compact metadata.")
+                    (test-assert (eq usage-omitted-p omit-usage-p)
+                                 "The fixture covers both retained summaries and missing usage."))))
+            (run-job-event-emitter-finish *run-job-event-emitter* (run-job-event-tests--terminal)))
+          (when timeout-p
+            (let* ((records  (run-job-event-tests--records (get-output-stream-string stream)))
+                   (finished (find ':tool-finished records :key (lambda (record) (getf (rest record) :kind))))
+                   (data     (getf (rest finished) :data)))
+              (test-assert (and (equal (getf data :tool-name) "job.list")
+                                (eq (getf data :status) ':succeeded))
+                           "A real tool completion is streamed before the timeout.")))))))
   nil)
 
 (defclass run-job-tests--stalled-input (trivial-gray-streams:fundamental-character-input-stream)
@@ -161,9 +154,6 @@
           (string= (run-job-request-role request) *run-job-default-role*)
           (string= (run-job-request-prompt request) "Do the task.")
           (null (run-job-request-input request))
-          (equal (run-job-request-output-contract request)
-                 (task-output-schema-normalize
-                  *run-job-prompt-output-contract* :source ':programmatic))
           (= (run-job-request-timeout-seconds request)
              *run-job-prompt-timeout-seconds*))
      "an inline prompt builds the ordinary version-one request")
@@ -207,7 +197,6 @@
           (list :autolith-job :version 1 :id "bad-timeout" :role "task"
                 :prompt          "Do it."
                 :input           nil
-                :output-contract *run-job-prompt-output-contract*
                 :timeout-seconds 0))
          nil)
      (run-job-error (condition)
@@ -230,15 +219,14 @@
            (declare (ignore configuration permission-mode))
            (test-assert (string= (run-job-request-prompt request) "Say yes.")
                         "the inline prompt reaches the executor unchanged")
-           (values ':succeeded '(:object ("answer" "yes")) "prompt-trace"
-                   '(:input-tokens 1 :output-tokens 1 :provider-requests 1)
-                   nil nil))))
+           (values ':succeeded "yes" "prompt-trace"
+                  '(:input-tokens 1 :output-tokens 1 :provider-requests 1)
+                  nil nil))))
        "the inline prompt path publishes through the ordinary boundary")
       (let ((result (run-job-tests--read-result output)))
         (test-assert
          (and (eq (getf (rest result) :status) ':succeeded)
-              (equal (getf (rest result) :result)
-                     '(:object ("answer" "yes"))))
+              (equal (getf (rest result) :result) "yes"))
          "the inline prompt result artifact is complete"))
       (let* ((oversized-output (merge-pathnames "prompt-failure.sexp" root))
              (events           (make-string-output-stream)))
@@ -355,22 +343,15 @@
          "the command line preserves the requested prompt options"))))
   nil)
 
-(-> run-job-tests--request-form
-    (&key (:role string) (:contract list) (:prompt string) (:input t))
-    list)
+(-> run-job-tests--request-form (&key (:role string) (:prompt string) (:input t)) list)
 (defun run-job-tests--request-form
     (&key
-       (role "custom-runner")
-       (contract '(:type :object
-                   :properties (("answer" (:type :string)))
-                   :required ("answer")
-                   :additional-properties nil))
-       (prompt "Return the answer.")
-       (input '(:value "opaque")))
+      (role "custom-runner")
+      (prompt "Return the answer.")
+      (input '(:value "opaque")))
   "Return one valid generic job form for tests."
   (list :autolith-job :version 1 :id "job-1" :role role
-        :prompt prompt :input input
-        :output-contract contract :timeout-seconds 30))
+        :prompt prompt :input input :timeout-seconds 30))
 
 (-> run-job-tests--temporary-directory () pathname)
 (defun run-job-tests--temporary-directory ()
@@ -394,8 +375,7 @@
          (snapshot      (provider--registry-snapshot))
          (request
            (run-job-validate-envelope
-            (run-job-tests--request-form
-             :role "init-runner" :contract '(:type :string)))))
+             (run-job-tests--request-form :role "init-runner"))))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
@@ -459,37 +439,27 @@
   (let ((request (run-job-validate-envelope (run-job-tests--request-form))))
     (test-assert
      (and (string= (run-job-request-identifier request) "job-1")
-          (string= (run-job-request-role request) "custom-runner")
-          (equal (getf (run-job-request-output-contract request) :type) :object))
+          (string= (run-job-request-role request) "custom-runner"))
      "run-job validates one complete version-one envelope"))
   (dolist (source
            '("(:autolith-job :version 1) (:extra)"
              "#.(progn :executed)"
              "(quote (:autolith-job))"
              "(:autolith-job :version 1 :version 1)"
-             "(:autolith-job :version 2 :id \"x\" :role \"task\" :prompt \"x\" :input nil :output-contract (:type :string) :timeout-seconds 1)"
-             "(:autolith-job :version 1 :id \"x\" :role \"task\" :prompt \"x\" :input foo:bar :output-contract (:type :string) :timeout-seconds 1)"))
+             "(:autolith-job :version 2 :id \"x\" :role \"task\" :prompt \"x\" :input nil :timeout-seconds 1)"
+             "(:autolith-job :version 1 :id \"x\" :role \"task\" :prompt \"x\" :input foo:bar :timeout-seconds 1)"))
     (test-assert
      (handler-case
          (progn (run-job-validate-envelope (run-job-read-string source)) nil)
        (run-job-error () t))
      (format nil "run-job rejects unsafe or malformed input ~S" source)))
-  (test-assert
-   (handler-case
-       (progn
-         (run-job-validate-envelope
-          (run-job-tests--request-form :contract '(:type :made-up)))
-         nil)
-     (run-job-error (condition)
-       (eq (run-job-error-category condition) :invalid-contract)))
-   "run-job rejects malformed output contracts before execution")
   (let* ((root   (run-job-tests--temporary-directory))
          (target (merge-pathnames "nested/result.sexp" root))
          (result
            (run-job-result-envelope
             "job-1" :succeeded
             :started-at 0 :finished-at 1
-            :result   '(:object ("answer" "yes"))
+             :result  "yes"
             :trace-id "trace-1"
             :usage    '(:input-tokens 2 :output-tokens 3 :provider-requests 1))))
     (unwind-protect
@@ -505,9 +475,7 @@
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (let* ((path   (merge-pathnames "child-result.sexp" root))
-           (result '(:status :success :output "child output" :yielded-p t
-                     :structured-output-present-p t
-                     :structured-output (:object ("answer" "yes"))
+           (result '(:status :success :output "child output"
                      :request-count 1 :usage (("input_tokens" 2)))))
       (snapshot-write path result)
       (test-assert (equal (run-job--read-task-result-artifact path) result)
@@ -628,11 +596,7 @@
            (let* ((configuration
                     (configuration-create
                      :working-directory           root
-                     :defer-provider-validation-p t))
-                  (request
-                    (run-job-validate-envelope (run-job-read-file input)))
-                  (definition
-                    (run-job--resolve-definition configuration request)))
+                     :defer-provider-validation-p t)))
              (test-assert
               (zerop
                (run-job-run
@@ -645,73 +609,15 @@
                    (eq active-configuration configuration)
                    "run-job preserves the caller's parsed configuration")
                   (values
-                   ':succeeded '(:object ("answer" "yes")) "trace-custom"
+                   ':succeeded "yes" "trace-custom"
                    '(:input-tokens 1 :output-tokens 1 :provider-requests 1)
                    nil nil))))
               "the generic run-job seam returns success"))
            (let ((result (run-job-tests--read-result output)))
              (test-assert
               (and (eq (getf (rest result) :status) :succeeded)
-                   (equal (getf (rest result) :result)
-                          '(:object ("answer" "yes"))))
-               "a caller-defined non-domain role uses the generic seam"))))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  (let* ((root       (run-job-tests--temporary-directory))
-         (input      (merge-pathnames "invalid-contract.sexp" root))
-         (output     (merge-pathnames "invalid-contract-result.sexp" root))
-         (executed-p nil))
-    (unwind-protect
-         (progn
-           (task-tests--write-text
-            input
-            (run-job--write-data-sexp
-             (run-job-tests--request-form :contract '(:type :made-up))
-             :pretty-p t))
-           (test-assert
-            (= (run-job-run
-                input output ':auto
-                :executor
-                (lambda (&rest arguments)
-                  (declare (ignore arguments))
-                  (setf executed-p t)))
-               64)
-            "invalid contracts return a command-line data error")
-           (let* ((result  (run-job-tests--read-result output))
-                  (fields  (rest result))
-                  (failure (getf fields :failure)))
-             (test-assert
-              (and (not executed-p)
-                   (string= (getf fields :id) "job-1")
-                   (eq (getf failure :category) ':invalid-contract))
-              "validation failures write a categorized result artifact")))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  (let* ((root   (run-job-tests--temporary-directory))
-         (input  (merge-pathnames "invalid-output.sexp" root))
-         (output (merge-pathnames "invalid-output-result.sexp" root)))
-    (unwind-protect
-         (progn
-           (task-tests--write-text
-            input
-            (run-job--write-data-sexp
-             (run-job-tests--request-form) :pretty-p t))
-           (test-assert
-            (= (run-job-run
-                input output ':auto
-                :executor
-                (lambda (configuration request permission-mode)
-                  (declare (ignore configuration request permission-mode))
-                  (values ':succeeded '(:object ("wrong" "value"))
-                          "trace-invalid" nil nil nil)))
-               1)
-            "contract-invalid executor output fails the job")
-           (let* ((result (run-job-tests--read-result output))
-                  (fields (rest result)))
-             (test-assert
-              (and (eq (getf fields :status) ':failed)
-                   (string= (getf fields :trace-id) "trace-invalid")
-                   (eq (getf (getf fields :failure) :category)
-                       ':invalid-output))
-              "invalid structured output keeps its trace and category")))
+                   (equal (getf (rest result) :result) "yes"))
+              "a caller-defined job publishes ordinary result text")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((root   (run-job-tests--temporary-directory))
          (input  (merge-pathnames "interrupted.sexp" root))
@@ -739,4 +645,4 @@
                        ':process-failure))
               "non-error serious conditions publish a terminal result artifact")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-nil
+  nil)

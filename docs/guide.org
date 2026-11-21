@@ -3369,8 +3369,8 @@ Session export collects task metadata independently of local log storage.
 
 =run-job= executes one caller-supplied child role without an interactive
 terminal. It uses normal project, user, and bundled task-agent discovery,
-provider and MCP configuration, role tool and spawn policy, task traces, usage
-accounting, and native structured-output contracts.
+provider and MCP configuration, role tool and spawn policy, task traces, and
+usage accounting. It publishes the child's ordinary response.
 
 #+BEGIN_SRC sh
 autolith --permissions auto run-job \
@@ -3388,11 +3388,10 @@ autolith --permissions auto run-job \
   --output /path/to/result.sexp
 #+END_SRC
 
-The inline defaults are role =task=, timeout 86,400 seconds, a generated job ID,
-and a permissive object output contract. Inline jobs use the same role
-validation, telemetry, events and atomic result publication as envelope jobs.
-Prompt-read failures and oversized prompts produce the normal failure artifact
-and terminal events.
+The inline defaults are role =task=, timeout 86,400 seconds, and a generated job
+ID. Inline jobs use the same role validation, telemetry, events and atomic
+result publication as envelope jobs. Prompt-read failures and oversized prompts
+produce the normal failure artifact and terminal events.
 
 With =--input=, supply exactly one bounded data-only S-expression:
 
@@ -3403,23 +3402,14 @@ With =--input=, supply exactly one bounded data-only S-expression:
  :role "project-role"
  :prompt "Perform the assigned work."
  :input (:caller-owned "opaque data")
- :output-contract (:type :object
-                   :properties (("answer" (:type :string)))
-                   :required ("answer")
-                   :additional-properties nil)
  :timeout-seconds 900)
 #+END_SRC
 
-The supplied output contract applies only to that run and does not alter the
-role definition.
-
-The terminal artifact is atomically installed at =--output= as
-=(:autolith-job-result :version 1 ...)=. Structured objects and arrays use
-=:OBJECT= and =:ARRAY= tags, so false, null, and empty arrays remain distinct.
-
-Failures use stable categories and statuses =:failed=, =:cancelled=, or
-=:timed-out=. Successful jobs use =:succeeded= and include the contracted
-result. Trace and usage fields are included when available.
+Autolith atomically installs the terminal artifact at =--output= as
+=(:autolith-job-result :version 1 ...)=. Successful jobs use =:succeeded= and
+include the child's response text in =:result=. Failures use stable categories
+and statuses =:failed=, =:cancelled=, or =:timed-out=. Trace and usage fields are
+included when available.
 
 Headless execution never opens an approval picker. =auto= classifies shell
 commands and denies decisions that would require approval. =sandbox= permits
