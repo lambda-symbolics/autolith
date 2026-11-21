@@ -37,33 +37,22 @@
        (client-id *grok-oauth-client-id*)
        request-function
        poll-function
-       (sleep-function #'sleep)
-       (clock-function #'device-authentication-monotonic-seconds)
-       (browser-function #'device-authentication-open-browser)
-       (poll-timeout *device-authentication-timeout*))
+       (sleep-function nil sleep-supplied-p)
+       (clock-function nil clock-supplied-p)
+       (browser-function nil browser-supplied-p)
+       (poll-timeout nil timeout-supplied-p))
   "Create a Grok device client with optional I/O and timing overrides."
-  (unless (and (non-empty-string-p issuer)
-               (non-empty-string-p client-id)
-               (plusp poll-timeout))
-    (device-authentication-fail
-     :stage   ':configuration
-     :message "Grok device authentication configuration is invalid."))
-  (make-instance
-   'grok-device-authentication-client
-   :issuer                  (string-right-trim '(#\/) issuer)
-   :client-id               client-id
-   :device-code-path        "/oauth2/device/code"
-   :token-path              "/oauth2/token"
-   :scope                   (format nil "~{~A~^ ~}" *grok-oauth-scopes*)
-   :request-code-parameters (list (cons "referrer" "autolith"))
-   :request-function
-   (or request-function #'device-authentication-request)
-   :poll-function
-   (or poll-function #'rfc8628-device-authentication-poll-for-tokens)
-   :sleep-function          sleep-function
-   :clock-function          clock-function
-   :browser-function        browser-function
-   :poll-timeout            poll-timeout))
+  (apply #'make-instance 'grok-device-authentication-client
+         :issuer issuer :client-id client-id
+         :device-code-path "/oauth2/device/code" :token-path "/oauth2/token"
+         :scope                   (format nil "~{~A~^ ~}" *grok-oauth-scopes*)
+         :request-code-parameters (list (cons "referrer" "autolith"))
+         (append (when request-function (list :request-function request-function))
+                 (when poll-function (list :poll-function poll-function))
+                 (when sleep-supplied-p (list :sleep-function sleep-function))
+                 (when clock-supplied-p (list :clock-function clock-function))
+                 (when browser-supplied-p (list :browser-function browser-function))
+                 (when timeout-supplied-p (list :poll-timeout poll-timeout)))))
 
 (defmethod device-authentication-display-code
     ((client grok-device-authentication-client)

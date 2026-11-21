@@ -76,32 +76,21 @@
        (client-id *nous-oauth-client-id*)
        request-function
        poll-function
-       (sleep-function #'sleep)
-       (clock-function #'device-authentication-monotonic-seconds)
-       (browser-function #'device-authentication-open-browser)
-       (poll-timeout *device-authentication-timeout*))
+       (sleep-function nil sleep-supplied-p)
+       (clock-function nil clock-supplied-p)
+       (browser-function nil browser-supplied-p)
+       (poll-timeout nil timeout-supplied-p))
   "Create a Nous device client with optional I/O and timing overrides."
-  (unless (and (non-empty-string-p portal-url)
-               (non-empty-string-p client-id)
-               (plusp poll-timeout))
-    (device-authentication-fail
-     :stage   ':configuration
-     :message "Nous device authentication configuration is invalid."))
-  (make-instance
-   'nous-device-authentication-client
-   :issuer           (string-right-trim '(#\/) portal-url)
-   :client-id        client-id
-   :device-code-path "/api/oauth/device/code"
-   :token-path       "/api/oauth/token"
-   :scope            *nous-oauth-scope*
-   :request-function
-   (or request-function #'device-authentication-request)
-   :poll-function
-   (or poll-function #'rfc8628-device-authentication-poll-for-tokens)
-   :sleep-function   sleep-function
-   :clock-function   clock-function
-   :browser-function browser-function
-   :poll-timeout     poll-timeout))
+  (apply #'make-instance 'nous-device-authentication-client
+         :issuer portal-url :client-id client-id
+         :device-code-path "/api/oauth/device/code" :token-path "/api/oauth/token"
+         :scope *nous-oauth-scope*
+         (append (when request-function (list :request-function request-function))
+                 (when poll-function (list :poll-function poll-function))
+                 (when sleep-supplied-p (list :sleep-function sleep-function))
+                 (when clock-supplied-p (list :clock-function clock-function))
+                 (when browser-supplied-p (list :browser-function browser-function))
+                 (when timeout-supplied-p (list :poll-timeout poll-timeout)))))
 
 (defmethod device-authentication-display-code
     ((client nous-device-authentication-client)
