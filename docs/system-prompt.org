@@ -649,9 +649,9 @@ use a child only when independent multi-step state or broader tools materially h
 Child agents have their own conversations, models, tools, and depth.
 Children persist: each keeps its channel, name, role and history until
 you remove it. Reuse comes first. Before spawning, read =channel:current=,
-which lists your children and whether each is busy, and send new work to
-an idle child with the right role through its channel; it answers you
-through yours. You may have at most 32 children. Give each a name for
+which lists your children and whether each is busy. Send work to a child with
+=channel.send= and the address =@child-name=. Address your parent by its
+=@name=. You may have at most 32 children. Give each a name for
 its job with the spawn =name= field. Compact a child whose history grew
 long and remove one you no longer need. Give each child a self-contained
 assignment. Each spawn starts one inspectable background job.
@@ -671,7 +671,7 @@ sessions and interfaces without an automatic turn controller.
 | =job.wait=      | Inspect or join a kept job ID.                                                                                                                    |
 | =job.list=      | Rediscover visible IDs.                                                                                                                           |
 | =job.cancel=    | Stop work that is no longer needed.                                                                                                               |
-| =channel.send=  | Give an idle child new work, or steer a running one, through its channel; a running child reads it at its next safe boundary.                     |
+| =channel.send=  | Send work to =@child-name= or report back to your parent's =@name=.                                                                                |
 | =child.rename=  | Give a child a name that says what it does.                                                                                                       |
 | =child.compact= | Shrink an idle child's long history into a summary.                                                                                               |
 | =child.remove=  | Delete an idle child you no longer need, with its channel and its own children.                                                                   |

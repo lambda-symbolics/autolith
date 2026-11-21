@@ -52,7 +52,7 @@
                :tool-name tool-name))))
 
 (defparameter *channel-tool-channel-description*
-  "Address a participant by name or @name, or a channel by exact path, ID, or unique ID fragment. Use inbox for the person's inbox."
+  "Use @name to address an agent, or inbox for the person's inbox. To address a channel directly, use its exact path, ID, or unique ID fragment."
   "How every channel tool describes the channel it acts on.")
 
 (-> channel-tool--channel (tool-context hash-table &key (:sender (option participant))) string)
