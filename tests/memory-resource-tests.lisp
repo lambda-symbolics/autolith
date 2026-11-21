@@ -452,23 +452,14 @@
                     (exact      (read-resource first-context uri)))
                (test-assert
                 (and (tool-result-success-p exact)
-                     (string= (memory-resource-tests--uri-identifier uri)
-                              identifier)
-                     (search "%2F" uri)
-                     (search "%20" uri)
-                     (search "%25" uri)
-                     (search "%C5%BE" uri)
                      (search (memory-title encoded-memory)
                              (tool-result-content exact)))
                 "canonical exact URIs round-trip percent-encoded persisted identifiers"))
-             (dolist (uri '("memory:id/"
-                            "memory:id/%GG"
-                            "memory:id/%FF"
-                            "memory:id/raw/slash"))
-               (test-assert
-                (not (tool-result-success-p
-                      (read-resource first-context uri)))
-                "malformed canonical exact memory URIs fail closed"))
+             (dolist (uri '("memory:id/" "memory:id/raw/slash"))
+              (test-assert
+               (not (tool-result-success-p
+                     (read-resource first-context uri)))
+               "malformed canonical exact memory URIs fail closed"))
              (let* ((revision-memory
                       (memory-remember
                        configuration

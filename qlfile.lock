@@ -112,8 +112,8 @@
   :version "git-83a5fc4d7cb8e584edff4674f746654251711f5f"))
 ("cl-resources" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-resources.git" :ref "6fa84c8ab0a87706b2dc266aafb54696c26d919f")
-  :version "git-6fa84c8ab0a87706b2dc266aafb54696c26d919f"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-resources.git" :ref "d17ecf154443fae229e4218120f995efa78a3c6e")
+  :version "git-d17ecf154443fae229e4218120f995efa78a3c6e"))
 ("clasted" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clasted.git" :ref "669dbf5ef7c9d8b6d31678f7d4b9677f3a2166b7")

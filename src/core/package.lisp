@@ -11,6 +11,9 @@
                 #:resource-observation-content
                 #:resource-observation-metadata
                 #:resource-uri-parse
+                #:resource-uri-encode
+                #:resource-uri-decode
+                #:resource-uri-unreserved-octet-p
                 #:resource-capabilities
                 #:resource-observe
                 #:resource-apply-operations

@@ -1041,7 +1041,7 @@ them, so a replacement that omits them keeps the recorded versions."
   (if (resource-revision-stale-actual-revision condition)
       (format nil "Resource revision ~A is stale: ~A changed to revision ~A. Reread ~A with resource.read and retry against the returned revision."
               base-revision
-              (resource-revision-stale-uri condition)
+              (cl-resources:resource-error-uri condition)
               (resource-revision-stale-actual-revision condition)
               uri)
       (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
