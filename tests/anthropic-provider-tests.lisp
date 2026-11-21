@@ -599,81 +599,85 @@
                                         do (remhash "cache_control" block)))
                          copy))
 
-                   (build ()
-                     "Build and dispatch one request, checking the prior wire prefix and marker budget."
-                     (let* ((*provider-context-request* (list :conversation conversation))
-                            (request                    (provider-request-object provider conversation tools))
-                            (messages                   (unmarked (json-get request "messages")))
-                            (markers
-                              (+ (loop for key in '("system" "tools")
-                                       sum (count-if (lambda (block) (json-get block "cache_control"))
-                                                     (or (json-get request key) #())))
-                                 (loop for message across (json-get request "messages")
-                                       sum (count-if (lambda (block) (json-get block "cache_control"))
-                                                     (json-get message "content"))))))
-                       (when previous
-                         (test-assert (and (<= (length previous) (length messages))
-                                           (equalp previous (subseq messages 0 (length previous))))
-                                      "Every dispatched message is an exact prefix across append-only changes"))
-                       (test-assert (<= markers 4) "The complete request uses at most four cache breakpoints")
-                       (test-assert
-                        (cl-llm-provider-api:wire-request-suffix
-                         (getf *provider-context-request* :projection))
-                        "Internal canonical projection preserves ordinary admission evidence")
-                       (let ((*provider-mission-output-allowance* 128))
-                         (provider-open-response-stream provider request :credentials credentials
-                                                                        :conversation conversation))
-                       (test-assert (and (= (json-get sent "max_tokens") 128)
-                                         (> (json-get request "max_tokens") 128))
-                                    "Admission dispatches a capped copy without changing the built request")
-                       (setf previous messages)
-                       request))
+                     (build ()
+                       "Build and dispatch one request, checking the prior wire prefix and marker budget."
+                       (let* ((*provider-context-request* (list :conversation conversation))
+                              (request                    (provider-request-object provider conversation tools))
+                              (messages                   (unmarked (json-get request "messages")))
+                              (markers
+                                (+ (loop for key in '("system" "tools")
+                                         sum (count-if (lambda (block) (json-get block "cache_control"))
+                                                       (or (json-get request key) #())))
+                                   (loop for message across (json-get request "messages")
+                                         sum (count-if (lambda (block) (json-get block "cache_control"))
+                                                       (json-get message "content"))))))
+                         (when previous
+                           (test-assert (and (<= (length previous) (length messages))
+                                             (equalp previous (subseq messages 0 (length previous))))
+                                        "Every dispatched message is an exact prefix across append-only changes"))
+                         (test-assert (<= markers 4) "The complete request uses at most four cache breakpoints")
+                         (test-assert
+                          (cl-llm-provider-api:wire-request-suffix
+                           (getf *provider-context-request* :projection))
+                          "Internal canonical projection preserves ordinary admission evidence")
+                         (let ((*provider-mission-output-allowance* 128))
+                           (provider-open-response-stream provider request :credentials credentials
+                                                                          :conversation conversation))
+                         (test-assert (and (= (json-get sent "max_tokens") 128)
+                                           (> (json-get request "max_tokens") 128))
+                                      "Admission dispatches a capped copy without changing the built request")
+                         (setf previous messages)
+                         request))
 
-                   (tool-round (index)
-                     "Append a complete tool round, optionally with signed thinking."
-                     (conversation-append-provider-item
-                      conversation (json-object "type" "message" "role" "assistant"
-                                                "content" (if signed-p
-                                                              (json-array (json-object "type" "thinking" "thinking" "signed"
-                                                                                       "signature" (format nil "prefix-signature-~D" index)))
-                                                              (json-array (json-object "type" "output_text" "text" "Tool work")))))
-                     (conversation-append-provider-item
-                      conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
-                                                "call_id" (format nil "prefix-call-~D" index) "arguments" "{}"))
-                     (conversation-append-provider-item
-                      conversation (json-object "type" "function_call_output"
-                                                "call_id" (format nil "prefix-call-~D" index) "output" "fresh tool result"))))
-            (test-call-with-function-replacements
-             (list (list 'provider-post-event-stream
-                         (lambda (url content &key headers)
-                           (declare (ignore url headers))
-                           (setf sent (json-decode (babel:octets-to-string content :encoding ':utf-8)))
-                           (values (make-string-input-stream "") 200 nil))))
-             (lambda ()
-               (conversation-append-user-message conversation "Question")
-               (build)
-                 (let* ((shared (json-object "nested" (json-object "label" "same")))
-                        (wire (json-array
-                               (json-object "role" "user" "content"
-                                            (json-array
-                                             (json-object "type" "text" "payload" shared)
-                                             (json-object "type" "text" "payload" shared)))))
-                        (copy (anthropic--unmarked-messages wire))
-                        (first-block (aref (json-get (aref copy 0) "content") 0))
-                        (second-block (aref (json-get (aref copy 0) "content") 1)))
-                   (let* ((first-nested (json-get (json-get first-block "payload") "nested"))
-                          (second-nested (json-get (json-get second-block "payload") "nested"))
-                          (first-label (gethash "label" first-nested))
-                          (first-key (first (loop for key being the hash-keys of first-nested collect key))))
-                     (setf (char first-label 0) #\X
-                           (char first-key 0) #\X)
-                     (test-assert (and (equal (gethash "label" second-nested) "same")
-                                       (equal (gethash "label" (json-get (json-get (aref (json-get (aref wire 0) "content") 0) "payload") "nested")) "same"))
-                                   "Repeated Anthropic values detach mutable strings and keys"))
+                     (tool-round (index)
+                       "Append a complete tool round, optionally with signed thinking."
+                       (conversation-append-provider-item
+                        conversation (json-object "type" "message" "role" "assistant"
+                                                  "content" (if signed-p
+                                                                (json-array (json-object "type" "thinking" "thinking" "signed"
+                                                                                         "signature" (format nil "prefix-signature-~D" index)))
+                                                                (json-array (json-object "type" "output_text" "text" "Tool work")))))
+                       (conversation-append-provider-item
+                        conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
+                                                  "call_id" (format nil "prefix-call-~D" index) "arguments" "{}"))
+                       (conversation-append-provider-item
+                        conversation (json-object "type" "function_call_output"
+                                                  "call_id" (format nil "prefix-call-~D" index) "output" "fresh tool result"))))
+             (test-call-with-function-replacements
+              (list (list 'provider-post-event-stream
+                          (lambda (url content &key headers)
+                            (declare (ignore url headers))
+                            (setf sent (json-decode (babel:octets-to-string content :encoding ':utf-8)))
+                            (values (make-string-input-stream "") 200 nil))))
+              (lambda ()
+                (conversation-append-user-message conversation "Question")
+                (build)
+                (let* ((shared       (json-object "nested" (json-object "label" "same")))
+                       (wire         (json-array
+                                      (json-object "role" "user" "content"
+                                                   (json-array
+                                                    (json-object "type" "text" "payload" shared)
+                                                    (json-object "type" "text" "payload" shared)))))
+                       (copy         (anthropic--unmarked-messages wire))
+                       (first-block  (aref (json-get (aref copy 0) "content") 0))
+                       (second-block (aref (json-get (aref copy 0) "content") 1)))
+                  (let* ((first-nested  (json-get (json-get first-block "payload") "nested"))
+                         (second-nested (json-get (json-get second-block "payload") "nested"))
+                         (first-label   (gethash "label" first-nested))
+                         (first-key     (first (loop for key being the hash-keys of first-nested collect key))))
+                    (setf (char first-label 0) #\X
+                          (char first-key 0) #\X)
+                    (test-assert (and (equal (gethash "label" second-nested) "same")
+                                      (equal (gethash "label" (json-get (json-get (aref (json-get (aref wire 0) "content") 0) "payload") "nested")) "same"))
+                                 "Repeated Anthropic values detach mutable strings and keys"))
                  (multiple-value-bind (tail matches-p)
                      (anthropic--appended-messages
-                      (json-array (json-object "role" "User" "content" (json-array "same")))
-                      (json-array (json-object "role" "user" "content" (json-array "same"))))
+                      (json-array
+                       (json-object "role" "user" "content"
+                                    (json-array (json-object "type" "text" "text" "Same"))))
+                      (json-array
+                       (json-object "role" "user" "content"
+                                    (json-array (json-object "type" "text" "text" "same")))))
                    (test-assert (and (null matches-p) (zerop (length tail)))
                                 "Changed-case prefix content does not reuse the cache"))
                  (let ((request
@@ -690,35 +694,34 @@
                    (test-assert (= 4 (count-if (lambda (block) (json-get block "cache_control"))
                                                (json-get (aref (json-get request "messages") 0) "content")))
                                 "Anthropic cache marker admission remains bounded"))
-               (dotimes (index 6)
-                 (tool-round index)
-                 (let ((request (build)))
-                   (test-assert (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode request)))
-                                "Unchanged request-local context occurs once across multiple tool rounds")))
-               (setf body "PREFIX-CONTEXT-TWO")
-               (let ((changed (build)))
-                 (test-assert (and (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode changed)))
-                                   (= 1 (cl-ppcre:count-matches body (json-encode changed))))
-                              "Changed context is appended once without rewriting the dispatched prefix"))
-               (build)
-               (conversation-append-provider-item
-                conversation (json-object "type" "message" "role" "assistant"
-                                          "content" (json-array (json-object "type" "output_text" "text" "Answer"))))
-               (conversation-append-user-message conversation "Fresh user input")
-               (test-assert (search "Fresh user input" (json-encode (build)))
-                            "New user input follows the dispatched context without removing it")
-               (conversation-append-user-message conversation "Additional steering input")
-               (test-assert (search "Additional steering input" (json-encode (build)))
-                            "Consecutive user input extends the wire tail without rewriting an old message")
-               (setf (config :model configuration) "claude-sonnet-5-5"
-                     previous nil)
-               (let ((reset (build)))
-                 (test-assert (and (not (search "PREFIX-CONTEXT-ONE" (json-encode reset)))
-                                   (search body (json-encode reset)))
-                              "Changed request headers start a fresh projection with current context"))
-               (let ((loaded (conversation-load (conversation-pathname conversation))))
-                 (test-assert (and (null (conversation-anthropic-request-state loaded))
-                                   (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
-                              "Request-local prefixes are neither durable history nor restart state")))))))))
-  nil)
-)
+                 (dotimes (index 6)
+                   (tool-round index)
+                   (let ((request (build)))
+                     (test-assert (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode request)))
+                                  "Unchanged request-local context occurs once across multiple tool rounds")))
+                 (setf body "PREFIX-CONTEXT-TWO")
+                 (let ((changed (build)))
+                   (test-assert (and (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode changed)))
+                                     (= 1 (cl-ppcre:count-matches body (json-encode changed))))
+                                "Changed context is appended once without rewriting the dispatched prefix"))
+                 (build)
+                 (conversation-append-provider-item
+                  conversation (json-object "type" "message" "role" "assistant"
+                                            "content" (json-array (json-object "type" "output_text" "text" "Answer"))))
+                 (conversation-append-user-message conversation "Fresh user input")
+                 (test-assert (search "Fresh user input" (json-encode (build)))
+                              "New user input follows the dispatched context without removing it")
+                 (conversation-append-user-message conversation "Additional steering input")
+                 (test-assert (search "Additional steering input" (json-encode (build)))
+                              "Consecutive user input extends the wire tail without rewriting an old message")
+                 (setf (config :model configuration) "claude-sonnet-5-5"
+                       previous nil)
+                 (let ((reset (build)))
+                   (test-assert (and (not (search "PREFIX-CONTEXT-ONE" (json-encode reset)))
+                                     (search body (json-encode reset)))
+                                "Changed request headers start a fresh projection with current context"))
+                 (let ((loaded (conversation-load (conversation-pathname conversation))))
+                   (test-assert (and (null (conversation-anthropic-request-state loaded))
+                                     (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
+                                "Request-local prefixes are neither durable history nor restart state")))))))))
+   nil))

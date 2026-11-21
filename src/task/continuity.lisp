@@ -392,16 +392,16 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                                :code ':authority)))
     (conversation-append-record
      conversation (list :task-inspector-call :call-id call-id
-                        :parent-call-id (tool-context-call-id context)
-                        :tool (tool-canonical-name tool)
-                        :arguments (json-encode arguments)))
+                        :parent-call-id      (tool-context-call-id context)
+                        :tool                (tool-canonical-name tool)
+                        :arguments           (json-encode arguments)))
     (let* ((nested-context
              (make-instance
               'tool-context :configuration (tool-context-configuration context)
               :conversation conversation :worker (tool-context-worker context)
               :registry registry :agent (tool-context-agent context)
               :observer observer :call-id call-id
-              :mutation-checker (tool-context-mutation-checker context)
+              :mutation-checker            (tool-context-mutation-checker context)
               :command-authorization-function
               (tool-context-command-authorization-function context)
               :tool-authorization-function
@@ -414,8 +414,8 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                    (execute)))))
       (conversation-append-record
        conversation (list :task-inspector-result :call-id call-id
-                          :success-p (tool-result-success-p result)
-                          :content (bounded-string (tool-result-content result) :limit 8000)))
+                          :success-p             (tool-result-success-p result)
+                          :content               (bounded-string (tool-result-content result) :limit 8000)))
       (values result call-id))))
 
 (-> task-continuity-revive

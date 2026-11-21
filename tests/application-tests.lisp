@@ -9075,47 +9075,47 @@
          (progn
            (let ((compact-p (application-compact-view-p application)))
              (unwind-protect
-                  (progn
-                    (dolist (arguments
-                             (list (json-object "task" "Default request")
-                                   (json-object "task" "Context request"
-                                                "context" "Background context")))
-                      (let* ((item (first (task-normalize-arguments arguments)))
-                             (call (json-object
-                                    "type" "function_call"
-                                    "namespace" (tool-namespace run-tool)
-                                    "name" (tool-name run-tool)
-                                    "arguments" (json-encode arguments))))
-                        (test-assert (eq ':detached (getf item :mode))
-                                     "normalized requests describe detached execution")
-                        (setf (application-compact-view-p application) nil)
-                          (let ((text (test-terminal-row-text
-                                         (response-item-entry application call))))
-                            (test-assert
-                             (and (search (application--task-run-mode-label ':detached) text)
-                                  (search (getf item :task) text)
-                                  (not (search "invalid" text)))
-                             "normalized transcript modes match execution descriptions")))
-                        (setf (application-compact-view-p application) t)
-                        (test-assert
-                         (search (getf item :task)
-                                 (test-terminal-row-text
-                                  (response-item-entry application call)))
-                         "compact task layout consumes normalized assignments")))
-                    (dolist (arguments
-                             (list (json-object "task" "Invalid context" "context" 7)
-                                   (json-object "task" "Invalid policy"
-                                                "completion-policy" "invalid")))
-                      (let ((call (json-object "type" "function_call"
-                                               "namespace" (tool-namespace run-tool)
-                                               "name" (tool-name run-tool)
-                                               "arguments" (json-encode arguments))))
-                          (test-assert
-                           (search "invalid task request"
-                                   (test-terminal-row-text
-                                    (response-item-entry application call)))
-                             "normalized presentations use execution's request validation")))
-               (setf (application-compact-view-p application) compact-p)))
+              (progn
+                (dolist (arguments
+                         (list (json-object "task" "Default request")
+                               (json-object "task" "Context request"
+                                            "context" "Background context")))
+                  (let* ((item (first (task-normalize-arguments arguments)))
+                         (call (json-object
+                                "type" "function_call"
+                                "namespace" (tool-namespace run-tool)
+                                "name" (tool-name run-tool)
+                                "arguments" (json-encode arguments))))
+                    (test-assert (eq ':detached (getf item :mode))
+                                 "normalized requests describe detached execution")
+                    (setf (application-compact-view-p application) nil)
+                    (let ((text (test-terminal-row-text
+                                 (response-item-entry application call))))
+                      (test-assert
+                       (and (search (application--task-run-mode-label ':detached) text)
+                            (search (getf item :task) text)
+                            (not (search "invalid" text)))
+                       "normalized transcript modes match execution descriptions"))
+                    (setf (application-compact-view-p application) t)
+                    (test-assert
+                     (search (getf item :task)
+                             (test-terminal-row-text
+                              (response-item-entry application call)))
+                     "compact task layout consumes normalized assignments")))
+                (dolist (arguments
+                         (list (json-object "task" "Invalid context" "context" 7)
+                               (json-object "task" "Invalid policy"
+                                            "completion-policy" "invalid")))
+                  (let ((call (json-object "type" "function_call"
+                                           "namespace" (tool-namespace run-tool)
+                                           "name" (tool-name run-tool)
+                                           "arguments" (json-encode arguments))))
+                    (test-assert
+                     (search "invalid task request"
+                             (test-terminal-row-text
+                              (response-item-entry application call)))
+                     "normalized presentations use execution's request validation"))))
+              (setf (application-compact-view-p application) compact-p)))
            (application-connect-task-presentation application)
            (application-connect-task-presentation application)
            (test-assert

@@ -527,14 +527,14 @@ is unavailable. Without a URI, the result's tail is discarded.")
                     (string= (json-encode (rest native-copy)) bounded-content)
                   (error () nil)))))
     (make-instance 'tool-result
-                   :content          bounded-content
+                   :content           bounded-content
                    :image-attachments attachments
-                   :content-blocks   blocks
-                   :details          details
-                   :native-value     (and native-valid-p (rest native-copy))
-                   :native-present-p native-valid-p
-                   :success-p        t
-                   :category         ':success)))
+                   :content-blocks    blocks
+                   :details           details
+                   :native-value      (and native-valid-p (rest native-copy))
+                   :native-present-p  native-valid-p
+                   :success-p         t
+                   :category          ':success)))
 
 (defgeneric agent-record-overflow-context (agent digest)
   (:documentation "Record an emitted context DIGEST on AGENT's durable producer record."))
@@ -1580,6 +1580,7 @@ Custom textual decoders receive encoded input unless they specialize this protoc
     (if (and (null (rest methods)) (eq (first methods) default))
         (json-normalize arguments)
         (tool-decode-arguments tool (json-encode arguments)))))
+
 (-> tool-registry--only-named (tool-registry string) (option tool))
 (defun tool-registry--only-named (registry name)
   "Return the single tool called NAME across namespaces, when unique.
@@ -1663,7 +1664,6 @@ signals with the candidate canonical names."
          :details  (when (typep condition 'self-correctable-error)
                      (list :evaluation (self-correctable-error-sections condition)))
          :denied-p (typep condition '(or tool-authority-denied command-authorization-unavailable)))))))
-
 
 (-> tool-registry-execute-call
     (tool-registry json-object tool-context)

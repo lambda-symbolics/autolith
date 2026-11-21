@@ -44,13 +44,13 @@
 (-> test-contract-json-value-semantics () null)
 (defun test-contract-json-value-semantics ()
   "Check raw contract references and procedure matching at JSON boundaries."
-  (let* ((object (json-object "items" (vector (json-object "false" (json-false) "null" nil))
-                              "0" "object-key"))
+  (let* ((object  (json-object "items" (vector (json-object "false" (json-false) "null" nil))
+                               "0" "object-key"))
          (outputs (list object)))
-    (dolist (case (list (list "$args.items.0.false" (json-false) t)
-                        (list "$args.items.0.null" nil t)
-                        (list "$args.items.0.missing" nil nil)
-                        (list "$args.0" "object-key" t)
+    (dolist (case (list (list "$arg.items.0.false" (json-false) t)
+                        (list "$arg.items.0.null" nil t)
+                        (list "$arg.items.0.missing" nil nil)
+                        (list "$arg.0" "object-key" t)
                         (list "$result.items.0.false" (json-false) t)))
       (destructuring-bind (reference expected present-p) case
         (test-assert
@@ -65,10 +65,10 @@
       (destructuring-bind (template value expected) case
         (test-assert (eq expected (nth-value 1 (procedure-template-match template value :outputs outputs)))
                      "Procedure templates distinguish case, false, null and missing paths.")))
-    (let* ((nested (procedure-template-instantiate
-                    '(:object ("payload" (:array (:from 0 ("items" 0 "false"))
-                                                (:from 0 ("items" 0 "null")))))
-                    nil outputs))
+    (let* ((nested  (procedure-template-instantiate
+                     '(:object ("payload" (:array (:from 0 ("items" 0 "false"))
+                                                 (:from 0 ("items" 0 "null")))))
+                     nil outputs))
            (payload (gethash "payload" nested)))
       (test-assert (equalp payload (vector (json-false) nil))
                    "Nested object and array templates preserve earlier raw results."))
@@ -85,11 +85,11 @@
      :observes (vector (json-object "predicate" "report.ready"
                                    "arguments" (vector "$result.value"))))
     (let* ((arguments (json-object))
-           (matches (knowledge-contracts-for-call configuration "resource.read" arguments))
-           (value (json-object "value" "report-native"))
-           (content (json-encode value))
-           (result (tool-success content :native-value value :native-present-p t))
-           (decode (symbol-function 'json-decode)))
+           (matches   (knowledge-contracts-for-call configuration "resource.read" arguments))
+           (value     (json-object "value" "report-native"))
+           (content   (json-encode value))
+           (result    (tool-success content :native-value value :native-present-p t))
+           (decode    (symbol-function 'json-decode)))
       (test-call-with-function-replacements
        (list (list 'json-decode
                    (lambda (source &rest options)

@@ -291,7 +291,6 @@ Refuse if a concurrent edit replaced the proposed definition."
           ((not (json-value-equal-p (rest condition) value))
            (return (values nil nil))))))))
 
-
 (-> knowledge--typed-environment (list list function) list)
 (defun knowledge--typed-environment (patterns environment schema-function)
   "Return ENVIRONMENT with JSON values read by the schema types of the PATTERNS using them."

@@ -245,7 +245,6 @@
       (error 'task-error :tool-name tool-name
              :message               (cl-llm-provider-api:provider-api-error-message condition)))))
 
-
 (-> task-json-normalize (t &key (:tool-name string)) json-value)
 (defun task-json-normalize (arguments &key (tool-name "task"))
   "Detach native arguments using the task decoder's output marker policy."
@@ -254,7 +253,7 @@
                                 :false-value 'yason:false :null-value ':null)
     (error ()
       (error 'task-error :tool-name tool-name
-                        :message "Could not decode the JSON value."))))
+                        :message    "Could not decode the JSON value."))))
 
 (-> task--character-strings (t) t)
 (defun task--character-strings (value)

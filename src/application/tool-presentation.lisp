@@ -1815,7 +1815,7 @@ Treat other output, including malformed untrusted JSON, as bounded tool text."
              (<= (length trimmed) 131072))
         (handler-case
             (let ((value (json-decode
-                          trimmed :limits (make-json-limits :maximum-depth 32
+                          trimmed :limits (make-json-limits :maximum-depth     32
                                                            :maximum-characters 131072))))
               (if (or (json-object-p value)
                       (and (vectorp value) (not (stringp value))))

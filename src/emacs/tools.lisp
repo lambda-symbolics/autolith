@@ -57,7 +57,7 @@
     (handler-case
         (let ((value (emacs-tool--execute tool context arguments)))
           (tool-success (json-encode value)
-                        :native-value value
+                        :native-value     value
                         :native-present-p (hash-table-p value)))
       (emacs-server-error (condition)
         (error 'tool-error :message (autolith-error-message condition) :tool-name name)))))

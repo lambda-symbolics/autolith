@@ -73,7 +73,7 @@
   (handler-case
       (let ((value (structural--execute tool context arguments)))
         (tool-success (json-encode value)
-                      :native-value value
+                      :native-value     value
                       :native-present-p t))
     (clasted:structural-error (condition)
       (structural--fail (clasted:structural-error-code condition) (princ-to-string condition)))))

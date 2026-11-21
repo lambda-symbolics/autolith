@@ -893,14 +893,14 @@ snapshot."
 (defmethod application-operation-invoke
     ((operation application-tool-operation) application arguments &key context)
   "Invoke a tool through the registry's native or textual path."
-  (let* ((tool           (application-operation-backend operation))
-         (canonical-name (tool-canonical-name tool))
-         (tool-context   (or context (application-operation--tool-context application)))
-         (json-arguments (if (hash-table-p arguments)
-                             arguments
-                             (application-operation--tool-arguments arguments tool)))
-         (ui             (and (slot-boundp application 'ui)
-                             (application-ui application)))
+  (let* ((tool              (application-operation-backend operation))
+         (canonical-name    (tool-canonical-name tool))
+         (tool-context      (or context (application-operation--tool-context application)))
+         (json-arguments    (if (hash-table-p arguments)
+                                arguments
+                                (application-operation--tool-arguments arguments tool)))
+         (ui                (and (slot-boundp application 'ui)
+                                (application-ui application)))
          (previous-activity (and ui (terminal-ui-local-activity ui)))
          (result
            (unwind-protect

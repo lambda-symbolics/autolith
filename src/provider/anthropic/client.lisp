@@ -280,7 +280,7 @@ text is never persisted. Cache markers may move within the four-breakpoint budge
                   :candidate
                   (list :request request :history digests :context context-key :header header
                         :canonical canonical
-                        :messages (json-normalize (json-get request "messages"))))))
+                        :messages  (json-normalize (json-get request "messages"))))))
     request))
 
 (-> anthropic--note-dispatched-request (conversation json-object) null)

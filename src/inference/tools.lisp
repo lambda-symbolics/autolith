@@ -78,7 +78,6 @@ The root context never enters a prompt, but its environment holds it in memory."
   "Decode rlm tool arguments exactly, keeping false and null distinct."
   (task-json-decode source :tool-name (tool-canonical-name tool)))
 
-
 (defmethod tool-decode-native-arguments ((tool rlm-frame-tool) arguments)
   "Detach RLM values with the textual decoder's false/null marker policy."
   (task-json-normalize arguments :tool-name (tool-canonical-name tool)))

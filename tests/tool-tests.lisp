@@ -80,23 +80,23 @@
 (-> test-tool-native-dispatch () null)
 (defun test-tool-native-dispatch ()
   "Exercise native ingress, shared mechanics, textual fallback and marker policies."
-  (let* ((registry (make-instance 'tool-registry))
-         (context (make-instance 'tool-context :registry registry :call-id "native-call"))
-         (schema (tool-object-schema
-                  (json-object "false" (json-object) "null" (json-object)
-                               "empty" (json-object) "fraction" (json-object)
-                               "label" (tool-string-property "Label"))
-                  nil))
-         (ordinary (make-instance 'tool :namespace "native" :name "ordinary"
-                                  :description "Capture native input." :parameters schema
-                                  :correction-metadata-p t))
-         (textual (make-instance 'tool-test-text-decoder
-                                 :namespace "native" :name "textual"
-                                 :description "Capture custom text." :parameters schema))
-         (opted-in (make-instance 'tool-test-native-decoder
-                                  :namespace "native" :name "opted-in"
-                                  :description "Capture custom native input." :parameters schema))
-         (received nil)
+  (let* ((registry   (make-instance 'tool-registry))
+         (context    (make-instance 'tool-context :registry registry :call-id "native-call"))
+         (schema     (tool-object-schema
+                      (json-object "false" (json-object) "null" (json-object)
+                                   "empty" (json-object) "fraction" (json-object)
+                                   "label" (tool-string-property "Label"))
+                      nil))
+         (ordinary   (make-instance 'tool :namespace "native" :name "ordinary"
+                                    :description "Capture native input." :parameters schema
+                                    :correction-metadata-p t))
+         (textual    (make-instance 'tool-test-text-decoder
+                                    :namespace "native" :name "textual"
+                                    :description "Capture custom text." :parameters schema))
+         (opted-in   (make-instance 'tool-test-native-decoder
+                                    :namespace "native" :name "opted-in"
+                                    :description "Capture custom native input." :parameters schema))
+         (received   nil)
          (executions 0))
     (dolist (tool (list ordinary textual opted-in))
       (tool-registry-register registry tool))
@@ -110,13 +110,13 @@
                    (setf received arguments)
                    (tool-success "executed"))))
      (lambda ()
-       (let* ((label (copy-seq "input"))
+       (let* ((label     (copy-seq "input"))
               (arguments (json-object "false" (json-false) "null" nil
                                       "empty" #() "fraction" 0.1f0 "label" label
                                       "corrects_previous" t))
-              (call (json-object "namespace" "native" "name" "ordinary"
-                                 "call_id" "native-call" "arguments" arguments))
-              (result (tool-registry-execute-native-call registry call context)))
+              (call      (json-object "namespace" "native" "name" "ordinary"
+                                      "call_id" "native-call" "arguments" arguments))
+              (result    (tool-registry-execute-native-call registry call context)))
          (test-assert (tool-result-success-p result) "native input reaches contract dispatch")
          (test-assert (and (not (eq received arguments))
                            (eq (gethash "false" received) (json-false))
@@ -170,8 +170,8 @@
                          (null (tool-test-decoder-sources opted-in)))
                     "custom textual decoding is retained unless explicitly opted in")))
     (dolist (class '(task-agents-tool task-job-tool rlm-infer-tool))
-      (let* ((tool (make-instance class :namespace "native" :name "policy"
-                                       :description "Check task markers." :parameters schema))
+      (let* ((tool      (make-instance class :namespace "native" :name "policy"
+                                            :description "Check task markers." :parameters schema))
              (arguments (tool-decode-native-arguments
                          tool (json-object "false" (json-false) "null" nil "empty" #()))))
         (test-assert (and (eq (gethash "false" arguments) 'yason:false)
@@ -208,13 +208,13 @@
                         (json-value-equal-p value (tool-result-native-value result)))
                    "native result presence distinguishes null, false and an empty array")))
   (dolist (spill-p '(nil t))
-    (let* ((value (json-object "body" (make-string 9000 :initial-element #\x)))
+    (let* ((value   (json-object "body" (make-string 9000 :initial-element #\x)))
            (offered nil)
            (*tool-result-overflow-function*
              (lambda (text)
                (setf offered text)
                (when spill-p "context:native-result")))
-           (result (tool-success (json-encode value) :native-value value :native-present-p t)))
+           (result  (tool-success (json-encode value) :native-value value :native-present-p t)))
       (test-assert (and offered (not (tool-result-native-present-p result))
                         (null (tool-result-native-value result)))
                    "clipped and spilled results do not expose hidden complete native data")))
