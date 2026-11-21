@@ -168,8 +168,8 @@
   :version "git-d9394567ac0c9846f4cb2c69f39ed3e558ef66d1"))
 ("lisp-em" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/lisp-em.git" :ref "4f4102d05cb2a00632fb7deea584b2df8ba77ec7")
-  :version "git-4f4102d05cb2a00632fb7deea584b2df8ba77ec7"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/lisp-em.git" :ref "c949c9a25589b4b8bd09862a326c17e262399b44")
+  :version "git-c949c9a25589b4b8bd09862a326c17e262399b44"))
 ("ls-compat" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "f3eaf96a8f80120423b5a31055984f9aa688566b")

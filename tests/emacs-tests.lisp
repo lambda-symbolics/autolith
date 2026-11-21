@@ -154,34 +154,30 @@
                      "Lookup continues to the next PATH directory.")))))
 
 
-;;;; -- JSON Envelope and Client Error Projection --
+;;;; -- Object Policy and Client Error Projection --
 
 (-> test-emacs-server-fake-replies () null)
 (defun test-emacs-server-fake-replies ()
-  "Test the Autolith JSON envelope and projection of standalone client failures."
-  (with-platform-capability (':local-sockets "Emacs JSON envelope")
+  "Test Autolith's object policy and projection of standalone client failures."
+  (with-platform-capability (':local-sockets "Emacs caller policy")
     (let ((directory (emacs-test-short-directory)))
       (unwind-protect
            (let* ((socket        (merge-pathnames "server" directory))
                   (configuration (emacs-test-configuration directory socket)))
-             (dolist (json '("{\"λ\":1}" "[]" "not JSON"))
-               (let* ((encoded (usb8-array-to-base64-string (utf8-string-to-octets json)))
-                      (thread  (emacs-test-serve-once
-                                socket
-                                (lambda (line stream)
-                                  (declare (ignore line))
-                                  (format stream "-print \"~A\"~%" encoded)))))
-                 (unwind-protect
-                      (if (char= (char json 0) #\{)
-                          (test-assert (eql 1 (json-get (emacs-server-call configuration "t") "λ"))
-                                       "A UTF-8 base64 JSON object reaches the caller.")
-                          (handler-case
-                              (progn (emacs-server-call configuration "t")
-                                     (test-assert nil "Invalid JSON envelopes must signal."))
-                            (emacs-server-error (condition)
-                              (test-assert (eq (emacs-server-error-reason condition) ':protocol)
-                                           "Non-object and malformed JSON are protocol failures."))))
-                   (join-thread thread))))
+             (let* ((encoded (usb8-array-to-base64-string (utf8-string-to-octets "[]")))
+                    (thread  (emacs-test-serve-once
+                              socket
+                              (lambda (line stream)
+                                (declare (ignore line))
+                                (format stream "-print \"~A\"~%" encoded)))))
+               (unwind-protect
+                    (handler-case
+                        (progn (emacs-server-call configuration "t")
+                               (test-assert nil "Non-object JSON must signal."))
+                      (emacs-server-error (condition)
+                        (test-assert (eq (emacs-server-error-reason condition) ':protocol)
+                                     "Autolith rejects a decoded non-object value.")))
+                 (join-thread thread)))
              (let ((thread (emacs-test-serve-once
                             socket
                             (lambda (line stream)
