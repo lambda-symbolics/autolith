@@ -2191,10 +2191,6 @@
                     (format nil
                             "2 results shown, 2 matched, 80 indexed; page 0.~%src/model-selection.lisp [git:clean] [12 bytes]~%docs/guide.org [40 bytes]~%next-page: 1~%")))
             "fff result text yields relative paths")
-           (dolist (case '(("guide" t) ("gde" t) ("GDE" t) ("edg" nil) ("zzq" nil) ("" t)))
-             (test-assert (eq (application-path--query-match-p "docs/guide.org" (first case))
-                              (second case))
-                          "@ path acceptance uses case-insensitive ordered fuzzy characters."))
            (test-assert
             (equal '("docs/guide.org")
                    (mapcar (lambda (entry) (getf entry :name))

@@ -19,13 +19,6 @@
 (-> web-gist--retrieve (string) string)
 (defun web-gist--retrieve (url)
   "Fetch URL and return its Markdown representation."
-  (let ((uri (quri:uri url)))
-    (unless (and (member (quri:uri-scheme uri) '("http" "https")
-                         :test #'string=)
-                 (non-empty-string-p (quri:uri-host uri)))
-      (error 'tool-error
-             :message   "web_extra.gist requires an absolute HTTP or HTTPS URL with a host."
-             :tool-name "web_extra.gist")))
   (fetch-gist:markdown-from-url url))
 
 (defmethod tool-execute ((tool web-gist-tool)

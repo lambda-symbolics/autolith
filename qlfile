@@ -15,7 +15,7 @@ ql winhttp 2026-01-01
 ql yason 2026-01-01
 
 git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 17b22db1db0f6527fc17fa8033045fc991f03594
-git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 082f4d45d4cf0076c0c891f00e05d71957de6009
+git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref d1ce830ef9b53c57b9c40a80b028ba8f2b2e3292
 git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref ea7dc43e58a5bf5c9ccb1288298ac666973ec8a0
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 31e8494cff864e6c0bb899e05210d4d762cc5aa2
@@ -55,8 +55,8 @@ git structlisp https://github.com/lambda-symbolics/structlisp.git :ref f09e1bcb0
 git llh2 https://github.com/lambda-symbolics/llh2.git :ref f516c92cff438d65fb42d31f4c552b39001e2edc
 git argo https://github.com/lambda-symbolics/argo.git :ref ff1d0643973278e3b282825fbdc604c1256070a2
 git prezdivka https://github.com/lambda-symbolics/prezdivka.git :ref f85ce29c7f7f2b096f76b3da74d1f7c7d6c59a76
-git sito https://github.com/lambda-symbolics/sito.git :ref 2147f6fcaaa470c6631ca9037728d77d16284226
-git setinka https://github.com/lambda-symbolics/setinka.git :ref ce63dce34287b20ad81f08f6d208e6e18bc3163f
+git sito https://github.com/lambda-symbolics/sito.git :ref 4095dc225f96d11cf6ab541dac60d3c0935245bf
+git setinka https://github.com/lambda-symbolics/setinka.git :ref a9983699c933d5fd9a287c939b199c2099e037ea
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 12497fd9be66b4ebfec5a8270302cd8d9d40948e
 git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref b1d03c9104eacd97caffa513c3e9fdbd277f27bf
 git defingerprinter https://github.com/chakanysystems/defingerprinter.git :ref 20ff2c26a89ce18fad0dc8bb4fdfd97f3d98327d

@@ -37,47 +37,21 @@
   (:default-initargs :type '(option pathname))
   (:documentation "An optional absolute file pathname; empty text means none."))
 
-(defclass continuation-limit-setting (setting)
+(defclass continuation-limit-setting (integer-or-alias-setting)
   ()
-  (:default-initargs :type '(or (integer 1) (eql :unlimited)))
+  (:default-initargs
+   :type    '(or (integer 1) (eql :unlimited))
+   :minimum 1
+   :aliases '(("unlimited" . :unlimited)))
   (:documentation "A positive automatic continuation count or the unlimited keyword."))
 
-(defmethod setting-coerce ((setting continuation-limit-setting) (value string) configuration)
-  "Read a positive count or the case-insensitive unlimited token."
-  (declare (ignore configuration))
-  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) value)))
-    (if (string-equal text "unlimited")
-        ':unlimited
-        (handler-case (parse-integer text)
-          (parse-error ()
-            (setting-reject setting value
-                            "~A must be a positive integer or unlimited, not ~S."
-                            (setting-label setting) value))))))
-
-(defclass optional-positive-integer-setting (setting)
+(defclass optional-positive-integer-setting (integer-or-alias-setting)
   ()
-  (:default-initargs :type '(option (integer 1)))
+  (:default-initargs
+   :type    '(option (integer 1))
+   :minimum 1
+   :aliases '(("" . nil) ("none" . nil) ("off" . nil) ("unset" . nil)))
   (:documentation "An optional positive integer; empty or textual off values mean none."))
-
-(defmethod setting-coerce ((setting optional-positive-integer-setting) (value string) configuration)
-  "Read a positive integer, or NONE, OFF, and UNSET as no value."
-  (declare (ignore configuration))
-  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) value)))
-    (cond
-      ((member text '("" "none" "off" "unset") :test #'string-equal)
-       nil)
-      (t
-       (handler-case
-           (let ((parsed (parse-integer text :junk-allowed nil)))
-             (if (plusp parsed)
-                 parsed
-                 (setting-reject setting value
-                                 "~A must be a positive integer, NONE, OFF, or UNSET, not ~S."
-                                 (setting-label setting) value)))
-         (parse-error ()
-           (setting-reject setting value
-                           "~A must be a positive integer, NONE, OFF, or UNSET, not ~S."
-                           (setting-label setting) value)))))))
 
 (defmethod setting-coerce ((setting directory-setting) value configuration)
   "Store directory designators in directory form."
@@ -124,11 +98,6 @@ exist yet, and is only put in directory form."
   (unless (or (null value) (equal value ""))
     (configuration--absolute-file-pathname
      (if (stringp value) (parse-namestring value) value))))
-
-(defmethod setting-coerce ((setting management-transport-setting) (value string) configuration)
-  "Read the transport name case-insensitively."
-  (declare (ignore setting configuration))
-  (intern (string-upcase value) '#:keyword))
 
 (defmethod setting-validate ((setting management-transport-setting) value configuration)
   "Require a transport the host supports."

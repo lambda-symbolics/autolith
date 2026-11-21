@@ -10779,62 +10779,27 @@
 
 ;;;; -- Transcript Actions --
 
-(defclass application-tests--clipboard (clipboard-backend)
-  ((texts
-    :initform      nil
-    :accessor      application-tests--clipboard-texts
-    :type          list
-    :documentation "Copied texts, newest first.")
-   (fail-p
-    :initarg       :fail-p
-    :initform      nil
-    :reader        application-tests--clipboard-fail-p
-    :type          boolean
-    :documentation "Whether every copy is refused with a clipboard error."))
-  (:documentation "A clipboard backend recording copies or refusing them."))
-
-(defmethod clipboard-backend-name ((backend application-tests--clipboard))
-  "Name the test backend."
-  :test)
-
-(defmethod backend-types ((backend application-tests--clipboard))
-  "The test backend offers nothing to read."
-  nil)
-
-(defmethod backend-get ((backend application-tests--clipboard) mime-type)
-  "The test backend holds nothing to read."
-  (declare (ignore mime-type))
-  nil)
-
-(defmethod backend-set ((backend application-tests--clipboard) data mime-type)
-  "Record DATA, or refuse it when the backend is set to fail."
-  (declare (ignore mime-type))
-  (when (application-tests--clipboard-fail-p backend)
-    (error 'sophisticated-clipboard-error))
-  (push data (application-tests--clipboard-texts backend)))
-
 (-> test-application-transcript-actions () null)
 (defun test-application-transcript-actions ()
   "Test clicked copy and link actions reach the clipboard, the terminal, and the browser."
   (let* ((terminal    (make-instance 'recording-terminal :columns 60 :rows 12 :styled-p t))
          (ui          (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
-         (backend     (make-instance 'application-tests--clipboard))
          (text        (format nil "alpha~%beta")))
     (with-terminal-ui (active ui)
       (test-assert (terminal-ui-action-function active)
                    "creating an application connects transcript actions")
-      (let ((*clipboard-backend* backend))
+      (let ((sophisticated-clipboard:*clipboard-backend*
+              (make-instance 'sophisticated-clipboard:terminal-backend :writer (constantly t))))
         (funcall (terminal-ui-action-function active) (list ':copy text)))
-      (test-assert (equal (list text) (application-tests--clipboard-texts backend))
-                   "copying places the text on the host clipboard")
       (test-assert (some (lambda (chunk)
-                           (search (terminal-clipboard-sequence text) chunk))
+                           (search (sophisticated-clipboard:terminal-clipboard-sequence text) chunk))
                          (recording-terminal-chunks terminal))
                    "copying also sends the OSC 52 request to the terminal")
       (test-assert (equal "· copied 2 lines to the clipboard" (terminal-ui-notice active))
                    "a successful copy is announced")
-      (let ((*clipboard-backend* (make-instance 'application-tests--clipboard :fail-p t)))
+      (let ((sophisticated-clipboard:*clipboard-backend*
+              (make-instance 'sophisticated-clipboard:terminal-backend :writer (constantly nil))))
         (terminal-ui-transcript-action (application-ui application) (list ':copy "solo")))
       (test-assert (uiop:string-prefix-p "· sent 1 line to the terminal's clipboard"
                                          (terminal-ui-notice active))

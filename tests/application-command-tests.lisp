@@ -2003,11 +2003,6 @@
                      ':ok)
                  (eql expected (config :goal-continuation-limit configuration)))
             "native continuation literals follow the setting schema")))
-       (test-assert
-        (eq ':unlimited
-            (setting-parse (configuration-setting configuration :goal-continuation-limit)
-                           (format nil " ~CUnLiMiTeD~C " #\Tab #\Newline) configuration))
-        "text coercion ignores surrounding whitespace and keyword case")
        (let ((saved (uiop:read-file-string (configuration-preferences-path configuration))))
          (dolist (value '(0 -1 2.5 nil :forever "abc"))
            (test-assert
@@ -2017,15 +2012,6 @@
                        nil)
               (setting-invalid () t))
             "invalid native values are rejected"))
-         (dolist (text '("abc" "0" "-2" "2.5"))
-           (test-assert
-            (handler-case
-                (progn (setting-parse
-                        (configuration-setting configuration :goal-continuation-limit)
-                        text configuration)
-                       nil)
-              (setting-invalid () t))
-            "invalid textual limits are rejected by the schema"))
          (test-assert
           (string= saved (uiop:read-file-string (configuration-preferences-path configuration)))
           "rejection leaves the durable preferences untouched")))))

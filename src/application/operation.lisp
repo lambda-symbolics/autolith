@@ -416,7 +416,7 @@ local-user override."
 (-> application-path--query-match-p (string string) boolean)
 (defun application-path--query-match-p (path query)
   "Return true when QUERY's characters match PATH in order, ignoring case."
-  (not (null (sito:score query path))))
+  (sito:match-p query path))
 
 (-> application-path-search-files
     (application string &key (:limit (integer 1)))

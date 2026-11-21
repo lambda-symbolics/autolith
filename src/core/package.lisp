@@ -61,15 +61,7 @@
                 #:cl+ssl-error
                 #:ssl-error-syscall)
   (:import-from #:sophisticated-clipboard
-                #:*clipboard-backend*
-                #:backend-get
-                #:backend-set
-                #:backend-types
-                #:clipboard-backend
-                #:clipboard-backend-name
-                #:clipboard-copy-text
-                #:sophisticated-clipboard-error
-                #:terminal-clipboard-sequence)
+                #:clipboard-copy-text)
   (:import-from #:cl-colorist
                 #:color
                 #:effective-color-level
@@ -1162,6 +1154,7 @@
                 #:derived-setting
                 #:find-setting
                 #:integer-setting
+                #:integer-or-alias-setting
                 #:make-setting-registry
                 #:pathname-setting
                 #:real-setting
