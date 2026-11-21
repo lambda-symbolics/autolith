@@ -28,10 +28,15 @@ try {
                        (uiop:ensure-directory-pathname
                         (uiop:getenv "AUTOLITH_COLORLISP_CHECK_ROOT"))))
 (let* ((ref (uiop:getenv "AUTOLITH_COLORLISP_CHECK_REF"))
+       (version (concatenate 'string "git-" ref))
        (dist (ql-dist:find-dist "colorlisp"))
-       (system (ql-dist:find-system "colorlisp")))
-  (unless (and dist system (eq (ql-dist:dist system) dist)
-               (equal (ql-dist:version dist) (concatenate 'string "git-" ref)))
+       (system (ql-dist:find-system "colorlisp"))
+       (owner (and system (ql-dist:dist system))))
+  ;; Quicklisp may return distinct objects for the same distribution.
+  (unless (and dist owner
+               (string= (ql-dist:name owner) "colorlisp")
+               (string= (ql-dist:version dist) version)
+               (string= (ql-dist:version owner) version))
     (error "Installed ColorLisp distribution does not match qlfile.lock."))
   (let ((asd (ql-dist:find-asdf-system-file "colorlisp")))
     (unless (and asd (probe-file asd))
