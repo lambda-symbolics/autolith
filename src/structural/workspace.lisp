@@ -71,15 +71,13 @@
      :program (uiop:native-namestring path)
      :maximum-matches 1000 :maximum-output-bytes (* 2 *structural-maximum-bytes*)
      :maximum-preview-bytes *structural-maximum-bytes* :timeout 30 :cancelled-p cancelled-p
-     :runner
-     (lambda (argv stdin &key maximum-output-bytes timeout cancelled-p)
+     :pre-run
+     (lambda (argv)
        (unless (eq (tool-context-authorize-command
                     context (format nil "~{~A~^ ~}" (mapcar #'uiop:escape-shell-token argv))
                     (config :working-directory (tool-context-configuration context)))
                    ':full-access)
-         (structural--fail ':authorization "Structural backend execution requires full-access command approval."))
-       (clasted:run-ast-grep argv stdin :maximum-output-bytes maximum-output-bytes
-                            :timeout timeout :cancelled-p cancelled-p)))))
+         (structural--fail ':authorization "Structural backend execution requires full-access command approval."))))))
 
 (-> structural--request (structural-proposal) cl-resources:resource-change)
 (defun structural--request (proposal)
@@ -113,12 +111,12 @@
 
 (defmethod edit-proposal-requests ((context tool-context) (proposal structural-proposal))
   "Return a list containing the replacement request, or NIL if the plan has no edits."
-  (when (plusp (length (clasted:plan-edits (structural-proposal-plan proposal))))
+  (unless (clasted:plan-empty-p (structural-proposal-plan proposal))
     (list (structural--request proposal))))
 
 (defmethod edit-proposal-access ((proposal structural-proposal))
   "Use read-only access to validate freshness for an authorized rewrite with no edits."
-  (if (plusp (length (clasted:plan-edits (structural-proposal-plan proposal)))) ':edit ':read))
+  (if (clasted:plan-empty-p (structural-proposal-plan proposal)) ':read ':edit))
 
 (-> structural--prepare
     (structural-state tool-context &key (:resource workspace-file-resource) (:plan clasted:edit-plan)
