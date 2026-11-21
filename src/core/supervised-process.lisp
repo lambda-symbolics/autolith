@@ -33,10 +33,10 @@ PATH is required when a saved core reopens native libraries by their basename."
 
 (-> supervised-process-terminate (t) null)
 (defun supervised-process-terminate (process)
-  "Kill and reap PROCESS; its request owner closes streams after joining I/O."
+  "Kill and reap a UIOP child; its request owner closes streams after joining I/O."
   (when process
-    (platform-terminate-process-object *platform* process :force t)
-    (platform-wait-process *platform* process))
+    (uiop:terminate-process process :urgent t)
+    (uiop:wait-process process))
   nil)
 
 (-> supervised-process--close-streams (t) null)
