@@ -20,14 +20,19 @@
 #+win32
 (progn
   (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
-  (let* ((system-root (asdf:system-source-directory :cl-exec-sandbox))
-         (builder     (merge-pathnames "scripts/build-windows-helper.ps1" system-root))
-         (script-root (uiop:pathname-directory-pathname *load-truename*))
-         (installer   (merge-pathnames "windows-sandbox.ps1" script-root))
-         (installed   (merge-pathnames "native/sandbox/"
-                                       (autolith-application-root ':data)))
-         (explicit    (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER"))
-         (powershell  (or (uiop:getenv "POWERSHELL") "powershell.exe")))
+  (let* ((system-root     (asdf:system-source-directory :cl-exec-sandbox))
+         (builder         (merge-pathnames "scripts/build-windows-helper.ps1" system-root))
+         (bundle-script   (merge-pathnames "scripts/windows-bundle.ps1" system-root))
+         (script-root     (uiop:pathname-directory-pathname *load-truename*))
+         (launcher-bundle (merge-pathnames "../bin/cl-exec-sandbox-bundle.ps1" script-root))
+         (installer       (merge-pathnames "windows-sandbox.ps1" script-root))
+         (installed       (merge-pathnames "native/sandbox/"
+                                          (autolith-application-root ':data)))
+         (explicit        (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER"))
+         (powershell      (or (uiop:getenv "POWERSHELL") "powershell.exe")))
+    (unless (probe-file bundle-script)
+      (error "cl-exec-sandbox standalone bundle helper is missing at ~A." bundle-script))
+    (uiop:copy-file bundle-script launcher-bundle)
     (uiop:with-current-directory (system-root)
       (if (and explicit (plusp (length explicit)))
           (uiop:run-program

@@ -459,6 +459,13 @@ values retain source access state before ordered moves remove their source paths
   child-only temporary/cache environment paths. The release launcher selects the
   bundled native helper outside writable scopes. Both Windows authorization
   modes execute commands through native PowerShell.
+- =cl-exec-sandbox= owns Windows bundle identity, private installation, validation,
+  generation publication and sharing retries. Bootstrap copies its standalone
+  =windows-bundle.ps1= beside the launchers as =bin/cl-exec-sandbox-bundle.ps1=;
+  Windows archives include that generated dependency artifact for pre-ASDF use.
+  Autolith owns application roots, workspace exclusion, environment defaults and
+  archive assembly. Static POSIX builds delegate the helper inventory to the
+  dependency's =scripts/build-helper --static=.
 - Task-worktree Git commands request a read-only scope for the existing =git/=
   subtree of a valid =XDG_CONFIG_HOME=. The platform adapter exposes that scope
   for the command lifetime without granting access to sibling configuration.
