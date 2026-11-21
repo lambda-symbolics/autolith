@@ -10,22 +10,18 @@
       (with-recursive-lock-held (*memory-lock*)
         (with-recursive-lock-held (*knowledge-lock*)
           (with-lock-held (*papercut-lock*)
-            (labels ((acquire (paths)
-                       (if paths
-                           (call-with-file-lock (first paths)
-                                                (lambda () (acquire (rest paths))))
-                           (plan--call-with-lock configuration function))))
-              (acquire
-               (list (merge-pathnames "data-transfer.lock"
-                                      (config :state-root configuration))
-                     (readable-state-lock-pathname (configuration-agenda-path configuration)
-                                                   "agendas.lock")
-                     (readable-state-lock-pathname (configuration-memory-path configuration)
-                                                   "memories.lock")
-                     (readable-state-lock-pathname (configuration-papercut-path configuration)
-                                                   "papercuts.lock")
-                     (readable-state-lock-pathname (configuration-knowledge-path configuration)
-                                                   "knowledge.lock"))))))))))
+            (ls-flock:call-with-file-locks
+             (list (merge-pathnames "data-transfer.lock"
+                                    (config :state-root configuration))
+                   (readable-state-lock-pathname (configuration-agenda-path configuration)
+                                                 "agendas.lock")
+                   (readable-state-lock-pathname (configuration-memory-path configuration)
+                                                 "memories.lock")
+                   (readable-state-lock-pathname (configuration-papercut-path configuration)
+                                                 "papercuts.lock")
+                   (readable-state-lock-pathname (configuration-knowledge-path configuration)
+                                                 "knowledge.lock"))
+             (lambda () (plan--call-with-lock configuration function)))))))))
 
 (-> data-transfer--histories (list) list)
 (defun data-transfer--histories (records)

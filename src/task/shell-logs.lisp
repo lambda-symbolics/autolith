@@ -104,7 +104,6 @@
             (,path (merge-pathnames "tasks/shell-log.lock" (config :data-root ,settings))))
        (with-lock-held (*shell-log-lock*)
          (shell-log--safe-path ,settings ,path)
-         (ensure-directories-exist ,path)
          (call-with-file-lock ,path
            (lambda ()
              (platform-make-private *platform* ,path)
@@ -135,11 +134,7 @@
       (when status
         (unless (eq (platform-file-status-kind status) ':file)
           (shell-log--fail "Unsafe shell log owner lock." path))
-        (handler-case
-            (let ((lease (lease-acquire path)))
-              (lease-release lease)
-              nil)
-          (file-lock-busy () t))))))
+        (values (ls-flock:file-lock-busy-p path))))))
 
 (-> shell-log--measure-captures (configuration pathname list) integer)
 (defun shell-log--measure-captures (configuration directory metadata)

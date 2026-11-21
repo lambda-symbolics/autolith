@@ -24,17 +24,20 @@
 (-> nous-authentication--call-with-store-lock (pathname function) t)
 (defun nous-authentication--call-with-store-lock (credential-pathname function)
   "Call FUNCTION while holding the process and filesystem Nous OAuth locks."
-  (let ((lock-pathname
-          (nous-authentication--lock-pathname credential-pathname)))
-    (handler-case
-        (call-with-file-lock lock-pathname function)
-      (authentication-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'authentication-error
-               :message
-               (format nil "Could not lock the Nous OAuth store at ~A: ~A"
-                       lock-pathname cause))))))
+  (let ((lock-pathname (nous-authentication--lock-pathname credential-pathname))
+        (acquired-p    nil))
+    (handler-bind
+        ((file-lock-error
+           (lambda (condition)
+             (unless acquired-p
+               (error 'authentication-error
+                      :message
+                      (format nil "Could not lock the Nous OAuth store at ~A: ~A"
+                              lock-pathname (ls-flock:file-lock-error-message condition)))))))
+      (call-with-file-lock lock-pathname
+                           (lambda ()
+                             (setf acquired-p t)
+                             (funcall function))))))
 
 
 ;;;; -- Access Token Validation --

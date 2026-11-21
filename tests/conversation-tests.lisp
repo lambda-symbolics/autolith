@@ -2030,152 +2030,6 @@ process without releasing the lease, exercising kernel cleanup."
         (lease-release guard))))
   nil)
 
-(-> test-conversation--owner-bookkeeping (configuration string) null)
-(defun test-conversation--owner-bookkeeping (configuration identifier)
-  "Exercise fork qualification and failed metadata/release bookkeeping without changing lock policy."
-  (let* ((*conversation-leases-held* (conversation--make-lease-tracking))
-         (lease                      (conversation-lease-acquire configuration identifier))
-         (parent                     (current-process-id))
-         (tracking                   *conversation-leases-held*))
-    (unwind-protect
-         (when (test-conversation--single-thread-p)
-           (with-lock-held ((conversation-lease-tracking-mutex tracking))
-             (test-assert
-              (eql 0
-                   (test-fixture-run-forked
-                    *platform*
-                    (lambda ()
-                      (handler-case
-                          (sb-sys:with-deadline (:seconds 2)
-                            ;; Leave ls-flock's inherited objects intact deliberately.
-                            (let ((condition (test-conversation--busy-condition configuration identifier)))
-                              (if (and (= parent (conversation-in-use-owner-pid condition))
-                                       (/= parent (conversation-lease-tracking-pid
-                                                   (conversation--lease-tracking))))
-                                  0 1)))
-                        (sb-sys:deadline-timeout () 1)))))
-              "a fork child discards inherited tracking before touching the inherited held mutex")))
-      (conversation-lease-release lease)))
-  (let ((*conversation-leases-held* (conversation--make-lease-tracking))
-        (resolve                    (symbol-function 'platform-truename))
-        (calls 0) (lease nil))
-    (unwind-protect
-         (progn
-           (test-call-with-function-replacements
-            (list (list 'platform-truename
-                        (lambda (platform path)
-                          (if (equal (pathname-type path) "lock")
-                              (error "owned metadata failure")
-                              (funcall resolve platform path))))
-                  (list 'platform-file-lock-owner
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (incf calls)
-                          (error "a potentially self-held inode must not be opened")))
-                  (list 'world-terminal-owner-reachability
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (incf calls)
-                          ':unknown)))
-            (lambda ()
-              (setf lease (conversation-lease-acquire configuration identifier))
-              (let ((condition (test-conversation--busy-condition configuration identifier)))
-                (princ-to-string condition)
-                (main--startup-error-text condition)
-                (test-assert (and (conversation-lease-held-p lease)
-                                  (null (conversation-in-use-owner-pid condition))
-                                  (zerop calls))
-                             "metadata failure preserves admission and suppresses unsafe probes and queries"))))
-           (test-assert (not (test-conversation--child-can-acquire-lease-p configuration identifier))
-                        "metadata failure and condition printing preserve the real kernel lock"))
-      (test-call-with-function-replacements
-       (list (list 'call-with-file-lock
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (error "owned release guard failure"))))
-       (lambda () (when lease (conversation-lease-release lease)))))
-    (test-assert (test-conversation--child-can-acquire-lease-p configuration identifier)
-                 "the existing release-error fallback still unlocks the kernel lease"))
-  nil)
-
-(-> test-conversation-lease-probe-open () null)
-(defun test-conversation-lease-probe-open ()
-  "Interleave a free probe's release with an actual opener using real lifecycle locks."
-  (with-test-configuration (configuration)
-    (let* ((identifier           "probe42")
-           (guard                (conversation--lease-guard-pathname configuration))
-           (lock-file            (symbol-function 'call-with-file-lock))
-           (release              (symbol-function 'lease-release))
-           (release-conversation (symbol-function 'conversation-lease-release))
-           (probe-thread         (current-thread))
-           (guard-thread         nil)
-           (attempting           (sb-thread:make-semaphore))
-           (opener               nil)
-           (opened               nil)
-           (failure              nil))
-      (unwind-protect
-           (progn
-             (test-assert (not (conversation-lease-busy-p configuration identifier))
-                          "an unowned conversation is free")
-             (flet ((interleave ()
-                      (when (and (eq (current-thread) probe-thread) (null opener))
-                        (setf opener
-                              (make-thread
-                               (lambda ()
-                                 (handler-case
-                                     (setf opened (conversation-lease-acquire configuration identifier))
-                                   (error (condition) (setf failure condition))))
-                               :name "lease probe concurrent opener"))
-                        (unless (sb-thread:wait-on-semaphore attempting :timeout 5)
-                          (error "Concurrent opener did not reach lifecycle acquisition"))
-                        ;; Fill an exposed lifecycle gap before probe cleanup.
-                        (unless (eq guard-thread probe-thread)
-                          (join-thread opener)))))
-               (test-call-with-function-replacements
-                (list
-                 (list 'call-with-file-lock
-                       (lambda (pathname function &key (mode #o600))
-                         (when (and (equal pathname guard)
-                                    (not (eq (current-thread) probe-thread)))
-                           (sb-thread:signal-semaphore attempting))
-                         (funcall lock-file pathname
-                                  (lambda ()
-                                    (let ((previous guard-thread))
-                                      (unwind-protect
-                                           (progn
-                                             (setf guard-thread (current-thread))
-                                             (funcall function))
-                                        (setf guard-thread previous))))
-                                  :mode mode)))
-                 (list 'conversation-lease-release
-                       (lambda (lease)
-                         (interleave)
-                         (funcall release-conversation lease)))
-                 (list 'lease-release
-                       (lambda (lease)
-                         (unless (equal (ls-flock:lease-pathname lease) guard)
-                           (interleave))
-                         (funcall release lease))))
-                (lambda ()
-                  (test-assert (not (conversation-lease-busy-p configuration identifier))
-                               "the original free probe completes"))))
-             (when opener (join-thread opener))
-             (test-assert (and opened (null failure))
-                          "a concurrent real opener never mistakes a probe for a primary owner")
-             (when opened
-               (test-assert (conversation-lease-busy-p configuration identifier)
-                            "a genuine primary owner excludes probes")
-               (test-assert (conversation-lease-held-p opened)
-                            "probing does not release the primary owner")
-               (let ((condition (test-conversation--busy-condition configuration identifier)))
-                 (test-assert (= (current-process-id) (conversation-in-use-owner-pid condition))
-                              "probing preserves diagnostic ownership"))))
-        (when opener (join-thread opener))
-        (when opened (conversation-lease-release opened)))
-      (test-assert (not (probe-file (conversation--lease-pathname configuration identifier)))
-                   "normal probe and owner cleanup removes the per-ID lock file")))
-  nil)
-
 (-> test-conversation-lease-owner-diagnostic () null)
 (defun test-conversation-lease-owner-diagnostic ()
   "Own the contention snapshot, diagnostic isolation, non-pruning and lock-preservation contracts."
@@ -2202,19 +2056,17 @@ process without releasing the lease, exercising kernel cleanup."
              (test-conversation--owner-quiesced
               configuration request (lambda () (observe ':no-reachable-endpoint)))
              (observe ':reachable))
-           (dolist (answer '((:unknown nil) (:free nil) (:held 0) (:error nil)))
-             (test-call-with-function-replacements
-              (list (list 'platform-file-lock-owner
-                          (lambda (platform path)
-                            (declare (ignore platform path))
-                            (when (eq (first answer) ':error) (error "owned syscall failure"))
-                            (values-list answer))))
-              (lambda ()
-                (let* ((condition (test-conversation--busy-condition configuration identifier))
-                       (text      (main--startup-error-text condition)))
-                  (test-assert (and (null (conversation-in-use-owner-pid condition))
-                                    (not (search "kill " text)))
-                               "unsupported, failed and free-after-busy snapshots stay unknown")))))
+           (test-call-with-function-replacements
+            (list (list 'lease-acquire
+                        (lambda (path &rest options)
+                          (declare (ignore options))
+                          (error 'file-lock-busy :pathname path :message "Unknown owner"))))
+            (lambda ()
+              (let* ((condition (test-conversation--busy-condition configuration identifier))
+                     (text      (main--startup-error-text condition)))
+                (test-assert (and (null (conversation-in-use-owner-pid condition))
+                                  (not (search "kill " text)))
+                             "an unknown owner offers no stop advice"))))
            (let ((condition nil) (queries 0))
              (test-call-with-function-replacements
               (list (list 'world-terminal-owner-reachability
@@ -2239,10 +2091,7 @@ process without releasing the lease, exercising kernel cleanup."
               (lambda ()
                 (test-assert (equal (princ-to-string condition) (main--startup-error-text condition))
                              "reporter errors preserve the original busy condition"))))))
-        (test-assert (test-conversation--child-can-acquire-lease-p configuration identifier)
-                     "cooperative holder cleanup permits real acquisition")
-        (let* ((*conversation-leases-held* (conversation--make-lease-tracking))
-               (lease                      (conversation-lease-acquire configuration identifier)))
+        (let ((lease (conversation-lease-acquire configuration identifier)))
           (unwind-protect
                (dolist (wrapper (list configuration (configuration-copy configuration)))
                  (test-call-with-function-replacements
@@ -2255,20 +2104,8 @@ process without releasing the lease, exercising kernel cleanup."
                       (test-assert (= (current-process-id) (conversation-in-use-owner-pid condition))
                                    "same-process ownership spans configuration wrappers")
                       (test-assert (not (search "kill " (main--startup-error-text condition)))
-                                   "self-reporting offers no stop command"))))
-                 (test-assert (not (test-conversation--child-can-acquire-lease-p configuration identifier))
-                              "reporting never closes another descriptor on a self-held inode"))
-            (conversation-lease-release lease)))
-        (test-assert (test-conversation--child-can-acquire-lease-p configuration identifier)
-                     "only actual release permits the independent child")
-        (test-conversation--owner-bookkeeping configuration identifier)
-        (let ((path (merge-pathnames "unlocked-file" (config :state-root configuration))))
-          (with-open-file (stream path :direction ':output) (write-string "" stream))
-          (test-assert (eq ':free (platform-file-lock-owner *platform* path))
-                       "an existing unlocked regular file is free")
-          (delete-file path)
-          (test-assert (eq ':unknown (platform-file-lock-owner *platform* path))
-                       "a missing file is unknown, not free")))))
+                                   "self-reporting offers no stop command")))))
+            (conversation-lease-release lease))))))
   nil)
 
 (-> test-conversation-inherited-reference () null)

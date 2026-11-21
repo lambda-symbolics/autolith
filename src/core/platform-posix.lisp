@@ -450,41 +450,6 @@
     (list (namestring pathname))))
 
 
-;;;; -- Lock Owner Snapshot --
-
-(defmethod platform-file-lock-owner ((platform posix-platform) pathname)
-  "Query the native F_GETLK layout when SB-POSIX supports it, otherwise return unknown."
-  (handler-case
-      (let* ((names   '("FLOCK" "FCNTL" "FLOCK-TYPE" "FLOCK-PID"
-                        "F-GETLK" "F-WRLCK" "F-RDLCK" "F-UNLCK" "SEEK-SET"))
-             (symbols (mapcar (lambda (name) (find-symbol name '#:sb-posix)) names)))
-        (unless (and (every #'identity symbols)
-                     (find-class (first symbols) nil)
-                     (every #'fboundp (subseq symbols 1 4))
-                     (every #'boundp (subseq symbols 4)))
-          (return-from platform-file-lock-owner (values ':unknown nil)))
-        (destructuring-bind (class fcntl type-reader pid-reader get-lock write-lock
-                             read-lock unlocked seek-set)
-            symbols
-          (let ((lock (make-instance class :type (symbol-value write-lock)
-                                    :whence (symbol-value seek-set) :start 0 :len 0)))
-            (with-open-stream (stream (platform-open-regular-file platform pathname))
-              (funcall fcntl (sb-sys:fd-stream-fd stream) (symbol-value get-lock) lock)
-              (let ((type (funcall type-reader lock))
-                    (pid  (funcall pid-reader lock)))
-                (cond
-                  ((eql type (symbol-value unlocked))
-                   (values ':free nil))
-                  ((and (member type (list (symbol-value write-lock)
-                                          (symbol-value read-lock)))
-                        (typep pid '(integer 1)))
-                   (values ':held pid))
-                  (t
-                   (values ':unknown nil))))))))
-    ((or sb-sys:deadline-timeout error) ()
-      (values ':unknown nil))))
-
-
 ;;;; -- Installation --
 
 (setf *platform* (make-instance 'posix-platform))

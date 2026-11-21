@@ -342,7 +342,6 @@ images use their own endpoint namespace."
 (defun world-server--lease-acquire (configuration)
   "Take the process lease on CONFIGURATION's world, or signal that another server holds it."
   (let ((pathname (world-server-lock-pathname configuration)))
-    (ensure-directories-exist pathname)
     (handler-case
         (lease-acquire pathname)
       (file-lock-busy ()
@@ -360,13 +359,7 @@ from its saved heap with the lease free. It publishes its endpoint again after
 a checkpoint, so a client that finds it running waits for the endpoint
 instead of starting a second server."
   (let ((pathname (world-server-lock-pathname configuration)))
-    (or (and (probe-file pathname)
-             (handler-case
-                 (progn
-                   (lease-release (lease-acquire pathname))
-                   nil)
-               (file-lock-busy ()
-                 t)))
+    (or (ls-flock:file-lock-busy-p pathname)
         (world-server-restarting-p configuration))))
 
 (-> world-server--runtime-start

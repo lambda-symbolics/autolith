@@ -6,11 +6,6 @@
   ()
   (:documentation "The adapter for Windows hosts built on the Win32 API."))
 
-(defmethod platform-file-lock-owner ((platform win32-platform) pathname)
-  "Return unknown: this adapter does not identify conversation lock owners."
-  (declare (ignore pathname))
-  (values ':unknown nil))
-
 (defmethod platform-file-uri ((platform win32-platform) pathname)
   "Encode drive and UNC paths using URI slashes rather than native separators."
   (let ((name (substitute #\/ #\\ (uiop:native-namestring pathname))))

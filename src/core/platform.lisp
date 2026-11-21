@@ -283,14 +283,6 @@ With FOLLOW-LINKS-P a symbolic link is reported as its target and a dangling
 link as absent; otherwise the link itself is reported with kind :SYMBOLIC-LINK.
 Signal PLATFORM-ERROR with operation :STATUS for any other failure."))
 
-(defgeneric platform-file-lock-owner (platform pathname)
-  (:documentation
-   "Return two values: :HELD and a positive owner PID, :FREE and NIL, or :UNKNOWN and NIL.
-
-Query an existing file's whole-file POSIX lock without acquiring or releasing it.
-The caller must exclude self-ownership first: opening and closing another descriptor
-on a POSIX inode locked by this process can release its existing locks."))
-
 (defgeneric platform-stream-status (platform stream)
   (:documentation
    "Return the PLATFORM-FILE-STATUS of the open file behind STREAM.

@@ -817,16 +817,6 @@ compaction checkpoint cites records by these."
     :reader        conversation-lease-identifier
     :type          non-empty-string
     :documentation "The normalized conversation identifier held by this lease.")
-   (lock-pathname
-    :initarg       :lock-pathname
-    :reader        conversation-lease--lock-pathname
-    :type          pathname
-    :documentation "The per-conversation lock file removed after a normal release.")
-   (guard-pathname
-    :initarg       :guard-pathname
-    :reader        conversation-lease--guard-pathname
-    :type          pathname
-    :documentation "The shared lock serializing per-conversation lock-file lifecycle.")
    (lock-lease
     :initarg       :lock-lease
     :reader        conversation-lease--lock-lease
@@ -850,83 +840,6 @@ compaction checkpoint cites records by these."
   (merge-pathnames "conversation-leases.lock"
                    (config :state-root configuration)))
 
-(defstruct (conversation-lease-tracking (:constructor conversation--make-lease-tracking))
-  "Process-qualified diagnostic state; never authoritative for lease admission."
-  (pid (current-process-id) :type integer)
-  (mutex (make-lock "conversation lease diagnostics"))
-  (leases (make-hash-table :test 'equal) :type hash-table)
-  (incomplete-p nil :type boolean))
-
-(defvar *conversation-leases-held* (conversation--make-lease-tracking)
-  "Diagnostic ownership index, replaced before locking in a fork child.")
-
-(-> conversation--lease-tracking () conversation-lease-tracking)
-(defun conversation--lease-tracking ()
-  "Return this process's state without touching an inherited mutex after fork."
-  (unless (= (conversation-lease-tracking-pid *conversation-leases-held*)
-             (current-process-id))
-    (setf *conversation-leases-held* (conversation--make-lease-tracking)))
-  *conversation-leases-held*)
-
-(-> conversation--lease-remember (conversation-lease-tracking conversation-lease) null)
-(defun conversation--lease-remember (tracking lease)
-  "Remember a successfully acquired LEASE without changing its outcome on metadata failure."
-  (handler-case
-      (setf (gethash (namestring (platform-truename
-                                  *platform* (conversation-lease--lock-pathname lease)))
-                     (conversation-lease-tracking-leases tracking))
-            lease)
-    ((or sb-sys:deadline-timeout error) ()
-      ;; A failed index update must forbid future extra descriptor probes.
-      (setf (conversation-lease-tracking-incomplete-p tracking) t)))
-  nil)
-
-(-> conversation--lease-forget (conversation-lease-tracking conversation-lease) null)
-(defun conversation--lease-forget (tracking lease)
-  "Remove only LEASE's own diagnostic entries without preventing release."
-  (handler-case
-      (maphash (lambda (key value)
-                 (when (eq value lease)
-                   (remhash key (conversation-lease-tracking-leases tracking))))
-               (conversation-lease-tracking-leases tracking))
-    ((or sb-sys:deadline-timeout error) ()
-      (setf (conversation-lease-tracking-incomplete-p tracking) t)))
-  nil)
-
-(-> conversation--lease-owner (conversation-lease-tracking pathname) (option (integer 1)))
-(defun conversation--lease-owner (tracking pathname)
-  "Snapshot an owner under lifecycle and tracking locks, excluding our held inodes first."
-  (handler-case
-      (let* ((key   (namestring (platform-truename *platform* pathname)))
-             (known (gethash key (conversation-lease-tracking-leases tracking))))
-        (when (and known (conversation-lease-held-p known))
-          (return-from conversation--lease-owner (current-process-id)))
-        (when (conversation-lease-tracking-incomplete-p tracking)
-          (return-from conversation--lease-owner nil))
-        (let ((target (platform-path-status *platform* pathname :follow-links-p t))
-              (self-p nil))
-          (unless target
-            (return-from conversation--lease-owner nil))
-          (maphash
-           (lambda (key lease)
-             (declare (ignore key))
-             (when (conversation-lease-held-p lease)
-               (let ((status (platform-path-status
-                              *platform* (conversation-lease--lock-pathname lease)
-                              :follow-links-p t)))
-                 (unless status
-                   (return-from conversation--lease-owner nil))
-                 (when (platform-file-status-same-object-p target status)
-                   (setf self-p t)))))
-           (conversation-lease-tracking-leases tracking))
-          (if self-p
-              (current-process-id)
-              (multiple-value-bind (state pid)
-                  (platform-file-lock-owner *platform* pathname)
-                ;; FREE after contention is a race, never permission to take over.
-                (and (eq state ':held) (typep pid '(integer 1)) pid)))))
-    ((or sb-sys:deadline-timeout error) ()
-      nil)))
 
 (declaim (inline conversation--lease-in-use))
 
@@ -990,36 +903,21 @@ a crash may leave one that a later lease acquisition can reuse safely."
          (guard-pathname
            (conversation--lease-guard-pathname configuration)))
     (handler-case
-        (progn
-          (ensure-directories-exist lease-pathname)
-          (call-with-file-lock
-           guard-pathname
-           (lambda ()
-             (let ((tracking (conversation--lease-tracking)))
-               (with-lock-held ((conversation-lease-tracking-mutex tracking))
-                 (handler-case
-                     (let ((lock-lease (lease-acquire lease-pathname)))
-                       (if probe-p
-                           (unwind-protect nil
-                             ;; Probes never enter the diagnostic ownership index.
-                             ;; Retain the lifecycle guard through descriptor and file cleanup.
-                             (lease-release lock-lease)
-                             ; mallet:suppress no-ignore-errors -- best-effort removal after releasing the temporary lease
-                             (ignore-errors (delete-file lease-pathname)))
-                           (let ((lease (make-instance 'conversation-lease
-                                                      :identifier     normalized
-                                                      :lock-pathname  lease-pathname
-                                                      :guard-pathname guard-pathname
-                                                      :lock-lease     lock-lease)))
-                             (conversation--lease-remember tracking lease)
-                             lease)))
-                   (file-lock-busy ()
-                     (conversation--lease-in-use
-                      normalized conversation-pathname lease-pathname
-                      :owner-pid (conversation--lease-owner tracking lease-pathname)))))))))
-      (file-lock-busy ()
+        (if probe-p
+            (multiple-value-bind (busy-p owner-pid)
+                (ls-flock:file-lock-busy-p lease-pathname :guard-pathname guard-pathname)
+              (when busy-p
+                (conversation--lease-in-use
+                 normalized conversation-pathname lease-pathname :owner-pid owner-pid))
+              nil)
+            (make-instance 'conversation-lease
+                           :identifier normalized
+                           :lock-lease (lease-acquire lease-pathname :guard-pathname guard-pathname)))
+      (file-lock-busy (condition)
         (conversation--lease-in-use
-         normalized conversation-pathname lease-pathname))
+         normalized conversation-pathname lease-pathname
+         :owner-pid (and (equal lease-pathname (ls-flock:file-lock-error-pathname condition))
+                         (ls-flock:file-lock-busy-owner-pid condition))))
       (conversation-error (condition)
         (error condition))
       (error (condition)
@@ -1033,33 +931,10 @@ a crash may leave one that a later lease acquisition can reuse safely."
          :pathname conversation-pathname
          :sequence nil)))))
 
-(-> conversation--lease-release-tracked (conversation-lease ls-flock:lease) null)
-(defun conversation--lease-release-tracked (lease lock-lease)
-  "Release LOCK-LEASE under the diagnostic mutex without reacquiring its lifecycle guard."
-  (let ((tracking (conversation--lease-tracking)))
-    (with-lock-held ((conversation-lease-tracking-mutex tracking))
-      (unwind-protect (lease-release lock-lease)
-        (conversation--lease-forget tracking lease))))
-  nil)
-
 (-> conversation-lease-release (conversation-lease) null)
 (defun conversation-lease-release (lease)
-  "Release LEASE idempotently and remove its empty per-ID lock file."
-  (let ((lock-lease (conversation-lease--lock-lease lease)))
-    (when (lease-held-p lock-lease)
-      (handler-case
-          (call-with-file-lock
-           (conversation-lease--guard-pathname lease)
-           (lambda ()
-             (conversation--lease-release-tracked lease lock-lease)
-             ; mallet:suppress no-ignore-errors -- best-effort removal of the empty lock file after the lease is released
-             (ignore-errors
-               (let ((pathname (conversation-lease--lock-pathname lease)))
-                 (when (probe-file pathname)
-                   (delete-file pathname))))))
-        (error ()
-          (conversation--lease-release-tracked lease lock-lease)))))
-  nil)
+  "Release LEASE and let its guarded lock remove the per-ID file."
+  (lease-release (conversation-lease--lock-lease lease)))
 
 
 ;;;; -- Durable Projection --

@@ -1051,7 +1051,6 @@
   test-conversation-concurrent-appends
   test-conversation-child-project-setup
   test-conversation-process-lease
-  test-conversation-lease-probe-open
   test-conversation-lease-owner-diagnostic
   test-conversation-interrupted-tool-call
   test-conversation-late-duplicate-tool-output

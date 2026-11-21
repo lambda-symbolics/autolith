@@ -105,8 +105,8 @@
                                                  (platform-process-object-alive-p *platform* process))))
           :world-lease        (probe (lambda ()
                                        (multiple-value-list
-                                        (platform-file-lock-owner *platform*
-                                                                  (world-server-lock-pathname configuration)))))
+                                          (ls-flock:file-lock-busy-p
+                                           (world-server-lock-pathname configuration)))))
           :restart-marker
           (probe (lambda ()
                    (let* ((marker (world-restart-tests--record-state
