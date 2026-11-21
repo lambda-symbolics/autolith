@@ -396,16 +396,16 @@ batch's evidence. A single persisted form may exceed the soft byte budget."
          (lambda (pathname header)
            (let ((source (conversation--from-header identity pathname header)))
              (values (conversation-next-sequence source) (eql 1 (getf (rest header) :version)))))
-         :record-sequence        (lambda (record) (getf (rest record) :seq))
-         :validate-record        (lambda (pathname record)
-                                   (unless (conversation--record-form-p record)
-                                     (shell-log--fail "Invalid historical shell delivery record." pathname)))
-         :validate-first-record  #'conversation--validate-segment-first-record
-         :start-position         (getf cursor :position 0)
-         :next-sequence           (getf cursor :next-sequence)
-         :batch-offset           (getf cursor :batch-offset 0)
-         :maximum-records        *shell-log-delivery-index-record-limit*
-         :maximum-octets         *shell-log-delivery-index-byte-limit*)
+         :record-sequence       (lambda (record) (getf (rest record) :seq))
+         :validate-record       (lambda (pathname record)
+                                  (unless (conversation--record-form-p record)
+                                    (shell-log--fail "Invalid historical shell delivery record." pathname)))
+         :validate-first-record #'conversation--validate-segment-first-record
+         :start-position        (getf cursor :position 0)
+         :next-sequence         (getf cursor :next-sequence)
+         :batch-offset          (getf cursor :batch-offset 0)
+         :maximum-records       *shell-log-delivery-index-record-limit*
+         :maximum-octets        *shell-log-delivery-index-byte-limit*)
       (declare (ignore count))
       (values index (list :segment       (file-namestring segment)
                           :position      position
@@ -440,7 +440,7 @@ owner's source lock, which excludes rotation and actual storage deletion."
                               (equal owner (getf cursor :owner-conversation))
                               (stringp (getf cursor :segment))
                               (typep (getf cursor :position) '(integer 0))
-                               (typep (getf cursor :batch-offset 0) '(integer 0))
+                              (typep (getf cursor :batch-offset 0) '(integer 0))
                               (typep (getf cursor :next-sequence) '(integer 1)))
                    (shell-log--fail "Invalid shell delivery index cursor." path))
                  (setf history (member (getf cursor :segment) history

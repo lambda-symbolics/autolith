@@ -408,19 +408,19 @@
                  (test-assert (and (not complete-p) (= total 1) (equal page '("recent"))
                                    (conversation-input-history-repair-pending-p loaded))
                               "a missing projection exposes the active local window and defers archive repair"))))
-              (let ((checks 0))
-                (test-assert
-                 (catch 'cancelled
-                   (conversation-maintenance-run loaded :check-function
-                                                 (lambda () (when (= (incf checks) 4) (throw 'cancelled t))))
-                   nil)
-                 "repair observes managed cancellation before publishing a partial index"))
-              (test-assert (not (conversation-maintenance-running-p loaded)) "cancelled repair releases its runtime reservation")
-              (conversation-maintenance-run loaded)
-              (multiple-value-bind (page total complete-p)
-                  (conversation-input-history-page loaded :start 62 :limit 5)
-                (test-assert (and complete-p (= total (length inputs)) (equal page (subseq inputs 62 67)))
-                              "completed maintenance restores the complete seekable history")))))))
+            (let ((checks 0))
+              (test-assert
+               (catch 'cancelled
+                 (conversation-maintenance-run loaded :check-function
+                                               (lambda () (when (= (incf checks) 4) (throw 'cancelled t))))
+                 nil)
+               "repair observes managed cancellation before publishing a partial index"))
+            (test-assert (not (conversation-maintenance-running-p loaded)) "cancelled repair releases its runtime reservation")
+            (conversation-maintenance-run loaded)
+            (multiple-value-bind (page total complete-p)
+                (conversation-input-history-page loaded :start 62 :limit 5)
+              (test-assert (and complete-p (= total (length inputs)) (equal page (subseq inputs 62 67)))
+                           "completed maintenance restores the complete seekable history")))))))
   nil)
 
 (-> test-application-input-history-packets () null)

@@ -13,42 +13,42 @@
     (sexp-store:log-index-read
      (conversation-input-history-pathname identity)
      (conversation-input-history-index-pathname identity)
-     :stride *conversation-input-history-index-stride*
+     :stride       *conversation-input-history-index-stride*
      :header-epoch (lambda (header) (getf (rest header) :epoch))
-     :validate (lambda (metadata header tail)
-                 (and (conversation-input-history--header-p conversation header)
-                      (equal (getf metadata :id) (conversation-identifier conversation))
-                      (eql (getf metadata :created-at) (conversation-created-at conversation))
-                      (eql (getf metadata :sequence) expected)
-                      (if (zerop expected)
-                          (zerop (getf metadata :tail-position))
-                          (and (eq (first tail) ':input)
-                               (eql (getf (rest tail) :seq) expected)
-                               (equal (getf (rest tail) :source) (getf metadata :previous)))))))))
+     :validate     (lambda (metadata header tail)
+                     (and (conversation-input-history--header-p conversation header)
+                          (equal (getf metadata :id) (conversation-identifier conversation))
+                          (eql (getf metadata :created-at) (conversation-created-at conversation))
+                          (eql (getf metadata :sequence) expected)
+                          (if (zerop expected)
+                              (zerop (getf metadata :tail-position))
+                              (and (eq (first tail) ':input)
+                                   (eql (getf (rest tail) :seq) expected)
+                                   (equal (getf (rest tail) :source) (getf metadata :previous)))))))))
 
 (-> conversation-input-history-index--build (conversation) null)
 (defun conversation-input-history-index--build (conversation)
   "Build seek offsets for nonduplicate editable inputs."
   (let* ((identity (conversation-pathname conversation))
-         (metadata (list :id (conversation-identifier conversation)
+         (metadata (list :id         (conversation-identifier conversation)
                          :created-at (conversation-created-at conversation)
                          :sequence 0 :previous nil)))
     (setf (conversation-input-history-index-metadata conversation)
           (sexp-store:log-index-rebuild
            (conversation-input-history-pathname identity)
            (conversation-input-history-index-pathname identity)
-           :stride *conversation-input-history-index-stride*
-           :header-epoch (lambda (header) (getf (rest header) :epoch))
+           :stride        *conversation-input-history-index-stride*
+           :header-epoch  (lambda (header) (getf (rest header) :epoch))
            :leaf-pathname (lambda (block) (conversation-input-history-index-pathname identity block))
-           :metadata metadata
-           :select (lambda (record)
-                     (conversation-maintenance-check)
-                     (when (eq (first record) ':input)
-                       (let ((input    (getf (rest record) :source))
-                             (previous (getf metadata :previous)))
-                         (setf (getf metadata :previous) input
-                               (getf metadata :sequence) (getf (rest record) :seq))
-                         (not (equal input previous))))))))
+           :metadata      metadata
+           :select        (lambda (record)
+                            (conversation-maintenance-check)
+                            (when (eq (first record) ':input)
+                              (let ((input    (getf (rest record) :source))
+                                    (previous (getf metadata :previous)))
+                                (setf (getf metadata :previous) input
+                                      (getf metadata :sequence) (getf (rest record) :seq))
+                                (not (equal input previous))))))))
   nil)
 
 (-> conversation-input-history-index--note (conversation list integer) null)
@@ -88,14 +88,14 @@
                             (conversation-input-history-index-pathname (conversation-pathname conversation) block)
                             metadata block)
                       leaf-block block))
-              (let* ((position (nth (mod index *conversation-input-history-index-stride*) leaf))
-                     (record   (sexp-store:log-first
-                                (conversation-input-history-pathname (conversation-pathname conversation))
-                                :start-position position :physical-forms-p t)))
-               (unless (and (eq (first record) ':input) (non-empty-string-p (getf (rest record) :source)))
-                 (error 'conversation-invariant-error :pathname (conversation-pathname conversation) :sequence nil
-                        :message "A requested input record is unavailable."))
-               (push (getf (rest record) :source) page)))
+             (let* ((position (nth (mod index *conversation-input-history-index-stride*) leaf))
+                    (record   (sexp-store:log-first
+                               (conversation-input-history-pathname (conversation-pathname conversation))
+                               :start-position position :physical-forms-p t)))
+              (unless (and (eq (first record) ':input) (non-empty-string-p (getf (rest record) :source)))
+                (error 'conversation-invariant-error :pathname (conversation-pathname conversation) :sequence nil
+                       :message "A requested input record is unavailable."))
+              (push (getf (rest record) :source) page)))
     (nreverse page)))
 
 (-> conversation-input-history-index--recent (conversation integer) list)

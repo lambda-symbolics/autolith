@@ -746,8 +746,8 @@
         (test-assert (equalp memory-before (data-transfer--bytes memory-path))
                      "rollback restores the existing memory collection")
         (let ((failures (list (list :pathname (namestring memory-path)
-                                   :backup   (namestring (merge-pathnames "retained.sexp" root))
-                                   :message  "Unable to restore the previous contents."))))
+                                   :backup    (namestring (merge-pathnames "retained.sexp" root))
+                                   :message   "Unable to restore the previous contents."))))
           (test-call-with-function-replacements
            (list (list 'files-publish
                        (lambda (&rest arguments)

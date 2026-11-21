@@ -297,7 +297,7 @@ it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
       (dolist (row rows)
         (unless (and (sexp-store:plist-schema-p
                       row :required-keys '(:wire-json)
-                          :allowed-keys (cons :wire-json *conversation-compaction-row-metadata*))
+                          :allowed-keys  (cons :wire-json *conversation-compaction-row-metadata*))
                      (stringp (getf row :wire-json)))
           (conversation--record-error
            conversation properties "A carried context row is invalid."))
