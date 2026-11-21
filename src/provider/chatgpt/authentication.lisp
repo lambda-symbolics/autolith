@@ -2,30 +2,8 @@
 
 ;;;; -- ChatGPT Browser OAuth Conditions --
 
-(define-condition chatgpt-oauth-error (authentication-error)
-  ((stage
-    :initarg       :stage
-    :reader        chatgpt-oauth-error-stage
-    :type          keyword
-    :documentation "The browser OAuth stage that failed.")
-   (status
-    :initarg       :status
-    :initform      nil
-    :reader        chatgpt-oauth-error-status
-    :type          (option integer)
-    :documentation "The HTTP status returned by OpenAI, if known.")
-   (code
-    :initarg       :code
-    :initform      nil
-    :reader        chatgpt-oauth-error-code
-    :type          (option string)
-    :documentation "A bounded non-secret OAuth error code, if supplied.")
-   (response
-    :initarg       :response
-    :initform      nil
-    :reader        chatgpt-oauth-error-response
-    :type          (option string)
-    :documentation "A bounded redacted OAuth error description, if supplied."))
+(define-condition chatgpt-oauth-error (authentication-error browser-authentication-error)
+  ()
   (:documentation "A failure in ChatGPT browser OAuth."))
 
 

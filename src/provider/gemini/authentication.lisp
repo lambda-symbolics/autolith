@@ -2,18 +2,8 @@
 
 ;;;; -- Gemini Installed-App OAuth Conditions --
 
-(define-condition gemini-oauth-error (authentication-error)
-  ((stage :initarg :stage :reader gemini-oauth-error-stage :type keyword
-          :documentation "The OAuth stage that failed.")
-   (status :initarg :status :initform nil :reader gemini-oauth-error-status
-           :type          (option integer)
-           :documentation "The HTTP status returned by Google, if known.")
-   (code :initarg :code :initform nil :reader gemini-oauth-error-code
-         :type          (option string)
-         :documentation "A bounded non-secret OAuth error code, if supplied.")
-   (response :initarg :response :initform nil :reader gemini-oauth-error-response
-             :type          (option string)
-             :documentation "A bounded redacted OAuth error description, if supplied."))
+(define-condition gemini-oauth-error (authentication-error browser-authentication-error)
+  ()
   (:documentation "A failure in Google installed-application OAuth for Gemini."))
 
 
