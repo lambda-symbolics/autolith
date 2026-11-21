@@ -206,15 +206,15 @@ on other global memories, so premises are followed until none are new."
   "Collect session assets independently of retained command-output storage."
   (let ((root (data-transfer--asset-root configuration area owner)))
     (data-transfer--check-path (config :data-root configuration) root)
-      (loop for pathname in (data-transfer--walk-files
-                             root :excluded-directory-names
-                             (when (eq area ':tasks) '("shell-log")))
-            for inspection = (ls-compat.files:confined-path-inspect
-                               pathname root :root-policy ':below-root)
-            collect (list :area area :owner owner
-                          :path  (ls-compat.files:confined-path-inspection-components
-                                  inspection)
-                          :bytes (data-transfer--bytes pathname)))))
+    (loop for pathname in (data-transfer--walk-files
+                           root :excluded-directory-names
+                           (when (eq area ':tasks) '("shell-log")))
+          for inspection = (ls-compat.files:confined-path-inspect
+                             pathname root :root-policy ':below-root)
+          collect (list :area area :owner owner
+                        :path  (ls-compat.files:confined-path-inspection-components
+                                inspection)
+                        :bytes (data-transfer--bytes pathname)))))
 
 (-> data-transfer--map-input-images (t function) t)
 (defun data-transfer--map-input-images (object function)
