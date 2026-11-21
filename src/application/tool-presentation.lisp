@@ -1771,172 +1771,56 @@ OPERATION's own declared target line so they stay numbered."
      (t
       (application--preview-rows text style limit :gutter "│ ")))))
 
-(-> application--evaluation-parts
-    (string)
-    (values (option string) (option string)))
-(defun application--evaluation-parts (output)
-  "Return captured output and rendered values from an evaluation OUTPUT."
-  (let* ((marker          (format nil "Values:~%"))
-         (values-position (search marker output :from-end t)))
-    (if values-position
-        (let* ((prefix      (string-right-trim
-                             '(#\Space #\Tab #\Newline #\Return)
-                             (subseq output 0 values-position)))
-               (captured    (if (uiop:string-prefix-p "Output:" prefix)
-                                (string-left-trim
-                                 '(#\Newline #\Return)
-                                 (subseq prefix (length "Output:")))
-                                prefix))
-               (values-text (string-trim
-                             '(#\Space #\Tab #\Newline #\Return)
-                             (subseq output
-                                     (+ values-position (length marker))))))
-          (values (and (plusp (length captured)) captured)
-                  values-text))
-        (values nil nil))))
-
-(-> application--evaluation-result-rows (string) list)
-(defun application--evaluation-result-rows (output)
-  "Return styled output and values sections from evaluation OUTPUT."
-  (multiple-value-bind (captured values-text)
-      (application--evaluation-parts output)
-    (if (or captured values-text)
-        (append
-         (when captured
-           (application--section-preview-rows "output" captured ':plain))
-         (when (and captured values-text) (list nil))
-         (application--section-preview-rows
-          "values" (or values-text "") ':code
-           :language              *application-common-lisp-language*
-           :rainbow-parentheses-p t))
-        (application--preview-rows output
-                                   ':dim
-                                   *application-tool-output-lines*
-                                   :gutter "│ "))))
-
-(-> application--labeled-output-rows (string &key (:limit integer)) list)
-(defun application--labeled-output-rows
-    (output &key (limit *application-tool-inspection-lines*))
-  "Return OUTPUT as aligned fields, headings, and readable continuation rows."
-  (let* ((lines         (or (application--display-lines output) (list "")))
-         (visible-count (min limit (length lines)))
-         (omitted       (- (length lines) visible-count)))
-    (append
-     (loop for line in (subseq lines 0 visible-count)
-           for colon = (position #\: line)
-           collect
-           (cond
-             ((zerop (length line))
-              nil)
-             ((and colon
-                   (= colon (1- (length line))))
-              (list (terminal-span ':strong (subseq line 0 colon))))
-             ((and colon
-                   (< colon (1- (length line)))
-                   (char= (char line (1+ colon)) #\Space))
-              (list (terminal-span ':dim
-                                   (format nil "~18A " (subseq line 0 colon)))
-                    (terminal-span ':plain
-                                   (string-left-trim
-                                    '(#\Space)
-                                    (subseq line (1+ colon))))))
-             ((member (char line 0) '(#\Space #\Tab))
-              (list (terminal-span ':code line)))
-             (t
-              (list (terminal-span ':plain line)))))
-     (when (plusp omitted)
-       (list (list (terminal-span
-                    ':dim
-                    (format nil "… +~D more line~:P" omitted))))))))
-
-(-> application--restart-row (string) list)
-(defun application--restart-row (line)
-  "Return one aligned restart NAME and report row parsed from LINE."
-  (let* ((trimmed   (string-left-trim '(#\Space #\Tab) line))
-         (separator (position-if (lambda (character)
-                                   (member character '(#\Space #\Tab)))
-                                 trimmed)))
-    (if separator
-        (list (terminal-span ':notice
-                             (format nil "~18A " (subseq trimmed 0 separator)))
-              (terminal-span ':plain
-                             (string-left-trim
-                              '(#\Space #\Tab)
-                              (subseq trimmed separator))))
-        (list (terminal-span ':notice trimmed)))))
-
-(-> application--debugger-rows (string) list)
-(defun application--debugger-rows (output)
-  "Return separate condition, restart, and retry areas from debugger OUTPUT."
-  (let* ((heading          (format nil "Available restarts:~%"))
-         (heading-position (search heading output))
-         (restart-start    (and heading-position
-                                (+ heading-position (length heading))))
-         (retry-position   (and restart-start
-                                (search "Retry the identical call"
-                                        output
-                                        :start2 restart-start)))
-         (condition-text
-           (string-trim '(#\Space #\Tab #\Newline #\Return)
-                        (subseq output 0 (or heading-position
-                                             (length output)))))
-         (restart-text
-           (and restart-start
-                (string-trim '(#\Space #\Tab #\Newline #\Return)
-                             (subseq output restart-start
-                                     (or retry-position (length output))))))
-         (retry-text
-           (and retry-position
-                (string-trim '(#\Space #\Tab #\Newline #\Return)
-                             (subseq output retry-position)))))
-    (append
-     (application--section-preview-rows "condition" condition-text ':plain)
-     (when restart-text
-       (append
-        (list nil (application--tool-section-row "available restarts"))
-        (loop for line in (subseq
-                           (application--display-lines restart-text)
-                           0
-                           (min *application-tool-output-lines*
-                                (length (application--display-lines
-                                         restart-text))))
-              collect (application--restart-row line))))
-     (when retry-text
-       (append (list nil (application--tool-section-row "retry"))
-               (application--preview-rows
-                retry-text ':hint *application-tool-output-lines*
-                :gutter "│ "))))))
+(-> application--evaluation-result-rows (list) list)
+(defun application--evaluation-result-rows (record)
+  "Render the bounded evaluation sections, without interpreting the model text."
+  (let* ((details        (getf (rest record) :details))
+         (sections       (and (proper-list-p details) (evenp (length details))
+                              (getf details :evaluation)))
+         (condition-text (getf sections :condition))
+         (output         (getf sections :output))
+         (backtrace      (getf sections :backtrace))
+         (restarts       (getf sections :restarts))
+         (retry          (getf sections :retry)))
+    (when sections
+      (append
+       (when condition-text
+         (application--section-preview-rows "condition" condition-text ':plain))
+       (when (non-empty-string-p output)
+         (append (when condition-text (list nil))
+                 (application--section-preview-rows
+                  (if (equal (getf (rest record) :tool) "lisp.describe") "description" "output")
+                  output ':plain)))
+       (when restarts
+         (append (list nil (application--tool-section-row "available restarts"))
+                 (loop for (name report) in restarts
+                       repeat *application-tool-output-lines*
+                       collect (list (terminal-span ':notice (format nil "~18A " name))
+                                     (terminal-span ':plain report)))))
+       (when retry
+         (append (list nil)
+                 (application--section-preview-rows "retry" retry ':hint)))
+       (if condition-text
+           (when (non-empty-string-p backtrace)
+             (append (list nil)
+                     (application--section-preview-rows "backtrace" backtrace ':dim)))
+           (append (when (non-empty-string-p output) (list nil))
+                   (application--section-preview-rows
+                    "values" (getf sections :values) ':code
+                    :language              *application-common-lisp-language*
+                    :rainbow-parentheses-p t)))))))
 
 (-> application--failure-result-rows
     (string &key (:tool-name (option string)))
     list)
 (defun application--failure-result-rows (output &key tool-name)
-  "Return condition details, omitting TOOL-NAME's redundant failure prefix."
-  (let* ((prefix           (and tool-name (format nil "~A failed: " tool-name)))
-         (output           (if (and prefix (uiop:string-prefix-p prefix output))
-                               (subseq output (length prefix))
-                               output))
-         (restart-marker   (format nil "Available restarts:~%"))
-         (backtrace-marker (format nil "~%~%Backtrace:~%")))
-    (cond
-      ((search restart-marker output)
-       (application--debugger-rows output))
-      ((search backtrace-marker output)
-       (let* ((position  (search backtrace-marker output))
-              (message   (subseq output 0 position))
-              (backtrace (subseq output
-                                 (+ position (length backtrace-marker)))))
-         (append
-          (application--section-preview-rows "condition" message ':plain)
-          (list nil)
-          (application--section-preview-rows "backtrace"
-                                             backtrace
-                                             ':dim))))
-      (t
-       (application--preview-rows output
-                                  ':plain
-                                  *application-tool-output-lines*
-                                  :gutter "│ ")))))
+  "Render plain failure text, omitting TOOL-NAME's redundant failure prefix."
+  (let ((prefix (and tool-name (format nil "~A failed: " tool-name))))
+    (application--preview-rows
+     (if (and prefix (uiop:string-prefix-p prefix output))
+         (subseq output (length prefix))
+         output)
+     ':plain *application-tool-output-lines* :gutter "│ ")))
 
 (-> application--structured-json-safe-p (string) boolean)
 (defun application--structured-json-safe-p (text)
@@ -2226,6 +2110,7 @@ re-emitting untrusted serialized JSON."
      application
      record
      :rows (or (application--native-details-rows application record)
+               (application--evaluation-result-rows record)
                (application--mcp-content-rows application record)
                (if (application--tool-result-success-p record)
                    (application--structured-output-rows application output)
@@ -2577,56 +2462,6 @@ that follow are the model's next observation, not something the user reads."
          :detail (if count
                      (format nil "~:D file~:P balanced" count)
                      "balanced")))
-      (call-next-method)))
-
-(defmethod application-tool-result-entry
-    ((tool lisp-tool) (application application) record)
-  "Present successful worker evaluations as separate output and values areas."
-  (if (application--tool-result-success-p record)
-      (let ((output (or (getf (rest record) :output) "")))
-        (multiple-value-bind (captured values-text)
-            (application--evaluation-parts output)
-          (if (or captured values-text)
-              (application--tool-result-entry
-               application
-               record
-               :rows (application--evaluation-result-rows output))
-              (call-next-method))))
-      (call-next-method)))
-
-(defmethod application-tool-result-entry
-    ((tool self-eval-tool) (application application) record)
-  "Present self.eval output and values in separate bounded areas."
-  (if (application--tool-result-success-p record)
-      (application--tool-result-entry
-       application
-       record
-       :rows (application--evaluation-result-rows
-              (or (getf (rest record) :output) "")))
-      (call-next-method)))
-
-(defmethod application-tool-result-entry
-    ((tool lisp-describe-tool) (application application) record)
-  "Present lisp.describe output as structured description and values sections."
-  (if (application--tool-result-success-p record)
-      (let ((output (or (getf (rest record) :output) "")))
-        (multiple-value-bind (captured values-text)
-            (application--evaluation-parts output)
-          (application--tool-result-entry
-           application
-           record
-           :rows (if (or captured values-text)
-                     (append
-                      (when captured
-                        (append
-                         (list (application--tool-section-row "description"))
-                         (application--labeled-output-rows captured)))
-                      (when (and captured values-text) (list nil))
-                      (application--section-preview-rows
-                       "values" (or values-text "") ':code
-                        :language              *application-common-lisp-language*
-                        :rainbow-parentheses-p t))
-                     (application--labeled-output-rows output)))))
       (call-next-method)))
 
 (defmethod application-tool-result-entry

@@ -351,7 +351,8 @@ whatever would change the channel."
                     (application-answer-evaluation application (getf arguments :evaluation)
                                                    :attachment  attachment
                                                    :succeeded-p (getf arguments :succeeded-p)
-                                                   :text        (getf arguments :text)))))
+                                                   :text        (getf arguments :text)
+                                                   :sections    (getf arguments :sections)))))
         (:mode
          (let ((mode (getf arguments :value)))
            (unless (member mode (application-client-permission-modes))

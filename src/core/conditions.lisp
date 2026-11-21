@@ -626,10 +626,15 @@ The code is :NO-CLIENT, :FAILED, :CLIENT-LEFT, :TIMEOUT or :CANCELLED."))
 
 (define-condition self-correctable-error (autolith-error restart-choice-available)
   ((restart-names
-    :initarg       :restart-names
-    :reader        self-correctable-error-restart-names
+     :initarg       :restart-names
+     :reader        self-correctable-error-restart-names
+     :type          list
+     :documentation "The invokable restart names offered by the failed operation.")
+   (sections
+    :initarg       :sections
+    :reader        self-correctable-error-sections
     :type          list
-    :documentation "The invokable restart names offered by the failed operation."))
+    :documentation "Bounded condition text, restart choices, and retry instructions."))
   (:documentation
    "An active-image failure with selectable restarts and the original condition."))
 

@@ -31,15 +31,21 @@
     :initform      nil
     :accessor      client-evaluation-answer
     :type          list
-    :documentation "The client's (SUCCEEDED-P TEXT) answer, or NIL while it has none."))
+    :documentation "The client's (SUCCEEDED-P TEXT &OPTIONAL SECTIONS) answer, or NIL while it has none."))
   (:documentation "One evaluation a channel waits for a client to finish."))
+
+(-> client-evaluation-sections-p (t) boolean)
+(defun client-evaluation-sections-p (sections)
+  "Check the two bounded text sections in a successful client reply."
+  (and (typep sections '(cons (eql :output) (cons string (cons (eql :values) (cons string null)))))
+       (<= (length (second sections)) *evaluation-section-character-limit*)
+       (<= (length (fourth sections)) *evaluation-section-character-limit*)))
 
 (-> client-evaluation-reply-p (t) boolean)
 (defun client-evaluation-reply-p (packet)
   "Return true when PACKET is a terminal client's answer to an evaluation.
 
-The answer names its evaluation and carries the text; fields a client of
-another version adds are ignored."
+The answer carries text and may include separately bounded evaluation sections."
   (values (record-check packet
                         :tag            ':evaluated
                         :keyword-keys-p t
@@ -48,7 +54,9 @@ another version adds are ignored."
                                               (list :indicator ':succeeded-p :required t
                                                     :validate (lambda (value) (typep value 'boolean)))
                                               (list :indicator ':text :required t
-                                                    :validate  #'stringp)))))
+                                                    :validate #'stringp)
+                                              (list :indicator ':sections
+                                                     :validate #'client-evaluation-sections-p)))))
 
 (-> client-evaluation-request-p (t) boolean)
 (defun client-evaluation-request-p (packet)
@@ -92,7 +100,7 @@ The terminal client its user is at comes first, then the client attached last."
 (-> application-evaluate-on-client
     (application list &key (:restart-name (option string))
                  (:restart-value-source (option string)))
-    string)
+    (values string list))
 (defun application-evaluate-on-client (application sources &key restart-name restart-value-source)
   "Evaluate SOURCES in the image of APPLICATION's evaluating client and return the rendered result.
 
@@ -120,10 +128,10 @@ the forms fail there, and when the client leaves, the turn is cancelled, or
                    (append (and restart-name (list :restart restart-name))
                            (and restart-value-source
                                 (list :restart-value restart-value-source)))))
-           (destructuring-bind (succeeded-p text)
+           (destructuring-bind (succeeded-p text &optional sections)
                (application--await-evaluation application evaluation)
              (if succeeded-p
-                 text
+                 (values text sections)
                  (client-evaluation--fail ':failed text))))
       (let ((abandoned-p nil))
         (with-lock-held ((client-hub-lock hub))
@@ -173,9 +181,10 @@ the forms fail there, and when the client leaves, the turn is cancelled, or
 ;;;; -- Answering --
 
 (-> application-answer-evaluation
-    (application t &key (:attachment (option image-daemon:attachment)) (:succeeded-p t) (:text t)) boolean)
+    (application t &key (:attachment (option image-daemon:attachment)) (:succeeded-p t)
+                 (:text t) (:sections list)) boolean)
 (defun application-answer-evaluation
-    (application identifier &key attachment (succeeded-p nil succeeded-p-p) text)
+    (application identifier &key attachment (succeeded-p nil succeeded-p-p) text sections)
   "Accept IDENTIFIER's answer only from its originating ATTACHMENT with an explicit boolean status.
 
 Unknown or answered evaluations, malformed answers and other attachments take nothing."
@@ -190,7 +199,9 @@ Unknown or answered evaluations, malformed answers and other attachments take no
                    (eq attachment (client-evaluation-attachment evaluation))
                    (null (client-evaluation-answer evaluation)))
           (setf (client-evaluation-answer evaluation)
-                (list succeeded-p (bounded-string text :limit *self-evaluation-character-limit*)))
+                (list* succeeded-p
+                       (bounded-string text :limit *self-evaluation-character-limit*)
+                       (when (and succeeded-p sections) (list sections))))
           (condition-notify (client-evaluation-condition-variable evaluation))
           t)))))
 
@@ -201,24 +212,25 @@ Unknown or answered evaluations, malformed answers and other attachments take no
 (defun client-evaluate-request (request)
   "Evaluate the forms of the (:evaluation ...) REQUEST in this image and return its answer's fields.
 
-The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
-:TEXT with the rendered output and values or the failure."
+Include the request identifier, status, text, and bounded sections on success."
   (unless (client-evaluation-request-p request)
     (error 'client-evaluation-error :code ':invalid-request
            :message                       "An evaluation requires an identifier, forms as strings, and valid optional restart fields."))
   (let ((arguments (rest request)))
-    (multiple-value-bind (succeeded-p text)
+    (multiple-value-bind (succeeded-p text sections)
         (handler-case
-            (values t (self-evaluate-sources
-                       (getf arguments :forms)
-                       :restart-name         (getf arguments :restart)
-                       :restart-value-source (getf arguments :restart-value)))
+            (multiple-value-bind (text sections)
+                (self-evaluate-sources (getf arguments :forms)
+                                       :restart-name         (getf arguments :restart)
+                                       :restart-value-source (getf arguments :restart-value))
+              (values t text sections))
           (error (condition)
             (let ((stream (bounded-output-stream-create *self-evaluation-character-limit*)))
               (princ condition stream)
-              (values nil (bounded-output-stream-text stream)))))
-      (list :evaluation (getf arguments :id) :succeeded-p succeeded-p
-            :text (bounded-string text :limit *self-evaluation-character-limit*)))))
+              (values nil (bounded-output-stream-text stream) nil))))
+      (list* :evaluation (getf arguments :id) :succeeded-p succeeded-p
+             :text (bounded-string text :limit *self-evaluation-character-limit*)
+             (when sections (list :sections sections))))))
 
 (defclass client-evaluator ()
   ((work :initform nil :accessor client-evaluator-work

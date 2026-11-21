@@ -330,29 +330,25 @@ match worker rendering. Conditions and nonlocal exits propagate unchanged."
                   :output-truncated-p (bounded-output-stream-truncated-p stream)
                   :values-truncated-p values-truncated-p))))
 
-(-> self-evaluation-result (list string) string)
+(-> self-evaluation-result (list string) (values string list))
 (defun self-evaluation-result (result-values output)
-  "Render RESULT-VALUES and OUTPUT within the self result character budget."
-  (let ((stream (bounded-output-stream-create *self-evaluation-character-limit*)))
-    (when (non-empty-string-p output)
-      (format stream "Output:~%~A~%" output))
-    (format stream "Values:~%~{~A~%~}" result-values)
-    (self--captured-text stream)))
+  "Return the rendered result and its bounded evaluation sections."
+  (let ((evaluation (evaluation-details result-values output
+                                        :limit (min *self-evaluation-character-limit*
+                                                    *evaluation-section-character-limit*))))
+    (values (evaluation-text evaluation) evaluation)))
 
 
 ;;;; -- Restart Selection --
 
-(-> self--correctable-message (condition list) string)
-(defun self--correctable-message (condition restarts)
-  "Describe CONDITION and its RESTARTS together with retry instructions."
-  (format nil
-          "~A~2%Available restarts:~%~{~A~%~}~
-           Retry the identical call adding \"restart\": \"NAME\" to invoke ~
-           one, and add \"restart-value\" with a value form when the ~
-           restart consumes a value."
-          condition
-          (loop for (name . report) in restarts
-                collect (format nil "  ~A  ~A" name report))))
+(-> self--correctable-message (list) string)
+(defun self--correctable-message (sections)
+  "Describe a condition and its restarts using the bounded SECTIONS."
+  (with-output-to-string (stream)
+    (format stream "~A~2%Available restarts:~%" (getf sections :condition))
+    (loop for (name report) in (getf sections :restarts)
+          do (format stream "  ~A  ~A~%" name report))
+    (write-string (getf sections :retry) stream)))
 
 (-> self-call-with-restarts
     (function &key (:restart-name (option string))
@@ -373,12 +369,18 @@ SELF-CORRECTABLE-ERROR with the available choices and retry instructions."
                                     (lambda ()
                                       (eval (self-read-form restart-value-source)))))
     (restart-choice-available (available)
-      (let ((condition (restart-choice-available-condition available))
-            (choices   (restart-choice-available-choices available)))
+      (let* ((condition (restart-choice-available-condition available))
+             (choices   (restart-choice-available-choices available))
+             (sections  (list :condition (bounded-string (princ-to-string condition) :limit 4000)
+                              :restarts  (loop for (name . report) in choices repeat 16
+                                               collect (list (bounded-string name :limit 80)
+                                                             (bounded-string report :limit 240)))
+                              :retry     "Retry the identical call adding \"restart\": \"NAME\" to invoke one, and add \"restart-value\" with a value form when the restart consumes a value.")))
         (error 'self-correctable-error
-               :message       (self--correctable-message condition choices)
+               :message       (self--correctable-message sections)
                :condition     condition
                :choices       choices
+               :sections      sections
                :restart-names (mapcar #'first choices))))))
 
 (-> self-evaluate-forms (list function) t)
@@ -397,9 +399,9 @@ before that form is read."
 
 (-> self-evaluate-sources
     (list &key (:restart-name (option string)) (:restart-value-source (option string)))
-    string)
+    (values string list))
 (defun self-evaluate-sources (sources &key restart-name restart-value-source)
-  "Evaluate SOURCES in order in this image and return the rendered output and values.
+  "Evaluate SOURCES in order and return the rendered result and its bounded sections.
 
 A failure names the failing form when several ran and keeps its restart
 choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
@@ -433,7 +435,7 @@ choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
 (-> self--evaluate-in-active-image
     (configuration list &key (:restart-name (option string))
                    (:restart-value-source (option string)))
-    string)
+    (values string list))
 (defun self--evaluate-in-active-image (configuration sources &key restart-name restart-value-source)
   "Evaluate SOURCES in the active image, journaling the attempt and its outcome."
   (with-live-mutation
@@ -442,9 +444,10 @@ choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
        configuration
        (list :mutation :kind :eval :proposed source :result ':pending))
       (handler-case
-          (prog1 (self-evaluate-sources sources
-                                        :restart-name         restart-name
-                                        :restart-value-source restart-value-source)
+          (multiple-value-prog1
+              (self-evaluate-sources sources
+                                     :restart-name         restart-name
+                                     :restart-value-source restart-value-source)
             (mutation-journal-append
              configuration
              (list :mutation :kind :eval :proposed source :result ':installed)))
@@ -469,16 +472,17 @@ part of the reconstructible state."
   (let ((sources              (tool-forms-argument arguments "self.eval"))
         (restart-name         (tool-argument arguments "restart"))
         (restart-value-source (tool-argument arguments "restart-value")))
-    (tool-success
-     (ecase (self--evaluation-target arguments)
-       (:server
-        (self--evaluate-in-active-image (tool-context-configuration context) sources
-                                        :restart-name         restart-name
-                                        :restart-value-source restart-value-source))
-       (:client
-        (agent-observer-evaluate-on-client (tool-context-observer context) sources
+    (multiple-value-bind (text evaluation)
+        (ecase (self--evaluation-target arguments)
+          (:server
+           (self--evaluate-in-active-image (tool-context-configuration context) sources
                                            :restart-name         restart-name
-                                           :restart-value-source restart-value-source))))))
+                                           :restart-value-source restart-value-source))
+          (:client
+           (agent-observer-evaluate-on-client (tool-context-observer context) sources
+                                              :restart-name         restart-name
+                                              :restart-value-source restart-value-source)))
+      (tool-success text :details (and evaluation (list :evaluation evaluation))))))
 
 (-> self--positioned-failure (error integer integer) error)
 (defun self--positioned-failure (condition position count)
@@ -491,12 +495,15 @@ still applies; any other failure becomes a TOOL-ERROR keeping its failure code."
       ((= count 1)
        condition)
       ((typep condition 'self-correctable-error)
-       (make-condition 'self-correctable-error
-                       :message       (concatenate 'string prefix
-                                                   (autolith-error-message condition))
-                       :condition     (restart-choice-available-condition condition)
-                       :choices       (restart-choice-available-choices condition)
-                       :restart-names (self-correctable-error-restart-names condition)))
+       (let ((sections (copy-list (self-correctable-error-sections condition))))
+         (setf (getf sections :condition)
+               (concatenate 'string prefix (getf sections :condition)))
+         (make-condition 'self-correctable-error
+                         :message       (self--correctable-message sections)
+                         :condition     (restart-choice-available-condition condition)
+                         :choices       (restart-choice-available-choices condition)
+                         :sections      sections
+                         :restart-names (self-correctable-error-restart-names condition))))
       (t
        (make-condition 'tool-error
                        :message   (format nil "~A~A" prefix condition)
