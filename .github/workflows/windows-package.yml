@@ -1,236 +1,130 @@
-name: Windows package
+name: Windows Clifff package proof
 
 on:
   workflow_dispatch:
-    inputs:
-      run-tests:
-        description: Run the full source test suite
-        type: boolean
-        default: true
-      test:
-        description: Optional exact source test case (empty runs the full suite)
-        type: string
-        default: ''
-  push:
-    branches: [master]
-    paths:
-      - "src/**"
-      - "script/**"
-      - "bin/**"
-      - "native/**"
-      - "qlfile*"
-      - "autolith.asd"
-      - "VERSION"
-      - "tests/**"
-      - "sbcl.version"
-      - "sbcl-minimum.version"
-      - "sbcl-*-releases.sha256"
-      - ".github/workflows/windows-package.yml"
-      - ".github/actions/windows-bootstrap/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: windows-package-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  unicode-runtime:
+  packaged-clifff:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 60
+    env:
+      CANDIDATE: 31bb830092900389a9f9c0a499d2de8dc08e9116
+      CLIFFF_COMMIT: 128b6441f04f9eae626ceb4250903388270c24c5
+      FFF_COMMIT: 9a7b1c8fc1d20236a255bf3ddb24eeb761bd6bd9
     steps:
       - uses: actions/checkout@v5
-      - name: Check installer in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-installer.ps1
-      - name: Check installer in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-installer.ps1
-      - name: Check OpenSSL discovery in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-openssl.ps1
-      - name: Check OpenSSL discovery in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-openssl.ps1
-      - name: Check Qlot cleanup in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-qlot-cleanup.ps1
-      - name: Check Qlot cleanup in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-qlot-cleanup.ps1
-      - name: Check Unicode runtime startup and core I/O
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify overlay and check out the exact package source
         shell: pwsh
         run: |
-          & bin\autolith-runtime.ps1 --install --script script/runtime-requirement.lisp
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime installation failed.' }
-          $version = (Get-Content -Raw sbcl.version).Trim()
-          $installed = Join-Path $env:LOCALAPPDATA "autolith\data\runtimes\$version\installation"
-          $runtime = Join-Path $env:RUNNER_TEMP 'runtime Lukáš-žluťoučký'
-          Copy-Item -Recurse -LiteralPath $installed -Destination $runtime
-          script\prepare-windows-runtime.ps1 -Runtime (Join-Path $runtime 'sbcl.exe')
-          script\check-windows-runtime.ps1 -RuntimeDirectory $runtime
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch') { throw 'Dispatch required.' }
+          $parentLine = git rev-list --parents -n 1 HEAD
+          if ($LASTEXITCODE -ne 0 -or $parentLine -cne "$env:GITHUB_SHA $env:CANDIDATE") {
+            throw 'Expected the dispatch SHA to be a single-parent overlay on the candidate.'
+          }
+          git diff --quiet $env:CANDIDATE HEAD -- . ':(exclude).github/workflows/windows-package.yml' ':(exclude).github/workflows/windows-clifff-smoke.lisp'
+          if ($LASTEXITCODE -ne 0) { throw 'Overlay changes the production tree.' }
 
-  package-windows-x86_64:
-    needs: unicode-runtime
-    runs-on: windows-2025
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
+          $root = Join-Path $env:RUNNER_TEMP 'clifff-proof'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $source = Join-Path $root 'source'
+          git worktree add --detach $source $env:CANDIDATE
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate checkout failed.' }
+          $revision = git -C $source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $revision -cne $env:CANDIDATE) { throw 'Wrong candidate checkout.' }
+          $fffPin = (Get-Content -Raw -LiteralPath (Join-Path $source 'native\fff\commit')).Trim()
+          if ($fffPin -cne $env:FFF_COMMIT) { throw 'Unexpected FFF source pin.' }
+          $lock = Get-Content -Raw -LiteralPath (Join-Path $source 'qlfile.lock')
+          $clifffPin = [regex]::Match($lock, '(?s)\("clifff"\s*\.\s*\(:class\s+qlot/source/git:source-git\s+:initargs\s*\(:remote-url\s+"https://github\.com/lambda-symbolics/clifff\.git"\s+:ref\s+"([0-9a-f]{40})"\)')
+          if (-not $clifffPin.Success -or $clifffPin.Groups[1].Value -cne $env:CLIFFF_COMMIT) {
+            throw 'Unexpected Clifff lock pin.'
+          }
+          "candidate=$revision clifff=$env:CLIFFF_COMMIT fff=$fffPin"
+          "CLIFFF_PROOF_ROOT=$root" >> $env:GITHUB_ENV
 
       - name: Install build dependencies
         shell: pwsh
         run: |
           choco install llvm cmake make --yes --no-progress
-          if (-not (Get-Command cargo.exe -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
-            & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
-            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-          }
-
-      - name: Bootstrap with shared caches
-        id: bootstrap
-        uses: ./.github/actions/windows-bootstrap
-
-      - name: Check native bundle publication and ACLs
-        shell: pwsh
-        run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
-      - name: Check upstream ColorLisp native artifacts
-        shell: pwsh
-        env:
-          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-        run: script\check-windows-colorlisp-upstream.ps1
-      - name: Check ColorLisp packaging in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-colorlisp.ps1
-      - name: Check ColorLisp packaging in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-colorlisp.ps1
-      - name: Package Windows release
-        shell: pwsh
-        run: |
-          $tag = "v0.52.0-dev.$env:GITHUB_RUN_NUMBER"
-          script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
-          script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: |
-            dist/*.zip
-            dist/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 14
-
-  packaged-unicode-launcher:
-    needs: package-windows-x86_64
-    runs-on: windows-2025
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: dist
-
-      # Exercise first-run builds with both release and data paths containing Unicode.
-      - name: Smoke-test the packaged launcher
-        shell: pwsh
-        run: |
-          $archive = (Get-ChildItem dist\*.zip).FullName
-          $stage = Join-Path $env:RUNNER_TEMP 'release-smoke-Lukáš-žluťoučký'
-          Expand-Archive -LiteralPath $archive -DestinationPath $stage
-          $release = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
-          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'release-smoke-Lukáš-žluťoučký-home'
-          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
-          $log = Join-Path $env:RUNNER_TEMP 'smoke.log'
-          $status = 0
-          try {
-            & (Join-Path $release 'bin\autolith.cmd') --version 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
-          }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Windows release smoke test failed' -Log $log -Status $status
-            exit $status
-          }
-
-  packaged-standard-account-sandbox:
-    needs: package-windows-x86_64
-    runs-on: windows-2025
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: dist
-
-      - name: Verify packaged sandbox under a standard account
-        shell: pwsh
-        run: |
-          $log = Join-Path $env:RUNNER_TEMP 'sandbox.log'
-          $status = 0
-          try {
-            & script\check-windows-sandbox.ps1 -Archive (Get-ChildItem dist\*.zip).FullName 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
-          }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Packaged Windows sandbox failed' -Log $log -Status $status
-            exit $status
-          }
-
-  source-check:
-    needs: unicode-runtime
-    if: github.event_name != 'workflow_dispatch' || inputs.run-tests
-    runs-on: windows-2025
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build dependencies
-        shell: pwsh
-        run: |
-          choco install llvm cmake make emacs --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw 'Build dependency installation failed.' }
-          & emacs.exe --version
-          if ($LASTEXITCODE -ne 0) { throw 'The native Emacs test dependency is unavailable.' }
           if (-not (Get-Command cargo.exe -ErrorAction SilentlyContinue)) {
             Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
             & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
-            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+            if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed.' }
+            "$env:USERPROFILE\.cargo\bin" >> $env:GITHUB_PATH
           }
 
-      - name: Bootstrap with shared caches
-        id: bootstrap
-        uses: ./.github/actions/windows-bootstrap
-
-      - name: Check native bundle publication and ACLs
+      - name: Bootstrap and build one canonical Windows package
         shell: pwsh
-        run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
-      - name: Check
-        shell: pwsh
-        env:
-          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-          AUTOLITH_CHECK_TEST: ${{ inputs.test }}
         run: |
-          $log = Join-Path $env:RUNNER_TEMP 'check.log'
-          $status = 0
+          $source = Join-Path $env:CLIFFF_PROOF_ROOT 'source'
+          Remove-Item Env:XDG_DATA_HOME, Env:XDG_CACHE_HOME, Env:XDG_STATE_HOME -ErrorAction SilentlyContinue
+          $env:LOCALAPPDATA = Join-Path $env:CLIFFF_PROOF_ROOT 'build-home'
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA | Out-Null
+          Push-Location $source
           try {
-            $selection = @()
-            if ($env:AUTOLITH_CHECK_TEST) { $selection = @('--test', $env:AUTOLITH_CHECK_TEST) }
-            & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
+            & .\script\bootstrap.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Candidate bootstrap failed.' }
+            git diff --quiet HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Bootstrap modified tracked candidate files.' }
+            $tag = 'v' + (Get-Content -Raw -LiteralPath VERSION).Trim() + "-dev.$env:GITHUB_RUN_NUMBER"
+            & .\script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
+            $archives = @(Get-ChildItem -File -LiteralPath dist -Filter '*.zip')
+            if ($archives.Count -ne 1) { throw 'Expected exactly one package ZIP.' }
+            & .\script\validate-windows-release-artifact.ps1 -Archive $archives[0].FullName
+            "CLIFFF_PROOF_ARCHIVE=$($archives[0].FullName)" >> $env:GITHUB_ENV
+          } finally {
+            Pop-Location
           }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Windows check failed' -Log $log -Status $status
-            exit $status
+
+      - name: Verify packaged DLL and exercise the search worker
+        shell: pwsh
+        run: |
+          $root = $env:CLIFFF_PROOF_ROOT
+          $stage = Join-Path $root 'unpacked'
+          Expand-Archive -LiteralPath $env:CLIFFF_PROOF_ARCHIVE -DestinationPath $stage
+          $release = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($env:CLIFFF_PROOF_ARCHIVE))
+          $packaged = Join-Path $release 'libexec\autolith'
+          if ((Get-Content -LiteralPath (Join-Path $release 'RELEASE')) -cnotcontains "commit=$env:CANDIDATE") {
+            throw 'Archive provenance does not match the exact candidate.'
           }
+          $dll = (Get-Item -LiteralPath (Join-Path $release 'native\fff_c.dll')).FullName
+          $built = @(Get-ChildItem -Recurse -File -LiteralPath (Join-Path $root 'build-home\autolith\data\native\fff') -Filter '*.dll')
+          $dllHash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          if ($built.Count -ne 1 -or $dllHash -cne (Get-FileHash -LiteralPath $built[0].FullName -Algorithm SHA256).Hash) {
+            throw 'Packaged DLL does not match the single canonical bootstrap DLL.'
+          }
+          $manifest = Get-Content -Raw -LiteralPath (Join-Path $built[0].DirectoryName 'manifest.sexp')
+          if ($manifest -cnotmatch ('^\s*\(:FFF-LIBRARY\s+:VERSION\s+1\s+:COMMIT\s+"' + $env:FFF_COMMIT + '"\)\s*$')) {
+            throw 'Bootstrap DLL manifest does not record the pinned FFF source.'
+          }
+          "package=$env:CLIFFF_PROOF_ARCHIVE fff_dll=$dll sha256=$dllHash"
+
+          Remove-Item Env:XDG_DATA_HOME, Env:XDG_CACHE_HOME, Env:XDG_STATE_HOME -ErrorAction SilentlyContinue
+          $env:LOCALAPPDATA = Join-Path $root 'search-home'
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA | Out-Null
+          $env:SBCL_HOME = Join-Path $release 'runtime'
+          $env:AUTOLITH_SBCL = (Get-Item -LiteralPath (Join-Path $env:SBCL_HOME 'sbcl.exe')).FullName
+          $env:AUTOLITH_FFF_LIBRARY = $dll
+          $env:AUTOLITH_PROJECT_SETUP = (Get-Item -LiteralPath (Join-Path $packaged '.qlot\setup.lisp')).FullName
+          $env:PATH = "$(Join-Path $release 'native');$env:PATH"
+          $probe = Join-Path $env:GITHUB_WORKSPACE '.github\workflows\windows-clifff-smoke.lisp'
+          $worker = Join-Path $packaged 'bin\autolith-search-worker'
+          Push-Location $packaged
+          try {
+            & $env:AUTOLITH_SBCL --script $probe $worker $env:LOCALAPPDATA
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Clifff search smoke failed.' }
+          } finally {
+            Pop-Location
+            $log = Join-Path $env:LOCALAPPDATA 'worker.log'
+            if (Test-Path -LiteralPath $log) { Get-Content -Tail 80 -LiteralPath $log }
+          }
+          # Also exercise Windows filesystem access after both worker cycles close.
+          Rename-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'index') -NewName 'closed-index'
+          'CLIFFF PASS: private native cache can be renamed after shutdown.'
