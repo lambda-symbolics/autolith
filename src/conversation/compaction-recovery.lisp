@@ -100,8 +100,7 @@ configured window. Read existing metadata only, without discovery or preparation
                   for item = (first tail)
                   for next = (second tail)
                  unless (and (not (gethash item (compaction-recovery-protected state)))
-                             (json-string= (json-get item "type") "reasoning")
-                             (non-empty-string-p (json-get item "encrypted_content"))
+                             (encrypted-reasoning-item-p item)
                              (not (compaction-recovery-linked-p item))
                              (not (and previous (compaction-recovery-linked-p previous)))
                              (not (and next (compaction-recovery-linked-p next))))
@@ -185,8 +184,8 @@ and legacy image_url parts. Ordinary strings and MIME metadata are retained."
             (progn
               (incf images)
               (values :replace
-                      (json-object "type" "input_text" "text"
-                                   "[Emergency compaction: image omitted; visual content unavailable in this text transcript.]")))
+                      (clinker-transcript:input-text-item
+                       "[Emergency compaction: image omitted; visual content unavailable in this text transcript.]")))
             (values :retain nil))))
      images)))
 
@@ -213,9 +212,8 @@ and legacy image_url parts. Ordinary strings and MIME metadata are retained."
                               :notice           "Native opaque anchors and reasoning are absent from the plain transcript.")
     (conversation-compaction-summary-view
      view (loop for group in (nreverse groups)
-                collect (json-object "type" "message" "role" "user"
-                                     "content" (vector (json-object "type" "input_text" "text"
-                                                                    (json-encode (coerce group 'vector)))))))))
+                collect (clinker-transcript:user-message-item
+                         (json-encode (coerce group 'vector)))))))
 
 (-> compaction-recovery-drop-exchange (conversation) (option conversation))
 (defun compaction-recovery-drop-exchange (view)

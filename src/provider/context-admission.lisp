@@ -243,14 +243,14 @@ that prefix. Count every new item and take no credit for removed reasoning."
       (let* ((model-changed-p (not (equal model (config :model (provider-configuration provider)))))
              (prefix          (subseq old 0 count))
              (covered         (if model-changed-p
-                                  (remove-if #'conversation--encrypted-reasoning-p prefix)
+                                  (remove-if #'encrypted-reasoning-item-p prefix)
                                   prefix))
              (added           nil))
         (dolist (item current)
           (cond
             ((and covered (eq item (first covered)))
              (pop covered))
-            ((or (null covered) (and model-changed-p (conversation--encrypted-reasoning-p item)))
+            ((or (null covered) (and model-changed-p (encrypted-reasoning-item-p item)))
              (push item added))
             (t
              (return (values nil nil)))))

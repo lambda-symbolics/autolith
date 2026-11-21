@@ -236,7 +236,7 @@
            (plain        (json-object "type" "reasoning" "summary" #("plaintext reasoning")))
            (paired       (json-object "type" "reasoning" "encrypted_content" "paired encrypted"))
            (call         (compaction-tail-tests--call "paired"))
-           (output       (compaction-tail-tests--output "paired" "answer"))
+           (output       (function-call-output-item "paired" "answer"))
            (after-output (json-object "type" "reasoning" "encrypted_content" "after output"))
            (anchor       (json-object "type" "compaction" "encrypted_content" "native anchor"))
            (after-anchor (json-object "type" "reasoning" "encrypted_content" "after anchor"))
@@ -268,8 +268,8 @@
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (state        (make-compaction-recovery))
-           (a            (compaction-tail-tests--output "a" (make-string 12000 :initial-element #\a)))
-           (b            (compaction-tail-tests--output "b" (make-string 12000 :initial-element #\b)))
+           (a            (function-call-output-item "a" (make-string 12000 :initial-element #\a)))
+           (b            (function-call-output-item "b" (make-string 12000 :initial-element #\b)))
            (items        (list (json-object "type" "message" "role" "user" "content" "old")
                           (compaction-tail-tests--call "a") a
                           (compaction-tail-tests--call "b") b
@@ -325,7 +325,7 @@
     (let* ((conversation (conversation-create configuration))
            (state        (make-compaction-recovery))
            (items        (list (compaction-tail-tests--call "boundary")
-                               (compaction-tail-tests--output "boundary" "old output")
+                               (function-call-output-item "boundary" "old output")
                                (json-object "type" "compaction" "encrypted_content" "native")
                                (json-object "type" "message" "role" "user" "content"
                                             (make-string 180000 :initial-element #\p))))

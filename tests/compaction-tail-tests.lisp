@@ -8,12 +8,6 @@
   (json-object "type" "function_call" "call_id" call-id
                "name" "inspect" "namespace" "test" "arguments" "{}"))
 
-(-> compaction-tail-tests--output (string string) json-object)
-(defun compaction-tail-tests--output (call-id output)
-  "Return the completed output correlated with CALL-ID."
-  (json-object "type" "function_call_output" "call_id" call-id
-               "output" output))
-
 (-> compaction-tail-tests--reasoning (string) json-object)
 (defun compaction-tail-tests--reasoning (text)
   "Return private reasoning that belongs to the current provider turn."

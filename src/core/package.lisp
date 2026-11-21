@@ -774,12 +774,14 @@
   (:import-from #:clinker-transcript
                 #:backend-search-call-item-p
                 #:chat-reasoning-item-p
+                #:encrypted-reasoning-item-p
                 #:family-private-item-p
                 #:function-call-item-p
                 #:function-call-output-item
                 #:function-call-output-item-p
                 #:item-assistant-text
                 #:item-role
+                #:item-text
                 #:message-item-p
                 #:native-compaction-item-canonicalize
                 #:native-compaction-item-p

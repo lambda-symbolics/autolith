@@ -1993,11 +1993,6 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
                       (error condition)))))))))
     normalized))
 
-(-> conversation--encrypted-reasoning-p (json-object) boolean)
-(defun conversation--encrypted-reasoning-p (item)
-  "Recognize an opaque reasoning item, not a native compaction checkpoint."
-  (and (reasoning-item-p item) (non-empty-string-p (json-get item "encrypted_content"))))
-
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
   "Append ITEM and attribute it to CONVERSATION's current model family."
@@ -2006,7 +2001,7 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
       (when (non-empty-string-p model)
         (setf (gethash item (conversation-input-item-families conversation))
               (model-family model (conversation-model-provider conversation)))
-        (when (conversation--encrypted-reasoning-p item)
+        (when (encrypted-reasoning-item-p item)
           (setf (gethash item (clinker-transcript:projection-metadata-table
                                (conversation-projection conversation) ':reasoning-model)) model)))
       (clinker-transcript:projection-append (conversation-projection conversation) item))))
@@ -2040,22 +2035,6 @@ lasts one response from its entry."
                         :key (lambda (entry) (getf entry :item)))))
       (not (null (or (member status '(:error :mechanics))
                      (getf entry :failed-p)))))))
-
-(-> conversation-item-text (json-object) string)
-(defun conversation-item-text (item)
-  "Return the text of ITEM, a user message or a tool output, without its images."
-  (let ((content (or (json-get item "content") (json-get item "output"))))
-    (typecase content
-      (string
-       content)
-      (vector
-       (format nil "~{~A~^~%~}"
-               (loop for part across content
-                     for text = (and (json-object-p part) (json-get part "text"))
-                     when (stringp text)
-                       collect text)))
-      (otherwise
-       ""))))
 
 (-> conversation--append-ephemeral-input-item
     (conversation json-object &key (:attachments list) (:failed-p boolean))
@@ -2113,7 +2092,7 @@ FAILED-P records that ITEM is the result of a failed tool call."
           (let ((owners (clinker-transcript:projection-metadata-table
                          (conversation-projection conversation) ':reasoning-model)))
             (remove-if (lambda (item)
-                         (and (conversation--encrypted-reasoning-p item)
+                         (and (encrypted-reasoning-item-p item)
                               (not (equal model (gethash item owners)))))
                        items))
           items))))
@@ -2200,8 +2179,7 @@ already owns its metadata and is installed without an additional remap."
    "role" "developer"
    "content"
    (json-array
-    (json-object "type" "input_text"
-                 "text" *conversation-inherited-reference-boundary*))))
+    (clinker-transcript:input-text-item *conversation-inherited-reference-boundary*))))
 
 (-> conversation--inherited-reference-boundary-p (t) boolean)
 (defun conversation--inherited-reference-boundary-p (item)
@@ -2962,7 +2940,7 @@ output for one identifier, so it fails instead of poisoning replay."
     (lambda (block)
       (etypecase block
         (string
-         (json-object "type" "input_text" "text" block))
+         (clinker-transcript:input-text-item block))
         (image-attachment
          (image-input-content-item block))))
     blocks)

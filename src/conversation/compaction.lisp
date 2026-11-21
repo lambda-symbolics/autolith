@@ -79,7 +79,7 @@ adopted context brought from another conversation."
     (loop for item in (reverse (conversation-compaction--source-items compaction))
           for record = (gethash item records)
           when record
-            collect (list* :text (conversation-item-text item)
+            collect (list* :text (item-text item)
                            (append (and (json-get item "call_id")
                                         (list :call-id (json-get item "call_id")))
                                    (and (not (gethash item shown))
@@ -415,7 +415,7 @@ handoff, which the family that owns the native window does not read."
             (setf (gethash item
                            (clinker-transcript:projection-metadata-table projection ':family))
                   family)
-            (when (and (conversation--encrypted-reasoning-p item) (conversation-model conversation))
+          (when (and (encrypted-reasoning-item-p item) (conversation-model conversation))
               (setf (gethash item (clinker-transcript:projection-metadata-table projection ':reasoning-model))
                     (conversation-model conversation))))
           (unless (member :continuation properties)
