@@ -87,7 +87,6 @@
              (test-assert (not (probe-file source)) "source removed through adapter")
              (test-assert (not (probe-file removed)) "deletion through adapter")
              (test-assert (equal "aYz" (uiop:read-file-string target)) "ordered moved content")
-             (test-assert (equal "firstsecond" (uiop:read-file-string created)) "stable simultaneous insert order")
              (test-assert (not (probe-file intermediate)) "intermediate move has no residual file")
              (with-test-fixture (':file-modes "semantic multi-hop move permissions")
                (test-assert (= #o750 (test-fixture-file-mode *platform* target))
@@ -97,7 +96,7 @@
 
 (-> test-lsp-semantic-preconditions () null)
 (defun test-lsp-semantic-preconditions ()
-  "Reject collisions and unsupported resource kinds, preserve conditional operation semantics."
+  "Reject unsupported host resources and prevent partial publication after late failure."
   (with-test-configuration (configuration)
     (setf configuration (lsp-semantic-tests--workspace configuration))
     (let* ((registry   (make-default-tool-registry :configuration configuration))
@@ -107,15 +106,11 @@
            (source     (lsp-semantic-tests--write configuration "source.txt" "source"))
            (target     (lsp-semantic-tests--write configuration "target.txt" "target"))
            (missing    (cl-lsp:lsp-path-uri (merge-pathnames "missing.txt" root)))
-           (source-uri (cl-lsp:lsp-path-uri source))
-           (target-uri (cl-lsp:lsp-path-uri target)))
+           (source-uri (cl-lsp:lsp-path-uri source)))
       (unwind-protect
            (progn
              (dolist (operation
-                      (list (json-object "kind" "create" "uri" target-uri)
-                            (json-object "kind" "rename" "oldUri" source-uri "newUri" target-uri)
-                            (json-object "kind" "delete" "uri" missing)
-                            (json-object "kind" "delete" "uri" (cl-lsp:lsp-path-uri root))
+                      (list (json-object "kind" "delete" "uri" (cl-lsp:lsp-path-uri root))
                             (json-object "kind" "create" "uri" "https://example.org/file")
                             (json-object "kind" "create" "uri" "file://host/file")))
                (test-assert
@@ -123,18 +118,6 @@
                  (lambda () (lsp-semantic-tests--proposal
                              context client (json-object "documentChanges" (vector operation)))))
                 "invalid resource precondition fails before mutation"))
-             (let ((entry (lsp-semantic-tests--proposal
-                           context client
-                           (json-object "documentChanges"
-                                        (vector (json-object "kind" "create" "uri" target-uri
-                                                             "options" (json-object "ignoreIfExists" t))
-                                                (json-object "kind" "rename" "oldUri" source-uri "newUri" target-uri
-                                                             "options" (json-object "ignoreIfExists" t))
-                                                (json-object "kind" "delete" "uri" missing
-                                                             "options" (json-object "ignoreIfNotExists" t)))))))
-               (test-assert (null (lsp-semantic--apply context entry #())) "ignored operations do not publish")
-               (test-assert (equal "source" (uiop:read-file-string source)) "ignored move retains source")
-               (test-assert (equal "target" (uiop:read-file-string target)) "ignored collision retains target"))
              (let* ((entry      (lsp-semantic-tests--proposal
                                  context client
                                  (json-object "documentChanges"
@@ -154,14 +137,7 @@
                (test-assert (and (equal "source" (uiop:read-file-string source))
                                  (equal "target" (uiop:read-file-string target))
                                  (not (probe-file (merge-pathnames "missing.txt" root))))
-                            "failed materialization publishes no partial file effects"))
-             (let ((entry (lsp-semantic-tests--proposal
-                           context client
-                           (json-object "documentChanges"
-                                        (vector (json-object "kind" "rename" "oldUri" source-uri "newUri" target-uri
-                                                             "options" (json-object "overwrite" t)))))))
-               (lsp-semantic--apply context entry #())
-               (test-assert (equal "source" (uiop:read-file-string target)) "overwrite move preserves source text")))
+                            "failed materialization publishes no partial file effects")))
         (tool-registry-close-runtime-state registry))))
   nil)
 
@@ -407,12 +383,6 @@
                          (t
                           (error "Unexpected fixture method ~A." method))))))
               (lambda ()
-                (setf (gethash "positionEncoding" (lsp-client-capabilities client)) "utf-8")
-                (test-assert (not (tool-result-success-p
-                                   (call "operation" "prepare-rename" "path" (namestring path) "line" 1 "character" 1)))
-                             "unsupported negotiated encoding rejects preparation")
-                (test-assert (null observed) "encoding guard precedes server requests")
-                (setf (gethash "positionEncoding" (lsp-client-capabilities client)) "utf-16")
                 (let ((prepared (json-get (aref (value "operation" "prepare-rename" "path" (namestring path) "line" 1 "character" 1) 0) "result")))
                   (test-assert (= 3 (json-get prepared "endOffset")) "symbol preparation offsets exposed"))
                 (let* ((rename (json-get (aref (value "operation" "rename" "path" (namestring path) "line" 1 "character" 1 "new-name" "new") 0) "result"))

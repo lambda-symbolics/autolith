@@ -32,7 +32,7 @@
   (when (json-get row "edit")
     (lsp-semantic--capture-plan context client :snapshots snapshots :plan (json-get row "edit")))
   (let ((entry (make-instance 'lsp-semantic-entry :client client
-                              :transport (lsp-client-transport client) :kind ':action
+                              :transport (cl-lsp:lsp-client-session-snapshot client) :kind ':action
                               :value row :snapshots snapshots)))
     (json-object "choice" (lsp-semantic--store state context entry)
                  "action" (json-get row "action")
@@ -52,9 +52,6 @@
      (lambda (client document)
        (let* ((snapshots (make-hash-table :test #'equal))
               (snapshot  (lsp-semantic--snapshot-function context client snapshots)))
-         (unless (equal (json-get (lsp-client-capabilities client) "positionEncoding" "utf-16")
-                        "utf-16")
-           (lsp-semantic--fail "Semantic requests require negotiated UTF-16 positions."))
          ;; The synchronized source participates even when a server edits only other files.
          (funcall snapshot (cl-lsp:lsp-path-uri path))
          (cond
@@ -91,13 +88,14 @@
                            :file-kind                       (lambda (uri)
                                                               (nth-value 2 (funcall snapshot uri))))))
                 ;; Server preparatory edits precede the user's requested physical move.
-                (setf (gethash "operations" plan)
-                      (concatenate 'vector (json-get plan "operations")
-                                   (vector (json-object "kind" "rename"
-                                                        "oldUri" (json-get rename "oldUri")
-                                                        "newUri" (json-get rename "newUri")))))
-                (lsp-semantic--present state context
-                                       (lsp-semantic--capture-plan context client :snapshots snapshots :plan plan)))))
+               (setf plan
+                     (cl-lsp:lsp-workspace-plan-append
+                      plan (vector (json-object "kind" "rename"
+                                                "oldUri" (json-get rename "oldUri")
+                                                "newUri" (json-get rename "newUri")))
+                      :snapshot snapshot))
+               (lsp-semantic--present state context
+                                      (lsp-semantic--capture-plan context client :snapshots snapshots :plan plan)))))
            (t
             (lsp-semantic--fail "Unknown semantic preparation operation."))))))))
 

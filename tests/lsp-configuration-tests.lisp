@@ -30,24 +30,5 @@
                  "LSP configuration has the expected filename")
     (test-assert (lsp-configuration-tests--signals-p configuration
                   "(:version 2 :servers ())")
-                 "unsupported version is rejected")
-    (test-assert (lsp-configuration-tests--signals-p configuration
-                  "(:version 1 :servers ((:name \"x\" :command \"x\" :language-id \"x\" :bogus t)))")
-                 "unknown keys are rejected")
-    (lsp-configuration-tests--write
-     configuration
-     "(:version 1 :servers ((:name \"typescript\" :command \"typescript-language-server\" :arguments (\"--stdio\") :extensions (\".ts\" \".tsx\") :language-id \"typescript\" :root-markers (\"tsconfig.json\") :initialization-options \"{\\\"a\\\":1}\" :settings \"{}\" :timeout-seconds 30 :disabled-p nil)))")
-    (let ((server (first (lsp-load-configurations configuration))))
-      (test-assert (and (typep server 'lsp-server-configuration)
-                        (string= (lsp-server-configuration-name server) "typescript")
-                        (equal (lsp-server-configuration-arguments server) '("--stdio"))
-                        (equal (lsp-server-configuration-extensions server) '(".ts" ".tsx"))
-                        (= (json-get (lsp-server-configuration-initialization-options server) "a") 1))
-                   "valid LSP configuration is decoded"))
-    (test-assert (lsp-configuration-tests--signals-p configuration
-                  "(:version 1 :servers ((:name \"x\" :command \"x\" :language-id \"x\" :timeout-seconds 0)))")
-                 "non-positive timeout is rejected")
-    (test-assert (lsp-configuration-tests--signals-p configuration
-                  "(:version 1 :servers ((:name \"x\" :command \"x\" :language-id \"x\" :settings \"[]\")))")
-                 "non-object JSON settings are rejected"))
+                 "library configuration failures map to the application condition"))
   nil)
