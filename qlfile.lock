@@ -120,8 +120,8 @@
   :version "git-669dbf5ef7c9d8b6d31678f7d4b9677f3a2166b7"))
 ("daphne" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/daphne.git" :ref "0727975d4c74a11be13b39ffe4a33aae74387848")
-  :version "git-0727975d4c74a11be13b39ffe4a33aae74387848"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/daphne.git" :ref "3c043bdb691d1ef5fb0c7d2b72cc5c10a465357c")
+  :version "git-3c043bdb691d1ef5fb0c7d2b72cc5c10a465357c"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "3c064d06d0a13fc58dd5cfd84f79af1eaedca2c4")
