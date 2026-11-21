@@ -39,24 +39,28 @@
                        (t
                         ':success))))
     (when call-key
-      (list :kind            ':result
-            :call-key        call-key
-            :job-key         (application--tool-outcome-key application ':job (getf job :id))
-            :state           state
-            :retain-output-p (not (null entry))
-            :entry-transform (when (and (eq state ':failure)
-                                        (equal (getf properties :tool) "resource.edit"))
-                               #'application--resource-edit-failure-entry)
-            :handoff         (and handoff (application--tool-execution-handoff-annotation handoff))
-            :body            (unless (or metadata-only-p handoff)
-                               (cond
-                                 ((and (eq state ':success) entry
-                                       (typep (application--find-tool application (getf properties :tool))
-                                              'papercut-report-tool))
-                                  ;; Prominent notices, such as papercut reports, retain their heading.
-                                  (cons (terminal-span ':plain (string #\Newline)) entry))
-                                 (t
-                                  (application--entry-body entry))))))))
+      (list :kind                   ':result
+            :call-key               call-key
+            :job-key                (application--tool-outcome-key application ':job (getf job :id))
+            :state                  state
+            :retain-output-p        (not (null entry))
+            :shell-command-denial-p (and (eq state ':failure)
+                                         (equal (getf properties :tool) "shell.run")
+                                         (equal (getf properties :details)
+                                                (list :shell-command-denial (getf properties :output))))
+            :entry-transform        (when (and (eq state ':failure)
+                                               (equal (getf properties :tool) "resource.edit"))
+                                      #'application--resource-edit-failure-entry)
+            :handoff                (and handoff (application--tool-execution-handoff-annotation handoff))
+            :body                   (unless (or metadata-only-p handoff)
+                                      (cond
+                                        ((and (eq state ':success) entry
+                                              (typep (application--find-tool application (getf properties :tool))
+                                                     'papercut-report-tool))
+                                         ;; Prominent notices, such as papercut reports, retain their heading.
+                                         (cons (terminal-span ':plain (string #\Newline)) entry))
+                                        (t
+                                         (application--entry-body entry))))))))
 
 (-> application--job-completion-outcome
     (application list list &key (:metadata-only-p boolean)) (option list))

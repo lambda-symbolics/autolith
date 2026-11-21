@@ -26,6 +26,12 @@
                  :denied-p   denied-p
                  :success-p  success-p))
 
+(-> shell-command-denial-result () tool-result)
+(defun shell-command-denial-result ()
+  "Retain the exact generic refusal so presentation can distinguish added diagnostics."
+  (let ((message "The user denied this command."))
+    (tool-failure message :denied-p t :details (list :shell-command-denial message))))
+
 (-> shell-output--render-capture
     (cl-exec-sandbox:sandbox-capture string string &key (:budget (integer 0))) string)
 (defun shell-output--render-capture (capture reference label &key (budget 6000))

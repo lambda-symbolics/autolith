@@ -2507,8 +2507,8 @@ as the terminal UI's exclusive-input function."
                              "do not run the command"))))))
 
 (-> application--present-permission-decision
-    (application list &key (:command string) (:directory pathname)) boolean)
-(defun application--present-permission-decision (application entry &key command directory)
+    (application list &key (:command string) (:directory pathname) (:denied-p boolean)) boolean)
+(defun application--present-permission-decision (application entry &key command directory denied-p)
   "Attach permission ENTRY to its exact tool call, or identify the operation inline."
   (let* ((context      *tool-authorization-context*)
          (conversation (and context (tool-context-conversation context)))
@@ -2518,7 +2518,8 @@ as the terminal UI's exclusive-input function."
                                (tool-context-call-id context))))
          (ui           (application-ui application))
          (metadata     (when (and call-key ui (terminal-ui-fullscreen-p ui))
-                         (list :kind ':annotation :call-key call-key :annotations entry)))
+                         (list :kind ':annotation :call-key call-key :annotations entry
+                               :permission-denial-p denied-p)))
          (fallback     (append entry
                                (list (terminal-span
                                       ':annotation
@@ -2550,7 +2551,7 @@ as the terminal UI's exclusive-input function."
                      "full access")
                     (:deny
                      (format nil "deny: ~A" (sanitize-text reason :single-line-p t)))))))
-   :command command :directory directory)
+   :command command :directory directory :denied-p (eq decision ':deny))
   decision)
 
 (-> application--current-user-instructions (application) (option string))

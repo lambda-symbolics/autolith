@@ -323,7 +323,7 @@
     (unless (and (non-empty-string-p name) (non-empty-string-p command))
       (shell-session--fail "Named shells require a nonempty session name and command."))
     (when (eq authorization ':deny)
-      (return-from shell-session-run (tool-failure "The user denied this command." :denied-p t)))
+      (return-from shell-session-run (shell-command-denial-result)))
     (when (eq authorization ':sandboxed)
       (workspace-tool-confined-path context (uiop:native-namestring directory) :tool-name "shell.run"))
     (with-lock-held (*shell-session-lock*)

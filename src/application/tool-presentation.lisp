@@ -2302,7 +2302,7 @@ Mark reports that repeat an active papercut as already reported."
          (exit-code (or (getf details :exit-code) (getf log :exit-code)))
          (success-p (and (application--tool-result-success-p record)
                          (or (not (integerp exit-code)) (zerop exit-code)))))
-    (if details
+    (if (and details (not (getf details :shell-command-denial)))
         (application--tool-entry
          application
          :style  (if success-p ':success ':failure)

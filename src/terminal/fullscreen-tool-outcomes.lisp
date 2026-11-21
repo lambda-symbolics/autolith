@@ -207,12 +207,21 @@
 (defun terminal-ui-fullscreen--apply-outcome (record metadata)
   "Update copied RECORD with an outcome or an annotation of its exact call."
   (setf (getf record :job-key) (or (getf metadata :job-key) (getf record :job-key)))
-  (if (eq (getf metadata :kind) ':annotation)
-      (setf (getf record :annotations)
-            (append (getf record :annotations) (getf metadata :annotations)))
-      (dolist (key '(:state :retain-output-p :handoff :body :body-layout :body-source-characters
-                     :entry-transform))
-        (setf (getf record key) (getf metadata key))))
+  (cond
+    ((eq (getf metadata :kind) ':annotation)
+     (setf (getf record :annotations)
+           (append (getf record :annotations) (getf metadata :annotations)))
+     (when (and (getf metadata :permission-denial-p) (getf metadata :annotations))
+       (setf (getf record :permission-denial-p) t)))
+    (t
+     (dolist (key '(:state :retain-output-p :handoff :body :body-layout :body-source-characters
+                    :entry-transform))
+       (setf (getf record key) (getf metadata key)))
+     (when (and (getf metadata :shell-command-denial-p) (getf record :permission-denial-p))
+       (setf (getf record :retain-output-p) nil
+             (getf record :body) nil
+             (getf record :body-layout) nil
+             (getf record :body-source-characters) 0))))
   record)
 
 (-> terminal-ui-fullscreen--publish-replacement (fullscreen-terminal-ui list t) boolean)

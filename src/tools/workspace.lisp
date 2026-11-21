@@ -267,7 +267,7 @@ Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
                 (return-from tool-execute
                   (tool-failure (princ-to-string condition) :denied-p t))))))
       (if (eq authorization ':deny)
-          (tool-failure "The user denied this command." :denied-p t)
+          (shell-command-denial-result)
           (let ((configuration (tool-context-configuration context))
                 (output-limit  *shell-maximum-output-characters*))
             (when (eq authorization ':sandboxed)
