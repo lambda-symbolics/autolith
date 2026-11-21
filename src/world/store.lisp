@@ -1463,7 +1463,8 @@ the channel's history."
            :now       (conversation-created-at conversation)
            :settings  (loop for (key value) on (list :model            (conversation-model conversation)
                                                      :model-provider   (conversation-model-provider conversation)
-                                                     :reasoning-effort (conversation-reasoning-effort conversation)) by #'cddr
+                                                     :reasoning-effort (conversation-reasoning-effort conversation))
+                           by (partial #'nthcdr 2)
                             when (and value (world--portable-value-p value))
                               append (list key value)))
         (when (and (world--name-p title) (not (equal title (channel-title channel))))
