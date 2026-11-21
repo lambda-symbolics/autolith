@@ -1207,7 +1207,7 @@
   gemini-code-assist-test--request-conversion
   gemini-code-assist-test--stream-fixture
   gemini-code-assist-test--credential-redaction
-  gemini-code-assist-test--setup-and-retry)
+  gemini-code-assist-test--setup-adapter)
 
 (define-test-suite anthropic-provider
   anthropic-provider-test--selection

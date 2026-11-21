@@ -271,54 +271,40 @@
      "Gemini error events preserve typed fields and safe surrounding text"))
   nil)
 
-(-> gemini-code-assist-test--setup-and-retry () null)
-(defun gemini-code-assist-test--setup-and-retry ()
-  "Test loadCodeAssist project setup and provider-specific HTTP retry."
-  (let ((provider                                   (gemini-code-assist-test--provider))
-        (attempts                                   0)
-        (*gemini-code-assist-nonstream-retry-delay* 0))
+(-> gemini-code-assist-test--setup-adapter () null)
+(defun gemini-code-assist-test--setup-adapter ()
+  "Test caller credential forwarding and completed setup state."
+  (let ((provider (gemini-code-assist-test--provider))
+        (credentials (make-instance 'oauth-credentials :access-token "fixture-token"
+                                    :expires-at (+ (get-universal-time) 3600)))
+        (attempts 0))
     (test-assert
      (and (provider-retryable-status-p provider 499 nil)
           (provider-retryable-status-p provider 599 nil)
           (not (provider-retryable-status-p provider 498 nil)))
-     "Code Assist recognizes its additional transient statuses")
+     "Code Assist transport uses its additional transient statuses")
     (test-call-with-function-replacements
      (list
-      (list
-       'gemini-code-assist--post-once
-       (lambda (actual-provider credentials &key method request)
-         (declare (ignore credentials method request))
-         (incf attempts)
-         (if (= attempts 1)
-             (provider-signal-http-failure
-              actual-provider
-              (make-condition
-               'http-request-failed
-               :body    "temporary Code Assist failure"
-               :status  599
-               :headers nil
-               :uri     nil
-               :method  ':post))
-             (values
-              (json-encode
-               (json-object "currentTier" (json-object "id" "free-tier")
-                            "cloudaicompanionProject" "managed-project"))
-              200
-              nil)))))
+      (list 'gemini-code-assist--post-once
+            (lambda (actual-provider actual-credentials &key method request)
+              (declare (ignore request))
+              (test-assert (and (eq actual-provider provider)
+                                (eq actual-credentials credentials)
+                                (string= method "loadCodeAssist"))
+                           "The setup adapter forwards the caller's provider and credentials")
+              (incf attempts)
+              (values (json-encode
+                       (json-object "currentTier" (json-object "id" "free-tier")
+                                    "cloudaicompanionProject" "managed-project"))
+                      200 nil))))
      (lambda ()
-       (gemini-code-assist-ensure-setup
-        provider
-        (make-instance 'oauth-credentials
-                       :access-token "fixture-token"
-                       :expires-at   (+ (get-universal-time) 3600)))))
-    (test-assert (= attempts 2)
-                 "Code Assist retries a raised provider-specific HTTP failure")
+       (gemini-code-assist-ensure-setup provider credentials)
+       (gemini-code-assist-ensure-setup provider credentials)))
+    (test-assert (= attempts 1) "Completed caller setup does not issue another RPC")
     (test-assert
-     (string= (gemini-code-assist-provider-project provider) "managed-project")
-     "Code Assist records the managed project")
-    (test-assert
-     (string= (gemini-code-assist-provider-tier provider) "free-tier")
-     "Code Assist records the selected tier"))
+     (and (string= (gemini-code-assist-provider-project provider) "managed-project")
+          (string= (gemini-code-assist-provider-tier provider) "free-tier"))
+     "Caller retains the effective setup project and tier"))
   nil)
 
 (-> gemini-code-assist-test--builtin-registration () null)

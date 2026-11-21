@@ -45,12 +45,6 @@
      :context-window 1048576))
   "Known Code Assist models exposed when no model-list RPC exists.")
 
-(defparameter *gemini-code-assist-nonstream-maximum-attempts* 4
-  "Maximum attempts for transient Code Assist non-streaming RPC failures.")
-
-(defparameter *gemini-code-assist-nonstream-retry-delay* 1
-  "Seconds between transient Code Assist non-streaming RPC attempts.")
-
 (define-condition gemini-code-assist-error (provider-error)
   ()
   (:documentation "A Gemini Code Assist protocol operation failed."))
@@ -205,40 +199,6 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
   (and (stringp value)
        (provider--sanitize-wire-string value)))
 
-(-> gemini-code-assist--condition-status (t) (option integer))
-(defun gemini-code-assist--condition-status (value)
-  "Return wire VALUE as a credential-sanitized provider status, when valid."
-  (let ((sanitized (provider--sanitize-wire-value value)))
-    (and (integerp sanitized) sanitized)))
-
-(-> gemini-code-assist--decode-json-response (string keyword) json-object)
-(defun gemini-code-assist--decode-json-response (body stage)
-  "Decode BODY as a JSON object for setup STAGE."
-  (let ((value
-          (handler-case
-              (json-decode body)
-            (error ()
-              (error 'gemini-code-assist-setup-error
-                     :message    "Gemini Code Assist returned invalid JSON."
-                     :stage      stage
-                     :status     nil
-                     :request-id nil
-                     :response
-                     (bounded-string
-                      (provider--sanitize-wire-string body)
-                      :limit 2000))))))
-    (unless (json-object-p value)
-      (error 'gemini-code-assist-setup-error
-             :message    "Gemini Code Assist returned a non-object JSON response."
-             :stage      stage
-             :status     nil
-             :request-id nil
-             :response
-             (bounded-string
-              (provider--sanitize-wire-string body)
-              :limit 2000)))
-    value))
-
 (-> gemini-code-assist--post-once
     (gemini-code-assist-provider oauth-credentials
      &key (:method non-empty-string) (:request json-object))
@@ -291,57 +251,6 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (http-request-failed (condition)
       (provider-signal-http-failure provider condition))))
 
-(-> gemini-code-assist--nonstream-request
-    (gemini-code-assist-provider oauth-credentials
-     &key (:stage keyword) (:request-function function))
-    json-object)
-(defun gemini-code-assist--nonstream-request
-    (provider credentials &key stage request-function)
-  "Run one setup RPC with Gemini CLI's bounded transient retry behavior.
-
-A retryable HTTP status or transport failure is retried after
-*GEMINI-CODE-ASSIST-NONSTREAM-RETRY-DELAY* seconds, up to
-*GEMINI-CODE-ASSIST-NONSTREAM-MAXIMUM-ATTEMPTS* attempts; the last failure
-propagates."
-  (declare (ignore credentials))
-  (call-with-bounded-retries
-   (lambda ()
-     (multiple-value-bind (body status headers) (funcall request-function)
-       (if (<= 200 status 299)
-           (gemini-code-assist--decode-json-response body stage)
-           (provider--signal-http-status-failure
-            provider status :headers headers :raw-body body))))
-   (lambda (event) (declare (ignore event)) nil)
-   :maximum-retries (1- *gemini-code-assist-nonstream-maximum-attempts*)
-   :delay-function  (lambda (retry-number condition)
-                      (declare (ignore retry-number condition))
-                      *gemini-code-assist-nonstream-retry-delay*)))
-
-(-> gemini-code-assist--post
-    (gemini-code-assist-provider oauth-credentials
-     &key (:method non-empty-string) (:stage keyword) (:request json-object))
-    json-object)
-(defun gemini-code-assist--post (provider credentials &key method stage request)
-  "POST one non-streaming Code Assist RPC."
-  (gemini-code-assist--nonstream-request
-   provider credentials
-   :stage            stage
-   :request-function (lambda ()
-                       (gemini-code-assist--post-once provider credentials
-                                                      :method  method
-                                                      :request request))))
-
-(-> gemini-code-assist--operation
-    (gemini-code-assist-provider oauth-credentials non-empty-string)
-    json-object)
-(defun gemini-code-assist--operation (provider credentials operation)
-  "GET one Code Assist long-running OPERATION."
-  (gemini-code-assist--nonstream-request
-   provider credentials
-   :stage            ':operation
-   :request-function (lambda ()
-                       (gemini-code-assist--get-once provider credentials operation))))
-
 
 ;;;; -- Account Setup --
 
@@ -357,39 +266,6 @@ propagates."
 (defun gemini-code-assist--numeric-string-p (value)
   "Return true when VALUE consists only of decimal digits."
   (and (plusp (length value)) (every #'digit-char-p value) t))
-
-(-> gemini-code-assist--metadata (&optional (option string)) json-object)
-(defun gemini-code-assist--metadata (&optional project)
-  "Return Gemini CLI-compatible Code Assist client metadata."
-  (let ((metadata
-          (json-object "ideType" "IDE_UNSPECIFIED"
-                       "platform" "PLATFORM_UNSPECIFIED"
-                       "pluginType" "GEMINI")))
-    (when project
-      (setf (gethash "duetProject" metadata) project))
-    metadata))
-
-(-> gemini-code-assist--tier-id (json-object) (option string))
-(defun gemini-code-assist--tier-id (response)
-  "Return the paid or current tier ID from a load response."
-  (let ((paid    (json-get response "paidTier"))
-        (current (json-get response "currentTier")))
-    (or (and (json-object-p paid) (json-get paid "id"))
-        (and (json-object-p current) (json-get current "id"))
-        "standard-tier")))
-
-(-> gemini-code-assist--default-tier (json-object) json-object)
-(defun gemini-code-assist--default-tier (response)
-  "Return the default allowed tier or the upstream legacy fallback."
-  (let ((tiers (json-get response "allowedTiers")))
-    (or (and (vectorp tiers)
-             (loop for tier across tiers
-                   when (and (json-object-p tier)
-                             (json-get tier "isDefault"))
-                     return tier))
-        (json-object "id" "legacy-tier"
-                     "name" ""
-                     "userDefinedCloudaicompanionProject" t))))
 
 (-> gemini-code-assist--project-required
     (json-object keyword) null)
@@ -427,54 +303,28 @@ propagates."
                :status     nil
                :request-id nil
                :response   nil))
-      (let* ((load
-               (gemini-code-assist--post
-                provider credentials
-                :method  "loadCodeAssist"
-                :stage   ':load
-                :request (json-object "cloudaicompanionProject" project
-                                      "metadata" (gemini-code-assist--metadata project))))
-             (current        (json-get load "currentTier"))
-             (loaded-project (json-get load "cloudaicompanionProject")))
-        (if (json-object-p current)
-            (progn
-              (unless (or loaded-project project)
-                (gemini-code-assist--project-required load ':load))
-              (setf (gemini-code-assist-provider-project provider)
-                    (or loaded-project project)
-                    (gemini-code-assist-provider-tier provider)
-                    (gemini-code-assist--tier-id load)))
-            (let* ((tier    (gemini-code-assist--default-tier load))
-                   (tier-id (or (json-get tier "id") "standard-tier"))
-                   (free-p  (string= tier-id "free-tier"))
-                   (onboard
-                     (gemini-code-assist--post
-                      provider credentials
-                      :method  "onboardUser"
-                      :stage   ':onboard
-                      :request (json-object
-                                "tierId" tier-id
-                                "cloudaicompanionProject" (unless free-p project)
-                                "metadata"
-                                (gemini-code-assist--metadata (unless free-p project))))))
-              (loop while (and (not (json-get onboard "done"))
-                               (non-empty-string-p (json-get onboard "name")))
-                    do (sleep 5)
-                       (setf onboard
-                             (gemini-code-assist--operation
-                              provider credentials (json-get onboard "name"))))
-              (let* ((response  (json-get onboard "response"))
-                     (companion (and (json-object-p response)
-                                     (json-get response
-                                               "cloudaicompanionProject")))
-                     (onboard-project
-                       (and (json-object-p companion) (json-get companion "id"))))
-                (unless (or onboard-project project)
-                  (gemini-code-assist--project-required load ':onboard))
-                (setf (gemini-code-assist-provider-project provider)
-                      (or onboard-project project)
-                      (gemini-code-assist-provider-tier provider) tier-id))))
-        (setf (gemini-code-assist-provider-setup-complete-p provider) t))))
+      (multiple-value-bind (effective tier missing-project-stage load-response)
+          (handler-case
+              (cl-llm-provider-api:gemini-code-assist-run-setup
+               provider
+               (lambda (method target request)
+                 (ecase method
+                   (:post (gemini-code-assist--post-once
+                           provider credentials :method target :request request))
+                   (:get (gemini-code-assist--get-once provider credentials target))))
+               :project project :sleep-function *bounded-retry-sleep-function*)
+            (cl-llm-provider-api:gemini-code-assist-setup-error (condition)
+              (error 'gemini-code-assist-setup-error
+                     :stage (cl-llm-provider-api:gemini-code-assist-setup-error-stage condition)
+                     :message (cl-llm-provider-api:provider-api-error-message condition)
+                     :status (provider-error-status condition)
+                     :request-id (provider-error-request-id condition)
+                     :response (provider-error-response condition))))
+        (when missing-project-stage
+          (gemini-code-assist--project-required load-response missing-project-stage))
+        (setf (gemini-code-assist-provider-project provider) effective
+              (gemini-code-assist-provider-tier provider) tier
+              (gemini-code-assist-provider-setup-complete-p provider) t))))
   provider)
 
 
