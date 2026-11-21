@@ -18,6 +18,11 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+Private replay =17c014d8= and its inherited mutations were deselected for
+normal startup. The active 0.67.66 heap was not restarted. History, saved
+generations, and the original pointer archived as
+=current-image-commit.retired-17c014d8.sexp= are available for recovery.
+
 ** Shell allocation with unresolved legacy evidence
 
 - Problem: missing historical capture metadata blocked shell commands before launch.
@@ -29,8 +34,8 @@ a user-local init.lisp change, or a private image commit.
 - Verification: 14 focused cases, 97 checks; source checks; active retention
   assertions; real synchronous/background commands, nonzero exit, separate streams
   and retained-log reads. Clean-process private replay passed.
-- Removal condition: discard the two private definitions after booting their
-  equivalent tracked implementation.
+- Retirement: =c3f5a7f7= shipped in 0.67.66. The private override will no
+  longer replay on normal startup.
 
 ** Portable job cancellation snippets
 
