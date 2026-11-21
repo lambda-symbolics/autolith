@@ -178,37 +178,34 @@ Only tools declared by exact name enter the host bridge."
   "Read a bounded single envelope with EOF, no reader evaluation, and stable identities."
   (let ((directory (uiop:pathname-directory-pathname pathname)))
     (executable-skill--check-directory directory directory-status)
-    (multiple-value-bind (stream status) (platform-open-regular-file *platform* pathname :follow-links-p nil)
-      (unwind-protect
-           (let ((size (platform-file-status-size status)))
-             (executable-skill--check-directory directory directory-status)
-             (unless (<= size *executable-skill-result-byte-limit*)
-               (executable-skill--fail ':result-transport "Executable result exceeds the transport byte limit."))
-             (let ((bytes (make-array size :element-type '(unsigned-byte 8))))
-               (unless (= size (read-sequence bytes stream))
-                 (executable-skill--fail ':result-transport "Executable result is incomplete."))
-               (unless (eq (read-byte stream nil ':eof) ':eof)
-                 (executable-skill--fail ':result-transport "Executable result grew while reading."))
-               (let ((after (platform-path-status *platform* pathname :follow-links-p nil)))
-                 (unless (and after (platform-file-status-same-object-p after status)
-                              (= size (platform-file-status-size after)))
-                   (executable-skill--fail ':result-transport "Executable result file identity changed.")))
-               (executable-skill--check-directory directory directory-status)
-               (handler-case
-                   (let ((envelope (read-source
-                                    (babel:octets-to-string bytes :encoding ':utf-8)
-                                    (executable-skill--result-grammar))))
-                     (unless (and (proper-list-p envelope) (= 4 (length envelope))
-                                  (eq (first envelope) ':token)
-                                  (equal (second envelope) token)
-                                  (eq (third envelope) ':record)
-                                  (proper-list-p (fourth envelope)))
-                       (executable-skill--fail ':result-transport "Executable result envelope is invalid."))
-                     (fourth envelope))
-                 (sexp-config-error (condition)
-                   (executable-skill--fail ':result-transport
-                                          (sexp-config-error-message condition))))))
-        (close stream)))))
+      (handler-case
+          (let ((bytes (ls-compat.files:read-stable-file-octets
+                        pathname
+                        :maximum-octets *executable-skill-result-byte-limit*
+                        :validation-function
+                        (lambda ()
+                          (executable-skill--check-directory directory
+                                                               directory-status)))))
+            (executable-skill--check-directory directory directory-status)
+            (handler-case
+                (let ((envelope (read-source
+                                 (babel:octets-to-string bytes :encoding ':utf-8)
+                                 (executable-skill--result-grammar))))
+                  (unless (and (proper-list-p envelope) (= 4 (length envelope))
+                               (eq (first envelope) ':token)
+                               (equal (second envelope) token)
+                               (eq (third envelope) ':record)
+                               (proper-list-p (fourth envelope)))
+                    (executable-skill--fail ':result-transport "Executable result envelope is invalid."))
+                  (fourth envelope))
+              (sexp-config-error (condition)
+                (executable-skill--fail ':result-transport
+                                       (sexp-config-error-message condition))))
+        (ls-compat.files:file-too-large ()
+          (executable-skill--fail ':result-transport "Executable result exceeds the transport byte limit."))
+        (ls-compat.files:file-changed ()
+          (executable-skill--fail ':result-transport "Executable result changed while reading.")))
+      )))
 
 (-> executable-skill--record-result (list) tool-result)
 (defun executable-skill--record-result (value)
