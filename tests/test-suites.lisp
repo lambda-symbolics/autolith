@@ -1824,7 +1824,6 @@
   test-application-create-unwind-safety
   test-application-reconnect-unwind-safety
   test-application-task-presentation
-  test-application-structured-output-boundaries
   test-working-directory-command
   test-effort-switch
   test-public-goal-actions

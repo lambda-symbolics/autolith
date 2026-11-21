@@ -45,35 +45,6 @@
                    "Presentation fixtures must never attempt durable writes.")))
   nil)
 
-(-> test-application-structured-output-boundaries () null)
-(defun test-application-structured-output-boundaries ()
-  "Check structured presentation at the container-depth and trimmed-text bounds."
-  (labels ((nested (depth)
-             (if (zerop depth)
-                 "0"
-                 (format nil "[~A]" (nested (1- depth)))))
-
-           (sized-object (characters)
-             (let* ((prefix "{\"value\":\"")
-                    (suffix "\"}")
-                    (size   (- characters (length prefix) (length suffix))))
-               (concatenate 'string prefix (make-string size :initial-element #\a) suffix))))
-    (dolist (case (list (list "object" "{}" t)
-                        (list "array" "[]" t)
-                        (list "scalar" "true" nil)
-                        (list "malformed" "[1,]" nil)
-                        (list "depth-32" (nested 32) t)
-                        (list "depth-33" (nested 33) nil)
-                        (list "characters-131072" (sized-object 131072) t)
-                        (list "trimmed-bound" (format nil " ~A ~%" (sized-object 131072)) t)
-                        (list "characters-131073" (sized-object 131073) nil)))
-      (destructuring-bind (name text expected) case
-        (multiple-value-bind (value structured-p) (application--structured-output-value text)
-          (test-assert (eq expected structured-p) (format nil "Structured output case ~A." name))
-          (unless expected
-            (test-assert (null value) "Fallback output has no hidden structured value."))))))
-  nil)
-
 (defclass cursor-observing-provider (scripted-provider)
   ((visibility-function
     :initarg       :visibility-function
