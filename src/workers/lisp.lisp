@@ -79,21 +79,6 @@
       :name             name
       :image-identifier image-identifier))))
 
-(-> lisp-worker-name (lisp-worker) string)
-(defun lisp-worker-name (worker)
-  "Return WORKER's stable REPL name."
-  (sbcl-worker-name worker))
-
-(-> lisp-worker-image-identifier (lisp-worker) string)
-(defun lisp-worker-image-identifier (worker)
-  "Return the pristine or saved image used by WORKER."
-  (sbcl-worker-used-image-identifier worker))
-
-(-> lisp-worker-running-p (lisp-worker) boolean)
-(defun lisp-worker-running-p (worker)
-  "Return true when WORKER has a live subprocess."
-  (sbcl-worker-running-p worker))
-
 (-> lisp-worker-start (lisp-worker) lisp-worker)
 (defun lisp-worker-start (worker)
   "Start WORKER when necessary and verify its protocol handshake."
@@ -578,7 +563,7 @@ that worker, while cancellation after a completed request leaves the REPL intact
          (tool-success
           (format nil "Lisp REPL ~A is running from image ~A."
                   name
-                  (lisp-worker-image-identifier worker))))))))
+                   (sbcl-worker-used-image-identifier worker))))))))
 
 (defmethod tool-execute ((tool lisp-stop-tool)
                          (context tool-context)
@@ -633,10 +618,10 @@ that worker, while cancellation after a completed request leaves the REPL intact
                 :note       note)))
          (tool-success
           (format nil "Saved Lisp REPL ~A as image ~A.~%Parent: ~A~%Note: ~A"
-                  (lisp-worker-name worker)
-                  (lisp-image-identifier image)
-                  (lisp-image-parent-identifier image)
-                  (lisp-image-note image))))))))
+                   (sbcl-worker-name worker)
+                   (sbcl-worker-image-identifier image)
+                   (sbcl-worker-image-parent-identifier image)
+                   (sbcl-worker-image-note image))))))))
 
 
 ;;;; -- Worker Runtime Entry Points --

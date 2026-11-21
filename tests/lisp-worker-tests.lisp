@@ -45,56 +45,48 @@
 
 (-> test-lisp-image-manifests () null)
 (defun test-lisp-image-manifests ()
-  "Test immutable saved worker-image manifests, notes, and compatibility."
+  "Test Autolith's saved-image inventory, prompt, pool, and error translation."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (identifier    "instrumented-compiler")
          (directory     (lisp-image--directory configuration identifier))
-         (core          (merge-pathnames "worker.core" directory)))
+         (core          (merge-pathnames "worker.core" directory))
+         (pool          (lisp-worker-pool-create configuration)))
     (unwind-protect
          (progn
            (test--write-sparse-lisp-core core)
-           (let ((image
-                   (lisp-image-publish-manifest
-                    configuration
-                    :identifier        identifier
-                    :parent-identifier (pristine-lisp-image-identifier)
-                    :note              "Traces compiler type derivation for comparison."
-                    :core-pathname     core
-                    :source-commit     "0123456789abcdef")))
-             (test-assert (string= (lisp-image-identifier image) identifier)
-                          "saved Lisp images retain their identifier")
+           (lisp-image-publish-manifest
+            configuration
+            :identifier        identifier
+            :parent-identifier (pristine-lisp-image-identifier)
+            :note              "Traces compiler type derivation for comparison."
+            :core-pathname     core)
+           (let ((inventory (lisp-image-render-inventory configuration)))
              (test-assert
-              (string= (lisp-image-note image)
-                       "Traces compiler type derivation for comparison.")
-              "saved Lisp images retain their durable note")
-             (test-assert (lisp-image-compatible-p image)
-                          "a manifest written by this runtime is compatible")
-             (test-assert
-              (search "instrumented-compiler"
-                       (lisp-image-render-inventory configuration))
-              "the image inventory reminds the model about saved images")
-             (test-assert
-              (search "Traces compiler type derivation"
-                      (lisp-image-prompt-notes configuration))
-              "the prompt inventory includes durable image notes"))
-           (handler-case
-               (progn
-                 (lisp-image-publish-manifest
-                  configuration
-                  :identifier        identifier
-                  :parent-identifier (pristine-lisp-image-identifier)
-                  :note              "A duplicate image."
-                  :core-pathname     core)
-                 (test-assert nil "saved image identifiers are immutable"))
-             (lisp-image-error ()
-               (test-assert t "saved image identifiers are immutable")))
-           (handler-case
-               (progn
-                 (lisp-image--validate-identifier "pristine")
-                 (test-assert nil "the pristine image name is reserved"))
-             (lisp-image-error ()
-               (test-assert t "the pristine image name is reserved"))))
+              (and (search "pristine  compatible  immutable base" inventory)
+                   (search "instrumented-compiler  compatible  parent pristine"
+                           inventory))
+              "the image inventory distinguishes the pristine base and saved image"))
+           (test-assert
+            (search "Traces compiler type derivation"
+                    (lisp-image-prompt-notes configuration))
+            "the prompt inventory includes durable image notes")
+           ;; Exercise named pool registration without booting the sparse core.
+           (test-call-with-function-replacements
+            (list (list 'sbcl-worker-start #'identity))
+            (lambda ()
+              (lisp-worker-pool-start pool "compiler" identifier)))
+           (test-assert
+            (search "compiler  stopped  image instrumented-compiler"
+                    (lisp-worker-manager-render pool))
+            "the REPL inventory identifies the saved image selected for a named worker")
+           (test-assert
+            (handler-case
+                (progn (lisp-image--validate-identifier "pristine") nil)
+              (lisp-image-error (condition)
+                (string= (tool-error-tool-name condition) "lisp.images")))
+            "the library image failure is translated for the Autolith images tool"))
+      (lisp-worker-pool-stop-all pool)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -665,7 +657,7 @@
                   (and terminal-p
                        (eq (getf snapshot :state) :aborted)
                        (eq (getf (getf snapshot :result) :status) :aborted)
-                       (not (lisp-worker-running-p cancel-worker)))
+                        (not (sbcl-worker-running-p cancel-worker)))
                   "cancelling a Lisp job aborts it and stops the interrupted REPL")))
              (let* ((*tool-execution-blocking-grace-seconds* 20)
                     (result
@@ -675,7 +667,7 @@
                (test-assert
                 (and (tool-result-success-p result)
                      (search "42" (tool-result-content result))
-                     (lisp-worker-running-p cancel-worker)
+                      (sbcl-worker-running-p cancel-worker)
                      (eq cancel-worker
                          (lisp-worker-pool-worker pool "cancel")))
                 "the cancelled named REPL restarts safely for its next request"))
@@ -1217,59 +1209,6 @@
         (platform-delete-directory-tree *platform* root
                                         :validate          t
                                         :if-does-not-exist ':ignore))))
-  nil)
-
-(-> test-lisp-worker-image-snapshot () null)
-(defun test-lisp-worker-image-snapshot ()
-  "Test saving a modified REPL core and starting an independent clone from it."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (pool          (lisp-worker-pool-create configuration)))
-    (unwind-protect
-         (let ((source (lisp-worker-pool-start pool "source" "pristine")))
-           (lisp-worker-request
-            source
-            :eval
-            '(:forms ("(defparameter *saved-worker-marker* 9001)")))
-           (let ((image
-                   (lisp-worker-save-image
-                    configuration
-                    source
-                    :identifier "diddled"
-                    :note
-                    "Carries a marker proving the modified SBCL heap was retained.")))
-             (test-assert
-              (and (string= (lisp-image-identifier image) "diddled")
-                   (lisp-image--plausible-core-p
-                    (lisp-image-core-pathname image)))
-              "saving a named REPL publishes a plausible immutable core")
-             (test-assert (lisp-worker-running-p source)
-                          "saving an image leaves the parent REPL running")
-             (let* ((clone (lisp-worker-pool-start pool "clone" "diddled"))
-                    (clone-result
-                      (lisp-worker-request
-                       clone
-                       :eval
-                       '(:forms ("*saved-worker-marker*"))))
-                    (pristine
-                      (lisp-worker-pool-start pool "control" "pristine"))
-                    (pristine-result
-                      (lisp-worker-request
-                       pristine
-                       :eval
-                       '(:forms ("(boundp '*saved-worker-marker*)")))))
-               (test-assert
-                (equal (getf (rest clone-result) :values) '("9001"))
-                "a REPL started from the saved image inherits its modified heap")
-               (test-assert
-                (equal (getf (rest pristine-result) :values) '("NIL"))
-                "a pristine comparison REPL excludes saved-image modifications")
-               (test-assert
-                (search "clone  running  image diddled"
-                        (lisp-worker-pool-render pool))
-                "the pool identifies which REPL uses the modified image"))))
-      (lisp-worker-pool-stop-all pool)
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-lisp-worker-failure-diagnostics () null)

@@ -230,7 +230,7 @@ CONTEXT is host-owned data; worker payloads cannot replace its authority."
                                       (and (typep agent 'agent) (mission--agent-context agent))))
          (*worker-host-admission* (or *worker-host-admission* (list mission)))
          (bindings                (worker-host--bindings))
-         (repl                    (lisp-worker-name worker)))
+         (repl                    (sbcl-worker-name worker)))
     (handler-case
         (lisp-worker--call
          (lambda ()

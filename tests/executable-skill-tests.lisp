@@ -277,7 +277,7 @@
               (declare (ignore operation arguments tools enabled-p))
               (setf worker actual
                     directory (merge-pathnames
-                               (format nil "executable-results/~A/" (subseq (lisp-worker-name actual) 6))
+                                (format nil "executable-results/~A/" (subseq (sbcl-worker-name actual) 6))
                                (config :cache-root (tool-context-configuration context))))
               (executable-skill-tests--write (merge-pathnames "result.sexp" directory) "(:partial")
               (error 'job-aborted :identifier "fixture" :reason ':cancelled :message "Cancel fixture"))))
@@ -285,7 +285,7 @@
        (test-assert
         (handler-case (progn (executable-skill--run context "t" :tools nil) nil)
           (job-aborted () t)) "cancellation control condition propagates")))
-    (test-assert (not (lisp-worker-running-p worker)) "cancelled Skill heap is stopped")
+    (test-assert (not (sbcl-worker-running-p worker)) "cancelled Skill heap is stopped")
     (test-assert (not (probe-file directory)) (format nil "cancelled partial publication removed: ~S" directory)))
   nil)
 

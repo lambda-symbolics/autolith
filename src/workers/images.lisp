@@ -86,26 +86,6 @@ only while that core still matches the source."
              :pathname (sbcl-worker-error-pathname condition)
              :stage    (or (sbcl-worker-error-stage condition) ':manifest)))))
 
-(-> lisp-image-identifier (lisp-image) string)
-(defun lisp-image-identifier (image)
-  "Return IMAGE's immutable identifier."
-  (sbcl-worker-image-identifier image))
-
-(-> lisp-image-core-pathname (lisp-image) pathname)
-(defun lisp-image-core-pathname (image)
-  "Return IMAGE's saved core pathname."
-  (sbcl-worker-image-core-pathname image))
-
-(-> lisp-image-parent-identifier (lisp-image) string)
-(defun lisp-image-parent-identifier (image)
-  "Return the pristine or saved parent of IMAGE."
-  (sbcl-worker-image-parent-identifier image))
-
-(-> lisp-image-note (lisp-image) string)
-(defun lisp-image-note (image)
-  "Return IMAGE's durable provenance note."
-  (sbcl-worker-image-note image))
-
 (-> lisp-image--validate-identifier (string) string)
 (defun lisp-image--validate-identifier (identifier)
   "Return valid saved image IDENTIFIER or signal LISP-IMAGE-ERROR."
@@ -167,12 +147,12 @@ only while that core still matches the source."
               (pristine-lisp-image-identifier))
       (dolist (image images)
         (format stream "~A  ~A  parent ~A~%  note: ~A~%"
-                (lisp-image-identifier image)
+                (sbcl-worker-image-identifier image)
                 (if (lisp-image-compatible-p image)
                     "compatible"
                     "incompatible")
-                (lisp-image-parent-identifier image)
-                (lisp-image-note image)))
+                (sbcl-worker-image-parent-identifier image)
+                (sbcl-worker-image-note image)))
       (dolist (failure failures)
         (format stream "invalid  ~A~%  error: ~A~%"
                 (namestring (first failure))
@@ -188,10 +168,10 @@ only while that core still matches the source."
              (mapcar
               (lambda (image)
                 (format nil "IMAGE=~A; PARENT=~A; COMPATIBLE=~A; NOTE=~A"
-                        (json-encode (lisp-image-identifier image))
-                        (json-encode (lisp-image-parent-identifier image))
+                         (json-encode (sbcl-worker-image-identifier image))
+                         (json-encode (sbcl-worker-image-parent-identifier image))
                         (if (lisp-image-compatible-p image) "true" "false")
-                        (json-encode (lisp-image-note image))))
+                         (json-encode (sbcl-worker-image-note image))))
               images)
              (mapcar
               (lambda (failure)

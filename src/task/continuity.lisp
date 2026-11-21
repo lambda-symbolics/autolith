@@ -178,9 +178,9 @@ The result is a list of at most one entry, so callers can append scans."
          (image      (and checkpoint
                           (find (getf checkpoint :image)
                                 (lisp-image-scan configuration)
-                                :key #'lisp-image-identifier :test #'equal))))
+                                 :key #'sbcl-worker-image-identifier :test #'equal))))
     (when (and image (lisp-image-compatible-p image)
-               (probe-file (lisp-image-core-pathname image)))
+                (probe-file (sbcl-worker-image-core-pathname image)))
       image)))
 
 (-> task-continuity--progress-summary (list) list)

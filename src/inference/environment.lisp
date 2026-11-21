@@ -57,7 +57,7 @@ each drive their own environment."
        (values nil ':retired))
       ((null entry)
        (values nil nil))
-      ((lisp-worker-running-p (getf entry ':worker))
+      ((sbcl-worker-running-p (getf entry ':worker))
        (values (getf entry ':worker) nil))
       (t
        ; mallet:suppress no-ignore-errors -- stopping a discarded worker is best-effort cleanup
