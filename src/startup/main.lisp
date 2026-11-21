@@ -400,10 +400,10 @@ recovery, WORLD-TERMINAL-IDENTITY, the :TOKEN, :CREATED-AT and
 the session shows again. Without BOOT-SCREEN-P the session opens without
 the boot screen, as for a terminal that switched to it. Return the
 controller's exit reason."
-  (let* ((ui                     (application-ui application))
-         (input-controller       nil)
-         (exit-reason            nil)
-         (recovery-startup-p     (application-recovery-startup-p application))
+  (let* ((ui                 (application-ui application))
+         (input-controller   nil)
+         (exit-reason        nil)
+         (recovery-startup-p (application-recovery-startup-p application))
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
@@ -475,8 +475,6 @@ controller's exit reason."
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
                       (terminal-ui-set-input ui initial-input))
-                    (when (and initial-command (input-leading-slash-p initial-command))
-                      (application--reject-slash-input application))
                     (setf input-controller
                           (application-input-controller-create
                            application
@@ -836,9 +834,9 @@ dependencies."
       (application--clear-recovery-environment))
     (when handoff-record
       (let* ((*world-startup-record* handoff-record)
-             (status                      (world-server-run configuration
-                                                            :permission-mode
-                                                            (or explicit-permission-mode permission-mode))))
+             (status                 (world-server-run configuration
+                                                       :permission-mode
+                                                       (or explicit-permission-mode permission-mode))))
         (when status
           (uiop:quit status)))
       (return-from main--start-session nil))
@@ -855,7 +853,7 @@ dependencies."
     (unless (platform-supports-p *platform* ':detached-sessions)
       (error 'platform-capability-unavailable
              :capability ':detached-sessions
-             :message "Starting a world server requires detached-session support."))
+             :message    "Starting a world server requires detached-session support."))
     (if (main--interactive-input-p)
         (main--run-world-client
          configuration
@@ -879,7 +877,6 @@ dependencies."
     (application--clear-recovery-environment))
   nil)
 
-
 (-> main--interactive-input-p () boolean)
 (defun main--interactive-input-p ()
   "Return true when standard input is a terminal someone types at, not piped input."
@@ -889,7 +886,7 @@ dependencies."
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
                         (:pick-channel-p boolean)
-                         (:inbox-p boolean) (:latest-p boolean) (:attach-expected-p boolean)
+                        (:inbox-p boolean) (:latest-p boolean) (:attach-expected-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean))
@@ -919,7 +916,7 @@ ends the start with the reason; no session runs in this terminal instead."
                          :switch-p           (not attach-expected-p)
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
-                       :new-p              new-p)
+                       :new-p                new-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -995,7 +992,7 @@ pump is joined before returning; queued interrupts check their retired scope."
                                 (with-lock-held (lock) (setf cancelled-p t))
                                 (wake-owner (make-condition 'world-terminal-client-cancelled
                                                             :operation ':switch
-                                                            :message "Channel switch cancelled."))
+                                                            :message   "Channel switch cancelled."))
                                 (return)))
                             (when (with-lock-held (lock) (shiftf resized-p nil))
                               (multiple-value-bind (rows columns) (terminal-current-size)
@@ -1007,7 +1004,7 @@ pump is joined before returning; queued interrupts check their retired scope."
                    (wake-owner condition)))))
       (handler-case
           (unwind-protect
-               (let ((*world-terminal-client-cancelled-p* #'cancelled-p)
+               (let ((*world-terminal-client-cancelled-p*           #'cancelled-p)
                      (image-daemon:*daemon-connect-timeout-seconds* nil))
                  (setf watch (platform-watch-terminal-resize
                               *platform* (lambda ()
@@ -1034,7 +1031,7 @@ pump is joined before returning; queued interrupts check their retired scope."
   (flet ((description (text)
            (if cancellable-p (format nil "~A (Esc: return)" text) text)))
     (world-terminal-screen-show-loading screen title :start-p start-p :boot-p boot-p
-                                                :agent-name agent-name
+                                                :agent-name  agent-name
                                                 :description (description "Connecting to world"))
     (handler-bind
         ((channel-loading-progress
@@ -1265,9 +1262,9 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :inbox-p            inbox-p
                                                  :latest-p           latest-p
                                                  :recovery-diagnosis recovery-diagnosis
-                                                :launch             launch)))
+                                                :launch              launch)))
                  :start-p (not (null (terminal--terminal-mode-or-nil
-                                     (world-terminal-screen-terminal screen))))
+                                      (world-terminal-screen-terminal screen))))
                  :boot-p  (config :boot-screen-p configuration))))
            (when welcome-p
              (world-sidebar-start panel))
@@ -1330,44 +1327,44 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                               (or (getf (rest exit) :message) "The attachment was lost.")
                                               :limit 400))))
                          (return))
-                       ((and (consp exit) (eq (first exit) ':return))
-                        (setf session-id origin
-                              restoring-p (not (null origin))
-                              origin nil
-                              switching-p nil
-                              started-p nil))
-                       ((and (consp exit) (eq (first exit) ':disconnected))
-                        (setf final-exit (rest exit)) (return))
-                       ((and (consp exit) (eq (first exit) ':switch))
-                        (let ((left session-id) (target (getf (rest exit) :session-id)))
-                          (handler-case
-                           (progn
-                            (multiple-value-setq (session-id started-p)
-                               (main--call-with-channel-loading
-                                screen (if target "Loading channel" "Opening channel")
-                                (lambda ()
-                                  (world-client-open configuration
-                                                     :channel         target
-                                                     :directory       (unless left launch-directory)
-                                                     :new-p           (getf (rest exit) :new-p)
-                                                     :launch          (unless left launch)
-                                                     :permission-mode permission-mode
-                                                     :immutable-p     immutable-p
-                                                     :switch-p        (not (null target))))
-                                :cancellable-p t
-                                :agent-name (when target (world-sidebar-agent-name panel target))))
-                            (setf origin left switching-p t))
-                           (error (condition)
-                                  (setf notice (if target
-                                                   (main--switch-failure target condition)
-                                                   (format nil "Could not open a channel: ~A" condition))
-                                        session-id left
-                                        origin nil
-                                        switching-p nil
-                                        started-p nil
-                                        restoring-p (not (null left)))))))
-                       (t
-                        (setf final-exit exit) (return)))))))
+                        ((and (consp exit) (eq (first exit) ':return))
+                         (setf session-id origin
+                               restoring-p (not (null origin))
+                               origin nil
+                               switching-p nil
+                               started-p nil))
+                        ((and (consp exit) (eq (first exit) ':disconnected))
+                         (setf final-exit (rest exit)) (return))
+                        ((and (consp exit) (eq (first exit) ':switch))
+                         (let ((left session-id) (target (getf (rest exit) :session-id)))
+                           (handler-case
+                            (progn
+                             (multiple-value-setq (session-id started-p)
+                                (main--call-with-channel-loading
+                                 screen (if target "Loading channel" "Opening channel")
+                                 (lambda ()
+                                   (world-client-open configuration
+                                                      :channel         target
+                                                      :directory       (unless left launch-directory)
+                                                      :new-p           (getf (rest exit) :new-p)
+                                                      :launch          (unless left launch)
+                                                      :permission-mode permission-mode
+                                                      :immutable-p     immutable-p
+                                                      :switch-p        (not (null target))))
+                                 :cancellable-p t
+                                 :agent-name    (when target (world-sidebar-agent-name panel target))))
+                             (setf origin left switching-p t))
+                            (error (condition)
+                                   (setf notice (if target
+                                                    (main--switch-failure target condition)
+                                                    (format nil "Could not open a channel: ~A" condition))
+                                         session-id left
+                                         origin nil
+                                         switching-p nil
+                                         started-p nil
+                                         restoring-p (not (null left)))))))
+                        (t
+                         (setf final-exit exit) (return)))))))
       (flet ((cleanup (stage function)
                (handler-case (funcall function)
                              (error (condition)

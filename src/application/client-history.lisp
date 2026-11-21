@@ -20,7 +20,7 @@
 (defun application-client-history--frame-size (event)
   "Count a portable frame, or return NIL if it exceeds packet bounds."
   (handler-case
-      (length (image-daemon:daemon-packet-string (client-portable event)))
+        (length (image-daemon:daemon-packet-string event))
     (image-daemon:daemon-error (condition)
       (unless (eq (image-daemon:daemon-error-operation condition) ':write-packet)
         (error condition))
@@ -196,7 +196,7 @@
           (let ((size (application-client-history--frame-size event)))
             (unless (and size (<= size available))
               (error 'world-terminal-error :operation ':client
-                                      :message    "The channel's current presentation exceeds the attachment budget."))
+                                      :message        "The channel's current presentation exceeds the attachment budget."))
             (decf available size)))
         (multiple-value-bind (events fields)
             (application-client-history-page application (application-client-history--cut application)
@@ -221,7 +221,7 @@ An operation overridden since attachment is declined without executing the pager
                          (equal conversation (conversation-identifier current))
                          (typep before-sequence '(integer 1)))
               (error 'world-terminal-error :operation ':transcript-history
-                                       :message   "The transcript history cursor does not name this channel's conversation."))
+                                       :message       "The transcript history cursor does not name this channel's conversation."))
             (with-terminal-ui-locked (presentation)
               (with-recursive-lock-held ((conversation-append-lock current))
                 (let ((before (min before-sequence (application-client-history--cut application))))
@@ -233,5 +233,5 @@ An operation overridden since attachment is declined without executing the pager
                                    (- (floor image-daemon:*attachment-queue-character-limit* 2) 1024))))
                     (when (and (getf fields :more-p) (= (getf fields :before-sequence) before))
                       (error 'world-terminal-error :operation ':transcript-history
-                                               :message   "The attachment budget is too small for the next transcript record."))
+                                               :message       "The attachment budget is too small for the next transcript record."))
                     (list* :history-page-p t :builtin-p t :events events fields))))))))))

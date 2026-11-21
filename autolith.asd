@@ -371,6 +371,7 @@
                                           (:file "terminal/responsive-input")
                                           (:file "application/client-operations")
                                           (:file "application/client-protocol")
+                                          (:file "application/client-wire")
                                           (:file "application/client-catalogs")
                                           (:file "application/client-settings")
                                           (:file "application/client-conversations")

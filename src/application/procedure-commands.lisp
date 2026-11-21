@@ -146,7 +146,7 @@
 ;;;; -- Command Definitions --
 
 (define-application-command application--builtin-procedures-command
-    (:name              "/procedures"
+    (:name              "procedures"
      :argument          nil
      :description       "list procedures learned from recurring work."
      :tip               "shows all learned tool sequences"
@@ -158,7 +158,7 @@
   ':continue)
 
 (define-application-command application--builtin-run-procedure-command
-    (:name              "/run-procedure"
+    (:name              "run-procedure"
      :argument          "[ID] [NAME VALUE ...]"
      :description       "run a learned procedure without the model."
      :tip               "run a saved tool procedure"
@@ -174,7 +174,7 @@
   ':continue)
 
 (define-application-command application--builtin-admit-procedure-command
-    (:name              "/admit-procedure"
+    (:name              "admit-procedure"
      :argument          "[ID]"
      :description       "let a learned procedure run"
      :tip               "admit the latest version of a procedure and lift suspensions after failed runs."
@@ -190,7 +190,7 @@
   ':continue)
 
 (define-application-command application--builtin-retire-procedure-command
-    (:name              "/retire-procedure"
+    (:name              "retire-procedure"
      :argument          "[ID]"
      :description       "stop a learned procedure for good"
      :tip               "retire a procedure so it is no longer used"

@@ -1619,14 +1619,6 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                       message)
                 ':hint)))))))
 
-(-> application--reject-slash-input (application) keyword)
-(defun application--reject-slash-input (application)
-  "Warn that leading-slash submissions are rejected rather than executed or sent."
-  (application-present
-   application
-   (list (terminal-span ':failure "Input starting with / was not sent. Use (help) to list commands.")))
-  ':failed)
-
 (-> application-input-controller--present-scheduled-lisp
     (application-input-controller string)
     null)
@@ -1658,7 +1650,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 (defun application-input-controller--command-request (input)
   "Return provenance for INPUT's notification, never executable command data."
   (let ((invocation (command-message-input-invocation input)))
-    (list :operation (string-left-trim "/" (application-command-invocation-name invocation))
+    (list :operation (application-command-invocation-name invocation)
           :summary   (user-message-input-text input))))
 
 (-> application-input-controller--steering-entry
@@ -1975,10 +1967,6 @@ may execute immediately; other Lisp waits for the idle boundary."
          (handled-p    nil)
          (changed-p    nil)
          (post-action  nil))
-    (when (and (input-leading-slash-p text)
-               (application-input-controller--follow-up-editing-p controller))
-      (application--reject-slash-input application)
-      (return-from application-input-controller--handle-recalled-submission t))
     (when (and work
                (application-input-controller--follow-up-editing-p controller)
                (not
@@ -2149,8 +2137,6 @@ may execute immediately; other Lisp waits for the idle boundary."
                (application-input-controller--request-exit controller ':quit))
              result))
       (cond
-        ((input-leading-slash-p text)
-         (application--reject-slash-input application))
         ((input-async-lisp-p text)
          (if (application-input-controller--submission-storage-ready-p controller input)
              (progn
@@ -2196,8 +2182,6 @@ may execute immediately; other Lisp waits for the idle boundary."
          (text        (user-message-input-text input))
          (message     (input-message input)))
     (cond
-      ((input-leading-slash-p text)
-       (application--reject-slash-input application))
       ((input-async-lisp-p text)
        (when (application-input-controller--submission-storage-ready-p controller input)
          (application-world-terminal-resume application)
@@ -3691,11 +3675,6 @@ however it ended."
             (append (list :work-started :kind (first work))
                     (when (application-input-controller--work-submission work)
                       (list :submission (application-input-controller--work-submission work)))))
-           (when (and (eq (first work) ':command)
-                      (not (typep (second work) 'command-message-input)))
-             (application-input-controller--record-prompt-result
-              controller (application--reject-slash-input application))
-             (return-from application-input-controller--run-work nil))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction

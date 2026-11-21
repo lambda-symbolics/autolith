@@ -453,12 +453,14 @@ Terminal-only operations return an explicit unsupported outcome. Workspace resou
 windows use =startLine= and =lineCount= and include the observed revision. Shell-log
 windows use =byteOffset= and =byteCount= and require session ownership.
 
-Invoke ordinary commands with =arguments: {"input": "..."}=, passing argument
-text for the selected operation. =text= is an alias for =input=. Commands such
-as =skills=, =hurry-up= and =papercuts= return their presented text. Operations with
-=terminalWithoutArguments= require an argument to avoid a terminal picker. During
-an active turn, native inspection and execution policies apply; boundary-applied
-commands return =delivery: "scheduled"= and present their results as ACP updates.
+For a command, send =arguments= as a JSON array in Lisp argument order. For
+example, =(settings :compact-view-p nil)= takes
+=[{"keyword":"compact-view-p"}, false]=. A keyword is an object with exactly one
+=keyword= member whose value is a nonempty string. For a tool, send =arguments=
+as an object keyed by parameter name. Operations with =terminalWithoutArguments=
+require an argument to avoid a terminal picker. During an active turn,
+boundary-applied commands return =delivery: "scheduled"= and present their
+results as ACP updates.
 
 =steer= delivers text at the next safe boundary, including submissions made while
 an approval is pending. Late steering is promoted ahead of ordinary queued
@@ -2850,13 +2852,12 @@ Put user commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=, or load
 a user-owned Lisp file from there. Autolith loads those definitions after the
 tracked system on each startup, including after a source update or an installed
 upgrade. Register commands with =define-application-command=, which defines
-Lisp names, aliases, completion, and busy/terminal policy. Registry names and
-aliases use a leading =/= in this metadata only.
+Lisp names, aliases, completion, and busy/terminal policy.
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
-    (:name              "/my-version"
-     :aliases           ("/local-version")
+    (:name              "my-version"
+     :aliases           ("local-version")
      :argument          "[LABEL]"
      :description       "show a labeled local integration version"
      :tip               "shows the version supplied by init.lisp."
@@ -2870,10 +2871,6 @@ aliases use a leading =/= in this metadata only.
 
 - Callable handlers accept ordinary Lisp lambda lists, including =&key= and
   supplied-p parameters. Lisp argument values reach the handler directly.
-- Use =:slash-parser function-name= to decode a structured client's argument
-  text when the default token splitting is insufficient. Define the function
-  before the command. It receives only the argument text and returns a list of
-  native handler arguments. Registration captures the decoder and the handler.
 - Missing interactive arguments open the restart debugger. =supply-arguments=
   accepts replacement arguments as Lisp values. Excess arguments are rejected
   before dispatch.

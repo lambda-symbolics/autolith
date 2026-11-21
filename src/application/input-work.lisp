@@ -135,7 +135,7 @@
            (command    (and (non-empty-string-p name) (application-command-find name))))
       (when (and command (string= name (application-command-name command))
                  (stringp (getf properties :input))
-                 (member (getf properties :syntax) '(:slash :lisp))
+                 (eq (getf properties :syntax) ':lisp)
                  (non-empty-string-p (getf properties :name))
                  (stringp (getf properties :remainder))
                  (typep (getf properties :argument) '(or null string))
@@ -233,16 +233,11 @@
   "Return true when TEXT begins with a question-mark Lisp draft prefix."
   (not (null (input-async-lisp-prefix-length text))))
 
-(-> input-leading-slash-p (string) boolean)
-(defun input-leading-slash-p (text)
-  "Return true when TEXT starts with the retired slash prompt syntax."
-  (and (plusp (length text)) (char= #\/ (char text 0))))
-
 (-> input-message
     ((or string user-message-input))
     (option (or string user-message-input)))
 (defun input-message (input)
-  "Return INPUT's model message, or NIL for commands, empty, Lisp, or slash input."
+  "Return INPUT's model message, or NIL for native commands, empty input, or Lisp."
   (let ((text (user-message-input-text input)))
     (cond
       ((typep input 'command-message-input)
@@ -253,8 +248,6 @@
       ((or (input-lisp-p text)
            (input-async-lisp-p text))
        nil)
-      ((input-leading-slash-p text)
-       nil)
       (t
        (user-message-input-copy input)))))
 
@@ -264,7 +257,9 @@
   (and (consp work)
        (member (first work) '(:message :command :lisp :native-lisp) :test #'eq)
        (consp (rest work))
-       (typep (second work) '(or string user-message-input))))
+       (typep (second work) '(or string user-message-input))
+       (or (not (eq (first work) ':command))
+           (typep (second work) 'command-message-input))))
 
 (-> input-work-from-input
     ((or string user-message-input))
@@ -366,8 +361,10 @@
   "Return one validated in-memory work item restored from durable FORM."
   (when (input-work--form-shape-p form)
     (let ((input (input-value-from-form (second form))))
-      (when (and input (or (not (typep input 'command-message-input))
-                           (eq (first form) ':command)))
+      (when (and input
+                 (if (eq (first form) ':command)
+                     (typep input 'command-message-input)
+                     (not (typep input 'command-message-input))))
         (append (list (first form) input) (copy-tree (nthcdr 2 form)))))))
 
 (-> input-steering->form

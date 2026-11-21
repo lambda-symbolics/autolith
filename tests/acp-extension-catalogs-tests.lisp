@@ -4,121 +4,88 @@
 
 (-> test-acp-extension-operations-and-invoke () null)
 (defun test-acp-extension-operations-and-invoke ()
-  "Invoke an actual registered tool with ACP authority and lossless JSON arguments."
+  "Invoke native command arguments and tool objects through the ACP boundary."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
      configuration
      (lambda (service client)
-       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-              (session    (acp-service--session service identifier))
-              (tool       (make-instance 'application-operation-test-tool
-                                         :namespace "acp-test" :name "echo"
-                                         :description "Exercise headless tool authority."
-                                         :parameters  (tool-object-schema (json-object) nil)))
-              (arguments  (agentcomms:json-object
-                           "text" "approved" "nested" (agentcomms:json-object
-                                                       "CamelCase" ':null "false" (argo:json-false)))))
-         (tool-registry-register (application-tool-registry (acp-session-test--application session)) tool)
+       (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
+              (session     (acp-service--session service identifier))
+              (application (acp-session-test--application session))
+              (tool        (make-instance 'application-operation-test-tool
+                                          :namespace "acp-test" :name "echo"
+                                          :description "Exercise headless tool authority."
+                                          :parameters  (tool-object-schema (json-object) nil)))
+              (arguments   (agentcomms:json-object
+                            "text" "approved" "nested" (agentcomms:json-object
+                                                        "CamelCase" ':null "false" (argo:json-false)))))
+         (tool-registry-register (application-tool-registry application) tool)
          (let* ((catalog   (agentcomms:client-agent-request
-                            client "_autolith/operations"
-                            (agentcomms:json-object "sessionId" identifier)))
+                            client "_autolith/operations" (agentcomms:json-object "sessionId" identifier)))
                 (items     (agentcomms:json-get (agentcomms:json-get catalog "value") "items"))
                 (supported (find (tool-canonical-name tool) items :test #'equal
                                  :key                                   (lambda (row) (agentcomms:json-get row "name"))))
-                (terminal  (find "settings" items :test #'equal
+                (settings  (find "settings" items :test #'equal
                                  :key                   (lambda (row) (agentcomms:json-get row "name")))))
            (test-assert (equal "ok" (agentcomms:json-get catalog "outcome")) "the catalog is readable")
-           (test-assert (and supported (eq t (agentcomms:json-get supported "admitted")))
-                        "idle tools are admitted even when held during an active turn")
-           (test-assert (and terminal (eq t (agentcomms:json-get terminal "terminalWithoutArguments")))
-                        "the settings picker requires arguments for headless use"))
+           (test-assert (eq t (agentcomms:json-get supported "admitted")) "idle tools are admitted")
+           (test-assert (argo:json-false-p (gethash "terminalOwning" supported)) "tools do not own the terminal")
+           (test-assert (eq t (agentcomms:json-get settings "terminalWithoutArguments"))
+                        "the settings picker needs arguments for headless use")
+           (test-assert (equal "array" (agentcomms:json-get
+                                           (agentcomms:json-get settings "argumentSchema") "type"))
+                        "command arguments are arrays"))
          (acp-session-cancel session)
-         (let* ((result  (agentcomms:client-agent-request
-                          client "_autolith/invoke"
-                          (agentcomms:json-object "sessionId" identifier
-                                                 "operation" (tool-canonical-name tool) "arguments" arguments)))
-                (decoded (application-operation-test-tool-arguments tool)))
-           (test-assert (equal "ok" (agentcomms:json-get result "outcome"))
-                        "explicit invocation after cancellation succeeds")
+         (let* ((response (agentcomms:client-agent-request
+                           client "_autolith/invoke"
+                           (agentcomms:json-object "sessionId" identifier
+                                                  "operation" (tool-canonical-name tool) "arguments" arguments)))
+                (decoded  (application-operation-test-tool-arguments tool)))
+           (test-assert (equal "ok" (agentcomms:json-get response "outcome")) "invocation after cancellation succeeds")
            (test-assert (equal "full-access allow: approved"
-                               (agentcomms:json-get (agentcomms:json-get result "value") "text"))
-                        "command and tool permissions use the ACP client")
-           (test-assert (= 1 (application-operation-test-tool-calls tool)) "the tool executes exactly once")
-           (test-assert (eq (application-agent (acp-session-test--application session))
+                               (agentcomms:json-get (agentcomms:json-get response "value") "result"))
+                        "tool invocation uses the ACP client's authority")
+           (test-assert (eq (application-agent application)
                             (tool-context-agent (application-operation-test-tool-context tool)))
                         "invocation retains the session agent")
            (test-assert (nth-value 1 (gethash "CamelCase" (gethash "nested" decoded)))
-                        "JSON member names retain their case")
-           (test-assert (null (gethash "CamelCase" (gethash "nested" decoded))) "JSON null is not false")
-           (test-assert (json-false-p (gethash "false" (gethash "nested" decoded))) "JSON false is distinct"))
+                        "object member names retain their case")
+           (test-assert (null (gethash "CamelCase" (gethash "nested" decoded))) "tool null is not false")
+           (test-assert (json-false-p (gethash "false" (gethash "nested" decoded))) "tool false is distinct"))
          (dolist (request (list
-                             (agentcomms:json-object "operation" "skills")
-                             (agentcomms:json-object "operation" "skills")
-                             (agentcomms:json-object "operation" "hurry-up"
-                                                    "arguments"
-                                                    (agentcomms:json-object "input" "on"))
-                             (agentcomms:json-object "operation" "hurry-up"
-                                                    "arguments"
-                                                    (agentcomms:json-object "text" "off"))))
+                           (agentcomms:json-object "operation" "settings"
+                                                  "arguments" (vector (agentcomms:json-object "keyword" "turn-timestamps-p") t))
+                           (agentcomms:json-object "operation" "permissions"
+                                                  "arguments" (vector (agentcomms:json-object "keyword" "auto")))))
            (setf (gethash "sessionId" request) identifier)
-           (let* ((result (agentcomms:client-agent-request client "_autolith/invoke" request))
-                  (value  (agentcomms:json-get result "value"))
-                  (text   (and value (agentcomms:json-get value "text"))))
-             (test-assert (equal "ok" (agentcomms:json-get result "outcome"))
-                          "ordinary application commands invoke through ACP")
-             (test-assert
-              (or (not (string= "skills" (agentcomms:json-get request "operation")))
-                  (and (stringp text) (plusp (length text))))
-              "ordinary command invocation returns presented text when it presents")))
-         (test-assert (not (application-hurry-up-p (acp-session-test--application session)))
-                      "the textual off action disables hurry-up")
-         (let ((request (agentcomms:json-object
-                         "sessionId" identifier
-                         "operation" "permissions"
-                         "arguments" (agentcomms:json-object "input" "auto"))))
-           (let ((result (agentcomms:client-agent-request client "_autolith/invoke" request)))
-             (test-assert (equal "ok" (agentcomms:json-get result "outcome"))
-                          "exclusive-without-arguments command accepts supplied arguments")
-             (test-assert (plusp (length (agentcomms:json-get
-                                          (agentcomms:json-get result "value") "text")))
-                          "argument-bearing command returns presented text")))
-         (acp-session-test-check-turns
-          client
-          '("invoke" "invoke" "invoke" "invoke" "invoke" "invoke")
-          '("end-turn" "end-turn" "end-turn" "end-turn" "end-turn" "end-turn"))
-         (dolist (request (list (agentcomms:json-object "operation" "settings")
-                               (agentcomms:json-object "operation" "auth"
-                                                      "arguments" (agentcomms:json-object "input" "chatgpt invalid"))
-                               (agentcomms:json-object "operation" "missing-operation")))
-          (setf (gethash "sessionId" request) identifier)
-          (test-assert (equal "unsupported"
-                              (agentcomms:json-get
-                               (agentcomms:client-agent-request client "_autolith/invoke" request) "outcome"))
-                       "unavailable adapters return an explicit unsupported outcome"))
-         (let ((result
-                 (agentcomms:client-agent-request
-                  client "_autolith/invoke"
-                  (agentcomms:json-object
-                   "sessionId" identifier "operation" "settings"
-                   "arguments" (agentcomms:json-object "input" "boot-screen-seconds 2")))))
-           (test-assert (and (equal "ok" (agentcomms:json-get result "outcome"))
-                             (= 2 (config :boot-screen-seconds
-                                          (application-configuration (acp-session-test--application session)))))
-                        "textual settings use the executing application's schema"))
-         (let ((result
-                 (agentcomms:client-agent-request
-                  client "_autolith/invoke"
-                  (agentcomms:json-object
-                   "sessionId" identifier "operation" "hurry-up"
-                   "arguments" (agentcomms:json-object "input" "sometimes")))))
-           (test-assert (and (equal "condition" (agentcomms:json-get result "outcome"))
-                             (not (application-hurry-up-p (acp-session-test--application session))))
-                        "invalid text actions fail before state changes"))
-         (test-assert (equal "condition"
-                             (agentcomms:json-get
-                              (agentcomms:client-agent-request
-                               client "_autolith/invoke"
-                               (agentcomms:json-object "sessionId" identifier "operation" (tool-canonical-name tool)
-                                                      "arguments" "not an object")) "outcome"))
-                      "invalid arguments fail before tool execution")))))
+           (let* ((response (agentcomms:client-agent-request client "_autolith/invoke" request))
+                  (value    (agentcomms:json-get response "value")))
+             (test-assert (equal "ok" (agentcomms:json-get response "outcome"))
+                          "native command arguments invoke through ACP")
+             (test-assert (and (nth-value 1 (gethash "result" value)) (null (gethash "result" value)))
+                          "an actual NIL command result is present")))
+         (test-assert (config :turn-timestamps-p (application-configuration application))
+                      "keyword setting names and boolean values cross the ACP boundary")
+         (acp-session-test-check-turns client '("invoke" "invoke" "invoke")
+                                      '("end-turn" "end-turn" "end-turn"))
+         (dolist (request (list
+                           (agentcomms:json-object "operation" "settings" "arguments" (agentcomms:json-object))
+                           (agentcomms:json-object "operation" (tool-canonical-name tool) "arguments" #())
+                           (agentcomms:json-object "operation" "permissions" "arguments" #("auto"))
+                           (agentcomms:json-object "operation" "permissions" "arguments"
+                                                  (vector (agentcomms:json-object "keyword" 7)))
+                           (agentcomms:json-object "operation" "permissions" "arguments"
+                                                  (vector (agentcomms:json-object "keyword" "full" "extra" t)))))
+           (setf (gethash "sessionId" request) identifier)
+           (test-assert (equal "condition" (agentcomms:json-get
+                                              (agentcomms:client-agent-request client "_autolith/invoke" request) "outcome"))
+                        "invalid containers and keyword tags fail before execution"))
+         (dolist (operation '("settings" "missing-operation"))
+           (test-assert (equal "unsupported" (agentcomms:json-get
+                                                (agentcomms:client-agent-request
+                                                 client "_autolith/invoke"
+                                                 (agentcomms:json-object "sessionId" identifier "operation" operation))
+                                                "outcome"))
+                        "unavailable operations have an explicit outcome"))
+         (test-assert (= 1 (application-operation-test-tool-calls tool)) "the tool executes exactly once")))))
   nil)

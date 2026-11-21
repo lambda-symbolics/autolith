@@ -41,17 +41,25 @@
 
 ;;;; -- Messages --
 
+(declaim (special *application-client-methods*))
+
 (-> world-terminal-message-p (t) boolean)
 (defun world-terminal-message-p (packet)
-  "Return true when PACKET is a structured message: a keyword for its kind, then a property list of fields.
+  "Return true for a keyword message with property fields or native client arguments.
+
+Registered client requests carry a fixed :id prefix followed by Lisp arguments.
 
 Each side reads only the fields it knows, so a peer of another version may add some."
   (and (consp packet)
        (keywordp (first packet))
-       (values (record-check (rest packet)
-                             :properties-p         t
-                             :keyword-keys-p       t
-                             :allow-duplicate-keys t))))
+       (if (assoc (first packet) *application-client-methods*)
+           (and (eq (second packet) ':id)
+                (typep (third packet) '(integer 0 *))
+                (proper-list-p (nthcdr 3 packet)))
+           (values (record-check (rest packet)
+                                 :properties-p         t
+                                 :keyword-keys-p       t
+                                 :allow-duplicate-keys t)))))
 
 
 ;;;; -- Client Capabilities --
@@ -77,7 +85,6 @@ Each side reads only the fields it knows, so a peer of another version may add s
 
 (setf image-daemon:*daemon-error-class* 'world-terminal-error)
 
-
 (-> world-terminal-call (t t keyword &key (:arguments t)) list)
 (defun world-terminal-call (port token operation &key arguments)
   "Send one authenticated channel OPERATION with ARGUMENTS and return its response."
@@ -93,7 +100,6 @@ Each side reads only the fields it knows, so a peer of another version may add s
            (daemon-read-response stream operation))
       ; mallet:suppress no-ignore-errors -- closing the connection must not mask its response
       (ignore-errors (close stream)))))
-
 
 (-> world-terminal-runtime-notify (image-daemon:daemon-runtime) boolean)
 (defun world-terminal-runtime-notify (runtime)

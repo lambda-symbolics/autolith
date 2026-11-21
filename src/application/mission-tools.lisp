@@ -87,31 +87,6 @@
     (mission-error (condition) (error condition))
     (error () (mission--reject ':invalid "Invalid mission data form."))))
 
-(-> application-mission-slash-arguments (string) list)
-(defun application-mission-slash-arguments (remainder)
-  "Parse legacy /mission command text into action arguments."
-  (let* ((text     (string-trim '(#\Space #\Tab #\Newline #\Return) remainder))
-         (space    (position-if (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return))) text))
-         (name     (subseq text 0 space))
-         (argument (and space (string-left-trim '(#\Space #\Tab) (subseq text (1+ space))))))
-    (cond
-      ((member name '("" "status" "run" "verify" "resume") :test #'string-equal)
-       (when (and argument (plusp (length argument)))
-         (mission--reject ':invalid "This mission action takes no arguments."))
-       (list (if (equal name "") ':status
-                 (find name '(:status :run :verify :resume) :test #'string-equal :key #'symbol-name))))
-      ((string-equal name "start")
-       (list ':start (mission--read-data (or argument ""))))
-      ((string-equal name "cancel")
-       (if argument (list ':cancel argument) (list ':cancel)))
-      ((member name '("accept" "invalidate") :test #'string-equal)
-       (let ((fields (mission--read-data (or argument ""))))
-         (unless (and (proper-list-p fields) (= (length fields) 2))
-           (mission--reject ':invalid "Expected (\"ID\" \"EVIDENCE\")."))
-         (cons (if (string-equal name "accept") ':accept ':invalidate) fields)))
-      (t
-       (mission--reject ':invalid "Unknown mission action.")))))
-
 (-> mission--command-specification-p (t) boolean)
 (defun mission--command-specification-p (specification)
   "Check for proper lists and valid property lists before policy validation."
@@ -173,13 +148,12 @@
   nil)
 
 (define-application-command application--builtin-mission-command
-    (:name              "/mission"
+    (:name              "mission"
      :argument          "[OPERATION DATA]"
      :description       "configure, run and verify an explicitly budgeted session mission"
      :tip               "start with an objective, criteria and budgets for turns, tokens and wall-clock time; use status to see saved gate evidence."
      :busy-behavior     :hold
      :terminal-behavior :shared
-     :slash-parser      application-mission-slash-arguments
      :callable          t)
     (application &optional (action ':status) &rest arguments)
   (apply #'application-mission-command application action arguments)

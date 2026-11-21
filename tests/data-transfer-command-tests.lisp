@@ -93,13 +93,13 @@
                (setf observed nil)
                (application-operation-call application (format nil "data.~A" operation)
                                            archive :workspace workspace)
-               (let* ((command (application-command-find (format nil "/data.~A" operation)))
-                      (input   (format nil "~S --workspace ~S" (uiop:native-namestring archive)
-                                       (uiop:native-namestring workspace))))
+               (let ((command (application-command-find (format nil "data.~A" operation))))
                  (application-command-execute
-                  command application (application-client-command-invocation command input)))
+                  command application
+                  (application-client-command-invocation
+                   command (list archive :workspace workspace))))
                (test-assert (equal (first observed) (second observed))
-                            "typed pathname options and structured argument text select the same transfer")))
+                            "native command and client arguments select the same typed transfer")))
            (setf observed nil)
            (application-operation-call application "data.export" #P"archive.sexp" :all t)
            (test-assert (null (third (first observed))) "native Boolean :all selects every workspace")

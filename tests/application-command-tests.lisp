@@ -29,8 +29,7 @@
 (defun application-command-tests--invocation (form)
   "Construct a native command invocation from literal FORM values."
   (application-operation--command-invocation
-   (application-command-find
-    (concatenate 'string "/" (string-downcase (string (first form)))))
+   (application-command-find (string-downcase (string (first form))))
    (rest form)))
 
 (defvar *application-command-tests-semantic-call* nil
@@ -56,7 +55,7 @@
     (dolist
         (form
          '((define-application-command application-command-tests--missing-tip
-               (:name              "/missing-tip"
+               (:name              "missing-tip"
                 :argument          nil
                 :description       "missing tip"
                 :busy-behavior     :inspect
@@ -65,7 +64,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command application-command-tests--blank-tip
-               (:name              "/blank-tip"
+               (:name              "blank-tip"
                 :argument          nil
                 :description       "blank tip"
                 :tip               "   "
@@ -75,7 +74,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command application-command-tests--bad-busy
-               (:name              "/bad-busy"
+               (:name              "bad-busy"
                 :argument          nil
                 :description       "bad busy policy"
                 :tip               "has invalid policy."
@@ -85,7 +84,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command application-command-tests--bad-terminal
-               (:name              "/bad-terminal"
+               (:name              "bad-terminal"
                 :argument          nil
                 :description       "bad terminal policy"
                 :tip               "has invalid policy."
@@ -95,7 +94,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command :keyword-definition
-               (:name              "/keyword"
+               (:name              "keyword"
                 :argument          nil
                 :description       "keyword identity"
                 :tip               "has invalid identity."
@@ -105,7 +104,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command application-command-tests--bad-callable
-               (:name              "/bad-callable"
+               (:name              "bad-callable"
                 :argument          "VALUE"
                 :description       "invalid callable marker"
                 :tip               "has invalid callable metadata."
@@ -116,7 +115,7 @@
              (declare (ignore application value))
              :continue)
            (define-application-command application-command-tests--legacy-options
-               (:name              "/legacy-options"
+               (:name              "legacy-options"
                 :description       "invalid legacy static options"
                 :tip               "has incompatible static option metadata."
                 :busy-behavior     :inspect
@@ -126,7 +125,7 @@
              (declare (ignore application invocation))
              :continue)
            (define-application-command application-command-tests--duplicate-options
-               (:name              "/duplicate-options"
+               (:name              "duplicate-options"
                 :argument          "[on|off]"
                 :description       "duplicated finite options"
                 :tip               "has duplicated option metadata."
@@ -144,7 +143,7 @@
       (test-assert
        (application-command-tests--macroexpand-error-p
         `(define-application-command application-command-tests--invalid-options
-             (:name "/invalid-options"
+             (:name "invalid-options"
               :description "invalid finite choices" :tip "tests finite option validation."
               :busy-behavior :inspect :terminal-behavior :shared
               :callable t :static-options ,options)
@@ -160,7 +159,7 @@
        (progn
          (application-command-create
           :definition-name   'application-command-tests--invalid-static-constructor
-          :name              "/invalid-static-constructor"
+          :name              "invalid-static-constructor"
           :aliases           nil
           :description       "invalid static constructor"
           :tip               "tests constructor validation."
@@ -187,7 +186,7 @@
          (progn
            (eval
               '(define-application-command application-command-tests--semantic
-                   (:name              "/semantic"
+                   (:name              "semantic"
                     :argument          "REQUIRED [OPTIONAL]"
                     :description       "exercise semantic command arguments"
                     :tip               "exists for semantic argument tests."
@@ -201,7 +200,7 @@
                       *application-command-tests-interactive-p*
                       *application-command-interactive-p*)
                 :continue))
-           (let ((command (application-command-find "/semantic")))
+           (let ((command (application-command-find "semantic")))
              (test-assert
               (and command
                    (application-command-callable-p command)
@@ -265,7 +264,7 @@
                     (make-instance
                      'application-command-invocation
                      :input                   "(semantic nil nil)"
-                     :name                    "/semantic"
+                     :name                    "semantic"
                      :remainder               "nil nil"
                      :argument                "nil"
                      :arguments               '(nil nil)
@@ -317,56 +316,56 @@
                     (application-command-tests--command
                      :definition-name
                      'application-command-tests--alpha
-                     :name    "/alpha"
-                     :aliases '("/a")))
+                     :name    "alpha"
+                     :aliases '("a")))
                   (beta
                     (application-command-tests--command
                      :definition-name
                      'application-command-tests--beta
-                     :name    "/beta"
+                     :name    "beta"
                      :aliases nil))
                   (renamed
                     (application-command-tests--command
                      :definition-name
                      'application-command-tests--alpha
-                     :name    "/renamed"
-                     :aliases '("/r"))))
+                     :name    "renamed"
+                     :aliases '("r"))))
              (register-application-command alpha :source ':runtime)
              (register-application-command beta :source ':runtime)
              (register-application-command renamed :source ':runtime)
              (test-assert
               (equal (mapcar #'application-command-name
                              (application-command-list))
-                     '("/renamed" "/beta"))
+                     '("renamed" "beta"))
               "redefining one command preserves its registry position")
              (test-assert
-              (and (null (application-command-find "/alpha"))
-                   (null (application-command-find "/a"))
-                   (eq (application-command-find "/R") renamed))
+              (and (null (application-command-find "alpha"))
+                   (null (application-command-find "a"))
+                   (eq (application-command-find "R") renamed))
               "renaming a command removes stale names and resolves aliases")
              (let ((shadow
                      (application-command-tests--command
                       :definition-name
                       'application-command-tests--shadow
-                      :name    "/renamed"
-                      :aliases '("/layered-command"))))
+                      :name    "renamed"
+                      :aliases '("layered-command"))))
                (register-application-command shadow :source ':user)
                (test-assert
-                (eq (application-command-find "/renamed") shadow)
+                (eq (application-command-find "renamed") shadow)
                 "a later layer shadows the same canonical command")
                (unregister-application-command
                 'application-command-tests--shadow
                 :source ':user)
                (test-assert
-                (eq (application-command-find "/renamed") renamed)
+                (eq (application-command-find "renamed") renamed)
                 "removing a layer reveals the preceding command"))
              (let* ((before (application-command--registry-snapshot))
                     (collision
                       (application-command-tests--command
                        :definition-name
                        'application-command-tests--collision
-                       :name    "/collision"
-                       :aliases '("/beta"))))
+                       :name    "collision"
+                       :aliases '("beta"))))
                (test-assert
                 (handler-case
                     (progn
@@ -395,45 +394,42 @@
                 (list
                  (application-command-tests--command
                    :definition-name 'application-command-tests--peek
-                   :name            "/peek"
-                   :aliases         '("/i")
+                   :name            "peek"
+                   :aliases         '("i")
                   :busy-behavior    ':inspect)
                  (application-command-tests--command
                   :definition-name   'application-command-tests--hold
-                  :name              "/hold"
+                  :name              "hold"
                   :aliases           nil
                   :busy-behavior     ':hold
                   :terminal-behavior ':exclusive)
                  (application-command-tests--command
                   :definition-name   'application-command-tests--conditional
-                  :name              "/conditional"
+                  :name              "conditional"
                   :aliases           nil
                   :busy-behavior     ':cancel
                   :terminal-behavior ':exclusive-without-arguments)))
              (register-application-command command :source ':runtime))
            (let* ((inspection
                     (application-client-command-invocation
-                     (application-command-find "/I") ""))
+                     (application-command-find "I") nil))
                   (inspection-with-argument
                     (application-client-command-invocation
-                     (application-command-find "/peek") "alpha beta"))
+                     (application-command-find "peek") '("alpha" "beta")))
                   (held
                     (application-client-command-invocation
-                     (application-command-find "/hold") ""))
+                     (application-command-find "hold") nil))
                   (conditional
                     (application-client-command-invocation
-                     (application-command-find "/conditional") "value")))
+                     (application-command-find "conditional") '("value"))))
              (test-assert
-              (and (string= (application-command-invocation-name inspection) "/peek")
+              (and (string= (application-command-invocation-name inspection) "peek")
                    (eq (application-command-invocation-command inspection)
-                       (application-command-find "/I"))
-                   (string= (application-command-invocation-remainder
-                             inspection-with-argument)
-                            "alpha beta")
-                   (string= (application-command-invocation-argument
-                             inspection-with-argument)
-                            "alpha"))
-              "structured invocations resolve aliases and preserve argument text")
+                       (application-command-find "I"))
+                   (equal (application-command-invocation-arguments
+                           inspection-with-argument)
+                          '("alpha" "beta")))
+              "structured invocations resolve aliases and preserve native arguments")
             (test-assert
              (and
               (eq (application-command-busy-action
@@ -514,14 +510,14 @@
    "every built-in command supplies a native argument contract")
   (dolist
       (case
-       '(("/help" (&optional topic))
-         ("/open" (&optional (designator nil designator-p)))
-         ("/cwd" (&optional pathname))
-         ("/ste" (&optional (mode ':status)))
-         ("/hurry-up" (&optional (mode ':status)))
-         ("/papercut" (&optional identifier))
-         ("/papercut-close" (&optional identifier))
-         ("/exit" nil)))
+       '(("help" (&optional topic))
+         ("open" (&optional (designator nil designator-p)))
+         ("cwd" (&optional pathname))
+         ("ste" (&optional (mode ':status)))
+         ("hurry-up" (&optional (mode ':status)))
+         ("papercut" (&optional identifier))
+         ("papercut-close" (&optional identifier))
+         ("exit" nil)))
     (destructuring-bind (name lambda-list) case
       (let ((command (application-command-find name)))
         (test-assert
@@ -529,7 +525,7 @@
               (equal (application-command-lambda-list command) lambda-list))
          (format nil "~A derives its native contract from its Lisp lambda list"
                  name)))))
-  (let ((command (application-command-find "/ste")))
+  (let ((command (application-command-find "ste")))
     (test-assert
      (equal (application-command-static-options command) '(t nil))
      "finite command options retain native boolean values"))
@@ -602,7 +598,7 @@
     (test-assert
      (handler-case
          (progn
-           (funcall (application-command-handler (application-command-find "/help"))
+           (funcall (application-command-handler (application-command-find "help"))
                     application ':extra ':more)
            nil)
        (program-error ()
@@ -628,7 +624,7 @@
       (test-assert
        (and (typep operation 'application-command-operation)
             (eq (application-operation-backend operation)
-                (application-command-find "/open")))
+                (application-command-find "open")))
        "open resolves to the channel command")
       (test-assert
        (find "(open" (application-operation-completion-entries application)
@@ -1012,22 +1008,6 @@
          nil)
     (configuration-error () t))
    "native auth rejects excess arguments before command effects")
-  (let ((command (application-command-find "/auth")))
-    (test-assert
-     (handler-case
-         (progn (application-client-command-invocation command "grok device typo") nil)
-       (authentication-error () t))
-     "structured auth rejects excess arguments before command effects")
-    (dolist (case '(("" nil)
-                    ("\"MiXeD provider\"" ("MiXeD provider"))
-                    ("chatgpt browser" ("chatgpt" :browser))
-                    ("chatgpt device-code" ("chatgpt" :device-code))))
-      (destructuring-bind (text expected) case
-        (test-assert
-         (equal (application-command-invocation-arguments
-                 (application-client-command-invocation command text))
-                expected)
-         "structured auth preserves identifiers and decodes only the method"))))
   (let ((application            (make-instance 'application))
         (picked-p               nil)
         (authenticated-provider nil)
@@ -1658,8 +1638,6 @@
                     for name in '(:turn-timestamps-p :cache-miss-notices-p)
                     do (test-application--setting-value-entry configuration entry name)))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-
-
  nil)
 
 (-> test-authentication-preserves-non-copilot-model () null)
@@ -1715,16 +1693,8 @@
   nil)
 
 
-;;;; -- Native Values and Structured Argument Adapters --
+;;;; -- Native Command Values --
 
-(defvar *application-command-tests-parser-calls* nil
-  "The complete argument texts received by the structured decoder fixture.")
-
-(-> application-command-tests--slash-parser (string) list)
-(defun application-command-tests--slash-parser (remainder)
-  "Record REMAINDER and return it as one literal argument."
-  (push remainder *application-command-tests-parser-calls*)
-  (list remainder))
 
 (defclass application-command-tests-unprintable () ()
   (:documentation "An opaque value whose printer must not run during invocation."))
@@ -1734,39 +1704,19 @@
   (declare (ignore object stream))
   (error 'configuration-error :message "A command argument was printed."))
 
-(-> application-command-tests--option-parser (string) list)
-(defun application-command-tests--option-parser (text)
-  "Parse the fixture's keyword action or literal string choice."
-  (let ((values (application-command--tokens text)))
-    (if (equal values '("on")) (list ':on) values)))
-
 (-> application-command-tests--native-arguments () null)
 (defun application-command-tests--native-arguments ()
-  "Exercise native value transport, structured argument decoders and keyword binding."
-  (dolist (parser '(nil t :parser "parser" (function parser)))
-    (test-assert
-     (application-command-tests--macroexpand-error-p
-      `(define-application-command application-command-tests--invalid-parser
-           (:name "/invalid-parser" :argument nil
-            :description "invalid parser metadata" :tip "tests parser validation."
-            :busy-behavior :inspect :terminal-behavior :shared
-            :callable t :slash-parser ,parser)
-           (application &rest arguments)
-         (declare (ignore application arguments))
-         :continue))
-     "slash-parser metadata requires a literal non-NIL function-name symbol"))
-  (let ((snapshot                                 (application-command--registry-snapshot))
-        (*application-command-tests-parser-calls* nil))
+  "Exercise native value transport and ordinary keyword argument binding."
+  (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
          (progn
            (eval
             '(define-application-command application-command-tests--native
-                 (:name "/native-values" :argument "[VALUES...]"
-                  :description  "test native command values"
-                  :tip          "tests native command values."
+                 (:name "native-values" :argument "[VALUES...]"
+                  :description "test native command values"
+                  :tip         "tests native command values."
                   :busy-behavior :inspect :terminal-behavior :shared
-                  :callable     t
-                  :slash-parser application-command-tests--slash-parser)
+                  :callable    t)
                  (application &rest values)
                (declare (ignore application))
                (setf *application-command-tests-semantic-call* values)
@@ -1778,7 +1728,7 @@
                                      (vector 1 (list :nested nil))))
                   (arguments   (list 'ordinary-symbol nil 37 #P"relative/path"
                                      nested opaque cycle))
-                  (command     (application-command-find "/native-values")))
+                  (command     (application-command-find "native-values")))
              (setf (rest cycle) cycle)
              (apply #'application-operation-call application "native-values" arguments)
              (test-assert
@@ -1786,22 +1736,12 @@
                       (length *application-command-tests-semantic-call*))
                    (every #'eq arguments *application-command-tests-semantic-call*))
               "symbols, NIL, numbers, paths, nested and opaque values retain identity")
-             (test-assert (null *application-command-tests-parser-calls*)
-                          "native invocation bypasses the structured argument decoder")
-             (let* ((payload "quoted \"Mixed Case\" and an unmatched \"")
-                    (invocation
-                       (application-client-command-invocation command payload)))
-               (application-command-execute command application invocation)
-               (test-assert
-                (and (equal *application-command-tests-parser-calls* (list payload))
-                     (equal *application-command-tests-semantic-call* (list payload)))
-                "a structured decoder receives complete argument text before token parsing"))
-             ;; A submitted invocation owns both handler and decoder snapshots.
-             (let ((old        (application-client-command-invocation command "old"))
+             ;; A submitted invocation owns its handler snapshot.
+             (let ((old        (application-operation--command-invocation command '("old")))
                    (registered (application-command--registry-snapshot)))
                (eval
                 '(define-application-command application-command-tests--native
-                     (:name "/native-values" :argument "[VALUES...]"
+                     (:name "native-values" :argument "[VALUES...]"
                       :description "replacement native command"
                       :tip         "tests command replacement."
                       :busy-behavior :inspect :terminal-behavior :shared
@@ -1815,30 +1755,30 @@
                 (application-command-invocation-command old) application old)
                (test-assert (equal *application-command-tests-semantic-call* '("old"))
                             "submitted invocations retain captured handler behavior")
-               (let ((new (application-client-command-invocation
-                           (application-command-find "/native-values") "\"new value\"")))
+               (let ((new (application-operation--command-invocation
+                           (application-command-find "native-values") '("new value"))))
                  (application-command-execute
                   (application-command-invocation-command new) application new)
                  (test-assert
                   (equal *application-command-tests-semantic-call*
                          '(:replacement "new value"))
-                  "structured arguments use token decoding when no decoder is registered"))
+                  "new invocations use the replacement command behavior"))
                (application-command--registry-restore registered)
-               (let ((restored (application-client-command-invocation
-                                (application-command-find "/native-values")
-                                "restored \"literal\"")))
+               (let ((restored (application-operation--command-invocation
+                                (application-command-find "native-values")
+                                '("restored \"literal\""))))
                  (application-command-execute
                   (application-command-invocation-command restored) application restored)
                  (test-assert
                   (equal *application-command-tests-semantic-call*
                          '("restored \"literal\""))
-                  "restoring a registration restores its captured argument decoder"))))
+                  "restoring a registration restores its captured handler"))))
            (eval
             '(define-application-command application-command-tests--options
-                 (:name "/native-options" :static-options (:on "MiXeD")
+                 (:name "native-options" :static-options (:on "MiXeD")
                   :description "native finite choices" :tip "tests typed option completion."
                   :busy-behavior :inspect :terminal-behavior :shared
-                  :callable t :slash-parser application-command-tests--option-parser)
+                  :callable t)
                  (application mode)
                (declare (ignore application))
                (setf *application-command-tests-semantic-call* (list mode))
@@ -1859,7 +1799,7 @@
                           "Lisp option completions retain keyword types and string case"))
            (eval
             '(define-application-command application-command-tests--keywords
-                 (:name "/native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
+                 (:name "native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
                   :description "test keyword command values"
                   :tip         "tests keyword command values."
                   :busy-behavior :inspect :terminal-behavior :shared :callable t)

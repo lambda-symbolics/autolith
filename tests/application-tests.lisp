@@ -374,12 +374,12 @@
           (application-command-list))
    "every canonical application command carries a non-empty tip")
   (dolist (metadata
-           '((:name              "/missing-tip"
+           '((:name              "missing-tip"
               :argument          nil
               :description       "omit the tip"
               :busy-behavior     :inspect
               :terminal-behavior :shared)
-             (:name              "/blank-tip"
+             (:name              "blank-tip"
               :argument          nil
               :description       "leave the tip blank"
               :tip               "   "
@@ -399,24 +399,22 @@
          t))
      "missing and blank command tips fail during macro expansion"))
   (test-assert
-   (string= (application-command-name
-             (application-command-find "/usage"))
-            "/status")
+   (string= (application-command-name (application-command-find "usage")) "status")
    "declared aliases resolve through their canonical command definitions")
   (test-assert
    (eq
     (application-command-busy-action
-     (application-command-find "/EXIT")
-     (application-operation--command-invocation (application-command-find "/EXIT") nil))
+     (application-command-find "EXIT")
+     (application-operation--command-invocation (application-command-find "EXIT") nil))
     ':cancel)
    "exit cancels active work before ending the listener")
-  (dolist (case '(("/settings" "(settings :onboarding-p nil)"
+  (dolist (case '(("settings" "(settings :onboarding-p nil)"
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
-                  ("/help" "(help :workspace)" "(help 'open)")
-                  ("/vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
-                  ("/data.export" "(data.export pathname :workspace directory)")
-                  ("/auth" "(auth \"chatgpt\" :device-code)" ":browser")))
+                  ("help" "(help :workspace)" "(help 'open)")
+                  ("vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
+                  ("data.export" "(data.export pathname :workspace directory)")
+                  ("auth" "(auth \"chatgpt\" :device-code)" ":browser")))
     (let* ((command (application-command-find (first case)))
            (spans   (application--command-tip-spans command))
            (code    (loop for span in spans
@@ -432,7 +430,7 @@
   (let* ((command
            (make-instance
             'application-command
-            :name "/test-tip"
+            :name "test-tip"
             :tip  "Try `(let ((label \"(x)\")) (list 'resume label))` (or later), then `'(a (b c))`."))
          (spans (application--command-tip-spans command)))
     (test-assert
@@ -1765,7 +1763,7 @@
                       (setf draft-preserved-observed-p
                             (string=
                              (line-editor-text (terminal-ui-editor ui))
-                              "draft survives"))
+                             "draft survives"))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
                        terminal '(:insert "(exit)"))
@@ -1831,7 +1829,7 @@
                 (register-application-command
                  (application-command-create
                   :definition-name   'test-active-command-stop-key-command
-                  :name              "/test-cancel-command"
+                  :name              "test-cancel-command"
                   :aliases           nil
                   :argument          nil
                   :description       "Block until the active-turn cancellation test stops it."
@@ -5272,7 +5270,7 @@
                          "the live region previews post-turn follow-up input")
             (test-assert
              (live-region-cursor-visible-p (terminal-ui-live-region ui))
-              "responsive model turns leave the input cursor visible")))
+             "responsive model turns leave the input cursor visible")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -5299,7 +5297,7 @@
                                  (null (application-input-controller--state controller :work-items)))
                             "native goal inspection runs during an active turn without queued work")
                (dolist (arguments '((:pause) (:resume) (:update "revised objective") ("revised objective")))
-                 (let ((command (application-command-find "/goal")))
+                 (let ((command (application-command-find "goal")))
                    (test-assert
                     (eq (application-command-busy-action
                          command (application-operation--command-invocation command arguments)) ':hold)
@@ -5313,102 +5311,6 @@
           (application-input-controller-stop controller)))))
   nil)
 
-(-> test-leading-slash-ingress () null)
-(defun test-leading-slash-ingress ()
-  "Reject slash commands and escapes at every executable prompt ingress."
-  (with-test-configuration (configuration)
-    (let* ((terminal      (make-instance 'waiting-recording-terminal :columns 60))
-           (ui            (terminal-ui-create :terminal terminal))
-           (application   (make-instance 'application :ui ui :configuration configuration
-                                          :conversation (conversation-create configuration)))
-           (controller    nil)
-           (model-calls   0)
-           (lisp-calls    0)
-           (command-calls 0)
-           (warnings      0)
-           (work-result   nil))
-      (with-terminal-ui (active-ui ui)
-        (setf controller (application-input-controller-create application :start-reader-p nil))
-        (unwind-protect
-             (test-call-with-function-replacements
-              (list (list 'application-run-message
-                          (lambda (&rest arguments)
-                            (declare (ignore arguments))
-                            (incf model-calls)))
-                    (list 'application-run-lisp-input
-                          (lambda (&rest arguments)
-                            (declare (ignore arguments))
-                            (incf lisp-calls)
-                            ':continue))
-                    (list 'application-command-execute
-                          (lambda (&rest arguments)
-                            (declare (ignore arguments))
-                            (incf command-calls)
-                            (values ':continue nil)))
-                    (list 'application-present
-                          (lambda (application entry &rest arguments)
-                            (declare (ignore application arguments))
-                            (when (and (consp entry) (eq (terminal-span-style (first entry)) ':failure))
-                              (incf warnings))))
-                    (list 'application-input-controller--record-prompt-result
-                          (lambda (controller result)
-                            (declare (ignore controller))
-                            (setf work-result result))))
-              (lambda ()
-                (labels ((no-admitted-work ()
-                           "Assert rejection did not admit executable work or contact a model."
-                           (test-assert
-                            (and (zerop model-calls) (zerop lisp-calls) (zerop command-calls)
-                                 (null (application-input-controller--state controller :work-items))
-                                 (deque-empty-p (application-input-controller-steering-items controller))
-                                 (deque-empty-p (application-input-controller-pending-apply-items controller)))
-                            "leading slashes neither execute nor queue work nor reach a model"))
-
-                         (warned (function)
-                           "Invoke one rejection path and require a visible failure warning."
-                           (let ((before warnings))
-                             (funcall function)
-                             (test-assert (> warnings before) "rejected input produces a warning"))
-                           (no-admitted-work)))
-                  (dolist (busy-p '(nil t))
-                    (when busy-p
-                      (application-input-controller--enqueue controller ':message "active turn")
-                      (application-input-controller--next-work controller))
-                    (dolist (source '("/status" "//literal message"))
-                      (warned
-                       (lambda ()
-                         (test-assert
-                          (eq (application-input-controller--route-submission controller source) ':failed)
-                          "idle and busy direct slash submissions are refused")))
-                      (warned
-                       (lambda ()
-                         (application-input-controller--handle-queue-submission controller source)))
-                      (setf (application-input-controller-follow-up-edit-index controller) 0
-                            (application-input-controller-follow-up-edit-work controller)
-                            '(:message "held follow-up"))
-                      (warned
-                       (lambda ()
-                         (test-assert
-                          (application-input-controller--handle-recalled-submission controller source)
-                          "a recalled slash edit is handled locally")))
-                      (test-assert
-                       (and (eql (application-input-controller-follow-up-edit-index controller) 0)
-                            (equal (application-input-controller-follow-up-edit-work controller)
-                                   '(:message "held follow-up")))
-                       "a rejected recalled edit preserves the selected work")
-                      (setf (application-input-controller-follow-up-edit-index controller) nil
-                            (application-input-controller-follow-up-edit-work controller) nil))
-                    (when busy-p (application-input-controller--finish-work controller)))
-                  (dolist (source '("/status" "//literal message"))
-                    (setf work-result nil)
-                    (warned
-                     (lambda ()
-                       (application-input-controller--run-work controller (list ':command source))))
-                    (test-assert (eq work-result ':failed)
-                                 "raw legacy command work is rejected before its handler runs")))))
-          (application-input-controller-stop controller)))))
-  nil)
-
 (-> test-responsive-command-scheduling () null)
 (defun test-responsive-command-scheduling ()
   "Test busy commands apply at safe boundaries, hold, or report immediately."
@@ -5417,14 +5319,14 @@
              (let ((command (application-command-find name)))
                (application-command-busy-action
                 command (application-operation--command-invocation command arguments)))))
-    (dolist (case '(("/model" ("gpt-5.6-luna") :apply)
-                    ("/effort" (:high) :apply) ("/mcp" (:refresh) :apply)
-                    ("/permissions" (:full) :apply) ("/hurry-up" (t) :apply)
-                    ("/cwd" ("one/") :steer) ("/cwd" () :execute)
-                    ("/goal" (:pause) :hold) ("/mcp" () :execute)
-                    ("/hurry-up" () :execute) ("/model" () :apply-interactive)
-                    ("/effort" () :apply-interactive) ("/permissions" () :apply-interactive)
-                    ("/status" () :execute) ("/compact" () :hold) ("/exit" () :cancel)))
+    (dolist (case '(("model" ("gpt-5.6-luna") :apply)
+                    ("effort" (:high) :apply) ("mcp" (:refresh) :apply)
+                    ("permissions" (:full) :apply) ("hurry-up" (t) :apply)
+                    ("cwd" ("one/") :steer) ("cwd" () :execute)
+                    ("goal" (:pause) :hold) ("mcp" () :execute)
+                    ("hurry-up" () :execute) ("model" () :apply-interactive)
+                    ("effort" () :apply-interactive) ("permissions" () :apply-interactive)
+                    ("status" () :execute) ("compact" () :hold) ("exit" () :cancel)))
       (destructuring-bind (name arguments expected) case
         (test-assert (eq (busy-action name arguments) expected)
                      (format nil "busy ~A ~S resolves to ~A" name arguments expected)))))
@@ -5466,7 +5368,7 @@
                (equal (deque->list
                        (application-input-controller-pending-apply-items
                         controller))
-                       (list (list ':native-lisp "(settings :turn-timestamps-p t)")))
+                      (list (list ':native-lisp "(settings :turn-timestamps-p t)")))
               "state changes queue for the next safe boundary instead")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
@@ -5547,7 +5449,7 @@
              (test-assert
               (equal (deque->list
                       (application-input-controller-pending-apply-items controller))
-                      (list (list ':native-lisp "(settings :turn-timestamps-p nil)")))
+                     (list (list ':native-lisp "(settings :turn-timestamps-p nil)")))
               "canonical Lisp state changes queue for the next safe boundary")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
@@ -5896,12 +5798,12 @@
              (let ((command (application-command-find name)))
                (application-command-terminal-owner-p
                 command (application-operation--command-invocation command arguments)))))
-    (test-assert (terminal-owner-p "/model") "argument-free pickers take terminal ownership")
-    (test-assert (terminal-owner-p "/permissions") "the permission picker takes terminal ownership")
-    (test-assert (terminal-owner-p "/model" "gpt-5.6-luna") "explicit model changes own the effort picker")
-    (test-assert (terminal-owner-p "/open") "the channel selector owns its terminal")
-    (test-assert (not (terminal-owner-p "/compact")) "nonmodal commands retain responsive input")
-    (test-assert (terminal-owner-p "/auth") "authentication owns terminal mode"))
+    (test-assert (terminal-owner-p "model") "argument-free pickers take terminal ownership")
+    (test-assert (terminal-owner-p "permissions") "the permission picker takes terminal ownership")
+    (test-assert (terminal-owner-p "model" "gpt-5.6-luna") "explicit model changes own the effort picker")
+    (test-assert (terminal-owner-p "open") "the channel selector owns its terminal")
+    (test-assert (not (terminal-owner-p "compact")) "nonmodal commands retain responsive input")
+    (test-assert (terminal-owner-p "auth") "authentication owns terminal mode"))
   (let* ((terminal    (make-instance 'waiting-recording-terminal :columns 60))
          (ui          (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
@@ -7836,7 +7738,7 @@
            (conversation-append-user-operation
             conversation
             :kind   ':command
-            :source "/help"
+            :source "help"
             :status ':ok
             :result "shown")
            (conversation-append-provider-metadata
@@ -7862,7 +7764,7 @@
              (test-assert
               (equal
                (conversation-input-history-page loaded :limit 3)
-               '("/help" "(+ 1 2)" "last user"))
+               '("help" "(+ 1 2)" "last user"))
               "editable history restores a bounded view without reading retired chunks")
              (test-assert
               (null (conversation-input-history-page loaded :limit 0))
@@ -7883,11 +7785,11 @@
                              :editor   editor)))
                (application--load-conversation-input-history ui loaded)
                (terminal-ui-set-input ui "draft")
-               (dolist (input '("last user" "(+ 1 2)" "/help" "first user"))
+               (dolist (input '("last user" "(+ 1 2)" "help" "first user"))
                  (terminal-ui-process-event ui ':history-previous)
                  (test-assert (string= input (line-editor-text editor))
                               "application recall pages archived inputs through the sidecar"))
-               (dolist (input '("/help" "(+ 1 2)" "last user" "draft"))
+               (dolist (input '("help" "(+ 1 2)" "last user" "draft"))
                  (terminal-ui-process-event ui ':history-next)
                  (test-assert (string= input (line-editor-text editor))
                               "application recall pages forward and restores its draft")))
@@ -7899,7 +7801,7 @@
                     (header   (conversation-peek-header active)))
                (test-assert
                 (equal (conversation-input-history reloaded)
-                       '("first user" "/help" "(+ 1 2)" "last user"))
+                       '("first user" "help" "(+ 1 2)" "last user"))
                 "complete editable inputs survive repeated rotation without duplication")
                (test-assert
                 (= (prompt-cache-baseline-prompt-tokens
@@ -7914,7 +7816,7 @@
                     (lambda (record) (conversation--apply-record older record)))
                    (test-assert
                     (and (equal (conversation-input-history older)
-                                '("first user" "/help" "(+ 1 2)" "last user"))
+                                '("first user" "help" "(+ 1 2)" "last user"))
                          (null (prompt-cache-baseline-from-conversation older)))
                     "older headers use the complete sidecar without archived replay")))
                (dolist (case '((:input-history-last-sequence -1)
@@ -9630,7 +9532,7 @@
                         "the workspace operation has a canonical local name")
            (test-assert (equal (application-command-invocation-arguments
                                   (application-operation--command-invocation
-                                   (application-command-find "/cwd") '("directory name with spaces")))
+                                   (application-command-find "cwd") '("directory name with spaces")))
                                '("directory name with spaces"))
                         "native command arguments preserve embedded spaces")
            (test-assert
@@ -9986,7 +9888,7 @@
                 (test-assert (null (application-goal application))
                              "status with no goal does not create one")
                 (dolist (objective '("pause" "resume" "clear" "update" "status"
-                                     "update another objective" ":pause" "/status"
+                                     "update another objective" ":pause" "status"
                                      "  pause  " "an unfinished \"quote"))
                   (let ((previous-starts started-goal-work))
                     (call-goal objective)
@@ -10037,9 +9939,9 @@
                         (eq (getf (reload-goal) :status) ':paused)
                         (null (application-goal-context application)))
                    "keyword pause persists the pause and removes goal context")
-                  (call-goal ':update "/status")
+                  (call-goal ':update "status")
                   (test-assert
-                   (string= (getf (application-goal application) :objective) "/status")
+                   (string= (getf (application-goal application) :objective) "status")
                    "keyword update accepts command-shaped literal strings")
                   (setf (getf (application-goal application) :continuations) 3)
                   (call-goal ':update "resume")
@@ -10111,12 +10013,12 @@
                 (incf started-goal-work)
                 nil)))
             (lambda ()
-              (application-goal-command application "update nothing yet")
+              (application-operation-call application "goal" (quote :update) "nothing yet")
               (test-assert (null (application-goal application))
                            "updating without a goal leaves none set")
               (test-assert (zerop started-goal-work)
                            "a failed goal update does not start a turn")
-              (application-goal-command application "polish the terminal")
+              (application-operation-call application "goal" "polish the terminal")
               (test-assert (eq (getf (application-goal application) :status)
                                ':active)
                            "setting a goal activates it")
@@ -10127,7 +10029,7 @@
                              "the goal context carries the objective")
                 (test-assert (search "[GOAL-COMPLETE]" context)
                              "the goal context teaches the completion marker"))
-              (application-goal-command application "update polish the prompt")
+              (application-operation-call application "goal" (quote :update) "polish the prompt")
               (test-assert (string= (getf (application-goal application)
                                           :objective)
                                     "polish the prompt")
@@ -10137,20 +10039,6 @@
                            "updating keeps an active goal active")
               (test-assert (= started-goal-work 2)
                            "updating an active goal starts work immediately")
-              (application-goal-command application "update")
-              (test-assert (string= (getf (application-goal application)
-                                          :objective)
-                                    "polish the prompt")
-                           "an empty update leaves the objective unchanged")
-              (test-assert (= started-goal-work 2)
-                           "an empty goal update does not start a turn")
-              (application-goal-command application "update /status")
-              (test-assert (string= (getf (application-goal application)
-                                          :objective)
-                                    "polish the prompt")
-                           "command-shaped update objectives are rejected")
-              (test-assert (= started-goal-work 2)
-                           "a rejected goal update does not start a turn")
               (let ((sibling (make-instance
                               'application
                               :configuration configuration
@@ -10163,10 +10051,10 @@
                 (test-assert (string= (getf (application-goal sibling) :objective)
                                       "polish the prompt")
                              "updated goals reload from durable records"))
-              (application-goal-command application "pause")
+              (application-operation-call application "goal" (quote :pause))
               (test-assert (null (application-goal-context application))
                            "paused goals inject no context")
-              (application-goal-command application "update polish it quietly")
+              (application-operation-call application "goal" (quote :update) "polish it quietly")
               (test-assert (eq (getf (application-goal application) :status)
                                ':paused)
                            "updating keeps a paused goal paused")
@@ -10204,7 +10092,7 @@
                                        :worker        nil)))
              (setf (application-provider application) provider
                    (application-agent application) agent)
-             (application-goal-command application "resume")
+             (application-operation-call application "goal" (quote :resume))
              (test-assert (eq (getf (application-goal application) :status)
                               ':complete)
                           "the continuation loop stops at the marker")
@@ -10224,7 +10112,7 @@
                     (setf (getf (application-goal app) :continuations) 0)
                     nil)))
                 (lambda ()
-                  (application-goal-command application "update polish once more")
+                  (application-operation-call application "goal" (quote :update) "polish once more")
                   (test-assert (eq (getf (application-goal application) :status)
                                    ':active)
                                "updating a completed goal reactivates it")
@@ -10278,7 +10166,7 @@
                                       *application-goal-continuation-prompt*))
                                (list (terminal-span :hint "· goal continues")))
                         "continuation prompts render as dim notices")
-           (application-goal-command application "clear")
+           (application-operation-call application "goal" (quote :clear))
            (test-assert (null (application-goal application))
                         "clearing removes the session goal")
            (terminal-ui-stop (application-ui application)))
@@ -11449,8 +11337,7 @@
 (-> test-goal-interrupted-input-does-not-resume () null)
 (defun test-goal-interrupted-input-does-not-resume ()
   "Keep an interrupted goal idle after unrelated command and Lisp input."
-  (dolist (work '((:lisp "(status)") (:native-lisp "(+ 1 1)")
-                  (:command "/status")))
+  (dolist (work '((:lisp "(status)") (:native-lisp "(+ 1 1)")))
     (goal-input-test--call
      (lambda (application controller)
        (let ((turns 0))

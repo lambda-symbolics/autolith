@@ -43,7 +43,7 @@
            (conversation-append-user-operation
             conversation
             :kind   ':command
-            :source "/help"
+            :source "help"
             :status ':ok
             :result "loop action: continue")
            (let* ((records                       (conversation-user-operation-snapshot conversation))
@@ -58,7 +58,7 @@
              (test-assert
               (and (= (length records) 2)
                    (equal (mapcar #'user-operation-context-tests--source records)
-                          '("(setf *example* 1)" "/help"))
+                          '("(setf *example* 1)" "help"))
                    (every (lambda (record)
                             (eq (first record) ':user-operation))
                           records)
@@ -90,7 +90,7 @@
                      (eq (context-contribution-class contribution) ':mandatory)
                      (search "outside normal provider conversation history"
                              (context-contribution-instruction contribution))
-                     (< (search "/help" evidence)
+                     (< (search "help" evidence)
                         (search "(setf *example* 1)" evidence))
                      (equal provider-items-before
                             (conversation-input-items conversation)))
@@ -151,7 +151,7 @@
               (and (= (length loaded-records) 2)
                    (equal (mapcar #'user-operation-context-tests--source
                                   loaded-records)
-                          '("(setf *example* 1)" "/help"))
+                          '("(setf *example* 1)" "help"))
                    (= (length (conversation-input-items loaded)) 1))
               "the first durable record carries earlier operations into replay"))
            (let ((empty
@@ -227,7 +227,7 @@
                (conversation-append-user-operation
                 conversation
                 :kind   ':command
-                :source "/help"
+                :source "help"
                 :status ':ok
                 :result "loop action: continue")
                (let ((loaded
@@ -247,7 +247,7 @@
                (conversation-append-user-operation
                 conversation
                 :kind   ':command
-                :source "/help"
+                :source "help"
                 :status ':ok
                 :result "loop action: continue")
                (let ((loaded
@@ -581,7 +581,7 @@
                  (application-command-create
                   :definition-name
                   'user-operation-context-tests--aborting-command
-                  :name              "/operation-abort"
+                  :name              "operation-abort"
                   :aliases           nil
                   :argument          "VALUE"
                   :description       "abort for user-operation capture tests"
@@ -598,7 +598,7 @@
                  (application-command-create
                   :definition-name
                   'user-operation-context-tests--failing-command
-                  :name              "/operation-failure"
+                  :name              "operation-failure"
                   :aliases           nil
                   :argument          nil
                   :description       "fail for user-operation capture tests"

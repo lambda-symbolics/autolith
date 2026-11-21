@@ -537,7 +537,7 @@
                        (typep
                         (active-image-corruption-restoration-condition condition)
                         'serious-condition))))
-             "a restoration failure preserves both conditions and escapes tool handling")))
+              "a restoration failure preserves both conditions and escapes tool handling")))
       (setf (symbol-function 'test-self-target) previous-function)
       (remhash (definition-key '(defun test-self-target () 0))
                *exploratory-definitions*)
@@ -686,7 +686,7 @@
          (existing-baseline-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-existing
-            :name            "/self-command-existing"
+            :name            "self-command-existing"
             :aliases         nil
             :action          ':continue
             :description     "Return the baseline command action."
@@ -694,15 +694,15 @@
          (existing-replacement-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-existing
-            :name            "/self-command-existing"
-            :aliases         '("/self-command-existing-alias")
+            :name            "self-command-existing"
+            :aliases         '("self-command-existing-alias")
             :action          ':quit
             :description     "Return the replacement command action."
             :tip             "Use (self-command-existing) for the replacement action."))
          (new-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-new
-            :name            "/self-command-new"
+            :name            "self-command-new"
             :aliases         nil
             :action          ':continue
             :description     "Return the new command action."
@@ -710,15 +710,15 @@
          (collision-owner-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-collision-owner
-            :name            "/self-command-collision-owner"
-            :aliases         '("/self-command-collision")
+            :name            "self-command-collision-owner"
+            :aliases         '("self-command-collision")
             :action          ':continue
             :description     "Own the colliding command alias."
             :tip             "Use (self-command-collision-owner) for the owner."))
          (collision-rejected-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-collision-rejected
-            :name            "/self-command-collision"
+            :name            "self-command-collision"
             :aliases         nil
             :action          ':quit
             :description     "Attempt to collide with an existing alias."
@@ -726,8 +726,8 @@
          (replay-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-replay
-            :name            "/self-command-replay"
-            :aliases         '("/self-command-replay-alias")
+            :name            "self-command-replay"
+            :aliases         '("self-command-replay-alias")
             :action          ':continue
             :description     "Return the replayed command action."
             :tip             "Use (self-command-replay) after private replay."))
@@ -809,7 +809,7 @@
                     'test-self-command-existing
                     ':runtime))
                  (baseline-command
-                   (application-command-find "/self-command-existing")))
+                   (application-command-find "self-command-existing")))
              (self-install-definition
               configuration
               existing-replacement-source)
@@ -823,7 +823,7 @@
              (test-assert
               (eq (application-command-definition-name
                    (application-command-find
-                    "/self-command-existing-alias"))
+                    "self-command-existing-alias"))
                   'test-self-command-existing)
               "self.define publishes replacement command metadata")
              (self-discard-mutation configuration nil)
@@ -839,18 +839,18 @@
                baseline-registration)
               "discard restores an existing command's exact runtime registration")
              (test-assert
-              (and (eq (application-command-find "/self-command-existing")
+              (and (eq (application-command-find "self-command-existing")
                        baseline-command)
                    (null
                     (application-command-find
-                     "/self-command-existing-alias")))
+                     "self-command-existing-alias")))
               "discard restores the preceding command projection"))
            (self-install-definition configuration new-source)
            (test-assert
             (and (fboundp 'test-self-command-new)
                  (eq
                   (application-command-definition-name
-                   (application-command-find "/self-command-new"))
+                   (application-command-find "self-command-new"))
                   'test-self-command-new))
             "self.define installs a new command and registration")
            (self-discard-mutation configuration nil)
@@ -860,11 +860,11 @@
                   (application-command--registration-snapshot
                    'test-self-command-new
                    ':runtime))
-                 (null (application-command-find "/self-command-new")))
+                 (null (application-command-find "self-command-new")))
             "discard removes a new command's function and registration")
            (eval (self-read-form collision-owner-source :read-eval nil))
            (let ((owner-command
-                   (application-command-find "/self-command-collision")))
+                   (application-command-find "self-command-collision")))
              (test-assert
               (handler-case
                   (progn
@@ -882,7 +882,7 @@
                 (application-command--registration-snapshot
                  'test-self-command-collision-rejected
                  ':runtime))
-               (eq (application-command-find "/self-command-collision")
+               (eq (application-command-find "self-command-collision")
                    owner-command)
                (not
                 (nth-value
@@ -921,12 +921,12 @@
              (eq
               (application-command-definition-name
                (application-command-find
-                "/self-command-replay-alias"))
+                "self-command-replay-alias"))
               'test-self-command-replay)
              (eq
               (funcall
                (application-command-handler
-                (application-command-find "/self-command-replay"))
+                (application-command-find "self-command-replay"))
                nil
                nil)
               ':continue))
@@ -1324,10 +1324,10 @@
                                    :worker           nil
                                    :conversation     conversation
                                    :mutation-checker checker))
-                  (registry     (make-default-tool-registry))
-                  (set-tool     (tool-registry-find registry "self" "set"))
-                  (diff-tool    (tool-registry-find registry "self" "diff"))
-                  (commit-tool  (tool-registry-find registry "self" "commit")))
+                  (registry    (make-default-tool-registry))
+                  (set-tool    (tool-registry-find registry "self" "set"))
+                  (diff-tool   (tool-registry-find registry "self" "diff"))
+                  (commit-tool (tool-registry-find registry "self" "commit")))
               (setf *image-state-initialized-p* nil
                     *active-image-commit-identifier* nil
                     *active-image-history-commit* nil

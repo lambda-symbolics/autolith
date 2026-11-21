@@ -341,8 +341,8 @@
 (defun test-xdg-configuration-native-defaults ()
   "Read native root defaults lazily from the current environment."
   (with-test-configuration (configuration root)
+    (declare (ignore configuration))
     (let ((defaults (make-configuration :provider-validation-p nil)))
-      (declare (ignorable configuration))
       (loop for (variable key) in '(("XDG_CONFIG_HOME" :config-root) ("XDG_DATA_HOME" :data-root)
                                     ("XDG_STATE_HOME" :state-root) ("XDG_CACHE_HOME" :cache-root))
             do (dolist (relative '("first/" "second/"))
@@ -387,5 +387,5 @@
                      :provider-validation-p nil)))
             (dolist (key '(:config-root :data-root :state-root :cache-root))
               (test-assert (equal (config key configuration) (config key explicit))
-                             "explicit roots override XDG defaults")))))))
+                           "explicit roots override XDG defaults")))))))
   nil)

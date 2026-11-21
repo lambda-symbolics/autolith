@@ -461,21 +461,14 @@ QUERY narrows the listing with the same lexical ranking recall uses."
 
 ;;;; -- Command Definitions --
 
-(-> application--memories-slash-arguments (string) list)
-(defun application--memories-slash-arguments (text)
-  "Treat the whole slash-syntax argument text as one search query."
-  (let ((query (string-trim '(#\Space #\Tab) text)))
-    (and (plusp (length query)) (list query))))
-
 (define-application-command application--builtin-memories-command
-    (:name              "/memories"
+    (:name              "memories"
      :argument          "[QUERY]"
      :description       "browse and manage saved memories and facts"
      :tip               "Browse notes, facts, and their evidence in fullscreen; filter with a query."
      :busy-behavior     :hold
      :terminal-behavior :exclusive
-     :callable          t
-     :slash-parser      application--memories-slash-arguments)
+     :callable          t)
     (application &optional query)
   (let ((ui (application-ui application)))
     (if (and ui (terminal-ui-pages-p ui)
@@ -485,8 +478,8 @@ QUERY narrows the listing with the same lexical ranking recall uses."
   ':continue)
 
 (define-application-command application--builtin-memory-command
-    (:name              "/memory"
-     :aliases           ("/why")
+    (:name              "memory"
+     :aliases           ("why")
      :argument          "[ID]"
      :description       "inspect one memory or fact and its evidence"
      :tip               "Inspect a memory or fact, its sources and premises, and what relies on it."
@@ -506,7 +499,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
   ':continue)
 
 (define-application-command application--builtin-forget-command
-    (:name              "/forget"
+    (:name              "forget"
      :argument          "[ID]"
      :description       "forget one memory or fact"
      :tip               "removes a memory or fact and names what relied on it."

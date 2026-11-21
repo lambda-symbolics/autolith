@@ -173,14 +173,14 @@ Each transcript event takes a line of its own."
              (test-assert
               (and (typep failure 'world-terminal-stop-error)
                    (eq session (application-channel-endpoint application))
-                    (equal (reverse attempts) '(:runtime :registry))
+                   (equal (reverse attempts) '(:runtime :registry))
                    (eq cause (second (first (world-terminal-stop-error-failures failure)))))
               "cleanup preserves the original stage failure, attempts every stage, and retains ownership"))
            (setf fail-p nil attempts nil)
            (world-terminal-stop application)
            (test-assert
             (and (null (application-channel-endpoint application))
-                  (equal (reverse attempts) '(:runtime :registry)))
+                 (equal (reverse attempts) '(:runtime :registry)))
             "retry completes owned cleanup before releasing the application slot"))))))
   nil)
 
@@ -775,9 +775,8 @@ Each transcript event takes a line of its own."
 
 (-> test-channel-endpoint-identifiers () null)
 (defun test-channel-endpoint-identifiers ()
-  "Test canonical timestamp-bearing IDs and retained legacy discovery behavior."
-  (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
-         (canonical (identifier-from-seed timestamp 0)))
+  "Test retained legacy endpoint discovery and handoff validation."
+  (let ((timestamp (encode-universal-time 5 4 3 2 1 2025 0)))
     (let ((configuration (test-configuration)))
       (unwind-protect
           (progn
@@ -795,7 +794,7 @@ Each transcript event takes a line of its own."
         (test-assert
          (world-startup--record-p
           (list :world-startup :launch-id "abcdef012345" :version *world-startup-version* :token
-      "legacy-token" :created-at timestamp :state ':pending :old-pid 1 :replacement-pid nil))
+           "legacy-token" :created-at timestamp :state ':pending :old-pid 1 :replacement-pid nil))
          "legacy session identifiers remain valid in detached handoff records")
         (uiop/filesystem:delete-directory-tree (test-configuration-root configuration)
                                                :validate t :if-does-not-exist
@@ -1316,8 +1315,8 @@ Each transcript event takes a line of its own."
                                                      10)
                                                     "both clients lose the endpoint that stopped for the checkpoint")
                                        (when (= iteration 1)
-                                         (error 'world-terminal-error :message   "Synthetic save failure."
-                                                                  :operation ':checkpoint))
+                                         (error 'world-terminal-error :message "Synthetic save failure."
+                                                                  :operation   ':checkpoint))
                                        ':saved))
                                   (world-terminal-error ()
                                     ':failed))
@@ -1374,7 +1373,7 @@ Each transcript event takes a line of its own."
          (let* ((session
                  (world-terminal-start application :checkpoint-reconnect-id
                                    "expected"))
-                (record                                     (world-terminal--registry-record session))
+                (record                                (world-terminal--registry-record session))
                 (entry
                  (cons (image-daemon:daemon-runtime-registry-pathname session)
                        record))
@@ -1708,7 +1707,7 @@ Each transcript event takes a line of its own."
                                       (:geometry :rows 50 :columns 150)
                                       (:cancel)
                                       (:mode :value :ask)
-                                      (:operation :method "status")
+                                      (:invoke "permissions" (:auto))
                                       (:detach)))
                      (test-assert (search "only watches" (apply #'refusal watcher command))
                                   (format nil "a watching client's ~(~A~) command is refused" (first command))))

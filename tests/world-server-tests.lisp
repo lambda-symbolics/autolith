@@ -1969,8 +1969,8 @@ the version the client says it is, when it says one."
          (let ((restarted-a (world-server-tests--session server id-a)))
            (test-assert (and (not (eq restarted-a session-a))
                              (string= (image-daemon:daemon-runtime-token restarted-a)
-                                      (image-daemon:daemon-runtime-token session-a))
-                             )
+                                      (image-daemon:daemon-runtime-token session-a)))
+
                         "every endpoint restarts under its token and keeps lingering"))
          (test-assert (eql 42 (world-server-tests--run-job other))
                       "the other channel's jobs run again after the checkpoint")
@@ -2665,8 +2665,8 @@ the version the client says it is, when it says one."
 (defun test-world-client-switch-wait ()
   "Serve resize and cancellation during one wait, retire its pump, and reject late completion."
   (dolist (mode '(:finish :cancel :interrupt :late-cancel :pump-failure))
-    (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
-           (screen (world-terminal-screen-create :terminal terminal))
+    (let* ((terminal  (make-instance 'recording-terminal :columns 80 :rows 24))
+           (screen    (world-terminal-screen-create :terminal terminal))
            (interrupt (symbol-function 'interrupt-thread))
            (paints 0) (resizes 0) (watch nil) (released-p nil) (cleaned-p nil)
            (deferred nil) (result nil))
@@ -2724,9 +2724,12 @@ the version the client says it is, when it says one."
       (test-assert (and released-p cleaned-p (= resizes 1) (>= paints 2))
                    "painting, resizing and request/watch cleanup complete before return")
       (test-assert (equal result (case mode
-                                  (:finish '(:ready t))
-                                  (:pump-failure ':pump-failed)
-                                  (otherwise ':cancelled)))
+                                  (:finish
+                                   '(:ready t))
+                                  (:pump-failure
+                                   ':pump-failed)
+                                  (otherwise
+                                   ':cancelled)))
                    "completion, cancellation and terminal failure settle the wait once")))
   nil)
 
@@ -2765,9 +2768,12 @@ the version the client says it is, when it says one."
                      "only an interactive cancellable open omits the total deadline")
         (test-assert (and (= calls (if (eq mode ':retry) 2 1))
                           (equal result (case mode
-                                          (:cancel ':cancelled)
-                                          (:ambiguous ':ambiguous)
-                                          (otherwise "bsecnd2"))))
+                                          (:cancel
+                                           ':cancelled)
+                                          (:ambiguous
+                                           ':ambiguous)
+                                          (otherwise
+                                           "bsecnd2"))))
                      "explicit rejection permits retry; cancellation and ambiguous opens do not"))))
   nil)
 
@@ -2822,14 +2828,14 @@ the version the client says it is, when it says one."
                               (and (string= identifier "bsecnd2")
                                    (member failure '(:discover :source-dies))))
                       (error 'world-terminal-error :operation ':discover
-                                              :message    "Endpoint disappeared."))
+                                              :message        "Endpoint disappeared."))
                     (when (string= identifier "bsecnd2")
                       (test-assert (string= (world-sidebar-current panel) "bfirst1")
                                    "the navigator commits no unacknowledged target")
                       (if (eq failure ':transport-error)
                           (error "Injected transport failure.")
                           (error 'world-terminal-error :operation ':connect
-                                                  :message    "Target died before acknowledgment.")))
+                                                  :message        "Target died before acknowledgment.")))
                     (funcall attached-function)
                     (cond
                       (left-p
@@ -3125,14 +3131,6 @@ the version the client says it is, when it says one."
                         "shutdown unpublishes the world endpoint"))))))
   nil)
 
-
-
-
-
-
-
-
-
 (-> test-world-channel-command-admission () null)
 (defun test-world-channel-command-admission ()
   "Execute navigation and messaging through the reader while another channel works."
@@ -3212,8 +3210,6 @@ the version the client says it is, when it says one."
              (application-input-controller-finish-external-work controller)
             (world-terminal-client-close connection))))))
   nil)
-
-
 
 (-> world-server-tests--call-running-child
     (function &key (:before-start (option function)) (:uncancellable-p boolean)) null)
@@ -3364,7 +3360,7 @@ terminal publication and join the serving owner before restoring the provider."
                 (dotimes (index 3)
                   (multiple-value-bind (connection events)
                       (test-world-terminal--present endpoint :client-pid (+ 424240 index)
-                                                       :watches-p    (= index 2))
+                                                       :watches-p        (= index 2))
                     (push connection connections)
                     (push events seen)))
                 (setf connections (nreverse connections) seen (nreverse seen))
@@ -3459,9 +3455,6 @@ terminal publication and join the serving owner before restoring the provider."
            (dolist (connection connections) (world-terminal-client-close connection)))))))
   nil)
 
-
-
-
 (-> test-world-server-running-child-close () null)
 (defun test-world-server-running-child-close ()
   "Close a real assignment and retain timed-out ownership."
@@ -3470,9 +3463,9 @@ terminal publication and join the serving owner before restoring the provider."
      (lambda (context)
        (destructuring-bind (&key server configuration job host application release &allow-other-keys)
            context
-         (let* ((identifier  (task-job-execution-identifier job))
-                (worker      (application-worker application))
-                (registry    (application-tool-registry application)))
+         (let* ((identifier (task-job-execution-identifier job))
+                (worker     (application-worker application))
+                (registry   (application-tool-registry application)))
            (world-server-close server identifier)
            (cond
              (timeout-p

@@ -585,7 +585,7 @@
            (register-application-command
             (test-mcp--reload-command
              'test-mcp--reload-old-command
-             "/mcp-reload-old")
+             "mcp-reload-old")
             :source ':user)
            (let* ((mcp-registrations     (mcp--registry-snapshot))
                   (context-registrations (context--registry-snapshot))
@@ -662,8 +662,8 @@
                       :test #'string=
                       :key  (lambda (registration)
                               (getf registration :identifier))))
-               (application-command-find "/mcp-reload-old")
-               (null (application-command-find "/mcp-reload-new")))
+               (application-command-find "mcp-reload-old")
+               (null (application-command-find "mcp-reload-new")))
               "failed MCP reload keeps old user policy and rejects new policy")
              (let ((server-names
                      (mapcar
@@ -993,7 +993,7 @@
                       (register-application-command
                        (test-mcp--reload-command
                         'test-mcp--reload-late-old-command
-                        "/mcp-reload-late-old")
+                        "mcp-reload-late-old")
                        :source ':user)
                       (with-open-file (stream mcp-pathname
                                               :direction         ':output
@@ -1200,10 +1200,10 @@
                               command-registrations
                               (application-command--registry-snapshot))
                              (application-command-find
-                              "/mcp-reload-late-old")
+                              "mcp-reload-late-old")
                              (null
                               (application-command-find
-                               "/mcp-reload-late-new")))
+                               "mcp-reload-late-new")))
                             "pre-commit failure restores every registration layer"))
                           (:old-runtime-close
                            (let ((new-orchestrator
@@ -1271,10 +1271,10 @@
                                  (lambda (registration)
                                    (getf registration :identifier))))
                                (application-command-find
-                                "/mcp-reload-late-new")
+                                "mcp-reload-late-new")
                                (null
                                 (application-command-find
-                                 "/mcp-reload-late-old")))
+                                 "mcp-reload-late-old")))
                               "cleanup failure retains newly committed registrations"))))))
                  (when application
                    (ignore-errors

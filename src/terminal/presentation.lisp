@@ -1228,10 +1228,9 @@ with a notice. Keep its source presentation for later layout and history."
                       (split-p
                         (handler-case
                             (progn
-                              (image-daemon:daemon-packet-string
-                               (client-portable
-                                (append event (list :sequence        most-positive-fixnum
-                                                    :record-sequence most-positive-fixnum))))
+                                (image-daemon:daemon-packet-string
+                                 (append event (list :sequence          most-positive-fixnum
+                                                       :record-sequence most-positive-fixnum)))
                               nil)
                           (portable-value-error (condition)
                             (if (eq (portable-value-error-reason condition) ':nodes)
@@ -1245,10 +1244,10 @@ with a notice. Keep its source presentation for later layout and history."
                   ((and split-p (null (rest records)))
                    (presentation--validate-transport-shape event)
                    (let ((notice (presentation--overflow-record (first records))))
-                     (image-daemon:daemon-packet-string
-                      (client-portable (list :ui :operation ':records :presentations (list notice)
-                                             :sequence        most-positive-fixnum
-                                             :record-sequence most-positive-fixnum)))
+                      (image-daemon:daemon-packet-string
+                       (list :ui :operation ':records :presentations (list notice)
+                             :sequence        most-positive-fixnum
+                             :record-sequence most-positive-fixnum))
                      (let ((event (list :ui :operation ':records :presentations (list notice))))
                        (list (list event (channel-presentation--record-weight event presentations)
                                    presentations group)))))
@@ -1263,7 +1262,7 @@ with a notice. Keep its source presentation for later layout and history."
                                (channel-presentation--record-weight event presentations)
                                presentations group)))))))
       (when records
-        (partition records presentations)))))
+          (partition records presentations)))))
 
 (-> channel-presentation--lay-out-log (channel-presentation) null)
 (defun channel-presentation--lay-out-log (ui)

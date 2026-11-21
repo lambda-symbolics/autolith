@@ -201,9 +201,9 @@
   "Invoke canonical and alias commands through native Lisp dispatch."
   (with-test-configuration (configuration)
     (let* ((application (complaint-tests--application configuration))
-           (canonical   (application-command-find "/complain"))
+           (canonical   (application-command-find "complain"))
            (calls       nil))
-      (test-assert (and canonical (eq canonical (application-command-find "/wtf")))
+      (test-assert (and canonical (eq canonical (application-command-find "wtf")))
                    "both callable names resolve to the same command")
       (test-assert (find "(complain" (application-operation-completion-entries application)
                          :key (lambda (entry) (getf entry :name)) :test #'equal)

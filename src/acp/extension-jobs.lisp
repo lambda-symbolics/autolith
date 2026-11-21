@@ -50,4 +50,6 @@
                          "A structured transcript update exceeds the response limit."))
                        (t
                         (return)))))
-          (page (subseq candidates 0 count) :start start :next cursor :total total))))))
+          (acp-extension--native-value
+           (page (subseq candidates 0 count) :start start :next cursor :total total)
+           :preserve-booleans-p t))))))

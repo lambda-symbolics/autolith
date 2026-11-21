@@ -24,7 +24,7 @@
 ;;;   (:evaluated :id N :evaluation ID :succeeded-p BOOLEAN :text TEXT)
 ;;;   (:mode :id N :value MODE)
 ;;;   (:state :id N)
-;;;   (:operation :id N :method METHOD :params PARAMS)
+;;;   (:invoke :id N :arguments ENCODED-NATIVE-ARGUMENTS)
 ;;;
 ;;; A client that says :presents-p when it attaches, with the :rows and
 ;;; :columns of its pane, renders the channel itself: it receives the
@@ -238,7 +238,7 @@
       (join-thread idle)))
   nil)
 
-(defparameter *world-terminal-watching-client-commands* '(:state :input-history :transcript-history)
+(defparameter *world-terminal-watching-client-commands* '(:state :client-state :input-history :transcript-history)
   "The commands a client that only watches a channel may send: those that change nothing.")
 
 (-> world-terminal--run-client-command
@@ -256,7 +256,7 @@ is this call's own, however many the reader takes meanwhile."
                                              :attachment (channel-client-attachment client)
                                              :watching-p (channel-client-watches-p client)))))
     (cond
-      ((eq (first command) ':operation)
+      ((assoc (first command) *application-client-methods*)
        (make-thread #'reply :name "Autolith client operation"))
       ((world-terminal--queued-input-p command)
        (unless (eq (client-input-queue-push
@@ -288,13 +288,22 @@ whatever would change the channel."
                    :message    "A client that only watches a channel sends it nothing."
                    :operation  ':client
                    :session-id (image-daemon:daemon-runtime-identifier session)))
-          (client-portable
-           (list* :reply :id identifier :ok t
-                  (world-terminal--client-command session (first packet) (rest packet)
-                                              :attachment attachment))))
+          (let* ((native-p  (assoc (first packet) *application-client-methods*))
+                 (arguments (nthcdr 3 packet))
+                 (decoded   (if native-p
+                                (progn
+                                  (unless (and (= (length arguments) 2) (eq (first arguments) ':arguments))
+                                    (application-client-wire--reject))
+                                  (application-client-wire-decode (second arguments)))
+                                arguments))
+                 (fields    (world-terminal--client-command session (first packet) decoded
+                                                            :attachment attachment)))
+            (when native-p
+              (setf (getf fields :result) (application-client-wire-encode (getf fields :result))))
+            (list* :reply :id identifier :ok t fields)))
       (error (condition)
-        (list :reply        :id identifier
-                     :error (bounded-string (princ-to-string condition) :limit 1000))))))
+        (list :reply :id identifier
+              :error (bounded-string (princ-to-string condition) :limit 1000))))))
 
 (-> world-terminal--client-command
     (channel-endpoint t list &key (:attachment (option image-daemon:attachment))) list)
@@ -321,8 +330,7 @@ whatever would change the channel."
                 controller
                 (user-message-input-create
                  :text            text
-                 :image-pathnames (unless (input-leading-slash-p text)
-                                    (mapcar #'image-input-validate-pathname images))
+                 :image-pathnames (mapcar #'image-input-validate-pathname images)
                  :submission      (getf arguments :submission))
                 :steer-p (not (null (getf arguments :steer-p)))))
            (list :busy-p (application-input-controller-busy-p controller))))
@@ -358,6 +366,8 @@ whatever would change the channel."
            nil))
         (:state
          (list :state (world-terminal-status-snapshot session)))
+        (:client-state
+         (list :result (application-client-run application :client-state)))
         (:input
          (let ((action (getf arguments :action))
                (text   (getf arguments :text))
@@ -365,18 +375,15 @@ whatever would change the channel."
            (unless (and controller (keywordp action) (typep text '(or null string))
                         (listp images) (every #'stringp images))
              (refuse "An input names its action and may carry text and image pathnames."))
-           (let ((slash-p (and text (member action '(:submit :queue :command))
-                               (input-leading-slash-p text))))
-             (unless slash-p
-               (application-world-terminal-resume application))
-             (list :handled-p
-                   (not (null (input-port-apply
-                               controller action
-                               (if (and images (not slash-p))
-                                   (user-message-input-create
-                                    :text            (or text "")
-                                    :image-pathnames (mapcar #'image-input-validate-pathname images))
-                                   text))))))))
+           (application-world-terminal-resume application)
+           (list :handled-p
+                 (not (null (input-port-apply
+                             controller action
+                             (if images
+                                 (user-message-input-create
+                                  :text            (or text "")
+                                  :image-pathnames (mapcar #'image-input-validate-pathname images))
+                                 text)))))))
         (:geometry
          (world-terminal--client-geometry application arguments)
          nil)
@@ -405,14 +412,30 @@ whatever would change the channel."
            (application-client-history-load
              application :conversation    (getf arguments :conversation)
                          :before-sequence (getf arguments :before-sequence))))
-        (:operation
-         (let ((method (getf arguments :method))
-               (params (client-json (getf arguments :params))))
-           (unless (stringp method)
-             (refuse "An operation names its method."))
-           (list :result (application-client-run
-                          application method
-                          (if (hash-table-p params) params (json-object))))))
+        (:settings
+         (list :result (application-client-run application :settings)))
+        (:set-setting
+         (list :result (apply #'application-client-run application :set-setting arguments)))
+        (:models
+         (list :result (application-client-run application :models)))
+        (:operations
+         (list :result (application-client-run application :operations)))
+        (:invoke
+         (list :result (apply #'application-client-run application :invoke arguments)))
+        (:conversations
+         (list :result (apply #'application-client-run application :conversations arguments)))
+        (:jobs
+         (list :result (apply #'application-client-run application :jobs arguments)))
+        (:job
+         (list :result (apply #'application-client-run application :job arguments)))
+        (:job-transcript
+         (list :result (apply #'application-client-run application :job-transcript arguments)))
+        (:job-send
+         (list :result (apply #'application-client-run application :job-send arguments)))
+        (:job-cancel
+         (list :result (apply #'application-client-run application :job-cancel arguments)))
+        (:resource
+         (list :result (apply #'application-client-run application :resource arguments)))
         (otherwise
          (refuse (format nil "Unknown client command ~S." command)))))))
 
@@ -503,12 +526,12 @@ whatever would change the channel."
     (when cancelled-p
       (loop until (listen stream)
             do (when (funcall cancelled-p)
-                 (error 'world-terminal-error :message  "Client attachment was cancelled."
-                                         :operation ':client))
+                 (error 'world-terminal-error :message "Client attachment was cancelled."
+                                         :operation    ':client))
                (sleep 0.01))
       (when (funcall cancelled-p)
-        (error 'world-terminal-error :message  "Client attachment was cancelled."
-                                :operation ':client)))
+        (error 'world-terminal-error :message "Client attachment was cancelled."
+                                :operation    ':client)))
     (daemon-read-response stream ':client)))
 
 (-> world-terminal-client-connect
@@ -614,7 +637,9 @@ thread after its greeting and before the reader starts, within the handshake dea
     (world-terminal-client-connection keyword &key (:identifier integer) (:arguments list)) null)
 (defun world-terminal-client--write (connection command &key identifier arguments)
   "Write COMMAND with IDENTIFIER and ARGUMENTS, disconnecting when the transport fails."
-  (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
+  (let* ((native-p (assoc command *application-client-methods*))
+         (payload  (if native-p (list :arguments (application-client-wire-encode arguments)) arguments))
+         (frame    (image-daemon:daemon-packet-string (list* command :id identifier payload))))
     (handler-case (world-terminal-client--write-frame connection frame)
       (error (condition)
         (world-terminal-client--disconnect connection)
@@ -634,20 +659,23 @@ Each call owns one pending reply entry, removed on every exit."
     (unwind-protect
          (progn
            (world-terminal-client--write connection command :identifier identifier
-                                                        :arguments  arguments)
+                                                        :arguments      arguments)
            (with-lock-held ((world-terminal-client-connection-lock connection))
              (loop
                (let ((reply (gethash identifier (world-terminal-client-connection-replies connection))))
                  (cond
                    (reply
                     (when (getf (rest reply) :error)
-                      (error 'world-terminal-error :message (getf (rest reply) :error) :operation ':client))
-                    (return (rest reply)))
+                       (error 'world-terminal-error :message (getf (rest reply) :error) :operation ':client))
+                    (let ((fields (rest reply)))
+                      (when (assoc command *application-client-methods*)
+                        (setf (getf fields :result) (application-client-wire-decode (getf fields :result))))
+                      (return fields)))
                    ((world-terminal-client-connection-closed-p connection)
                     (error 'world-terminal-request-interrupted
-                           :message      "The client connection closed before the reply arrived. The request's execution outcome is unknown."
-                           :operation ':client :identifier identifier :command command
-                           :reconnect-id (world-terminal-client-connection-checkpoint-reconnect-id connection)))
+                          :message      "The client connection closed before the reply arrived. The request's execution outcome is unknown."
+                          :operation ':client :identifier identifier :command command
+                          :reconnect-id (world-terminal-client-connection-checkpoint-reconnect-id connection)))
                    (t
                     (condition-wait (world-terminal-client-connection-condition-variable connection)
                                     (world-terminal-client-connection-lock connection))))))))

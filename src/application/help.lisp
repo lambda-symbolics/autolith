@@ -75,7 +75,7 @@ commands before sections. Tool namespaces and command aliases are also accepted.
 (-> application-help-completion-entries (application) list)
 (defun application-help-completion-entries (application)
   "Return live Lisp help-subject completions behind the help command."
-  (let ((command (application-command-find "/help")))
+  (let ((command (application-command-find "help")))
     (when (and command
                (eq (application-command-definition-name command)
                    'application--builtin-help-command))

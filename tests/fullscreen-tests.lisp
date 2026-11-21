@@ -798,8 +798,8 @@
              (client       nil))
         (labels ((present (event)
                    "Apply one presentation EVENT to the attached client's UI as it arrives over the wire."
-                   (let ((event (client-portable event)))
-                     (apply #'presentation-apply client (getf (rest event) :operation) (rest event))))
+                     (let ((event (application-client-value event)))
+                      (apply #'presentation-apply client (getf (rest event) :operation) (rest event))))
 
                  (attach ()
                    "Attach a fresh client, which is replayed what the channel shows and then follows it."

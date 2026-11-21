@@ -808,7 +808,6 @@
   test-channel-view-history-admission)
 
 (define-test-suite portable-values
-  test-portable-client-values
   test-portable-operation-values
   test-portable-task-values
   test-portable-shared-subtrees
@@ -1483,7 +1482,6 @@
   test-task-child-steering-mailbox
   test-task-child-messaging)
 
-
 (define-test-suite task-execution
   test-task-abort-control-condition
   test-task-child-prompt-cache-key
@@ -1816,7 +1814,6 @@
   test-goal-explicit-resume-yields-to-input
   test-responsive-model-input
   test-responsive-goal-inspection
-  test-leading-slash-ingress
   test-responsive-command-scheduling
   test-recovery-diagnosis-tool-surface
   test-input-reader-quiescence

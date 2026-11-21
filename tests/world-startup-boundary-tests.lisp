@@ -1,25 +1,21 @@
 (in-package #:autolith)
 
-(-> test-world-terminal--write-startup-ticket
-    (application channel-endpoint keyword)
-    pathname)
-(defun test-world-terminal--write-startup-ticket (application session mode)
+(-> test-world-terminal--write-startup-ticket (application channel-endpoint) pathname)
+(defun test-world-terminal--write-startup-ticket (application session)
   "Publish a startup ticket for cancellation boundary tests."
   (let ((conversation (application-conversation application)))
     (unless (conversation-persisted-p conversation)
       (conversation-append-record conversation (list :world-startup :launch-id nil))))
   (let* ((configuration (application-configuration application))
-         (conversation  (application-conversation application))
          (pathname
           (world-startup--pathname configuration
                                         (image-daemon:daemon-runtime-identifier
                                          session)))
-         (draft         (line-editor-text (terminal-ui-editor (application-ui application))))
          (record
           (list :world-startup :launch-id (image-daemon:daemon-runtime-identifier session) :version
-      *world-startup-version* :token (image-daemon:daemon-runtime-token session) :created-at
-      (image-daemon:daemon-runtime-created-at session) :state ':pending :old-pid
-      (current-process-id) :replacement-pid nil)))
+           *world-startup-version* :token (image-daemon:daemon-runtime-token session) :created-at
+           (image-daemon:daemon-runtime-created-at session) :state ':pending :old-pid
+           (current-process-id) :replacement-pid nil)))
     (world-startup--write-record pathname record)
     pathname))
 
@@ -54,7 +50,7 @@
            (configuration-ensure-directories configuration)
            (setf application (values (test-world-terminal--leased-application configuration))
                  session     (world-terminal-start application)
-                 pathname    (test-world-terminal--write-startup-ticket application session ':detach))
+                 pathname    (test-world-terminal--write-startup-ticket application session))
            (let ((record (world-startup--read configuration pathname)))
              (setf process
                    (world-startup--launch-supervised
@@ -87,7 +83,7 @@
                     (image-daemon:handoff-ticket-sibling pathname ':cancelled)))
               "a delayed replacement cannot reclaim an invalidated handoff"))
            (setf claimed-pathname
-                 (test-world-terminal--write-startup-ticket application session ':detach))
+                 (test-world-terminal--write-startup-ticket application session))
            (let ((record
                    (world-startup--read
                     configuration claimed-pathname)))

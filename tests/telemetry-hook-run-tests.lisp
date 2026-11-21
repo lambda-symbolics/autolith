@@ -276,7 +276,7 @@
                            (bt:signal-semaphore started)
                            (bt:wait-on-semaphore released)
                            (telemetry-note-model :run child-run :provider "local")
-                            (list :status ':success :request-count 1))))
+                           (list :status ':success :request-count 1))))
              (lambda ()
                (telemetry-call-with-run
                 configuration
@@ -1060,9 +1060,10 @@
                     "A deliberate secondary-root consent write changes the owner.")
        (test-assert (null (config :telemetry-enabled-p secondary))
                     "A copied snapshot is not the consent authority.")
-       (test-assert (eq (json-get (application-client--setting-item
-                                   application secondary (find-setting :telemetry-enabled-p))
-                               "value") t)
+       (test-assert (eq (getf (application-client--setting-item
+                                application secondary (find-setting :telemetry-enabled-p))
+                            :value)
+                        t)
                    "ACP displays process-authoritative consent.")
        (telemetry-call-with-run
         secondary

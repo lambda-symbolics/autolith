@@ -222,7 +222,7 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
       outcome)))
 
 (define-application-command application--builtin-onboard-command
-    (:name              "/onboard"
+    (:name              "onboard"
      :help-topic        :display
      :help-order        1
      :argument          nil

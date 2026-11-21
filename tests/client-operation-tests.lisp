@@ -79,15 +79,13 @@
               (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
                            "the primary channel work reaches its steering boundary")
               (let* ((result
-                       (application-client-invoke
-                        application (agentcomms:json-object
-                                     "operation" "cwd"
-                                     "arguments" (agentcomms:json-object "input" (namestring text-target)))))
+                         (application-client-invoke application :cwd
+                                                     (list (namestring text-target))))
                      (entry (first (funcall take)))
                      (input (agent-steering-input-content entry)))
                 (setf current-id (agent-steering-input-identifier entry))
                 (test-assert
-                 (and (equal "scheduled" (gethash "delivery" result)) (= setter-calls 0)
+                   (and (equal "scheduled" (getf result :delivery)) (= setter-calls 0)
                       (eq (command-message-input-phase input) ':pending)
                       (equal base (config :working-directory configuration))
                       (equal (application-command-invocation-arguments
@@ -138,12 +136,11 @@
                                     (eq (getf (rest (getf completion :event)) :kind) ':steering)))
                              completions))
                  "retry projects one receipt and completes without repeating the runtime setter")
-                (let* ((reply (world-terminal-client-call connection ':operation :method "_autolith/state"
-                                                      :params                        (client-portable (json-object))))
+                (let* ((reply (world-terminal-client-call connection ':client-state))
                        (state (getf reply :result)))
                   (test-assert
                    (and (eq (getf state :outcome) ':ok)
-                        (equal (gethash "workspace" (client-json (getf state :value)))
+                        (equal (getf (getf state :value) :workspace)
                                (namestring native-target)))
                    "the shared client state reports the postcommit working directory")))))
         (unwind-protect
@@ -171,27 +168,25 @@
             (publication (symbol-function 'application-clients-publish-state))
             (published   nil)
             (waiter      nil))
-       (labels ((invoke (name &optional (input ""))
-                  "Invoke NAME through the shared client parameter decoder and operation admission."
-                  (application-client-invoke
-                   application
-                   (agentcomms:json-object
-                    "operation" name
-                    "arguments" (agentcomms:json-object "input" input))))
+        (labels ((invoke (name &optional input)
+                   "Invoke NAME through the shared client parameter decoder and operation admission."
+                   (application-client-invoke application
+                                               (intern (string-upcase name) :keyword)
+                                               (if input (list input) nil)))
 
-                (saved-mode ()
-                  "Read the mode from private state, independently of live publication."
-                  (application--saved-permission-mode configuration (application-conversation application)))
+                 (saved-mode ()
+                   "Read the mode from private state, independently of live publication."
+                   (application--saved-permission-mode configuration (application-conversation application)))
 
-                (idle ()
-                  "Wait until the channel has finished its preceding command."
-                  (test-assert
-                   (task-tests--wait-until
-                    (lambda ()
-                      (not (application-input-controller-busy-p
-                            (application-input-controller application))))
-                    10)
-                   "preceding channel work reaches idle")))
+                 (idle ()
+                   "Wait until the channel has finished its preceding command."
+                   (test-assert
+                    (task-tests--wait-until
+                     (lambda ()
+                       (not (application-input-controller-busy-p
+                             (application-input-controller application))))
+                     10)
+                    "preceding channel work reaches idle")))
          (unwind-protect
               (test-call-with-function-replacements
                (list (list 'application-clients-publish-state
@@ -218,8 +213,8 @@
                      "structured sandbox mode retains the command sandbox guard")
                     (idle)
                     (test-assert
-                     (handler-case (progn (invoke "permissions" "sandbox") nil)
-                       (configuration-error () t))
+                      (handler-case (progn (invoke "permissions" :sandbox) nil)
+                        (configuration-error () t))
                      "ACP invocation preserves the sandbox configuration condition")))
                  (test-assert (and (eq ':full-access (application-permission-mode application))
                                    (null published))
@@ -248,17 +243,17 @@
                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
                               "a real channel work item owns execution")
                  (world-terminal-client-call connection ':mode :value ':auto)
-                 (let ((result (invoke "permissions" "ask")))
-                   (test-assert (and (stringp (gethash "text" result))
-                                     (equal "scheduled" (gethash "delivery" result)))
-                                "ACP preserves its scheduled delivery and presentation envelope"))
+                 (let ((result (invoke "permissions" :ask)))
+                   (test-assert (and (stringp (getf result :result))
+                                     (equal "scheduled" (getf result :delivery)))
+                                "native invocation returns safe-boundary acceptance"))
                  (test-assert (and (eq ':full-access (application-permission-mode application))
                                    (null published)
                                    (eq ':full-access (saved-mode)))
                               "busy mode acceptance neither applies nor publishes before the safe boundary")
                  (test-assert
-                  (handler-case (progn (invoke "goal" "pause") nil)
-                    (application-client-operation-busy () t))
+                    (handler-case (progn (invoke "goal" :pause) nil)
+                     (application-client-operation-busy () t))
                   "a held busy command retains ACP busy rejection")
                  (sb-thread:signal-semaphore release)
                  (join-thread waiter)
@@ -271,11 +266,11 @@
                                    (eq ':ask (saved-mode)))
                               "safe-boundary execution preserves command ordering and persistence")
                  (idle)
-                 (let ((result (invoke "permissions" "auto")))
-                   (test-assert (and (stringp (gethash "text" result))
-                                     (not (nth-value 1 (gethash "delivery" result)))
-                                     (eq ':auto (application-permission-mode application)))
-                               "idle ACP invocation returns text without a scheduled delivery"))
+                 (let ((result (invoke "permissions" :auto)))
+                    (test-assert (and (null (getf result :result))
+                                      (null (getf result :delivery))
+                                      (eq ':auto (application-permission-mode application)))
+                                 "idle native invocation returns the command's NIL result"))
                  (client-operation-tests--steering-cwd application connection)))
            (sb-thread:signal-semaphore release)
            (when waiter (join-thread waiter))
@@ -294,33 +289,27 @@
                              :session-id))
             (connection (world-terminal-client-connect
                          (world-terminal--find-record configuration channel) :name "catalog test"))
-            (command    (application-command-find "/permissions")))
-       (labels ((request (method)
-                  "Call one shared semantic method without an ACP session."
-                  (getf (world-terminal-client-call connection ':operation
-                                               :method method
-                                               :params (client-portable (json-object)))
-                        :result)))
+            (command    (application-command-find "permissions")))
+       (labels ((request (command)
+                  "Call one registered native method without an ACP session."
+                  (getf (world-terminal-client-call connection command) :result)))
          (unwind-protect
               (progn
-                (let ((state (request "_autolith/state")))
+                 (let ((state (request ':client-state)))
                   (test-assert (eq ':ok (getf state :outcome))
                                "state is a server-owned semantic endpoint")
-                  (test-assert (stringp (gethash "workspace" (client-json (getf state :value))))
-                               "state returns structured application data"))
-                (test-assert (eq ':unsupported (getf (request "_autolith/steer") :outcome))
-                             "frontend session handlers are not server semantic methods")
-                (let* ((catalog (request "_autolith/operations"))
-                       (items   (gethash "items" (client-json (getf catalog :value))))
-                       (row     (find "permissions" items :test #'equal
-                                      :key                      (lambda (item) (gethash "name" item)))))
+                  (test-assert (stringp (getf (getf state :value) :workspace))
+                             "state returns structured application data"))
+                 (let* ((catalog (request ':operations))
+                        (items   (getf (getf catalog :value) :items))
+                        (row     (find "permissions" items :test #'equal
+                                       :key                      (lambda (item) (getf item :name)))))
                   (test-assert row "the registered command appears in the shared catalogue")
-                  (test-assert (equal (gethash "help" row) (application-command-tip command))
-                               "command help comes from registered metadata")
+                  (test-assert (equal (getf row :help) (application-command-tip command))
+                             "command help comes from registered metadata")
                   (test-assert
-                   (equalp (gethash "choices" row)
-                           (map 'vector #'application-client-catalog--option-token
-                               (application-command-static-options command)))
+                     (equalp (getf row :choices)
+                             (application-command-static-options command))
                    "supported textual choices use the structured client's argument encoding"))
                 (let ((find-command (symbol-function 'application-command-find))
                       (restricted   (make-instance 'application-command
@@ -328,7 +317,7 @@
                   (test-call-with-function-replacements
                    (list (list 'application-command-find
                                (lambda (name)
-                                 (if (equal name "/permissions")
+                                 (if (equal name "permissions")
                                      restricted
                                      (funcall find-command name)))))
                    (lambda ()
@@ -350,15 +339,15 @@
 
 (-> test-client-state-goal () null)
 (defun test-client-state-goal ()
-  "Read ordinary and mission goal transitions through the semantic state boundary."
+  "Read goal transitions through the native state boundary."
   (with-test-configuration (configuration)
     (let ((application (mission-test--application configuration)))
       (labels ((reported ()
-                 "Return the JSON goal member through the shared client dispatcher."
-                 (let ((reply (application-client-run application "_autolith/state" (json-object))))
-                   (test-assert (eq (getf reply :outcome) ':ok) "goal state is a successful semantic request")
-                   (gethash "goal" (getf reply :value)))))
-        (test-assert (eq (reported) ':null) "a channel without a goal reports null")
+                 (let ((reply (application-client-run application :client-state)))
+                   (test-assert (eq (getf reply :outcome) :ok)
+                                "goal state is a successful native request")
+                   (getf (getf reply :value) :goal))))
+        (test-assert (null (reported)) "a channel without a goal reports nil")
         (dolist (kind '(:goal :mission))
           (dolist (status '(:active :paused :complete :verified :blocked :exhausted :cancelled :failed))
             (setf (application-goal application)
@@ -366,13 +355,13 @@
                         :created-at 3972384000 :continuations 2))
             (let ((goal (reported)))
               (test-assert
-               (and (equal (gethash "objective" goal) "Ship the requested change")
-                    (equal (gethash "status" goal) (string-downcase (symbol-name status)))
-                    (equal (gethash "kind" goal) (string-downcase (symbol-name kind)))
-                    (= (gethash "createdAt" goal) 3972384000)
-                    (= (gethash "continuations" goal) 2))
-               "state reports the goal's own kind, status, creation time and continuation count"))))
+               (and (equal (getf goal :objective) "Ship the requested change")
+                    (eq (getf goal :status) status)
+                    (eq (getf goal :kind) kind)
+                    (= (getf goal :created-at) 3972384000)
+                    (= (getf goal :continuations) 2))
+               "native state reports goal metadata"))))
         (setf (application-goal application) nil)
-        (test-assert (eq (reported) ':null) "clearing the goal replaces its state with null"))
-      (terminal-ui-stop (application-ui application))))
-  nil)
+        (test-assert (null (reported)) "clearing the goal reports nil")
+        (terminal-ui-stop (application-ui application))))
+   nil))

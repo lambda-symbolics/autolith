@@ -153,7 +153,6 @@ local-user override."
   (declare (ignore tool))
   t)
 
-
 (defgeneric tool-active-turn-action (tool)
   (:documentation
    "Return :EXECUTE or :HOLD for an explicit local call to TOOL during an active turn."))
@@ -197,8 +196,8 @@ local-user override."
 
 (-> application-operation--command-name (application-command) non-empty-string)
 (defun application-operation--command-name (command)
-  "Return COMMAND's canonical Lisp operation name without the leading slash."
-  (subseq (application-command-name command) 1))
+  "Return the canonical native operation name of COMMAND."
+  (application-command-name command))
 
 (-> application-operation--from-command
     (application-command &key (:name (option string)))
@@ -253,7 +252,7 @@ local-user override."
                    append (loop for alias in (application-command-aliases command)
                                 when (eq command (application-command-find alias))
                                   collect (application-operation--from-command
-                                           command :name (subseq alias 1))))
+                                           command :name alias)))
            *application-local-operations*
            (mapcar #'application-operation--from-tool
                    (application-operation--tools application)))))
@@ -347,8 +346,7 @@ local-user override."
                    (application-command--lambda-list-arity
                     (application-command-lambda-list command))
                  (declare (ignore maximum))
-                 (application-command--static-option-hint
-                  options (zerop minimum) :native-p t))
+                 (application-command--static-option-hint options (zerop minimum)))
                (application-command-argument command))))
     (and hint (format nil "~A)" hint))))
 
@@ -964,7 +962,7 @@ snapshot."
 (defmethod application-command-validate-registration ((command application-command))
   "Reject COMMAND when its canonical name or an alias would shadow a function."
   (dolist (name (cons (application-command-name command) (application-command-aliases command)))
-    (let* ((symbol    (application-operation--function-symbol (subseq name 1)))
+    (let* ((symbol    (application-operation--function-symbol name))
            (installed (gethash symbol *application-operation-bindings*))
            (existing  (and (fboundp symbol) (fdefinition symbol))))
       (when (and existing

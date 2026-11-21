@@ -20,7 +20,7 @@
 
   (defparameter *application-command-metadata-keys*
     '(:name :aliases :argument :description :tip
-      :busy-behavior :terminal-behavior :callable :static-options :slash-parser
+      :busy-behavior :terminal-behavior :callable :static-options
       :help-topic :help-order)
     "The literal metadata keys accepted by DEFINE-APPLICATION-COMMAND.")
 
@@ -45,16 +45,12 @@
 
   (-> application-command--identifier-p (t) boolean)
   (defun application-command--identifier-p (value)
-    "Return true when VALUE is one normalized slash-command identifier."
+    "Return true when VALUE is a normalized native command identifier."
     (and (non-empty-string-p value)
-         (> (length value) 1)
-         (char= (char value 0) #\/)
          (string= value (string-downcase value))
-         (not
-          (find-if
-           (lambda (character)
-             (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
-           value))))
+         (not (find-if (lambda (character)
+                         (find character '(#\/ #\Space #\Tab #\Newline #\Return #\Page)))
+                       value))))
 
   (-> application-command--metadata-key-count (list symbol) (integer 0))
   (defun application-command--metadata-key-count (metadata key)
@@ -64,7 +60,7 @@
 
   (-> application-command--option-text ((or boolean string keyword)) string)
   (defun application-command--option-text (option)
-    "Return the slash spelling of a native string, keyword, or boolean OPTION."
+    "Return the compact display spelling of a native OPTION."
     (etypecase option
       (boolean
        (if option "on" "off"))
@@ -161,17 +157,11 @@ The maximum is NIL for &REST or &KEY."
          nil "An application command rest marker requires a parameter."))
       (values minimum (and (not rest-p) maximum))))
 
-  (-> application-command--static-option-hint
-      (list boolean &key (:native-p boolean)) string)
-  (defun application-command--static-option-hint (options optional-p &key native-p)
-    "Return the finite OPTIONS hint in native Lisp or slash syntax."
+  (-> application-command--static-option-hint (list boolean) string)
+  (defun application-command--static-option-hint (options optional-p)
+    "Return the finite OPTIONS hint in native Lisp syntax."
     (let* ((*print-case* ':downcase)
-           (choices      (format nil "~{~A~^|~}"
-                                 (mapcar (lambda (option)
-                                           (if native-p
-                                               (format nil "~S" option)
-                                               (application-command--option-text option)))
-                                         options))))
+           (choices      (format nil "~{~S~^|~}" options)))
       (if optional-p (format nil "[~A]" choices) choices)))
 
   (-> application-command--validate-metadata
@@ -184,7 +174,7 @@ The maximum is NIL for &REST or &KEY."
     "Validate command metadata values and return true."
     (unless (application-command--identifier-p name)
       (application-command--definition-error
-       name "Application command name ~S is not a lowercase slash identifier." name))
+       name "Application command name ~S is not a lowercase native identifier." name))
     (unless (proper-list-p aliases)
       (application-command--definition-error
        name "Application command ~A aliases are not a proper literal list." name))
@@ -274,15 +264,6 @@ The maximum is NIL for &REST or &KEY."
                  (not callable-p))
         (application-command--definition-error
          definition-name "Application command ~S :CALLABLE must be literal T." definition-name))
-      (when (plusp (application-command--metadata-key-count metadata :slash-parser))
-        (let ((parser (getf metadata :slash-parser)))
-          (unless (and callable-p parser (symbolp parser)
-                       (not (keywordp parser)) (not (eq parser t))
-                       (symbol-package parser))
-            (application-command--definition-error
-             definition-name
-             "Application command ~S :SLASH-PARSER requires a literal function name and :CALLABLE T."
-             definition-name))))
       (when (and static-options (not callable-p))
         (application-command--definition-error
          definition-name
@@ -360,13 +341,13 @@ The maximum is NIL for &REST or &KEY."
     :initarg       :name
     :reader        application-command-name
     :type          non-empty-string
-    :documentation "The canonical lowercase slash-command name.")
+    :documentation "The canonical lowercase native command name.")
    (aliases
     :initarg       :aliases
     :initform      nil
     :reader        application-command-aliases
     :type          list
-    :documentation "Alternative slash names sharing this command's behavior.")
+    :documentation "Alternative native names sharing this command's behavior.")
    (argument
     :initarg       :argument
     :reader        application-command-argument
@@ -416,12 +397,6 @@ The maximum is NIL for &REST or &KEY."
     :reader        application-command-callable-p
     :type          boolean
     :documentation "Whether the handler receives canonical Lisp arguments.")
-   (slash-parser
-    :initarg       :slash-parser
-    :initform      nil
-    :reader        application-command-slash-parser
-    :type          (option function)
-    :documentation "Captured slash-only parser from complete remainder text to semantic arguments.")
    (static-options
     :initarg       :static-options
     :initform      nil
@@ -444,10 +419,10 @@ The maximum is NIL for &REST or &KEY."
     :documentation "The complete submitted command input.")
    (syntax
     :initarg       :syntax
-    :initform      ':slash
+    :initform      ':lisp
     :reader        application-command-invocation-syntax
-    :type          (member :slash :lisp)
-    :documentation "Whether arguments came from slash text or evaluated Lisp values.")
+    :type          (member :lisp)
+    :documentation "Native Lisp argument provenance for durable command invocations.")
    (name
     :initarg       :name
     :reader        application-command-invocation-name
@@ -543,14 +518,6 @@ The maximum is NIL for &REST or &KEY."
     (error 'configuration-error
            :message (format nil "Application command ~A has no callable handler."
                             (application-command-name command))))
-  (unless (or (null (application-command-slash-parser command))
-              (functionp (application-command-slash-parser command)))
-    (error 'configuration-error
-           :message "An application command slash parser must be a function."))
-  (when (and (application-command-slash-parser command)
-             (not (application-command-callable-p command)))
-    (error 'configuration-error
-           :message "A slash parser requires a callable application command."))
   (if (application-command-callable-p command)
       (handler-case
           (multiple-value-bind (minimum maximum)
@@ -579,12 +546,12 @@ The maximum is NIL for &REST or &KEY."
           (:argument (option string)) (:description string) (:tip string)
           (:busy-behavior keyword) (:terminal-behavior keyword)
           (:lambda-list list) (:callable-p boolean) (:static-options list)
-          (:slash-parser (option function)) (:handler function)
+          (:handler function)
           (:help-topic t) (:help-order t))
     application-command)
 (defun application-command-create
     (&key definition-name name aliases argument description tip busy-behavior
-            terminal-behavior lambda-list callable-p static-options slash-parser handler
+            terminal-behavior lambda-list callable-p static-options handler
             help-topic help-order)
   "Create and validate one immutable interactive command."
   (unless (and (symbolp definition-name)
@@ -638,7 +605,6 @@ The maximum is NIL for &REST or &KEY."
     :static-options    (mapcar (lambda (option)
                                  (if (stringp option) (copy-seq option) option))
                                static-options)
-    :slash-parser      slash-parser
     :handler           handler)))
 
 (defgeneric application-command-validate-registration (command)
@@ -915,77 +881,12 @@ without changing the registry."
 
 (defparameter *application-command-whitespace*
   '(#\Space #\Tab #\Newline #\Return #\Page)
-  "Characters separating command tokens and arguments.")
-
-(-> application-command--first-token (string) (option string))
-(defun application-command--first-token (text)
-  "Return TEXT's first parsed slash argument, or NIL when empty."
-  (first (application-command--tokens text)))
-
-(-> application-command--tokens (string) list)
-(defun application-command--tokens (text)
-  "Parse TEXT into whitespace-delimited strings with double-quoted spans."
-  (let ((arguments  nil)
-        (characters nil)
-        (quoted-p   nil)
-        (escaped-p  nil)
-        (started-p  nil))
-    (labels ((finish-argument ()
-               "Finish the current argument when one has started."
-               (when started-p
-                 (push (coerce (nreverse characters) 'string) arguments)
-                 (setf characters nil
-                       started-p nil))))
-      (loop for character across text
-            do
-               (cond
-                 (escaped-p
-                  (if (member character '(#\" #\\) :test #'char=)
-                      (push character characters)
-                      (progn
-                        (push #\\ characters)
-                        (push character characters)))
-                  (setf escaped-p nil
-                        started-p t))
-                 ((and quoted-p (char= character #\\))
-                  (setf escaped-p t
-                        started-p t))
-                 ((char= character #\")
-                  (setf quoted-p (not quoted-p)
-                        started-p t))
-                 ((and (not quoted-p)
-                       (find character *application-command-whitespace*))
-                  (finish-argument))
-                 (t
-                  (push character characters)
-                  (setf started-p t))))
-      (when (or quoted-p escaped-p)
-        (error 'configuration-error
-               :message "A slash command argument has an unterminated quote."))
-      (finish-argument)
-      (nreverse arguments))))
-
-(-> application-command--slash-arguments
-    ((option application-command) list string)
-    list)
-(defun application-command--slash-arguments (command parsed-arguments remainder)
-  "Return semantic slash arguments for callable COMMAND and REMAINDER."
-  (unless (and command (application-command-callable-p command))
-    (return-from application-command--slash-arguments nil))
-  (cond
-    ((application-command-slash-parser command)
-     (let ((arguments (funcall (application-command-slash-parser command) remainder)))
-       (unless (proper-list-p arguments)
-         (error 'configuration-error
-                :message "A command slash parser must return a proper argument list."))
-       arguments))
-    (t
-     parsed-arguments)))
+  "Whitespace trimmed from command presentation labels.")
 
 (-> application-command--display-name (application-command) string)
 (defun application-command--display-name (command)
   "Return COMMAND's canonical callable spelling for human-facing diagnostics."
-  (format nil "(~A)" (subseq (application-command-name command) 1)))
+  (format nil "(~A)" (application-command-name command)))
 
 (-> application-command--validate-invocation-arity
     (application-command list)
@@ -1067,12 +968,9 @@ without changing the registry."
     (application-command application-command-invocation)
     boolean)
 (defun application-command-invocation-argument-free-p (command invocation)
-  "Return whether INVOCATION supplied no arguments for COMMAND's call protocol."
-  (if (application-command-callable-p command)
-      (zerop
-       (application-command-invocation-supplied-argument-count invocation))
-      (zerop
-       (length (application-command-invocation-remainder invocation)))))
+  "Return whether INVOCATION supplied no native command arguments."
+  (declare (ignore command))
+  (zerop (application-command-invocation-supplied-argument-count invocation)))
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
@@ -1159,13 +1057,9 @@ METADATA must contain literal :NAME, :DESCRIPTION, :TIP, :BUSY-BEHAVIOR, and
 :TERMINAL-BEHAVIOR values. :ALIASES defaults to NIL. Commands state either an
 :ARGUMENT hint or finite :STATIC-OPTIONS. Legacy handlers receive APPLICATION
 and an APPLICATION-COMMAND-INVOCATION. A :CALLABLE T handler's parameters after
-APPLICATION are its authoritative Lisp argument contract. Optional :SLASH-PARSER
-names the structured client's argument-text decoder. It receives only the
-arguments and returns a proper list; Lisp calls supply native arguments instead.
-Without a decoder, client argument text uses token splitting. The decoder and
-handler are captured at registration. :HELP-TOPIC selects a supported section,
-defaulting to Other commands. :HELP-ORDER is an optional integer rank, with
-registration order breaking
+APPLICATION are its authoritative Lisp argument contract. The handler is captured
+at registration. :HELP-TOPIC selects a supported section, defaulting to Other
+commands. :HELP-ORDER is an optional integer rank, with
 ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
 or :QUIT, and may return a second value, which a Lisp call of the command yields."
   (application-command--validate-defining-form
@@ -1192,8 +1086,6 @@ or :QUIT, and may return a second value, which a Lisp call of the command yields
            :lambda-list       ',call-lambda-list
            :callable-p        ,callable-p
            :static-options    ',static-options
-           :slash-parser      ,(when (getf metadata :slash-parser)
-                                 `#',(getf metadata :slash-parser))
            :handler           #',definition-name)))
        ',definition-name)))
 

@@ -50,7 +50,7 @@ subsequent events after its bounded history snapshot."
                                :channel         identifier
                                :new-p           (null identifier)
                                :permission-mode (acp-service-permission-mode service)
-                               :mcp-servers     (and servers (client-portable servers)))
+                               :mcp-servers     (and servers (mapcar #'acp-extension--native-value servers)))
           (world-terminal-error (condition)
             (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))
       (let ((session     (make-instance 'acp-session
@@ -292,14 +292,11 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
                  (handler-case (acp-extension-result ':ok :value (funcall (second entry) session params))
                    (acp-extension-unavailable (condition)
                      (acp-extension-result ':unsupported :report (acp-extension-unavailable-reason condition))))
-                 (let ((outcome (getf (channel-subscription-call session ':operation
-                                                        :method method
-                                                        :params (client-portable params))
-                                      :result)))
-                   (acp-extension-result (getf outcome :outcome)
-                                         :value          (client-json (getf outcome :value))
-                                         :report         (getf outcome :report)
-                                         :condition-type (getf outcome :condition-type)))))
+                (let ((outcome (acp-extension-call session (second entry) params)))
+                  (acp-extension-result (getf outcome :outcome)
+                                        :value          (getf outcome :value)
+                                        :report         (getf outcome :report)
+                                        :condition-type (getf outcome :condition-type)))))
          (error (condition)
            (acp-extension-result ':condition
                                  :report         (princ-to-string condition)

@@ -87,7 +87,7 @@
 ;;;; -- Command Definitions --
 
 (define-application-command application--builtin-diagnoses-command
-    (:name              "/diagnoses"
+    (:name              "diagnoses"
      :argument          nil
      :description       "list diagnoses and what decided their cases"
      :tip               "shows saved diagnoses and recent cases: what cause was discovered, how it was repaired, and the facts that were involved."

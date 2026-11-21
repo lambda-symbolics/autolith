@@ -61,41 +61,19 @@
 (-> test-papercut-resources () null)
 (defun test-papercut-resources ()
   "Test papercut collection and exact-item reads, edits, confinement, and schemas."
-  (let* ((base-configuration   (test-configuration))
-         (root                 (test-configuration-root base-configuration))
-         (first-workspace      (merge-pathnames "papercut-first/" root))
-         (second-workspace     (merge-pathnames "papercut-second/" root))
-         (configuration        nil)
-         (second-configuration nil)
-         (registry             (make-default-tool-registry)))
+  (let* ((base-configuration (test-configuration))
+         (root               (test-configuration-root base-configuration))
+         (first-workspace    (merge-pathnames "papercut-first/" root))
+         (configuration      (configuration-copy base-configuration :working-directory first-workspace))
+         (registry           (make-default-tool-registry)))
     (ensure-directories-exist (merge-pathnames "marker" first-workspace))
-    (ensure-directories-exist (merge-pathnames "marker" second-workspace))
-    (setf configuration
-          (configuration-copy base-configuration
-                                :working-directory first-workspace)
-          second-configuration
-          (configuration-copy base-configuration
-                                :working-directory second-workspace))
     (unwind-protect
          (let* ((first-conversation
                   (conversation-create
                    configuration :identifier "papercut-resource-first"))
-                (second-conversation
-                  (conversation-create
-                   configuration :identifier "papercut-resource-second"))
                 (first-context
                   (make-instance 'tool-context
                                  :configuration configuration
-                                 :worker        nil
-                                 :conversation  first-conversation))
-                (second-context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker        nil
-                                 :conversation  second-conversation))
-                (moved-context
-                  (make-instance 'tool-context
-                                 :configuration second-configuration
                                  :worker        nil
                                  :conversation  first-conversation))
                 (child-context
@@ -182,7 +160,7 @@
                       (read-resource child-context "papercut:current")))
                 "task children cannot resolve papercut resources")
                (let* ((papercut (papercut-report configuration :title "Resource papercut"
-                                                 :content "Complete resource report content."))
+                                                 :content             "Complete resource report content."))
                       (uri      (resource-item-uri "papercut" (papercut-identifier papercut))))
                  (let* ((item-read     (read-resource first-context uri))
                         (item-revision (revision item-read)))
@@ -330,11 +308,11 @@
                       (tool-result-success-p read)
                       (search (papercut-title fixture) (tool-result-content read)))
                  "canonical papercut item URIs percent-encode and decode arbitrary IDs"))
-              (let* ((item     (first (papercut-list configuration)))
-                     (uri      (resource-item-uri "papercut" (papercut-identifier item)))
-                     (base     (revision (read-resource first-context uri)))
-                     (assess   (papercut-resource-tests--operation "papercut-assess"
-                                                                  "verdict" "worse" "note" "Fixture"))
+              (let* ((item          (first (papercut-list configuration)))
+                     (uri           (resource-item-uri "papercut" (papercut-identifier item)))
+                     (base          (revision (read-resource first-context uri)))
+                     (assess        (papercut-resource-tests--operation "papercut-assess"
+                                                                       "verdict" "worse" "note" "Fixture"))
                      (invalid-extra
                       (edit-resource first-context uri base
                                      (papercut-resource-tests--operation "papercut-assess"

@@ -458,11 +458,6 @@ neither is awaited."
              (mission--reject ':schedule-resolution "Expected completed, failed or retry."))))
       (mission-schedule--notify service))))
 
-(-> application-mission-wakeup-slash-arguments (string) list)
-(defun application-mission-wakeup-slash-arguments (remainder)
-  "Read the serialized ticket only at the slash command boundary."
-  (list (mission--read-data remainder)))
-
 (-> application-mission-wakeup-command (application t &rest t) null)
 (defun application-mission-wakeup-command (application ticket &rest extra)
   "Validate and consume a native persisted scheduler ticket."
@@ -479,13 +474,12 @@ neither is awaited."
   nil)
 
 (define-application-command application--builtin-mission-wakeup-command
-    (:name              "/mission-wakeup"
+    (:name              "mission-wakeup"
      :argument          "TICKET"
      :description       "consume an admitted durable mission wakeup"
      :tip               "rechecks the current mission version and records uncertain execution before effects."
      :busy-behavior     :hold
      :terminal-behavior :shared
-     :slash-parser      application-mission-wakeup-slash-arguments
      :callable          t)
     (application &optional ticket &rest extra)
   (apply #'application-mission-wakeup-command application ticket extra)

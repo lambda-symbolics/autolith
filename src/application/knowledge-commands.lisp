@@ -421,7 +421,7 @@ matches of an ambiguous prefix."
 ;;;; -- Command Definitions --
 
 (define-application-command application--builtin-what-changed-command
-    (:name              "/what-changed"
+    (:name              "what-changed"
      :argument          nil
      :description       "show how facts changed since you last asked"
      :tip               "reports facts that changed, appeared, or stopped holding, and why."
@@ -433,7 +433,7 @@ matches of an ambiguous prefix."
   ':continue)
 
 (define-application-command application--builtin-rules-command
-    (:name              "/rules"
+    (:name              "rules"
      :argument          nil
      :description       "list the rules that derive facts"
      :tip               "show the latest version and whether it is admitted for all rules."
@@ -445,7 +445,7 @@ matches of an ambiguous prefix."
   ':continue)
 
 (define-application-command application--builtin-admit-rule-command
-    (:name              "/admit-rule"
+    (:name              "admit-rule"
      :argument          "[ID]"
      :description       "admit a proposed rule"
      :tip               "admit a proposed rule so it may be used to derive facts, the latest version replaces earlier ones."
@@ -461,7 +461,7 @@ matches of an ambiguous prefix."
   ':continue)
 
 (define-application-command application--builtin-retire-rule-command
-    (:name              "/retire-rule"
+    (:name              "retire-rule"
      :argument          "[ID]"
      :description       "stop a rule deriving facts"
      :tip               "retires a rule; facts derived through the rule stop holding unless something else supports them."

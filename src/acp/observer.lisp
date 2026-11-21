@@ -121,7 +121,7 @@
            (agentcomms:json-object
             "sessionId" (channel-subscription-identifier session)
             "sequence" (incf (acp-session-extension-sequence session))
-            "kind" kind "data" (or data (agentcomms:json-object))))
+            "kind" kind "data" (if data (acp-extension-value data) (agentcomms:json-object))))
         (agentcomms:acp-error ()
           nil))))
   nil)

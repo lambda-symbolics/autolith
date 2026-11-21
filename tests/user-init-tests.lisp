@@ -315,7 +315,7 @@
                       :source)
                 ':user)
             "contributors registered by user init retain their source")
-           (let ((command (application-command-find "/user-init-test")))
+           (let ((command (application-command-find "user-init-test")))
              (test-assert
               (and command
                    (eq
@@ -376,7 +376,7 @@
                     "old contributor"))
               "a failed reload restores the exact previous contributor function"))
            (test-assert
-            (application-command-find "/user-init-test")
+            (application-command-find "user-init-test")
             "a failed reload restores the previous command registry")
            (delete-file pathname)
            (user-init-load configuration)

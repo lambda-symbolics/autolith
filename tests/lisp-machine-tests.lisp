@@ -269,7 +269,7 @@
            (register-application-command
             (application-command-create
              :definition-name   'lisp-machine-tests--required-debugger-command
-             :name              "/debug-required"
+             :name              "debug-required"
              :aliases           nil
              :argument          "VALUE"
              :description       "exercise required command recovery"
@@ -986,7 +986,7 @@
                (terminal-ui-finish-prompt-block ui 0)
                (terminal-ui-open-prompt-block ui)
                (recording-terminal-reset terminal)
-                (run-lisp-work "(exit)")
+               (run-lisp-work "(exit)")
                (let ((output (recording-terminal-output terminal)))
                  (test-assert
                   (and (application-input-controller-stopping-p controller)

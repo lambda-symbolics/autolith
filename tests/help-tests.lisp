@@ -47,13 +47,13 @@
   "Exercise extension ranking, aliases, replacements, and invalid metadata."
   (dolist (command
            (list (help-tests--command :definition-name 'help-tests--zeta-command
-                                      :name            "/help-zeta"
+                                      :name            "help-zeta"
                                       :help-topic ':channels :help-order 0)
                  (help-tests--command :definition-name 'help-tests--alpha-command
-                                      :name "/help-alpha" :aliases '("/help-alias")
+                                      :name "help-alpha" :aliases '("help-alias")
                                       :help-topic ':channels :help-order 0)
                  (help-tests--command :definition-name 'help-tests--unranked-command
-                                      :name "/help-unranked" :help-topic ':channels)))
+                                      :name "help-unranked" :help-topic ':channels)))
     (register-application-command command :source ':test))
   (let* ((section   (application-operation-help application ':channels))
          (positions (mapcar (lambda (usage) (search usage section))
@@ -65,7 +65,7 @@
                              (application-operation-help application 'help-alpha)))
                  "aliases resolve to their canonical command without another section listing"))
   (register-application-command
-   (help-tests--command :definition-name 'help-tests--replacement-command :name "/open")
+   (help-tests--command :definition-name 'help-tests--replacement-command :name "open")
    :source ':test)
   (let* ((channels    (application-operation-help application ':channels))
          (commands    (application-operation-help application ':commands))
@@ -75,7 +75,7 @@
                       other replacement (< other replacement))
                  "a replacement without metadata belongs to Other commands instead of inheriting builtin metadata"))
   (register-application-command
-   (help-tests--command :definition-name 'help-tests--replacement-command :name "/open"
+   (help-tests--command :definition-name 'help-tests--replacement-command :name "open"
                         :help-topic ':workspace :help-order -1)
    :source ':test)
   (let* ((workspace   (application-operation-help application ':workspace))
@@ -97,7 +97,7 @@
          (progn
            (macroexpand-1
             `(define-application-command help-tests--invalid-command
-                 (:name "/help-invalid" :argument nil
+                 (:name "help-invalid" :argument nil
                   :description "Invalid help metadata fixture."
                   :tip         "Exercise definition refusal."
                   :busy-behavior :inspect :terminal-behavior :shared

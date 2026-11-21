@@ -221,7 +221,7 @@ watches is never it."
 (defun channel-client-tell (client operation &rest fields)
   "Send presentation OPERATION with FIELDS to CLIENT alone and return true while it is attached."
   (unless (channel-client-closed-p client)
-    (channel-client-enqueue client (client-portable (list* :ui :operation operation fields)))
+      (channel-client-enqueue client (list* ':ui ':operation operation fields))
     t))
 
 (-> application-client-tell (application keyword &rest t) boolean)
@@ -240,7 +240,7 @@ to another channel."
 
 Each client is given the daemon's stop deadline to take what was queued for
 it, so the word reaches a client that reads before the endpoint closes."
-  (let ((event (client-portable (list* :ui :operation operation fields))))
+  (let ((event (list* ':ui ':operation operation fields)))
     (dolist (client (remove-if-not #'channel-client-presents-p (application-clients application)))
       (channel-client-finish client event)))
   nil)
@@ -269,17 +269,17 @@ it, so the word reaches a client that reads before the endpoint closes."
   (let ((hub      (application-client-hub application))
         (overflow nil))
     (with-lock-held ((client-hub-lock hub))
-      (let ((portable (client-portable
-                       (append event
-                               (list :sequence        (incf (client-hub-event-sequence hub))
-                                     :record-sequence (application-clients--record-sequence application))))))
-        (deque-push-back (client-hub-event-journal hub) portable)
-        (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
-              do (deque-pop-front (client-hub-event-journal hub)))
-        (dolist (client (client-hub-clients hub))
-          (when (and (channel-client--receives-p client portable)
-                     (channel-client--queue-event client portable))
-            (push client overflow)))))
+        (let ((portable
+                (append event
+                        (list :sequence        (incf (client-hub-event-sequence hub))
+                              :record-sequence (application-clients--record-sequence application)))))
+         (deque-push-back (client-hub-event-journal hub) portable)
+         (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
+               do (deque-pop-front (client-hub-event-journal hub)))
+         (dolist (client (client-hub-clients hub))
+           (when (and (channel-client--receives-p client portable)
+                      (channel-client--queue-event client portable))
+             (push client overflow)))))
     (dolist (client overflow)
       (channel-client-close client)))
   nil)
@@ -328,9 +328,10 @@ The greeting contains the event watermark and durable replay boundary. A
 cursor outside the retained tail is refused rather than skipping events."
   (unless (or (null after-sequence) (typep after-sequence '(integer 0 *)))
     (error 'world-terminal-error :operation ':client
-           :message                     "A channel event cursor must be a nonnegative integer."))
+           :message                         "A channel event cursor must be a nonnegative integer."))
   (let* ((hub          (application-client-hub application))
-         (conversation (and (slot-boundp application 'conversation) (application-conversation application)))
+         (conversation (and (slot-boundp application 'conversation)
+                            (application-conversation application)))
          (presentation (and (channel-client-presents-p client)
                             (application-presentation application))))
     (flet ((subscribe (replay)
@@ -340,37 +341,40 @@ cursor outside the retained tail is refused rather than skipping events."
                         :message "The channel is restarting; retry attachment after it resumes."))
                (let* ((sequence (client-hub-event-sequence hub))
                       (events   (deque->list (client-hub-event-journal hub)))
-                      (oldest   (if events (getf (rest (first events)) :sequence) (1+ sequence))))
+                      (oldest   (if events
+                                    (getf (rest (first events)) :sequence)
+                                    (1+ sequence))))
                  (when (and after-sequence
                             (not (<= (1- oldest) after-sequence sequence)))
                    (error 'world-terminal-error :operation ':client
-                          :message                     "The channel event cursor has expired or is ahead of the channel."))
+                          :message                         "The channel event cursor has expired or is ahead of the channel."))
                  (when attached
                    (when (channel-client--queue-event
-                          client (client-portable
-                                  (append attached
-                                          (list :sequence              sequence
-                                                :record-sequence       (application-clients--record-sequence application)
-                                                :presentation-replay-p (not (null replay))))))
-                     (error 'world-terminal-error :operation ':client :message "The client greeting queue is full.")))
-                 (dolist (event events)
-                   (when (and after-sequence (> (getf (rest event) :sequence) after-sequence)
-                              (channel-client--receives-p client event))
-                     (when (channel-client--queue-event client event)
-                       (error 'world-terminal-error :operation ':client
-                              :message                     "The retained event tail exceeds the client queue."))))
-                 (dolist (event replay)
-                   (when (channel-client--queue-event client (client-portable event))
+                          client
+                          (append attached
+                                  (list :sequence              sequence
+                                        :record-sequence       (application-clients--record-sequence application)
+                                        :presentation-replay-p (not (null replay)))))
                      (error 'world-terminal-error :operation ':client
-                            :message                     "The channel's presentation exceeds the client queue.")))
-                 (with-lock-held ((image-daemon:attachment-lock (channel-client-attachment client)))
+                            :message                         "The client greeting queue is full.")))
+                 (dolist (event events)
+                   (when (and after-sequence
+                              (> (getf (rest event) :sequence) after-sequence)
+                              (channel-client--receives-p client event)
+                              (channel-client--queue-event client event))
+                     (error 'world-terminal-error :operation ':client
+                            :message                         "The retained event tail exceeds the client queue.")))
+                 (dolist (event replay)
+                   (when (channel-client--queue-event client event)
+                     (error 'world-terminal-error :operation ':client
+                            :message                         "The channel's presentation exceeds the client queue.")))
+                 (with-lock-held ((image-daemon:attachment-lock
+                                   (channel-client-attachment client)))
                    (unless (channel-client-closed-p client)
                      (setf (channel-client-hub client) hub)
                      (push client (client-hub-clients hub))))))))
       (flet ((attach ()
                (application-clients--follow-conversation application)
-                ;; A fresh presenting client starts from durable history; a reconnect
-                ;; retains its own viewport and resumes only the exact event tail.
                (subscribe
                 (and presentation (null after-sequence)
                      (application-client-history-replay
@@ -384,14 +388,11 @@ cursor outside the retained tail is refused rather than skipping events."
                      (with-recursive-lock-held ((conversation-append-lock conversation))
                        (attach))
                      (attach))))
-          ;; Stream rendering, presentation, durable append, then hub admission.
-          ;; Hold this cut through registration, with no transport cleanup inside it.
           (if presentation
               (with-recursive-lock-held ((application-render-lock application))
                 (with-terminal-ui-locked (presentation)
                   (attach-appending)))
               (attach-appending)))))
-    ;; The serving scope owns cleanup, after transmitting an attachment refusal.
     (image-daemon:attachment-start (channel-client-attachment client)))
   nil)
 
@@ -579,62 +580,3 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
            (list :omitted         :kind (first event)
                  :sequence        (getf (rest event) :sequence)
                  :record-sequence (getf (rest event) :record-sequence)))))))
-
-
-;;;; -- Portable Events --
-
-(-> client-portable (t) t)
-(defun client-portable (value)
-  "Return VALUE with everything a client cannot read replaced by its printed form.
-
-Events carry strings, numbers, keywords, T and lists of them. A JSON object
-becomes (:OBJECT KEY VALUE ...), a JSON array (:ARRAY VALUE ...) and JSON
-false :FALSE, other symbols their lowercase names, pathnames their
-namestrings, and other objects, such as conditions, their printed text.
-CLIENT-JSON turns the JSON forms back."
-  (portable-value-map
-   value
-   (lambda (item child)
-     (typecase item
-       (null
-        nil)
-       ((satisfies json-false-p)
-        ':false)
-       (string
-        (copy-seq item))
-       ((or number keyword character (eql t))
-        item)
-       (hash-table
-        (cons ':object
-              (loop for key being the hash-keys of item using (hash-value member)
-                    append (list (funcall child key) (funcall child member)))))
-       (vector
-        (cons ':array (map 'list child item)))
-       (symbol
-        (string-downcase (symbol-name item)))
-       (pathname
-        (namestring item))
-       (t
-        (princ-to-string item))))
-   :containers-p t))
-
-(-> client-json (t) t)
-(defun client-json (value)
-  "Return the JSON value whose portable form CLIENT-PORTABLE made VALUE.
-
-(:OBJECT KEY VALUE ...) becomes a JSON object, (:ARRAY VALUE ...) a vector,
-:FALSE JSON false, and :NULL stays the JSON null."
-  (cond
-    ((and (consp value) (eq (first value) ':object))
-     (let ((object (make-hash-table :test #'equal)))
-       (loop for (key item) on (rest value) by (partial #'nthcdr 2)
-             do (setf (gethash key object) (client-json item)))
-       object))
-    ((and (consp value) (eq (first value) ':array))
-     (map 'vector #'client-json (rest value)))
-    ((eq value ':false)
-     (json-false))
-    ((consp value)
-     (mapcar #'client-json value))
-    (t
-     value)))

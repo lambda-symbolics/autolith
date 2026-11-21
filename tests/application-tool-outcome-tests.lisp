@@ -120,8 +120,8 @@
         (with-terminal-ui (client (terminal-ui-create
                                    :terminal     (make-instance 'recording-terminal :columns 100 :rows 24)
                                    :fullscreen-p t))
-          (dolist (event (mapcar #'client-portable (channel-presentation-replay presentation)))
-            (apply #'presentation-apply client (getf (rest event) :operation) (rest event)))
+            (dolist (event (mapcar #'application-client-value (channel-presentation-replay presentation)))
+             (apply #'presentation-apply client (getf (rest event) :operation) (rest event)))
           (let ((viewport (fullscreen-terminal-ui-viewport client)))
             (test-assert (and (= 1 (clinedi:transcript-viewport-chunk-count viewport))
                               (search "web, search, skill, shodan"

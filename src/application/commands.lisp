@@ -642,40 +642,6 @@ combination."
     (t
      (application--control-choice value '(:on :off :status)))))
 
-(-> application--parse-control (string list) list)
-(defun application--parse-control (text choices)
-  "Parse one quoted slash-command action from TEXT into native CHOICES."
-  (let ((arguments (application-command--tokens text)))
-    (when arguments
-      (unless (= (length arguments) 1)
-        (error 'configuration-error :message "A control accepts one action."))
-      (let ((choice (find (first arguments) choices
-                          :test #'string-equal :key #'symbol-name)))
-        (unless choice
-          (error 'configuration-error
-                 :message (format nil "Expected ~{~(~A~)~^, ~}, not ~S." choices (first arguments))))
-        (list choice)))))
-
-(-> application--parse-boolean-control (string) list)
-(defun application--parse-boolean-control (text)
-  "Read a slash boolean mode without applying Lisp string coercion."
-  (application--parse-control text '(:on :off :status)))
-
-(-> application--parse-slynk-control (string) list)
-(defun application--parse-slynk-control (text)
-  "Read a slash Slynk action."
-  (application--parse-control text '(:start :stop :status)))
-
-(-> application--parse-mcp-control (string) list)
-(defun application--parse-mcp-control (text)
-  "Read a slash MCP action."
-  (application--parse-control text '(:refresh :reload :status)))
-
-(-> application--parse-permissions-control (string) list)
-(defun application--parse-permissions-control (text)
-  "Read a slash command-permission action."
-  (application--parse-control text '(:ask :auto :sandbox :full :list :clear)))
-
 (-> application-set-reasoning-traces (application boolean) null)
 (defun application-set-reasoning-traces (application enabled-p)
   "Persist and apply whether future reasoning summaries are visible."
@@ -1073,12 +1039,6 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
            (format nil "queued ~D skipped definition~:P for repair or removal" (length skips))))))))
   nil)
 
-(-> application--skipped-definitions-slash-arguments (string) list)
-(defun application--skipped-definitions-slash-arguments (text)
-  "Return the complete slash remainder TEXT as one optional direction string."
-  (when (plusp (length text))
-    (list text)))
-
 
 ;;;; -- Manual Compaction --
 
@@ -1105,19 +1065,6 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
   nil)
 
 
-;;;; -- Command Input --
-
-(-> application--command-remainder (string) string)
-(defun application--command-remainder (input)
-  "Return INPUT's trimmed text after its slash-command word."
-  (let ((space (position-if (lambda (character)
-                              (find character '(#\Space #\Tab)))
-                            input)))
-    (if space
-        (string-trim '(#\Space #\Tab) (subseq input space))
-        "")))
-
-
 ;;;; -- Session Goal Command --
 
 (-> application--goal-description (application) string)
@@ -1133,22 +1080,12 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
                 (getf goal :objective))
         "No session goal is set. Use (goal \"OBJECTIVE\") to set one.")))
 
-(-> application--goal-update-argument (string) (option string))
-(defun application--goal-update-argument (remainder)
-  "Return the objective after the slash-syntax update action, or NIL otherwise."
-  (let ((word (string-downcase remainder)))
-    (and (uiop:string-prefix-p "update" word)
-         (or (= (length word) (length "update"))
-             (find (char word (length "update")) '(#\Space #\Tab)))
-         (application--command-remainder remainder))))
-
-(-> application--goal-update (application string &key (:literal-p boolean)) boolean)
-(defun application--goal-update (application objective &key literal-p)
+(-> application--goal-update (application string) boolean)
+(defun application--goal-update (application objective)
   "Rewrite the current session goal's objective to OBJECTIVE in place.
 
 An active or paused goal keeps its status and creation time while its
 continuation budget restarts. A completed goal becomes active again.
-LITERAL-P permits command-shaped strings supplied as evaluated Lisp values.
 Return true only when the objective was rewritten."
   (let ((goal (application-goal application)))
     (cond
@@ -1165,13 +1102,6 @@ Return true only when the objective was rewritten."
        nil)
       ((zerop (length objective))
        (application-present application (application-failure-line "usage: (goal :update \"NEW-OBJECTIVE\")"))
-       nil)
-      ((and (not literal-p) (uiop:string-prefix-p "/" objective))
-       (application-present
-        application
-        (application-failure-line
-         (format nil "~S looks like a command, not an objective; usage: (goal :update \"NEW-OBJECTIVE\")"
-                 objective)))
        nil)
       (t
        (when (eq (getf goal :status) ':complete)
@@ -1296,7 +1226,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
              (application--start-goal-work application))
            (application-present application (application-failure-line "no paused goal to resume"))))
       ((eq request ':update)
-       (when (and (application--goal-update application (first arguments) :literal-p t)
+       (when (and (application--goal-update application (first arguments))
                   (application-goal application)
                   (eq (getf (application-goal application) :status) ':active))
          (application--start-goal-work application)))
@@ -1313,37 +1243,6 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
                  to inspect it and (goal :clear) to stop."
                 request))
        (application--start-goal-work application))))
-  nil)
-
-(-> application-goal--slash-arguments (string) list)
-(defun application-goal--slash-arguments (text)
-  "Parse goal controls and objective text only at the slash-command boundary."
-  (let* ((remainder (string-trim *application-command-whitespace* text))
-         (word      (string-downcase remainder))
-         (update    (application--goal-update-argument remainder))
-         (objective (or update remainder)))
-    (when (uiop:string-prefix-p "/" objective)
-      (error 'application-goal-error
-             :reason ':invalid-objective :request objective
-             :message "A slash-command goal objective must not begin with /."))
-    (cond
-      ((zerop (length remainder))
-       nil)
-      ((member word '("clear" "pause" "resume" "status") :test #'string=)
-       (list (intern (string-upcase word) '#:keyword)))
-      (update
-       (list ':update update))
-      (t
-       (list remainder)))))
-
-(-> application-goal-command (application string) null)
-(defun application-goal-command (application remainder)
-  "Apply a legacy slash goal request through the native goal interface."
-  (handler-case
-      (let ((arguments (application-goal--slash-arguments remainder)))
-        (application-goal-request application (first arguments) (rest arguments)))
-    (application-goal-error (condition)
-      (application-present application (princ-to-string condition))))
   nil)
 
 (-> application--generation-items (application) list)
@@ -1665,7 +1564,6 @@ searches every task directory."
                                 :usage        usage
                                 :empty-notice "no agents exist"))
 
-
 (-> application--prefill-call (application string string) null)
 (defun application--prefill-call (application operator argument)
   "Put (OPERATOR \"ARGUMENT\" \"\") in the input with the cursor in its empty string, for the person to finish."
@@ -1828,7 +1726,7 @@ searches every task directory."
                               application :start-reader-p nil :load-pending-p nil)))
              (invocation (or *application-command-presentation-invocation*
                              (application-operation--command-invocation
-                              (application-command-find "/cwd") (list location))))
+                              (application-command-find "cwd") (list location))))
              (input      (or (application-input-controller-active-command-input controller)
                              (command-message-input-create
                               (or *application-command-source-input*
@@ -2624,28 +2522,6 @@ The current value and its source sit in aligned columns of their own."
                     name)))))))
   nil)
 
-(-> application--parse-settings-control (string) list)
-(defun application--parse-settings-control (text)
-  "Retain slash settings text for parsing with the executing configuration."
-  (unless (zerop (length (string-trim '(#\Space #\Tab) text)))
-    (list text)))
-
-(-> application--settings-text-command (application (option string)) null)
-(defun application--settings-text-command (application text)
-  "Parse slash settings once using APPLICATION's schema and quoted token rules."
-  (let ((arguments (and text (application-command--tokens text))))
-    (unless (<= (length arguments) 2)
-      (error 'configuration-error :message "Usage: (settings), (settings :NAME), or (settings :NAME VALUE)."))
-    (destructuring-bind (&optional name (value nil value-supplied-p)) arguments
-      (if value-supplied-p
-          (let* ((configuration (application-configuration application))
-                 (setting       (configuration-setting
-                                 configuration (application--setting-name name))))
-            (application-settings-command
-             application name (setting-parse setting value configuration)))
-          (application-settings-command application name))))
-  nil)
-
 (-> application-settings-command (application &optional t t) null)
 (defun application-settings-command (application &optional name (value nil value-supplied-p))
   "Browse settings, show one, or set one, depending on the arguments."
@@ -2674,7 +2550,7 @@ The current value and its source sit in aligned columns of their own."
   nil)
 
 (define-application-command application--builtin-settings-command
-    (:name              "/settings"
+    (:name              "settings"
      :help-topic        :display
      :help-order        2
      :argument          "[NAME [VALUE]]"
@@ -2682,18 +2558,11 @@ The current value and its source sit in aligned columns of their own."
      :tip               "Change native values with `(settings :onboarding-p nil)` or `(settings :boot-screen-seconds 2)`; inspect one setting with `(settings :terminal-theme)`."
      :busy-behavior     :apply
      :terminal-behavior :exclusive-without-arguments
-     :callable          t
-     :slash-parser      application--parse-settings-control)
+     :callable          t)
     (application &optional name (value nil value-supplied-p))
-  (let ((invocation *application-command-presentation-invocation*))
-    (cond
-      ((and invocation
-            (eq (application-command-invocation-syntax invocation) ':slash))
-       (application--settings-text-command application name))
-      (value-supplied-p
-       (application-settings-command application name value))
-      (t
-       (application-settings-command application name))))
+  (if value-supplied-p
+      (application-settings-command application name value)
+      (application-settings-command application name))
   ':continue)
 
 (-> application-slynk-command (application &optional t) null)
@@ -2722,13 +2591,12 @@ The current value and its source sit in aligned columns of their own."
   nil)
 
 (define-application-command application--builtin-slynk-command
-    (:name              "/slynk"
+    (:name              "slynk"
      :description       "serve this image to sly"
      :tip               "Use `(slynk)` to start Slynk and show its port for M-x sly-connect, or `(slynk :stop)` to close it."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t
-     :slash-parser      application--parse-slynk-control
      :static-options    (:start :stop :status))
     (application &optional (action ':start))
   (application-slynk-command application action)
@@ -2785,7 +2653,7 @@ The current value and its source sit in aligned columns of their own."
 ;;;; -- Built-in Interactive Commands --
 
 (define-application-command application--builtin-help-command
-    (:name              "/help"
+    (:name              "help"
      :argument          "[TOPIC]"
      :description       "browse help or look up a command"
      :tip               "Use `(help :workspace)` for a section or `(help 'open)` for a command."
@@ -2799,7 +2667,7 @@ The current value and its source sit in aligned columns of their own."
   ':continue)
 
 (define-application-command application--builtin-new-command
-    (:name              "/new"
+    (:name              "new"
      :help-topic        :channels
      :help-order        2
      :argument          nil
@@ -2824,9 +2692,9 @@ The current value and its source sit in aligned columns of their own."
                  (getf (rest (world-server-open
                               (application-world-server application)
                               (append
-                               (list :directory    (namestring (config :working-directory configuration))
-                                     :new-p        t
-                                     :switch-p     t)
+                               (list :directory (namestring (config :working-directory configuration))
+                                     :new-p     t
+                                     :switch-p  t)
                                presentation)))
                        :session-id))
                (display (conversation-identifier-display identifier)))
@@ -2921,7 +2789,7 @@ show."
           nil))))
 
 (define-application-command application--builtin-open-command
-    (:name              "/open"
+    (:name              "open"
      :help-topic        :channels
      :help-order        1
      :argument          "[TARGET]"
@@ -2966,7 +2834,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-rename-command
-    (:name              "/rename"
+    (:name              "rename"
      :help-topic        :channels
      :help-order        7
      :argument          "[[WHO] NAME]"
@@ -3007,7 +2875,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-channel-id-command
-    (:name              "/channel-id"
+    (:name              "channel-id"
      :help-topic        :channels
      :help-order        8
      :argument          nil
@@ -3025,7 +2893,7 @@ show."
     (values ':continue identifier)))
 
 (define-application-command application--builtin-tell-command
-    (:name              "/tell"
+    (:name              "tell"
      :help-topic        :channels
      :help-order        3
      :argument          "[CHANNEL MESSAGE]"
@@ -3063,7 +2931,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-history-command
-    (:name              "/history"
+    (:name              "history"
      :help-topic        :conversations
      :help-order        1
      :argument          nil
@@ -3077,7 +2945,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-working-directory-command
-    (:name              "/cwd"
+    (:name              "cwd"
      :help-topic        :workspace
      :help-order        1
      :argument          "[PATH]"
@@ -3090,26 +2958,13 @@ show."
   (application-working-directory-command application pathname)
   ':continue)
 
-(-> application-authentication--slash-arguments (string) list)
-(defun application-authentication--slash-arguments (text)
-  "Parse a provider identifier and optional textual authentication method."
-  (let ((arguments (application-command--tokens text)))
-    (when (> (length arguments) 2)
-      (error 'authentication-error
-             :message "Auth accepts a provider and optional method."))
-    (if (rest arguments)
-        (list (first arguments)
-              (provider--parse-authentication-method (second arguments)))
-        arguments)))
-
 (define-application-command application--builtin-authentication-command
-    (:name              "/auth"
+    (:name              "auth"
      :help-topic        :models
      :help-order        1
      :argument          "[PROVIDER] [METHOD]"
      :description       "pick and authenticate a registered provider"
      :tip               "Use `(auth \"chatgpt\" :device-code)` for device authentication, or `:browser`."
-     :slash-parser      application-authentication--slash-arguments
      :busy-behavior     :hold
      :terminal-behavior :exclusive
      :callable          t)
@@ -3124,7 +2979,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-model-command
-    (:name              "/model"
+    (:name              "model"
      :help-topic        :models
      :help-order        2
      :argument          "[MODEL] [:provider PROVIDER]"
@@ -3159,7 +3014,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-models-command
-    (:name              "/models"
+    (:name              "models"
      :help-topic        :models
      :help-order        3
      :argument          "[:provider PROVIDER]"
@@ -3173,7 +3028,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-effort-command
-    (:name              "/effort"
+    (:name              "effort"
      :help-topic        :models
      :help-order        4
      :argument          "[LEVEL]"
@@ -3197,7 +3052,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
-    (:name              "/ste"
+    (:name              "ste"
      :help-topic        :display
      :help-order        5
      :description       "use Simple Technical English for replies"
@@ -3205,14 +3060,13 @@ show."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t
-     :slash-parser      application--parse-boolean-control
      :static-options    (t nil))
     (application &optional (mode ':status))
   (application-simple-technical-english-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
-    (:name              "/hurry-up"
+    (:name              "hurry-up"
      :help-topic        :models
      :help-order        6
      :description       "show or change hurry-up mode"
@@ -3220,14 +3074,13 @@ show."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t
-     :slash-parser      application--parse-boolean-control
      :static-options    (t nil))
     (application &optional (mode ':status))
   (application-hurry-up-command application mode)
   ':continue)
 
 (define-application-command application--builtin-permissions-command
-    (:name              "/permissions"
+    (:name              "permissions"
      :help-topic        :workspace
      :help-order        2
      :description       "choose and remember command access for this channel"
@@ -3235,7 +3088,6 @@ show."
      :busy-behavior     :apply-interactive
      :terminal-behavior :exclusive-without-arguments
      :callable          t
-     :slash-parser      application--parse-permissions-control
      :static-options    (:ask :auto :sandbox :full :list :clear))
     (application &optional (choice nil choice-supplied-p))
   (when choice-supplied-p
@@ -3258,7 +3110,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-goal-command
-    (:name              "/goal"
+    (:name              "goal"
      :help-topic        :conversations
      :help-order        2
      :argument          "[OBJECTIVE]"
@@ -3266,14 +3118,13 @@ show."
      :tip               "Set a string objective; use `(goal :pause)`, `(goal :resume)`, or `(goal :clear)` for control."
      :busy-behavior     :inspect
      :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application-goal--slash-arguments)
+     :callable          t)
     (application &optional request &rest arguments)
   (application-goal-request application request arguments)
   ':continue)
 
 (define-application-command application--builtin-agenda-command
-    (:name              "/agenda"
+    (:name              "agenda"
      :help-topic        :workspace
      :help-order        3
      :argument          nil
@@ -3287,7 +3138,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-papercuts-command
-    (:name              "/papercuts"
+    (:name              "papercuts"
      :help-topic        :workspace
      :help-order        6
      :argument          nil
@@ -3301,7 +3152,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-papercut-command
-    (:name              "/papercut"
+    (:name              "papercut"
      :help-topic        :workspace
      :help-order        7
      :argument          "[ID]"
@@ -3321,7 +3172,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-papercut-close-command
-    (:name              "/papercut-close"
+    (:name              "papercut-close"
      :help-topic        :workspace
      :help-order        8
      :argument          "[ID]"
@@ -3341,7 +3192,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-skills-command
-    (:name              "/skills"
+    (:name              "skills"
      :help-topic        :workspace
      :help-order        4
      :argument          nil
@@ -3434,7 +3285,7 @@ show."
                             (if replay (namestring replay) "unavailable for legacy generation")))))))))
 
 (define-application-command application--builtin-mcp-command
-    (:name              "/mcp"
+    (:name              "mcp"
      :help-topic        :workspace
      :help-order        5
      :description       "show or refresh configured MCP servers"
@@ -3442,7 +3293,6 @@ show."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t
-     :slash-parser      application--parse-mcp-control
      :static-options    (:refresh :reload))
     (application &optional (mode ':status))
   (let ((mode          (application--control-choice mode '(:status :refresh :reload)))
@@ -3474,7 +3324,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-checkpoint-command
-    (:name              "/checkpoint"
+    (:name              "checkpoint"
      :help-topic        :runtime
      :help-order        3
      :argument          "[:allow-dirty t]"
@@ -3488,7 +3338,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-checkpoint-cancel-command
-    (:name              "/checkpoint-cancel"
+    (:name              "checkpoint-cancel"
      :help-topic        :runtime
      :help-order        4
      :argument          nil
@@ -3508,7 +3358,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-generations-command
-    (:name              "/generations"
+    (:name              "generations"
      :help-topic        :runtime
      :help-order        5
      :argument          nil
@@ -3524,7 +3374,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-rollback-command
-    (:name              "/rollback"
+    (:name              "rollback"
      :help-topic        :runtime
      :help-order        6
      :argument          "[ID]"
@@ -3550,7 +3400,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-info-command
-    (:name              "/info"
+    (:name              "info"
      :help-topic        :runtime
      :help-order        1
      :argument          nil
@@ -3564,10 +3414,10 @@ show."
   ':continue)
 
 (define-application-command application--builtin-status-command
-    (:name              "/status"
+    (:name              "status"
      :help-topic        :runtime
      :help-order        2
-     :aliases           ("/usage")
+     :aliases           ("usage")
      :argument          nil
      :description       "show usage and rate limits"
      :tip               "shows the model, context usage, and subscription rate limits."
@@ -3579,7 +3429,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-update-command
-    (:name              "/update"
+    (:name              "update"
      :help-topic        :runtime
      :help-order        7
      :argument          nil
@@ -3593,7 +3443,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-context-command
-    (:name              "/context"
+    (:name              "context"
      :help-topic        :conversations
      :help-order        3
      :argument          nil
@@ -3607,7 +3457,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-compact-command
-    (:name              "/compact"
+    (:name              "compact"
      :help-topic        :conversations
      :help-order        4
      :argument          nil
@@ -3621,7 +3471,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-fix-skipped-definitions-command
-    (:name              "/fix-skipped-definitions"
+    (:name              "fix-skipped-definitions"
      :help-topic        :runtime
      :help-order        8
      :argument          "[comment]"
@@ -3629,14 +3479,13 @@ show."
      :tip               "Use `(fix-skipped-definitions \"Drop temporary development overrides.\")` to direct which skipped definitions to rebuild or drop before committing."
      :busy-behavior     :hold
      :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--skipped-definitions-slash-arguments)
+     :callable          t)
     (application &optional (comment ""))
   (application-fix-skipped-definitions application comment)
   ':continue)
 
 (define-application-command application--builtin-detach-command
-    (:name              "/detach"
+    (:name              "detach"
      :help-topic        :runtime
      :help-order        15
      :argument          nil
@@ -3659,7 +3508,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-stop-server-command
-    (:name              "/stop-server"
+    (:name              "stop-server"
      :argument          nil
      :description       "stop the current world server and its channels"
      :tip               "stops work in every channel and closes the world's clients."
@@ -3674,7 +3523,7 @@ show."
   ':continue)
 
 (define-application-command application--builtin-exit-command
-    (:name              "/exit"
+    (:name              "exit"
      :help-topic        :runtime
      :help-order        16
      :argument          nil

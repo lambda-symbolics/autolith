@@ -43,34 +43,19 @@
     operation))
 
 (-> application-client-command-invocation
-    (application-command string) application-command-invocation)
-(defun application-client-command-invocation (command input)
-  "Decode structured client INPUT as argument text for the selected COMMAND."
-  (let* ((name      (application-command-name command))
-         (remainder (string-trim *application-command-whitespace* input))
-         (tokens    (unless (application-command-slash-parser command)
-                      (application-command--tokens remainder)))
-         (arguments (application-command--slash-arguments command tokens remainder))
-         (argument  (first (if (application-command-callable-p command) arguments tokens))))
-    (make-instance 'application-command-invocation
-                   :input                   (application-command--display-name command)
-                   :name                    name
-                   :remainder               remainder
-                   :argument                (and (stringp argument) argument)
-                   :arguments               arguments
-                   :supplied-argument-count (length arguments)
-                   :command                 command)))
+    (application-command list) application-command-invocation)
+(defun application-client-command-invocation (command arguments)
+  "Capture native ARGUMENTS for COMMAND without parsing or printing their values."
+  (application-operation--command-invocation command arguments))
 
 (-> application-client-operation--invoke-presented
     (application-operation application t &key (:context (option tool-context))) t)
 (defun application-client-operation--invoke-presented (operation application arguments &key context)
-  "Return command presentation text or the native tool result."
+  "Return the native operation result while capturing command presentation."
   (let* ((*application-command-presentation-capture-p* t)
          (*application-command-presentation-text*      nil)
          (result                                       (application-operation-invoke operation application arguments :context context)))
-    (if (typep operation 'application-command-operation)
-        (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
-        result)))
+    result))
 
 (-> application-client-operation-invoke
     (application application-operation t) (values t (option string) &optional))
@@ -127,7 +112,7 @@ policy, including safe-boundary scheduling. A scheduled reply is acceptance only
 (defun application-client-permission-modes ()
   "Return supported channel mode IDs in the permissions command's option order."
   (loop for option in (application-command-static-options
-                       (application-command-find "/permissions"))
+                       (application-command-find "permissions"))
         for mode = (case option
                      (:ask
                       ':ask)
@@ -140,16 +125,17 @@ policy, including safe-boundary scheduling. A scheduled reply is acceptance only
         when mode
         collect mode))
 
-(-> application-client-permission-input (keyword) string)
+(-> application-client-permission-input (keyword) list)
 (defun application-client-permission-input (mode)
-  "Return MODE's command input only when the registered command supports it."
+  "Return native command arguments for a supported channel permission MODE."
   (unless (member mode (application-client-permission-modes))
     (error 'application-client-operation-unavailable))
-  (ecase mode (:ask
-               "ask")
-              (:auto
-               "auto")
-              (:sandboxed
-               "sandbox")
-              (:full-access
-               "full")))
+  (list (ecase mode
+          (:ask
+           ':ask)
+          (:auto
+           ':auto)
+          (:sandboxed
+           ':sandbox)
+          (:full-access
+           ':full))))

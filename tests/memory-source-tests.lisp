@@ -771,10 +771,6 @@
                          "(forget) forgets and names the memories that relied on it"))
           (test-assert (null (memory-find configuration (memory-identifier deploy)))
                        "the forgotten memory is gone")
-          (test-assert (and (equal (application--memories-slash-arguments " deploy prod ")
-                                   '("deploy prod"))
-                            (null (application--memories-slash-arguments "  ")))
-                       "/memories takes the rest of the line as one query")
          (test-assert (string= (memory-identifier release)
                                (memory-identifier
                                 (memory-resolve configuration "ef003333-0000-4000-8000-000000000000")))

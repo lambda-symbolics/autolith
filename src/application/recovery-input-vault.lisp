@@ -1131,7 +1131,7 @@ The caller must hold CONTROLLER's lock."
 ;;;; -- Built-in Recovery Vault Commands --
 
 (define-application-command application--builtin-vault-command
-    (:name              "/vault"
+    (:name              "vault"
      :help-topic        :runtime
      :help-order        9
      :argument          nil
@@ -1145,7 +1145,7 @@ The caller must hold CONTROLLER's lock."
   ':continue)
 
 (define-application-command application--builtin-vault-restore-command
-    (:name              "/vault-restore"
+    (:name              "vault-restore"
      :help-topic        :runtime
      :help-order        11
      :argument          nil
@@ -1172,7 +1172,7 @@ The caller must hold CONTROLLER's lock."
   ':continue)
 
 (define-application-command application--builtin-vault-discard-command
-    (:name              "/vault-discard"
+    (:name              "vault-discard"
      :help-topic        :runtime
      :help-order        12
      :argument          nil

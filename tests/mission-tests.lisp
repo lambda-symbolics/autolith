@@ -853,7 +853,7 @@
   (with-test-configuration (configuration)
     (let* ((application (mission-test--application configuration))
            (registry    (application-tool-registry application)))
-      (test-assert (application-command-find "/mission") "mission command participates in operation lookup")
+      (test-assert (application-command-find "mission") "mission command participates in operation lookup")
       (let ((specification (mission-test--specification)))
         (setf (getf specification :objective) "Keep Case, quotes \" and  spaces")
         (test-call-with-function-replacements

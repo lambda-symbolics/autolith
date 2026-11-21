@@ -131,21 +131,21 @@
          (task-tests--publish-terminal
           job :completed
           (acp-extension-job-tests--result job (conversation-pathname conversation)))
-         (let* ((response (application-client-job-transcript
-                           (acp-session-test--application session)
-                           (agentcomms:json-object
-                            "jobId" (job-identifier job) "offset" 0 "limit" 4096)))
+         (let* ((response (acp-extension-value
+                           (apply #'application-client-job-transcript (acp-session-test--application session)
+                                  (acp-extension--arguments :job-transcript
+                                   (agentcomms:json-object "jobId" (job-identifier job) "offset" 0 "limit" 4096)))))
                 (content  (agentcomms:json-get response "content"))
                 (total    (agentcomms:json-get response "total")))
            (setf full content)
            (test-assert (plusp total) "completed child transcript has content")
            (test-assert (search needle content) "transcript contains persisted child content")
            (test-assert (= total (length content)) "full transcript reports its length"))
-         (let* ((structured (application-client-job-transcript
-                              (acp-session-test--application session)
-                              (agentcomms:json-object
-                               "jobId" (job-identifier job) "output" "structured"
-                               "offset" 0 "limit" 20)))
+         (let* ((structured (acp-extension-value
+                             (apply #'application-client-job-transcript (acp-session-test--application session)
+                                    (acp-extension--arguments :job-transcript
+                                     (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "offset" 0
+                                                             "limit" 20)))))
                 (updates    (agentcomms:json-get structured "updates")))
            (test-assert (vectorp updates)
                         "structured transcript returns an update vector")
@@ -156,17 +156,17 @@
                         "structured transcript uses the canonical ACP update kind"))
          (let* ((page-size     7)
                 (first-page
-                  (application-client-job-transcript
-                   (acp-session-test--application session)
-                   (agentcomms:json-object
-                    "jobId" (job-identifier job) "offset" 0 "limit" page-size)))
+                  (acp-extension-value
+                   (apply #'application-client-job-transcript (acp-session-test--application session)
+                          (acp-extension--arguments :job-transcript
+                           (agentcomms:json-object "jobId" (job-identifier job) "offset" 0 "limit" page-size)))))
                 (first-content (agentcomms:json-get first-page "content"))
                 (next          (agentcomms:json-get first-page "nextOffset"))
                 (second-page
-                  (application-client-job-transcript
-                   (acp-session-test--application session)
-                   (agentcomms:json-object
-                    "jobId" (job-identifier job) "offset" next "limit" page-size))))
+                  (acp-extension-value
+                   (apply #'application-client-job-transcript (acp-session-test--application session)
+                          (acp-extension--arguments :job-transcript
+                           (agentcomms:json-object "jobId" (job-identifier job) "offset" next "limit" page-size))))))
            (test-assert (string= first-content (subseq full 0 page-size))
                         "transcript first page is character bounded")
            (test-assert (= next page-size) "transcript advances by returned characters")
@@ -174,9 +174,10 @@
                                  (subseq full page-size
                                          (min (length full) (* 2 page-size))))
                         "transcript second page starts at nextOffset"))
-         (let* ((whole     (application-client-job-transcript
-                            (acp-session-test--application session) (agentcomms:json-object "jobId" (job-identifier job)
-                                                                     "output" "structured")))
+         (let* ((whole     (acp-extension-value
+                            (apply #'application-client-job-transcript (acp-session-test--application session)
+                                   (acp-extension--arguments :job-transcript
+                                    (agentcomms:json-object "jobId" (job-identifier job) "output" "structured")))))
                 (updates   (agentcomms:json-get whole "updates"))
                 (collected nil)
                 (offset    0))
@@ -230,48 +231,56 @@
              (test-assert (and (equal "done" (gethash "rawOutput" result))
                                (plusp (length (gethash "content" result))))
                           "structured tool results include their visible output"))
-           (let* ((prefix (application-client-job-transcript
-                           application (agentcomms:json-object "jobId" (job-identifier job)
-                                                              "output" "structured" "limit" 5)))
+           (let* ((prefix (acp-extension-value
+                           (apply #'application-client-job-transcript application
+                                  (acp-extension--arguments :job-transcript
+                                   (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "limit" 5)))))
                   (*application-client-job-structured-response-limit*
                     (length (utf8-string-to-octets
                              (json-encode (acp-extension-result ':ok :value prefix))))))
-             (let ((page (application-client-job-transcript
-                          application (agentcomms:json-object "jobId" (job-identifier job)
-                                                             "output" "structured" "limit" 20))))
+             (let ((page (acp-extension-value
+                          (apply #'application-client-job-transcript application
+                                 (acp-extension--arguments :job-transcript
+                                  (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "limit" 20))))))
                (test-assert (and (= 5 (length (gethash "updates" page)))
                                  (= 5 (gethash "nextOffset" page)))
                             "byte admission stops before a giant update rather than skipping to later small updates")))
            (let ((*application-client-job-structured-response-limit* 512))
              (test-assert
               (handler-case
-                  (progn (application-client-job-transcript
-                          (acp-session-test--application session) (agentcomms:json-object "jobId" (job-identifier job)
-                                                                   "output" "structured" "offset" 5))
-                         nil)
-                (agentcomms:acp-error () t))
+               (progn
+                (acp-extension-value
+                 (apply #'application-client-job-transcript (acp-session-test--application session)
+                        (acp-extension--arguments :job-transcript
+                         (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "offset"
+                                                 5))))
+                nil)
+               (agentcomms:acp-error nil t) (application-client-unavailable nil t))
               "a giant multibyte update fails explicitly at its own offset")
-             (let ((page (application-client-job-transcript
-                          (acp-session-test--application session) (agentcomms:json-object "jobId" (job-identifier job)
-                                                                   "output" "structured" "limit" 1))))
+             (let ((page (acp-extension-value
+                          (apply #'application-client-job-transcript (acp-session-test--application session)
+                                 (acp-extension--arguments :job-transcript
+                                  (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "limit" 1))))))
                (test-assert (<= (length (utf8-string-to-octets
                                          (json-encode (acp-extension-result ':ok :value page)))) 512)
                             "the bound includes the encoded typed response envelope")))
            (with-open-file (stream (conversation-log-pathname conversation)
                                    :direction ':output :if-exists ':append)
              (write-string "(" stream))
-           (let ((page (application-client-job-transcript
-                        (acp-session-test--application session) (agentcomms:json-object "jobId" (job-identifier job)
-                                                                 "output" "structured"))))
+           (let ((page (acp-extension-value
+                        (apply #'application-client-job-transcript (acp-session-test--application session)
+                               (acp-extension--arguments :job-transcript
+                                (agentcomms:json-object "jobId" (job-identifier job) "output" "structured"))))))
              (test-assert (string= (json-encode updates) (json-encode (gethash "updates" page)))
                           "a torn tail preserves the last complete snapshot")))
          (let ((invalid nil))
            (handler-case
-               (application-client-job-transcript
-                (acp-session-test--application session)
-                (agentcomms:json-object
-                 "jobId" (job-identifier job) "output" "structured" "offset" -1))
-             (agentcomms:acp-error () (setf invalid t)))
+            (acp-extension-value
+             (apply #'application-client-job-transcript (acp-session-test--application session)
+                    (acp-extension--arguments :job-transcript
+                     (agentcomms:json-object "jobId" (job-identifier job) "output" "structured" "offset"
+                                             -1))))
+            (agentcomms:acp-error nil (setf invalid t)) (application-client-unavailable nil (setf invalid t)))
            (test-assert invalid "negative structured offsets are rejected"))
         nil)))))
 
@@ -294,9 +303,11 @@
               (constructor  (symbol-function 'agentcomms:acp-text-content)))
          (labels ((query (output offset limit)
                     "Read the owned transcript through its public endpoint."
-                    (application-client-job-transcript
-                     application (agentcomms:json-object "jobId" (job-identifier job)
-                                                        "output" output "offset" offset "limit" limit)))
+                    (acp-extension-value
+                     (apply #'application-client-job-transcript application
+                            (acp-extension--arguments :job-transcript
+                             (agentcomms:json-object "jobId" (job-identifier job) "output" output "offset" offset
+                                                     "limit" limit)))))
 
                   (wire-size (page)
                     "Measure the complete typed success response."
@@ -342,7 +353,7 @@
                   (let ((page (query "structured" (+ total 10) 2)))
                     (test-assert (and (zerop constructed) (= total (gethash "offset" page))
                                       (eq t (gethash "complete" page))
-                                      (eq ':null (gethash "nextOffset" page)))
+                                      (null (gethash "nextOffset" page)))
                                  "off-end structured pages construct nothing"))
                   (let* ((text-total (* total (+ 7 (length body))))
                          (page       (query "text" (- text-total 3) 2)))
@@ -370,14 +381,14 @@
                                      "terminal and nonterminal escaped multibyte pages admit the exact envelope bound"))
                       (decf *application-client-job-structured-response-limit*)
                       (test-assert
-                       (handler-case (progn (query "structured" offset 200) nil)
-                         (agentcomms:acp-error () t))
+                       (handler-case (progn (query "structured" offset 200) nil) (agentcomms:acp-error nil t)
+                        (application-client-unavailable nil t))
                        "one byte below either exact envelope rejects the first update")))))
               (let ((*application-client-job-structured-response-limit* 1))
                 (setf constructed 0)
                 (test-assert
-                 (handler-case (progn (query "structured" 0 200) nil)
-                   (agentcomms:acp-error () t))
+                 (handler-case (progn (query "structured" 0 200) nil) (agentcomms:acp-error nil t)
+                  (application-client-unavailable nil t))
                  "a failing array lower bound retains the original oversized-first rejection")
                 (test-assert (= 1 constructed) "lower-bound failure stops constructors immediately"))
               ;; Replay accepts durable sequence gaps and ignores an incomplete last form.
@@ -414,17 +425,20 @@
               (foreign-agent    (task-tests--primary-agent configuration "foreign-control"))
               (foreign          (task-tests--register-job orchestrator foreign-agent definition
                                                           :name "foreign-control"))
-              (sent             (application-client-job-send
-                                 (acp-session-test--application session)
-                                 (agentcomms:json-object
-                                  "jobId" (job-identifier job) "text" "steer this job")))
-              (cancelled        (application-client-job-cancel
-                                 (acp-session-test--application session)
-                                 (agentcomms:json-object "jobId" (job-identifier job))))
+              (sent             (acp-extension-value
+                                 (apply #'application-client-job-send (acp-session-test--application session)
+                                        (acp-extension--arguments :job-send
+                                         (agentcomms:json-object "jobId" (job-identifier job) "text" "steer this job")))))
+              (cancelled        (acp-extension-value
+                                 (apply #'application-client-job-cancel (acp-session-test--application session)
+                                        (acp-extension--arguments :job-cancel
+                                         (agentcomms:json-object "jobId" (job-identifier job))))))
               (foreign-rejected nil))
          (handler-case
-             (application-client-job-cancel
-              (acp-session-test--application session) (agentcomms:json-object "jobId" (job-identifier foreign)))
+             (acp-extension-value
+              (apply #'application-client-job-cancel (acp-session-test--application session)
+                     (acp-extension--arguments :job-cancel
+                      (agentcomms:json-object "jobId" (job-identifier foreign)))))
            (task-error () (setf foreign-rejected t)))
          (test-assert (agentcomms:json-get sent "accepted")
                       "owned live job accepts steering")
@@ -468,7 +482,9 @@
                  for result = (acp-extension-job-tests--result job (conversation-pathname conversation))
                  do (setf (getf result :status) status)
                     (snapshot-write result-path result)
-                    (let ((row (application-client-job (acp-session-test--application session) (agentcomms:json-object "jobId" identifier))))
+                    (let ((row (acp-extension-value
+                                (apply #'application-client-job (acp-session-test--application session)
+                                       (acp-extension--arguments :job (agentcomms:json-object "jobId" identifier))))))
                       (test-assert (string= identifier (agentcomms:json-get row "id"))
                                    "durable result is projected by job detail")
                       (test-assert (string= expected (agentcomms:json-get row "state"))
@@ -486,7 +502,9 @@
                   (getf result :artifact-path) "declared-artifact")
             (ensure-directories-exist result-path)
             (snapshot-write result-path result)
-            (let* ((row    (application-client-job application (agentcomms:json-object "jobId" identifier)))
+            (let* ((row    (acp-extension-value
+                            (apply #'application-client-job application
+                                   (acp-extension--arguments :job (agentcomms:json-object "jobId" identifier)))))
                    (native (tool-execute
                             (tool-registry-find registry "job" "get")
                             (make-instance 'tool-context :configuration configuration
@@ -505,8 +523,10 @@
                                 (string= (namestring result-path)
                                          (getf (getf (getf record :result) :artifact) :path)))
                            "Native inspection uses stored identity, terminal status and actual artifact pathname")))
-           (let ((transcript (application-client-job-transcript
-                              (acp-session-test--application session) (agentcomms:json-object "jobId" identifier "offset" 0 "limit" 4096))))
+           (let ((transcript (acp-extension-value
+                              (apply #'application-client-job-transcript (acp-session-test--application session)
+                                     (acp-extension--arguments :job-transcript
+                                      (agentcomms:json-object "jobId" identifier "offset" 0 "limit" 4096))))))
              (test-assert (search needle (agentcomms:json-get transcript "content"))
                           "durable result exposes its conversation transcript")))))))
   nil)

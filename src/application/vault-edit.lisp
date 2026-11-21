@@ -225,7 +225,7 @@ The live queue, active work and already consumed steering are not edited."
   value)
 
 (define-application-command application--builtin-vault-store-command
-    (:name              "/vault-store"
+    (:name              "vault-store"
      :argument          nil
      :description       "move queued work and unconsumed steering into the vault immediately"
      :tip               "parks queued input immediately, even during an active turn; edit it with `(setf (vault-contents 0) '(:message \"new task\"))`."

@@ -144,7 +144,7 @@
                  (declare (ignore candidate identifier mode))
                  (funcall attached-function)
                  (when (eq phase ':primary-error) (error cause))
-                  exit))
+                 exit))
          (list 'world-terminal-client-screen-release
                (lambda (candidate)
                  (declare (ignore candidate))
@@ -178,7 +178,7 @@
                  (and success relayed-p (eq relayed exit)
                       (= (length (getf metadata :cleanup-failures)) 2)
                       (not (search "private" (write-to-string metadata))))
-                  "exit and detach reach relay exit unchanged with class-only diagnostics")))
+                 "exit and detach reach relay exit unchanged with class-only diagnostics")))
           (test-assert (equal (reverse attempts) '("client-screen" "sidebar"))
            "each shared-screen owner cleanup stage is attempted independently"))))))
   nil)
@@ -194,7 +194,7 @@
               (view           (channel-view-create
                                configuration (image-daemon:daemon-runtime-identifier session) screen))
               (cause          (make-condition 'world-terminal-error :operation ':attach
-                                                                :message   "Injected setup failure."))
+                                                                :message       "Injected setup failure."))
               (cleanup-cause  (make-condition 'simple-error :format-control "Injected cleanup failure."))
               (start-terminal (symbol-function 'terminal-start))
               (stop-ui        (symbol-function 'terminal-ui-stop))
@@ -334,7 +334,7 @@
                                       (if answer-p
                                           (image-daemon:daemon-packet-string '(:reply :id 1 :entries ("older"))) "")))
              (connection (make-instance 'world-terminal-client-connection :socket nil
-                                        :stream                               (make-string-input-stream wire)))
+                                        :stream                                   (make-string-input-stream wire)))
              (reader     nil))
         (setf (channel-subscription-connection view) connection)
         (channel-view-apply view ':history :entries '("recent") :offset 1 :paged-p t)
@@ -375,7 +375,7 @@
   (dolist (large-p '(nil t))
     (let* ((view                             (make-instance 'channel-view))
            (connection                       (make-instance 'world-terminal-client-connection :socket nil
-                                                            :stream                               (make-string-output-stream)))
+                                                            :stream                                   (make-string-output-stream)))
            (*channel-view-event-count-limit* 2)
            (*channel-view-event-byte-limit*  1024))
       (setf (channel-subscription-connection view) connection)
@@ -400,7 +400,7 @@
   "A goodbye waiting behind a stalled writer cannot prevent retiring the view's connection."
   (let* ((view       (make-instance 'channel-view))
          (connection (make-instance 'world-terminal-client-connection :socket nil
-                                    :stream                               (make-string-output-stream)))
+                                    :stream                                   (make-string-output-stream)))
          (gate       (sb-thread:make-semaphore))
          (started    (sb-thread:make-semaphore))
          (writer     nil))
@@ -440,9 +440,9 @@
                                                    (write-string (image-daemon:daemon-packet-string '(:ui :operation :replayed)) output))
                                                  (write-string (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t)) output)))
              (connection                       (make-instance 'world-terminal-client-connection :socket nil
-                                                              :stream                               (make-string-input-stream wire)
-                                                              :attached                             (list :attached :sequence 0 :record-sequence 0
-                                                                                                          :presentation-replay-p (not (eq mode ':old)))))
+                                                              :stream                                   (make-string-input-stream wire)
+                                                              :attached                                 (list :attached :sequence 0 :record-sequence 0
+                                                                                                              :presentation-replay-p (not (eq mode ':old)))))
              (*channel-view-event-count-limit* 2))
         (unwind-protect
              (progn
@@ -609,7 +609,7 @@
                       (declare (ignore fields))
                       (test-assert (> (length events) 1) "A durable page partitions into bounded transport batches.")
                       (test-assert (every (lambda (event)
-                                            (< (length (image-daemon:daemon-packet-string (client-portable event))) 8192))
+                                             (< (length (image-daemon:daemon-packet-string (application-client-value event))) 8192))
                                           events)
                                    "Every durable page batch fits the actual packet serializer."))
                    (let ((before (conversation-next-sequence conversation)))

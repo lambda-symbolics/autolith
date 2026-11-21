@@ -24,17 +24,20 @@
        (lambda (service client)
          (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
                 (session     (acp-service--session service identifier))
-                (first       (application-client-conversations
-                              (acp-session-test--application session) (agentcomms:json-object "limit" 2)))
+                (first       (acp-extension-value
+                              (apply #'application-client-conversations (acp-session-test--application session)
+                                     (acp-extension--arguments :conversations (agentcomms:json-object "limit" 2)))))
                 (first-items (gethash "items" first))
                 (cursor      (gethash "nextCursor" first))
-                (second      (application-client-conversations
-                              (acp-session-test--application session) (agentcomms:json-object "cursor" cursor "limit" 2)))
-                (filtered    (application-client-conversations
-                              (acp-session-test--application session)
-                              (agentcomms:json-object
-                               "cwd" (namestring (config :working-directory configuration))
-                               "limit" 10))))
+                (second      (acp-extension-value
+                              (apply #'application-client-conversations (acp-session-test--application session)
+                                     (acp-extension--arguments :conversations
+                                      (agentcomms:json-object "cursor" cursor "limit" 2)))))
+                (filtered    (acp-extension-value
+                              (apply #'application-client-conversations (acp-session-test--application session)
+                                     (acp-extension--arguments :conversations
+                                      (agentcomms:json-object "cwd" (namestring (config :working-directory configuration))
+                                                              "limit" 10))))))
            (test-assert (= 2 (length first-items)) "first conversation page is bounded")
            (test-assert (stringp cursor) "non-final conversation page has a cursor")
            (test-assert (plusp (length (gethash "items" second)))
@@ -64,8 +67,10 @@
                                (agentcomms:json-object "cursor" "not-an-integer")))
              (let ((rejected nil))
                (handler-case
-                   (application-client-conversations (acp-session-test--application session) params)
-                 (agentcomms:acp-method-error () (setf rejected t))
-                 (agentcomms:acp-error () (setf rejected t)))
+                (acp-extension-value
+                 (apply #'application-client-conversations (acp-session-test--application session)
+                        (acp-extension--arguments :conversations params)))
+                (agentcomms:acp-method-error nil (setf rejected t)) (agentcomms:acp-error nil (setf rejected t))
+                (application-client-unavailable nil (setf rejected t)))
                (test-assert rejected "invalid conversation paging parameters are rejected")))))))
   nil)

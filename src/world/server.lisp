@@ -288,13 +288,13 @@ TOKEN and CREATED-AT name the endpoint the client that started this process
 waits for; without them the endpoint gets fresh ones. The process services,
 the management REPL and Slynk, start with the server. Pristine and retained
 images use their own endpoint namespace."
-  (let* ((pristine-p (equal *world-image-selection* "pristine"))
-         (failures   (if *checkpoint-boot-generation*
-                         (application--prepare-process configuration
-                                                       :pristine-p pristine-p
-                                                       :image-replay-failures nil)
-                         (application--prepare-process configuration
-                                                       :pristine-p pristine-p)))
+  (let* ((pristine-p   (equal *world-image-selection* "pristine"))
+         (failures     (if *checkpoint-boot-generation*
+                           (application--prepare-process configuration
+                                                         :pristine-p            pristine-p
+                                                         :image-replay-failures nil)
+                           (application--prepare-process configuration
+                                                         :pristine-p pristine-p)))
          (bootstrapped (with-extension-registry-transaction
                          (application--load-extension-configuration
                           configuration :pristine-p pristine-p)
@@ -548,7 +548,7 @@ channel that cannot be served keeps its message waiting."
                                                           (channel-workspace
                                                            channel)
                                                           :arguments
-                                                           (list :switch-p t))))
+                                                          (list :switch-p t))))
                             (error (condition)
                                    (format *error-output*
                                            "~&World server could not serve channel ~A for its message: ~A~%"
@@ -810,7 +810,7 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
         (let* ((host        (world-server--start-host
                              server :conversation-id identifier
                                     :directory       (channel-workspace target)
-                                     :arguments       (list :switch-p t)))
+                                     :arguments      (list :switch-p t)))
                (application (world-host-application (world-server--wait-ready server host))))
           (application-input-controller--handle-submission
            (application-input-controller application) text :interactive-p nil))
@@ -842,7 +842,7 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
         collect (if (and session (eq health ':ready))
                     (append (world-terminal-status-snapshot session) (list :host-health health))
                     (list :world-terminal-status :version *daemon-protocol-version*
-                          :session-id        (world-host-channel host)
+                          :session-id            (world-host-channel host)
                           :state health :host-health health :terminal-attached-p nil))))
 
 (-> world-server-person-unread-changed (world-server) null)
@@ -1593,7 +1593,7 @@ forgotten again when no thread could start."
                   (when (getf launch :immutable-p) (list :immutable-p t)))))
          (application
           (application--build configuration :conversation-id conversation-id
-                              :pristine-p (equal *world-image-selection* "pristine")
+                              :pristine-p                    (equal *world-image-selection* "pristine")
                               :permission-mode
                               (world-server--permission-mode server (getf arguments :permission-mode))
                               :explicit-permission-mode
@@ -1610,9 +1610,8 @@ forgotten again when no thread could start."
                                   (lambda (configuration)
                                     (acp-mcp-create-tool-registry configuration
                                                                   (coerce
-                                                                   (client-json
-                                                                    servers)
-                                                                   'list)))))))
+                                                                     servers
+                                                                     'list)))))))
          (host   (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))
@@ -1708,11 +1707,11 @@ because the image is shared, while a fatal error ends this channel alone. A
 session that ends for a checkpoint leaves HOST paused, to be served again on
 another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE.
 Without BOOT-SCREEN-P the channel opens without the boot screen."
-  (let* ((application                 (world-host-application host))
-         (configuration               (application-configuration application))
+  (let* ((application            (world-host-application host))
+         (configuration          (application-configuration application))
          (bordeaux-threads:*default-special-bindings*
           (world-server--thread-bindings application))
-         (*active-application*        application)
+         (*active-application*   application)
          (*world-startup-record* nil)
          (*default-pathname-defaults*
           (config :working-directory configuration)))

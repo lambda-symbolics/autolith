@@ -21,6 +21,8 @@
             (lock        (make-lock "client protocol test"))
             (events      nil)
             (connection  nil))
+        ;; Build the lazy syntax library before starting bounded transport waits.
+        (application-lisp-code-spans "(list 34 47)")
        (labels ((seen ()
                   "Return the events seen so far, oldest first."
                   (with-lock-held (lock)
@@ -49,6 +51,13 @@
                 (test-assert (eq (first (getf (world-terminal-client-call connection ':state) :state))
                                  ':world-terminal-status)
                              "a state command answers with the channel's state")
+                (let* ((reply  (world-terminal-client-call connection ':invoke "permissions" '(:full)))
+                       (result (getf reply :result)))
+                  (test-assert (and (eq (getf result :outcome) ':ok)
+                                    (null (getf (getf result :value) :result)))
+                               "native positional arguments and NIL success cross the channel")
+                  (test-assert (not (world-terminal-message-p '(:invoke :id "bad" "permissions" (:full))))
+                               "native frames reject a malformed fixed identifier prefix"))
                 (flet ((submission ()
                          "Identify one prompt from this attached client."
                          (list :id (make-identifier) :client (getf (rest greeting) :client-id) :source ':prompt)))
@@ -62,26 +71,15 @@
                                         (eq (getf (rest event) :kind) ':lisp)
                                         (eq (getf (rest event) :outcome) ':done)
                                         (getf (rest event) :idle-p)))))
-                     "native Lisp publishes its result and correlated idle completion"))
-                  (let* ((conversation (application-conversation application))
-                         (items        (conversation-input-items conversation)))
-                    (dolist (text '("/exit" "//escaped"))
-                      (let ((submission (submission)))
-                        (world-terminal-client-call connection ':submit :text text :submission submission)
-                        (test-assert
-                         (await ':work-finished
-                                (lambda (event)
-                                  (and (equal (getf (rest event) :submission) submission)
-                                       (eq (getf (rest event) :outcome) ':failed))))
-                         "leading-slash submissions finish with a correlated failure")))
-                    (test-assert
-                     (and (equal items (conversation-input-items conversation))
-                          (getf (world-terminal-client-call connection ':state) :state))
-                     "leading-slash text neither becomes model input nor closes the hosted channel")))
+                     "native Lisp publishes its result and correlated idle completion")))
+
                 (world-terminal-client-call connection ':mode :value ':ask)
-                (test-assert (and (eq (application-permission-mode application) ':ask)
-                                  (await ':state))
-                             "a mode command sets the channel's permission mode and publishes its state")
+                (test-assert
+                 (and (await ':state
+                             (lambda (event)
+                               (eq (getf (rest (getf (rest event) :state)) :permission-mode) ':ask)))
+                      (eq (application-permission-mode application) ':ask))
+                 "a mode command sets the channel's permission mode and publishes its state")
                 (test-assert (handler-case (progn (world-terminal-client-call connection ':mode :value ':root) nil)
                                (world-terminal-error (condition)
                                  (search "permission mode" (autolith-error-message condition))))
@@ -215,7 +213,7 @@
    (lambda (application entry)
      (let ((start    #'image-daemon:attachment-start)
            (injected (make-condition 'world-terminal-error :operation ':client
-                                      :message                    "Injected writer-start refusal.")))
+                                      :message                        "Injected writer-start refusal.")))
        (test-call-with-function-replacements
         (list (list 'image-daemon:attachment-start
                     (lambda (attachment)
@@ -449,8 +447,7 @@
              (list
               (list 'world-terminal--client-command
                     (lambda (session operation arguments &key attachment)
-                      (if (and (eq operation ':operation)
-                               (equal (getf arguments :method) "blocked"))
+                       (if (eq operation ':client-state)
                           (progn
                             (sb-thread:signal-semaphore received)
                             (sb-thread:wait-on-semaphore release :timeout 10)
@@ -467,8 +464,8 @@
                       (lambda ()
                         (unwind-protect
                              (handler-case
-                                 (world-terminal-client-call connection ':operation :method "blocked")
-                               (world-terminal-error (condition)
+                                  (world-terminal-client-call connection ':client-state)
+                                (world-terminal-error (condition)
                                  (setf failure condition)))
                           (sb-thread:signal-semaphore completed)))
                       :name "pending client call"))
@@ -482,10 +479,10 @@
                (test-assert (sb-thread:wait-on-semaphore completed :timeout 10)
                             "transport failure wakes every pending call")
                (test-assert (and (typep failure 'world-terminal-request-interrupted)
-                                 (eq (world-terminal-request-interrupted-command failure) ':operation)
+                                 (eq (world-terminal-request-interrupted-command failure) ':client-state)
                                  (world-terminal-client-connection-closed-p connection)
                                  (zerop (hash-table-count (world-terminal-client-connection-replies connection))))
-                            "failed calls report interruption and release reply entries on the closed connection")))
+                           "failed calls report interruption and release reply entries on the closed connection")))
          (sb-thread:signal-semaphore release)
          (world-terminal-client-close connection)
          (when caller
@@ -519,7 +516,7 @@
                (progn
                  (setf connection
                        (world-terminal-client-connect entry :after-sequence (1- cursor)
-                                                  :event-function       (lambda (event) (push event events))))
+                                                  :event-function           (lambda (event) (push event events))))
                  (world-terminal-client-call connection ':state)
                  (test-assert (equal entry (world-terminal-client-connection-entry connection))
                               "the authenticated endpoint survives registry changes")

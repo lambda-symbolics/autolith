@@ -154,7 +154,7 @@ turn, external work on another thread, pending input, and live asynchronous jobs
   nil)
 
 (define-application-command application--builtin-delete-command
-    (:name              "/delete"
+    (:name              "delete"
      :argument          "[ID]"
      :description       "delete a channel and its nested channels after confirmation"
      :tip               "deletes this channel by default, stopping its turn once confirmed; a channel ID or an agent's name selects another."

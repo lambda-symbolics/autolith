@@ -288,7 +288,6 @@
   "Return the identifiers of WORLD's channels other than the person's inbox."
   (mapcar #'channel-identifier (remove-if #'channel-inbox-p (world-channels world))))
 
-
 (-> world-tests--inbox (configuration) string)
 (defun world-tests--inbox (configuration)
   "Return the identifier of the person's inbox in CONFIGURATION's world."
@@ -330,7 +329,7 @@
         (let ((world (world-load configuration)))
           (test-assert (and (equal (participant-identifier agent) (channel-identifier channel))
                             (eq agent (world-participant-find world "al-legacy"))
-                             (equal (participant-name agent) "helper")
+                            (equal (participant-name agent) "helper")
                             (equal (channel-title channel) "Legacy title")
                             (equal (world-channel-residents world "bcanonical") (list agent)))
                        "a legacy ID reads the one canonical agent, and retry keeps existing metadata")
@@ -364,9 +363,6 @@
                           (equal (conversation-model conversation) "gpt-6-luna"))
                      "the conversation and its agent both take the chosen model and effort"))))
   nil)
-
-
-
 
 (-> test-world-application-sync () null)
 (defun test-world-application-sync ()
@@ -998,6 +994,7 @@
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore human))
       (let ((first-id  (participant-identifier first-agent))
             (second-id (participant-identifier second-agent))
             (long-name (make-string *world-handle-limit* :initial-element #\a)))
@@ -1478,7 +1475,7 @@
         (test-assert (equal (channel-parent (world-channel-find (world-load configuration) "bsecond")) inbox)
                      "standalone channel creation defaults to home")
         (test-assert (equal (participant-parent (world-participant-find (world-load configuration)
-                                                                             (participant-identifier agent)))
+                                                                        (participant-identifier agent)))
                             agent-parent)
                      "creating sibling and nested channels preserves agent ancestry"))))
   nil)
@@ -1540,7 +1537,6 @@
                      "the inbox modeline shows the inbox, no model and no context meter"))))
   nil)
 
-
 (-> test-world-cold-reconciliation () null)
 (defun test-world-cold-reconciliation ()
   "Start and open a small channel without reading unrelated sealed histories."
@@ -1589,7 +1585,6 @@
                             (not (probe-file (conversation-picker-metadata-pathname identity))))
                        "cold reconciliation retains conversations without warming their sidecars")))))
   nil)
-
 
 (-> test-world-ambiguous-channel () null)
 (defun test-world-ambiguous-channel ()
@@ -1892,7 +1887,7 @@
                (progn
                  (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
                  (test-assert (string= (participant-name (world-participant-find (world-load configuration)
-                                                                                   "bkid11"))
+                                                                                 "bkid11"))
                                        "keeper")
                               "a parent renames its child by its name")
                  (let ((lease (conversation-lease-acquire configuration "bkid11")))
@@ -1929,7 +1924,7 @@
                                      (null (conversation-task-pathname-for-id configuration "bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bgrand11"))
                                      (null (world-participant-find world "bkid11")))
-                                 "a removed child leaves no channel, agent or history")))
+                                "a removed child leaves no channel, agent or history")))
             (task-orchestrator-close orchestrator))))))
   nil)
 
@@ -1969,11 +1964,11 @@
                         (conversation-task-pathname-for-id configuration "bremovea")
                         (not (conversation-lease-busy-p configuration "bremovea")))
                    "failed cleanup keeps the world and storage and releases the acquired leases")
-      (let ((transact        (symbol-function 'world--transact))
-            (subdirectories  (symbol-function 'uiop:subdirectories))
-            (world-updates   0)
-            (discoveries     0)
-            (log-passes      0))
+      (let ((transact       (symbol-function 'world--transact))
+            (subdirectories (symbol-function 'uiop:subdirectories))
+            (world-updates  0)
+            (discoveries    0)
+            (log-passes     0))
         (test-call-with-function-replacements
          (list
           (list 'world--transact
@@ -2133,7 +2128,6 @@
                      "a session in no role refuses to swap in a child's conversation in place"))))
   nil)
 
-
 (-> test-world-child-sync () null)
 (defun test-world-child-sync ()
   "Register a child that starts after its parent is already in the catalogue."
@@ -2206,7 +2200,7 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                            :channel  "exec-two"
                                            :text     text
                                            :notify-p nil)
-                        :channels))))
+                       :channels))))
         (test-assert (equal (reached "@parent done") '("exec-one"))
                      "@parent reaches the sender's parent agent")
         (flet ((told (sender channel)
@@ -2300,19 +2294,18 @@ A parent that writes @parent to its own child reaches nobody but the child."
             (application-input-controller-stop controller))))))
   nil)
 
-
 (-> test-world-child-participants () null)
 (defun test-world-child-participants ()
   "Test child task conversations become nested channels with steerable participants."
   (with-test-configuration (configuration)
     (let* ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
            (child (conversation-create configuration
-                                       :identifier   "exec-one"
+                                       :identifier        "exec-one"
                                        :parent-identifier "broot11"
-                                       :storage-root (merge-pathnames
-                                                      "tasks/broot11/exec-one/"
-                                                      (config :data-root configuration))
-                                       :created-at   1500)))
+                                       :storage-root      (merge-pathnames
+                                                           "tasks/broot11/exec-one/"
+                                                           (config :data-root configuration))
+                                       :created-at        1500)))
       (conversation-append-user-message child "do the task")
       (world-register-conversation configuration child)
       (let ((world (world-load configuration)))
@@ -2398,10 +2391,9 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                 (string= (world-delivery-sender delivery)
                                          (participant-identifier task-agent))
                                 (string= (world-delivery-text delivery) "done here"))
-                           "the message arrives as the child's own participant")))
-          ))))
-  nil)
+                           "the message arrives as the child's own participant")))))))
 
+  nil)
 
 (-> test-world-channel-catalogue nil null)
 (defun test-world-channel-catalogue ()

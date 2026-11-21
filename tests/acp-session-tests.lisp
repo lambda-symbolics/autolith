@@ -596,8 +596,6 @@
          (dolist (case '(("" :end-turn)
                          ("(status)" :end-turn)
                          ("(+ 1 2)" :end-turn)
-                         ("/status" :condition)
-                         ("//status" :condition)
                          ("(error \"local evaluation failed\")" :cancelled)))
            (destructuring-bind (text expected) case
              (let ((result (handler-case

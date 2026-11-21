@@ -121,7 +121,7 @@
             (TEST-ASSERT
              (AND (STRING= (WORLD-DELIVERY-TARGET DELIVERY) IDENTIFIER)
                   (STRING= (WORLD-DELIVERY-SENDER DELIVERY)
-                            (PARTICIPANT-IDENTIFIER (WORLD-HUMAN-PARTICIPANT (WORLD-LOAD CONFIGURATION))))
+                           (PARTICIPANT-IDENTIFIER (WORLD-HUMAN-PARTICIPANT (WORLD-LOAD CONFIGURATION))))
                   (STRING= (WORLD-DELIVERY-TEXT DELIVERY) "computed request"))
              "omitted destination means the current channel and local sender is the person"))
           (TEST-CONVERSATION--WRITE-TINY-PNG IMAGE)
@@ -286,7 +286,7 @@
 (-> test-application-operation-binding-conflicts () null)
 (defun test-application-operation-binding-conflicts ()
   "Test canonical operation conflicts fail registration and never break evaluation."
-  (dolist (name '("/search" "/reverse"))
+  (dolist (name '("search" "reverse"))
     (let* ((command
              (application-command-create
               :definition-name   'application-operation-tests--conflicting-function
@@ -305,7 +305,7 @@
                 (declare (ignore application invocation))
                 ':continue)))
            (operation (application-operation--from-command command))
-           (symbol    (application-operation--function-symbol (subseq name 1)))
+           (symbol    (application-operation--function-symbol name))
            (existing  (fdefinition symbol))
            (snapshot  (application-command--registry-snapshot)))
       (test-assert
@@ -325,11 +325,11 @@
       (test-assert
        (eq (fdefinition symbol) existing)
        "skipped operation bindings preserve the existing function")))
-  (dolist (alias '("/search" "/reverse"))
+  (dolist (alias '("search" "reverse"))
     (let ((snapshot (application-command--registry-snapshot))
           (command  (application-command-create
                      :definition-name 'application-operation-tests--conflicting-alias
-                     :name "/alias-conflict" :aliases (list alias)
+                     :name "alias-conflict" :aliases (list alias)
                      :description     "An alias conflicting with a Common Lisp function."
                      :tip             "Exercise native alias binding conflicts."
                      :busy-behavior ':inspect :terminal-behavior ':shared
@@ -527,7 +527,7 @@
                             :primary)))
                (test-assert
                  (and (equal (primary-of "(ste nil)") "(ste")
-                       (null (primary-of "(ste")))
+                      (null (primary-of "(ste")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
                   (equal (primary-of "(usage)") "(status)")
@@ -544,7 +544,7 @@
               (and test-entry
                    (search ":|odd key)| VALUE"
                            (or (getf test-entry :argument) "")))
-               "completion escapes punctuation and whitespace in property names"))
+              "completion escapes punctuation and whitespace in property names"))
            (let ((unclassified
                    (make-instance
                     'tool
@@ -559,8 +559,8 @@
                        ("(channel.send :text \"text\")" :execute)
                        ("(channel.send :text (read-file \"/tmp/example\"))" :execute)
                        ("(goal \"pause\")" :hold)
-                        ("(exit)" :cancel)
-                        ("(progn (exit))" :hold)
+                       ("(exit)" :cancel)
+                       ("(progn (exit))" :hold)
                        ("(update)" :hold)
                        ("(compact)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
@@ -693,7 +693,7 @@
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
                    (search "(help" output)
-                    (search "(resource.read" output)
+                   (search "(resource.read" output)
                    (search "(exit)" output))
               "nested help can present the full registered operation reference"))
            (let ((evaluation
@@ -702,7 +702,7 @@
               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                    (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
                    (null (application-lisp-evaluation-values evaluation)))
-               "exit transfers control to the application loop"))
+              "exit transfers control to the application loop"))
            (let ((*update-check-fetch-function* (lambda () "v99.0.0")))
              (setf (application-installation-provenance application)
                    (make-instance
@@ -1170,7 +1170,7 @@
                           "Breakable result rows and their prefix fit the terminal width.")
              (test-assert (equal (read-from-string (subseq text 2))
                                  '(:name "scout" :source :bundled :models ("@smol")
-                                 :tools ("resource.read" "search.*" "web_search")))
+                                   :tools ("resource.read" "search.*" "web_search")))
                           "Prefix-aware terminal layout preserves the displayed Lisp value."))
         (ignore-errors (terminal-ui-stop (application-ui application)))
         (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))

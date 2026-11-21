@@ -42,7 +42,7 @@
 
 (-> provider--parse-authentication-method ((option string)) (option keyword))
 (defun provider--parse-authentication-method (text)
-  "Parse authentication method TEXT from command-line or slash-command input."
+  "Parse authentication method TEXT from command-line input."
   (cond
     ((null text)
      nil)

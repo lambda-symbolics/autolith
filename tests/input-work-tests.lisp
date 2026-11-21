@@ -6,8 +6,8 @@
 (defun input-work-tests--command ()
   "Return a command fixture independent of cwd admission policy."
   (application-command-create
-   :definition-name 'input-work-tests--command :name "/input-work-command"
-   :aliases '("/input-work-alias") :argument "VALUE" :description "codec fixture"
+   :definition-name 'input-work-tests--command :name "input-work-command"
+   :aliases '("input-work-alias") :argument "VALUE" :description "codec fixture"
    :tip "exercise durable command input." :busy-behavior ':hold :terminal-behavior ':shared
    :handler (lambda (application invocation)
               (declare (ignore application invocation))
@@ -86,7 +86,7 @@
            (dolist (argument (list "~/workspace" path))
              (let* ((invocation
                       (make-instance 'application-command-invocation
-                                     :input "(cwd)" :syntax ':lisp :name "/input-work-alias"
+                                     :input "(cwd)" :syntax ':lisp :name "input-work-alias"
                                      :remainder "" :argument (when (stringp argument) argument)
                                      :arguments (list argument) :supplied-argument-count 1 :command command))
                     (input (command-message-input-create source invocation)))
@@ -177,7 +177,7 @@
                                 "mutable command values are detached by copy")))))
            (let* ((input (command-message-input-create source
                           (make-instance 'application-command-invocation
-                                         :input "(cwd)" :syntax ':lisp :name "/input-work-alias"
+                                         :input "(cwd)" :syntax ':lisp :name "input-work-alias"
                                          :remainder "" :argument nil :arguments (list path)
                                          :supplied-argument-count 1 :command command)))
                   (form  (input-value->form input)))
@@ -191,7 +191,7 @@
              (dolist (case '((:version 2) (:syntax :json) (:name nil) (:remainder nil)
                              (:argument #P"/not-a-text-argument/") (:arguments ("dotted" . "tail"))
                              (:supplied-argument-count -1) (:supplied-argument-count 0)
-                             (:command "/missing-command") (:command "/input-work-alias")))
+                              (:command "missing-command") (:command "input-work-alias")))
                (let ((bad (copy-tree form)))
                  (setf (getf (rest (getf (rest bad) :invocation)) (first case)) (second case))
                  (test-assert (null (input-value-from-form bad)) "malformed or noncanonical invocation is rejected")))
@@ -226,7 +226,6 @@
                            :work-items
                            (list (input-work-from-input input)
                                  (list ':native-lisp "(values)" :submission submission)
-                                (list ':command "/help" :submission submission)
                                 (input-work-from-input
                                  (user-message-input-create :text "(+ 1 2)" :submission submission)))
                            :steering-promotion-prefix-count 2))
@@ -235,11 +234,11 @@
     (test-assert restored "a payload is decodable without snapshot or conversation identity")
     (test-assert (equal payload (input-state->payload restored))
                  "direct payloads preserve images, identified work and queue order")
-    (test-assert (= 7 (input-state-count restored))
+    (test-assert (= 6 (input-state-count restored))
                  "the input model counts active, in-flight, steering and queued input")
     (dolist (work (cons (getf restored :active-work) (getf restored :work-items)))
       (test-assert (equal submission (getf (nthcdr 2 work) :submission))
-                   "native, prose, command and Lisp work retain submission provenance"))
+                   "native, prose and Lisp work retain submission provenance"))
     (let ((form (input-state->form (list* :snapshot-identifier "snapshot" state) "conversation")))
       (test-assert (equal payload
                           (input-state->payload (input-state-from-form form "conversation")))
@@ -251,7 +250,6 @@
       (test-assert (null (input-state-from-payload bad))
                    "invalid native queue metadata is rejected")))
   (dolist (form '((:lisp "(values)" :submission (:id "id"))
-                  (:command "/help" :submission (:id "id" :client "client" :source "unknown"))
                   (:message "hello" :unexpected (:id "id" :client "client" :source :prompt))))
     (test-assert (null (input-work-from-form form)) "invalid work provenance is rejected"))
   (test-assert (equal (user-message-input-submission

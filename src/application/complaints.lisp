@@ -214,22 +214,15 @@ but unconfirmed final candidate."
              (return)))))))
   nil)
 
-(-> application-complaint--parse (string) list)
-(defun application-complaint--parse (text)
-  "Pass the whole slash-command remainder as one complaint, without evaluation."
-  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-    (and (plusp (length text)) (list text))))
-
 (define-application-command application--builtin-complain-command
-    (:name              "/complain"
-     :aliases           ("/wtf")
+    (:name              "complain"
+     :aliases           ("wtf")
      :argument          "[COMPLAINT]"
      :description       "turn a complaint into a saved correction rule"
      :tip               "Use `(complain \"what went wrong\")` or `(wtf \"what went wrong\")` to review a correction, amend it, and save it for this workspace or globally."
      :busy-behavior     :hold
      :terminal-behavior :exclusive
-     :callable          t
-     :slash-parser      application-complaint--parse)
+     :callable          t)
     (application &optional complaint)
   (application-complain application complaint)
   ':continue)
