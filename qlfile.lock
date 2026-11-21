@@ -148,8 +148,8 @@
   :version "git-f6882b8bb7dc2e4b0808c2de0d48d0f87f398996"))
 ("colorlisp" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/colorlisp.git" :ref "b6fdb68ae22ab997bb818c486983129ec7ac6177")
-  :version "git-b6fdb68ae22ab997bb818c486983129ec7ac6177"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/colorlisp.git" :ref "c828aeae0f1bacce0ebe920958474a03042007fc")
+  :version "git-c828aeae0f1bacce0ebe920958474a03042007fc"))
 ("colordiff" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/colordiff.git" :ref "a8d229ae99dcd630bb4b32942e12791a7ea67a4d")
