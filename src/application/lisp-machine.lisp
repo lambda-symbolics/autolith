@@ -67,10 +67,14 @@ are presented by the evaluator."
               conversation-invariant-error
               active-image-corruption)))
 
+(defparameter *application-lisp-restart-reports* nil
+  "Bounded snapshot reports keyed by live restart identity during one selection.")
+
 (-> application-lisp--restart-report (restart) string)
 (defun application-lisp--restart-report (restart)
-  "Return RESTART's printable report without terminal control characters."
-  (sanitize-text (princ-to-string restart) :single-line-p t))
+  "Sanitize RESTART's captured report; an uncaptured restart has no report."
+  (let ((entry (assoc restart *application-lisp-restart-reports* :test #'eq)))
+    (sanitize-text (if entry (rest entry) "") :single-line-p t)))
 
 (-> application-lisp--restart-arguments (string) list)
 (defun application-lisp--restart-arguments (source)
@@ -102,11 +106,13 @@ Return values, status, condition report, restart names, and selected restart nam
            :selector
            (when restart-selector
              (lambda (session)
-               (let ((*application-debugger-snapshot*
-                       (debug-session-snapshot session)))
-                 (funcall restart-selector
-                          (debug-session-condition session)
-                          (debug-session-restarts session)))))
+                (let* ((restarts                        (debug-session-restarts session))
+                       (*application-debugger-snapshot* (debug-session-snapshot session))
+                       (*application-lisp-restart-reports*
+                         (loop for restart in restarts
+                               for description in (getf *application-debugger-snapshot* :restarts)
+                               collect (cons restart (getf description :report)))))
+                  (funcall restart-selector (debug-session-condition session) restarts))))
            :condition-p        debug-condition-p
            :passthrough-p      #'application-lisp--control-condition-p
            :restart-p          (lambda (restart)

@@ -60,9 +60,9 @@
   (handler-case
       (let ((proposal
               (make-instance 'recovery
-                             :kind               (intern (string-upcase
-                                                          (tool-argument arguments "kind" :required t))
-                                                         :keyword)
+                             :kind               (find (tool-argument arguments "kind" :required t)
+                                                       (recovery-kinds)
+                                                       :key #'symbol-name :test #'string-equal)
                              :report             (bounded-string
                                                   (tool-argument arguments "report" :required t))
                              :restart-id         (tool-argument arguments "target-restart-id")
@@ -101,7 +101,10 @@
                  :parameters
                  (tool-object-schema
                   (json-object
-                   "kind" (json-object "type" "string" "enum" #("invoke-restart" "repair-and-invoke" "retry-operation" "repair-and-retry" "return-values" "abort-operation"))
+                   "kind" (json-object "type" "string"
+                                       "enum" (map 'vector
+                                                   (lambda (kind) (string-downcase (symbol-name kind)))
+                                                   (recovery-kinds)))
                    "report" (tool-string-property "Why this executable proposal is appropriate.")
                    "target-restart-id" (tool-string-property "The exact restart id, when needed.")
                    "preparation-source" (tool-string-property "A portable source form run before invocation.")
