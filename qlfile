@@ -54,7 +54,7 @@ git surgeon https://github.com/lambda-symbolics/surgeon.git :ref b159c64231f35d2
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref f09e1bcb034113eda7fd8eb4d2bf14ad0ae10fa6
 git llh2 https://github.com/lambda-symbolics/llh2.git :ref f516c92cff438d65fb42d31f4c552b39001e2edc
 git argo https://github.com/lambda-symbolics/argo.git :ref ff1d0643973278e3b282825fbdc604c1256070a2
-git prezdivka https://github.com/lambda-symbolics/prezdivka.git :ref 5f21475558a4bf4595e7ca2d9b1e08fea9064cc0
+git prezdivka https://github.com/lambda-symbolics/prezdivka.git :ref f85ce29c7f7f2b096f76b3da74d1f7c7d6c59a76
 git sito https://github.com/lambda-symbolics/sito.git :ref 2147f6fcaaa470c6631ca9037728d77d16284226
 git setinka https://github.com/lambda-symbolics/setinka.git :ref ce63dce34287b20ad81f08f6d208e6e18bc3163f
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 12497fd9be66b4ebfec5a8270302cd8d9d40948e
