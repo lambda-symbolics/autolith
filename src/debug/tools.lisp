@@ -93,28 +93,20 @@
 
 (-> debug--events (debug-session-entry hash-table &key (:timeout integer) (:cancel-p function)) t)
 (defun debug--events (entry arguments &key timeout cancel-p)
-  "Present finite event pages, retaining unpresented events rather than silently dropping them."
+  "Present a bounded page or named event after checking its encoded size."
   (let ((session (debug-session-entry-session entry))
         (name    (when (tool-argument arguments "wait-for") (debug--argument arguments "wait-for"))))
-    (cond
-      (name
-       (let ((event (find name (debug-session-entry-events entry)
-                          :key (lambda (event) (json-get event "event")) :test #'equal)))
-         (when event
-           (debug--bounded-json event)
-           (setf (debug-session-entry-events entry)
-                 (cl:delete event (debug-session-entry-events entry) :count 1)))
-         (or event (daphne:session-wait-event session name :timeout timeout :cancel-p cancel-p))))
-      (t
-       (unless (debug-session-entry-events entry)
-         (setf (debug-session-entry-events entry) (daphne:session-events session)))
-       (let* ((pending (debug-session-entry-events entry))
-              (count   (min (length pending) (debug--argument arguments "count")))
-              (page    (json-object "events" (coerce (subseq pending 0 count) 'vector)
-                                    "bufferedRemaining" (- (length pending) count))))
-         (debug--bounded-json page)
-         (setf (debug-session-entry-events entry) (nthcdr count pending))
-         page)))))
+    (if name
+        (daphne:session-wait-event session name :timeout timeout :cancel-p cancel-p
+                                   :accept #'debug--bounded-json)
+        (let ((page nil))
+          (daphne:session-events-page
+           session (debug--argument arguments "count")
+           :accept (lambda (events remaining)
+                     (setf page (json-object "events" (coerce events 'vector)
+                                             "bufferedRemaining" remaining))
+                     (debug--bounded-json page)))
+          page))))
 
 (-> debug--start (debug-tool tool-context hash-table) json-object)
 (defun debug--start (tool context arguments)
@@ -149,12 +141,10 @@
                  (when (or (debug-session-manager-closed-p manager)
                            (debug-session-entry-cancelled-p entry))
                    (debug--fail ':cancelled "Debug startup was cancelled before adapter execution."))
-                 (multiple-value-bind (session transport)
-                     (daphne:start-adapter (uiop:native-namestring path) (debug-tool-arguments tool)
-                                           :directory directory :max-body *debug-result-byte-limit*
-                                           :max-events 128 :max-pending 4 :stderr-limit 4096)
-                   (setf (debug-session-entry-session entry) session
-                         (debug-session-entry-transport entry) transport)))
+                 (setf (debug-session-entry-session entry)
+                       (daphne:start-adapter (uiop:native-namestring path) (debug-tool-arguments tool)
+                                             :directory directory :max-body *debug-result-byte-limit*
+                                             :max-events 128 :max-pending 4 :stderr-limit 4096)))
                (let ((cancel  (lambda () (debug--cancel-p manager entry (debug-tool-cancel-p tool))))
                      (session (debug-session-entry-session entry)))
                  (when (funcall cancel) (debug--fail ':cancelled "Debug startup was cancelled."))
