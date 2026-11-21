@@ -2,7 +2,7 @@
 #+SUBTITLE: The self-modifying Common Lisp neurosymbolic agent
 #+STARTUP: content
 
-#+ATTR_HTML: :alt Autolith terminal interface
+#+ATTR_HTML: :alt Autolith by Lambda Symbolics
 [[file:docs/autolith-banner.png]]
 
 [[file:LICENSE][https://img.shields.io/badge/license-ISC-42b28a.svg]]
