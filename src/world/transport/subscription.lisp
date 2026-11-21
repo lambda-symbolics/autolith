@@ -145,7 +145,7 @@
 
 (-> channel-subscription--connect (channel-subscription) world-terminal-client-connection)
 (defun channel-subscription--connect (subscription)
-  "Find SUBSCRIPTION's channel with a bounded handshake, or a cancellable switch wait.
+  "Find SUBSCRIPTION's channel with bounded discovery, or a cancellable switch wait.
 
 An endpoint that was replaced while this client connected is discovered again
 and tried once. No channel command has been sent by then."

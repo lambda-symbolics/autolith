@@ -521,18 +521,17 @@ whatever would change the channel."
 
 (-> world-terminal-client--read-greeting (stream (option function)) list)
 (defun world-terminal-client--read-greeting (stream cancelled-p)
-  "Read the required greeting boundedly, checking cancellation before it arrives."
-  (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
-    (when cancelled-p
-      (loop until (listen stream)
-            do (when (funcall cancelled-p)
-                 (error 'world-terminal-error :message "Client attachment was cancelled."
-                                         :operation    ':client))
-               (sleep 0.01))
-      (when (funcall cancelled-p)
-        (error 'world-terminal-error :message "Client attachment was cancelled."
-                                :operation    ':client)))
-    (daemon-read-response stream ':client)))
+  "Read the required greeting, checking cancellation before it arrives."
+  (when cancelled-p
+    (loop until (listen stream)
+          do (when (funcall cancelled-p)
+               (error 'world-terminal-error :message "Client attachment was cancelled."
+                                       :operation    ':client))
+             (sleep 0.01))
+    (when (funcall cancelled-p)
+      (error 'world-terminal-error :message "Client attachment was cancelled."
+                              :operation    ':client)))
+  (daemon-read-response stream ':client))
 
 (-> world-terminal-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
@@ -552,7 +551,8 @@ connection runs the forms the channel sends in this image and answers them
 itself; EVENT-FUNCTION never sees those requests. ARGUMENTS is a plist of
 what else the client states, such as :PRESENTS-P and its pane's size.
 INITIALIZE-FUNCTION, when supplied, receives the connection on the calling
-thread after its greeting and before the reader starts, within the handshake deadline."
+thread after its greeting and before the reader starts. Attachment and
+history replay have no time limit."
   (let ((record     (rest entry))
         (socket     nil)
         (stream     nil)
@@ -560,7 +560,7 @@ thread after its greeting and before the reader starts, within the handshake dea
     (multiple-value-setq (socket stream)
       (daemon-connect (world-terminal--record-port record)))
     (handler-case
-        (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
+        (progn
           (daemon-write-packet stream
                                (list :world-terminal-request
                                      :version   *daemon-protocol-version*
@@ -580,20 +580,19 @@ thread after its greeting and before the reader starts, within the handshake dea
                      :operation  ':client
                      :retry-p    (getf (rest greeting) :retry-p)
                      :session-id (world-terminal--record-session-id record)))
-            (progn
-              (setf connection (make-instance 'world-terminal-client-connection
-                                              :entry    entry
-                                              :socket   socket
-                                              :stream   stream
-                                              :attached greeting))
-              (when initialize-function
-                (funcall initialize-function connection))
-              (setf (world-terminal-client-connection-reader-thread connection)
-                    (make-thread (lambda ()
-                                   (world-terminal-client--read connection event-function
-                                                            :evaluates-p evaluates-p))
-                                 :name (format nil "Autolith ~A client reader" name)))
-              connection)))
+            (setf connection (make-instance 'world-terminal-client-connection
+                                           :entry    entry
+                                           :socket   socket
+                                           :stream   stream
+                                           :attached greeting))
+            (when initialize-function
+              (funcall initialize-function connection))
+            (setf (world-terminal-client-connection-reader-thread connection)
+                  (make-thread (lambda ()
+                                 (world-terminal-client--read connection event-function
+                                                          :evaluates-p evaluates-p))
+                               :name (format nil "Autolith ~A client reader" name)))
+            connection))
       ((or error sb-sys:deadline-timeout) (condition)
         (when connection
           (world-terminal-client--disconnect connection))
