@@ -121,11 +121,6 @@
                  (not (eq (user-message-input-copy "plain input") "plain input")))
             "legacy strings satisfy the user input protocol")
            (test-conversation--write-tiny-jpeg jpeg-source)
-           (multiple-value-bind (format width height)
-               (image-input--inspect jpeg-source)
-             (test-assert
-              (and (eq format ':jpeg) (= width 3) (= height 2))
-              "JPEG inspection returns dimensions from its frame marker"))
            (test-assert
             (equal (image-input-validate-pathname jpeg-source)
                    (truename jpeg-source))

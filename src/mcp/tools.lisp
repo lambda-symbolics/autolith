@@ -1228,21 +1228,6 @@ retained value is credential-redacted or projected."
            :tool-name "mcp"))
   (coerce value 'list))
 
-(-> mcp-tools--mime-extension (string) (option string))
-(defun mcp-tools--mime-extension (mime-type)
-  "Return a supported temporary image extension for MIME-TYPE."
-  (cond
-    ((string-equal mime-type "image/png")
-     "png")
-    ((string-equal mime-type "image/jpeg")
-     "jpg")
-    ((string-equal mime-type "image/gif")
-     "gif")
-    ((string-equal mime-type "image/webp")
-     "webp")
-    (t
-     nil)))
-
 (-> mcp-tools--image-attachment
     (tool-context string
      &key (:mime-type string) (:source-name string) (:index integer))
@@ -1259,8 +1244,8 @@ retained value is credential-redacted or projected."
            (format nil "MCP image ~D has invalid or oversized base64 data."
                    index)
            :tool-name "mcp"))
-  (let ((extension (mcp-tools--mime-extension mime-type)))
-    (unless extension
+  (let ((format (yolokuva:image-format-for-mime-type mime-type)))
+    (unless format
       (error 'tool-error
              :message
              (format nil "MCP image ~D uses unsupported media type ~S."
@@ -1273,8 +1258,8 @@ retained value is credential-redacted or projected."
            (temporary
              (merge-pathnames
               (make-pathname
-               :name (format nil ".mcp-incoming-~A" identifier)
-               :type extension)
+                :name (format nil ".mcp-incoming-~A" identifier)
+                :type (yolokuva:image-format-extension format))
               root))
            (prepared   nil)
            (attachment nil))

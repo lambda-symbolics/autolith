@@ -194,7 +194,7 @@ spelling is read until 0.69.0."
     (values keyword integer integer))
 (defun image-input--inspect (pathname)
   "Identify PATHNAME, returning its image format and pixel dimensions."
-  (yolokuva:image-inspect (image-input--absolute pathname)
+  (yolokuva:image-inspect pathname
                           :maximum-octets *image-input-maximum-source-bytes*))
 
 (defvar *image-input-publication-lock* (make-recursive-lock "Image publication roots")
@@ -224,14 +224,9 @@ JPEG, or WebP image is copied, anything else becomes a resized PNG."
                   :pathname absolute (image-input--limits))
          (let* ((identifier (make-identifier))
                 (target     (merge-pathnames
-                             (make-pathname :name identifier
-                                            :type (ecase output-format
-                                                    (:png
-                                                     "png")
-                                                    (:jpeg
-                                                     "jpg")
-                                                    (:webp
-                                                     "webp")))
+                              (make-pathname
+                               :name identifier
+                               :type (yolokuva:image-format-extension output-format))
                              artifact-root)))
            (ensure-directories-exist target)
            (platform-make-private *platform* artifact-root)
@@ -304,15 +299,9 @@ JPEG, or WebP image is copied, anything else becomes a resized PNG."
                :message (format nil "Image location ~A is not a valid local pathname."
                                 location)
                :cause   condition)))))
-    (multiple-value-bind (format width height)
-        (image-input--inspect pathname)
-      (declare (ignore format))
-      (if (and (plusp width) (plusp height))
-          (platform-truename *platform* pathname)
-          (image-input--error
-           pathname
-           :stage   ':recognition
-           :message (format nil "Image ~A has no valid pixel dimensions." pathname))))))
+    (let ((resolved (image-input--absolute pathname)))
+      (image-input--inspect resolved)
+      resolved)))
 
 
 ;;;; -- Durable Projection --
