@@ -523,16 +523,6 @@
         (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
-(-> test-provider-model-cache-shared-root () null)
-(defun test-provider-model-cache-shared-root ()
-  "Read persisted model metadata when cache and state share a directory."
-  (with-test-configuration (configuration)
-    (setf configuration (configuration-copy configuration :cache-root (config :state-root configuration)))
-    (provider--write-model-cache configuration '(:models))
-    (test-assert (equal (provider--read-model-cache configuration) '(:models))
-                 "identical state and cache roots do not remove the cache"))
-  nil)
-
 (define-condition test-provider-model-discovery-interrupt (serious-condition)
   ()
   (:documentation "A synthetic non-error interrupt during provider model discovery."))

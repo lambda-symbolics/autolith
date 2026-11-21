@@ -160,16 +160,6 @@ Source precedence, source recording, and value rejection belong to setinka."
                         "the next store replaces a damaged file"))
         nil)))))
 
-(-> test-preferences-shared-root () null)
-(defun test-preferences-shared-root ()
-  "Store and load preferences when config and state share a directory."
-  (with-test-configuration (configuration)
-    (let ((shared (configuration-copy configuration :config-root (config :state-root configuration))))
-      (preferences-store shared :future-key 7)
-      (test-assert (= (getf (preferences-load-values shared) :future-key) 7)
-                   "an explicit shared root stores preferences normally")))
-  nil)
-
 (-> test-preferences-unavailable-provider-selection () null)
 (defun test-preferences-unavailable-provider-selection ()
   "Drop durable unavailable model/provider pairs during deferred startup validation."

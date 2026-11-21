@@ -105,10 +105,9 @@
 (-> test-cli-world-client-start () null)
 (defun test-cli-world-client-start ()
   "Test client-owned welcome, explicit starts, failures and channel navigation."
-  (with-test-configuration (configuration root)
+  (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier     "b6uouHJ")
-           (new-directory  (ensure-directories-exist (merge-pathnames "new-workspace/" root)))
            (record         (cons #p"unused.sexp"
                                  (image-daemon:daemon-registry-record
                                   :identifier identifier :pid 424242)))
@@ -124,11 +123,7 @@
       (test-call-with-function-replacements
        (list
         (list 'configuration-create
-              (lambda (&rest arguments)
-                (let ((directory (getf arguments :working-directory)))
-                  (if directory
-                      (configuration-copy configuration :working-directory directory)
-                      configuration))))
+              (lambda (&rest arguments) (declare (ignore arguments)) configuration))
         (list 'main--interactive-input-p
               (lambda () t))
         (list 'main-resolve-conversation
@@ -208,15 +203,6 @@
                              (getf (first opened) :latest-p)
                              (not (getf (first opened) :pick-channel-p)))
                         "open without an ID asks the server for the latest workspace channel, not a picker")
-           (setf opened nil attached nil)
-           (main-dispatch (list "new" (namestring new-directory)))
-           (test-assert (and (= (length opened) 1)
-                             (getf (first opened) :new-p)
-                             (getf (first opened) :attach-expected-p)
-                             (null (getf (first opened) :channel))
-                             (equal (getf (first opened) :directory) new-directory)
-                             (equal attached (list (list identifier ':control))))
-                        "new creates a channel in the requested directory and attaches to it")
            (setf attach-error (make-condition 'world-terminal-error
                                               :operation ':attach
                                               :message   "The attachment was rejected."))

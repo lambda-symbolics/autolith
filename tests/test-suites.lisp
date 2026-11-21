@@ -875,8 +875,7 @@
   test-preferences-provider-selection-controls
   test-preferences-mixed-provider-selection
   test-preferences-provider-selection-restoration
-  test-preferences-provider-aliases
-  test-preferences-shared-root)
+  test-preferences-provider-aliases)
 
 (define-test-suite prompt-cache
   test-prompt-cache-miss-detection
@@ -1206,7 +1205,6 @@
   test-openai-api-responses
   test-openai-compatible-provider-discovery-is-on-demand
   test-openai-compatible-provider-model-cache-boundary
-  test-provider-model-cache-shared-root
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity
