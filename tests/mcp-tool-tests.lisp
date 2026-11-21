@@ -625,7 +625,7 @@
                    (register-application-command
                     (test-mcp--reload-command
                      'test-mcp--reload-new-command
-                     \"/mcp-reload-new\")))"
+                     \"mcp-reload-new\")))"
                 stream))
              (test-assert
               (handler-case
@@ -760,7 +760,7 @@
              (register-application-command
               (test-mcp--reload-command
                'test-mcp--reload-isolation-old-command
-               "/mcp-isolation-old")
+               "mcp-isolation-old")
               :source ':user)
              (with-open-file (stream mcp-pathname
                                      :direction         ':output
@@ -787,7 +787,7 @@
                    (register-application-command
                     (test-mcp--reload-command
                      'test-mcp--reload-isolation-new-command
-                     \"/mcp-isolation-new\")))"
+                     \"mcp-isolation-new\")))"
                 stream))
              (let* ((old-tool-registry (make-instance 'tool-registry))
                     (application
@@ -857,7 +857,7 @@
                              (register-application-command
                               (test-mcp--reload-command
                                'test-mcp--reload-isolation-concurrent-command
-                               "/mcp-isolation-concurrent")
+                               "mcp-isolation-concurrent")
                               :source ':runtime))
                            (with-lock-held (state-lock)
                              (setf writer-finished-p t)))
@@ -899,7 +899,7 @@
                                     :test #'string=)))
                           (not
                            (null
-                            (member "/mcp-isolation-concurrent"
+                            (member "mcp-isolation-concurrent"
                                     reader-command-names
                                     :test #'string=)))))))
                  (test-assert
@@ -907,7 +907,7 @@
                    (member "isolation-old" reader-mcp-names :test #'string=)
                    (member "isolation-old-context"
                            reader-context-identifiers :test #'string=)
-                   (member "/mcp-isolation-old"
+                   (member "mcp-isolation-old"
                            reader-command-names :test #'string=)
                    (not
                     (member "isolation-new"
@@ -916,7 +916,7 @@
                     (member "isolation-new-context"
                             reader-context-identifiers :test #'string=))
                    (not
-                    (member "/mcp-isolation-new"
+                    (member "mcp-isolation-new"
                             reader-command-names :test #'string=))
                    (member concurrent-count '(0 3)))
                   "a concurrent reader sees one complete restored registry generation")))
@@ -928,7 +928,7 @@
                (member "isolation-concurrent-context"
                        (context-identifiers (context--registry-snapshot))
                        :test #'string=)
-               (member "/mcp-isolation-concurrent"
+               (member "mcp-isolation-concurrent"
                        (command-names
                         (application-command--registry-snapshot))
                        :test #'string=))
@@ -1016,7 +1016,7 @@
                             (register-application-command
                              (test-mcp--reload-command
                               'test-mcp--reload-late-new-command
-                              \"/mcp-reload-late-new\")))"
+                              \"mcp-reload-late-new\")))"
                          stream))
                       (let* ((conversation
                                (conversation-create
