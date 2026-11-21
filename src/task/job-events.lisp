@@ -298,10 +298,7 @@ one in-flight bounded form and the disabled emitter survive until process exit."
 (-> run-job-event--time () string)
 (defun run-job-event--time ()
   "Return a UTC wire timestamp without implementation-specific objects."
-  (multiple-value-bind (second minute hour day month year)
-      (decode-universal-time (get-universal-time) 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month day hour minute second)))
+  (format-utc-timestamp (get-universal-time)))
 
 (-> run-job-event--record (string integer &key (:kind keyword) (:data list)) list)
 (defun run-job-event--record (run-id sequence &key kind data)

@@ -884,7 +884,4 @@ Punctuation surrounding a term is ignored."
 (-> memory--timestamp-string (timestamp) string)
 (defun memory--timestamp-string (timestamp)
   "Return TIMESTAMP as an ISO-8601 UTC string."
-  (multiple-value-bind (second minute hour date month year)
-      (decode-universal-time timestamp 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month date hour minute second)))
+  (format-utc-timestamp timestamp))

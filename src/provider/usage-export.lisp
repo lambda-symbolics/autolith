@@ -15,10 +15,7 @@
 (-> llm-usage--iso-utc (&optional integer) string)
 (defun llm-usage--iso-utc (&optional (timestamp (get-universal-time)))
   "Format TIMESTAMP in UTC."
-  (multiple-value-bind (second minute hour day month year)
-      (decode-universal-time timestamp 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month day hour minute second)))
+  (format-utc-timestamp timestamp))
 
 (-> llm-usage--event (conversation provider-result real) json-object)
 (defun llm-usage--event (conversation result wall-seconds)
