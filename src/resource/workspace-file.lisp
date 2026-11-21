@@ -619,13 +619,19 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
   "Use the observed file pathname for source delimiter annotations."
   (getf (resource-observation-metadata observation) :pathname))
 
-(defmethod text-resource-read-tool-result ((observation workspace-file-observation) content)
-  "Retain an observed missing path while reporting that no file exists."
-  (if (eq (workspace-file-observation-kind observation) ':missing)
-      (tool-failure (format nil "No file exists at ~A; resource.edit can create it at the revision below.~%~A"
-                            (resource-observation-uri observation) content)
-                    :code ':not-found)
-      (tool-success content)))
+(defmethod text-resource-read-tool-result ((observation workspace-file-observation) content &key details)
+  "Present file windows and retain a missing path's observation for later edits."
+  (case (workspace-file-observation-kind observation)
+    (:missing
+     (let* ((uri   (resource-observation-uri observation))
+            (cause (format nil "No file exists at ~A" uri)))
+       (tool-failure (format nil "~A; resource.edit can create it at the revision below.~%~A" cause content)
+                     :code ':not-found
+                     :details (list :resource-read (list :cause (resource-tool--detail-text cause))))))
+    (:file
+     (tool-success content :details details))
+    (otherwise
+     (tool-success content))))
 
 
 ;;;; -- Resource Tool Methods --

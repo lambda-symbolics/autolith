@@ -69,8 +69,8 @@
 (defgeneric text-resource-edit-notice (resource)
   (:documentation "Return backend-specific prose following a successful edit summary."))
 
-(defgeneric text-resource-read-tool-result (observation content)
-  (:documentation "Wrap rendered CONTENT with the backend's read outcome."))
+(defgeneric text-resource-read-tool-result (observation content &key details)
+  (:documentation "Wrap the bounded read content and details with the backend's read outcome."))
 
 (defmethod initialize-instance :after ((state text-resource-observation-state) &key)
   "Normalize inclusive renderer ranges into the shared interval representation."
@@ -154,9 +154,9 @@
   (declare (ignore resource))
   "")
 
-(defmethod text-resource-read-tool-result ((observation text-resource-observation) content)
-  "Return an ordinary successful text read."
-  (declare (ignore observation))
+(defmethod text-resource-read-tool-result ((observation text-resource-observation) content &key details)
+  "Return a plain text result for backends without a source preview."
+  (declare (ignore observation details))
   (tool-success content))
 
 (-> text-resource-observation-lines (text-resource-observation) vector)
@@ -191,9 +191,10 @@
 
 (-> text-resource--window-result
     (tool-context text-resource-observation
-     &key (:start-line (integer 1)) (:line-count (integer 1)) (:carried list) (:reading-p boolean)) string)
+     &key (:start-line (integer 1)) (:line-count (integer 1)) (:carried list) (:reading-p boolean))
+    (values string list &optional))
 (defun text-resource--window-result (context observation &key start-line line-count carried reading-p)
-  "Render a window and retain only complete lines, plus unchanged carried ranges.
+  "Return the rendered window and, for reads, its visible source metadata.
 
 A nonempty read with no complete visible line fails before retaining its snapshot.
 An edit may produce an overlong line; its successful publication is still reported."
@@ -203,7 +204,6 @@ An edit may produce an overlong line; its successful publication is still report
         (text--numbered-line-window lines :start-line start-line :line-count line-count
                                    :maximum-characters   *workspace-file-resource-maximum-result-characters*
                                    :line-anchor-function #'cl-hashline:line-anchor)
-      (declare (ignore last-line))
       (when (and reading-p (plusp total-lines) (null visible-ranges))
         (error 'tool-error
                :message   (format nil "Line ~D exceeds the resource.read result limit and was not observed. Use bounded search to inspect it."
@@ -212,7 +212,19 @@ An edit may produce an overlong line; its successful publication is still report
       (let ((state (resource-observation-state-ensure
                     (tool-context-conversation context) observation
                     :visible-ranges (append carried visible-ranges))))
-        (text-resource--read-result state body :total-lines total-lines :truncated-p truncated-p)))))
+        (values (text-resource--read-result state body :total-lines total-lines :truncated-p truncated-p)
+                (when (and reading-p visible-ranges)
+                  (list :resource-read
+                        (list :uri (resource-observation-uri observation)
+                              :lines (loop for number from start-line to last-line
+                                           for text = (aref lines (1- number))
+                                           collect (list number (cl-hashline:line-anchor text) text))
+                              :elisions (remove nil
+                                                (list (when (> start-line 1)
+                                                        (format nil "1-~D before" (1- start-line)))
+                                                      (when (< last-line total-lines)
+                                                        (format nil "~D-~D after" (1+ last-line) total-lines))
+                                                      (when truncated-p "current result truncated")))))))))))
 
 (defmethod resource-apply-operations
     ((resource text-resource) (context tool-context) &key base-revision operations)
@@ -249,8 +261,9 @@ An edit may produce an overlong line; its successful publication is still report
          (observation (resource-observe resource context))
          (start       (text-resource-read-start resource :start-line start-line :line-count line-count
                                                         :total-lines (length (text-resource-observation-lines observation)))))
-    (text-resource-read-tool-result
-     observation (text-resource--window-result context observation :start-line start :line-count line-count :reading-p t))))
+    (multiple-value-bind (content details)
+        (text-resource--window-result context observation :start-line start :line-count line-count :reading-p t)
+      (text-resource-read-tool-result observation content :details details))))
 
 (defmethod resource-tool-edit
     ((resource text-resource) (tool resource-edit-tool) (context tool-context) (arguments hash-table))
@@ -268,17 +281,24 @@ An edit may produce an overlong line; its successful publication is still report
             (resource-apply-operations resource context :base-revision base-revision :operations (coerce operation-array 'list))
           (multiple-value-bind (start-line line-count)
               (text-resource--operation-window normalized (length (text-resource-observation-lines observation)))
-            (let* ((result (format nil "Applied ~{~A~^; ~}.~A~%~A"
-                                   (mapcar (lambda (operation) (getf operation :summary)) normalized)
-                                   (text-resource-edit-notice resource)
+            (let* ((summary (format nil "Applied ~{~A~^; ~}."
+                                    (mapcar (lambda (operation) (getf operation :summary)) normalized)))
+                   (result (format nil "~A~A~%~A"
+                                   summary (text-resource-edit-notice resource)
                                    (text-resource--window-result context observation :start-line start-line
                                                                                    :line-count line-count :carried carried)))
-                   (path   (text-resource-source-pathname observation)))
-              (tool-success (if path (lisp-source-edit-result-content result path (resource-observation-content observation)) result)))))
+                   (path    (text-resource-source-pathname observation))
+                   (warning (and path (lisp-source-edit-result-content
+                                       "" path (resource-observation-content observation)))))
+              (tool-success (if warning (concatenate 'string result warning) result)
+                            :details (list :resource-edit
+                                           (list :summary (resource-tool--detail-text summary)
+                                                 :delimiter-warning-p (and warning (plusp (length warning)))))))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri))))))
+                 base-revision uri)
+         :details (resource-tool--stale-edit-details base-revision))))))
 
 
 ;;;; -- Line Operation Mechanics --

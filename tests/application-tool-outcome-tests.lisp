@@ -216,7 +216,8 @@
                                                                          "content" "requested-change"))))))))
            (output      (format nil "resource.edit failed: Resource revision ~A is stale, expired, or was not observed in this conversation. Reread workspace:example.lisp with resource.read and retry against the returned revision." revision))
            (result      (list :tool-result :seq 2 :time 0 :tool "resource.edit" :call-id "edit"
-                              :status ':error :output output)))
+                              :status ':error :output output
+                              :details (list :resource-edit (list :stale-revision revision)))))
       (application-tool-outcome-tests--present application call result)
       (dolist (columns '(100 40 100))
         (terminal-ui-resize (application-ui application) columns :rows 24)

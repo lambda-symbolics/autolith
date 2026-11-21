@@ -485,10 +485,10 @@ When truncating, report how many characters were kept."
                     (tool-context-conversation context)
                     observation)))
             (tool-success
-             (format nil "~A~%~A"
-                     summary
-                     (resource-item-read-result state)))))
+             (format nil "~A~%~A" summary (resource-item-read-result state))
+             :details (list :resource-edit (list :summary (resource-tool--detail-text summary))))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, from another workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri))))))
+                 base-revision uri)
+         :details (resource-tool--stale-edit-details base-revision))))))
