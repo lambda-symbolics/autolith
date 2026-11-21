@@ -2893,6 +2893,7 @@ A channel message shows its sender and channel instead of an operation."
          (outcome    (getf completion :outcome))
          (identifier (getf completion :job-id))
          (summary    (getf completion :summary))
+         (shell      (getf completion :transcript-shell))
          (status     (case outcome
                         (:cancellation-pending
                          "cancellation pending")
@@ -2904,18 +2905,24 @@ A channel message shows its sender and channel instead of an operation."
                         "cancelled")
                        (otherwise
                         "result received"))))
-    (application--transcript-entry
-     application
-     :style     (if (eq outcome ':failure) ':failure ':notice)
-     :header    (format nil "▸ job ~A" status)
-     :detail    (when (stringp identifier) identifier)
-     :timestamp (getf properties :time)
-     :body      (when (and (or (eq outcome ':cancellation-pending)
-                               (not (application-compact-view-p application)))
-                           (non-empty-string-p summary))
-                  (if (> (length summary) 500)
-                      (concatenate 'string (subseq summary 0 500) "…")
-                      summary)))))
+    (append
+     (application--transcript-entry
+      application
+      :style     (if (eq outcome ':failure) ':failure ':notice)
+      :header    (format nil "▸ job ~A" status)
+      :detail    (when (stringp identifier) identifier)
+      :timestamp (getf properties :time)
+      :body      (when (and (not shell)
+                            (or (eq outcome ':cancellation-pending)
+                                (not (application-compact-view-p application)))
+                            (non-empty-string-p summary))
+                   (if (> (length summary) 500)
+                       (concatenate 'string (subseq summary 0 500) "…")
+                       summary)))
+     (when (and shell (not (application-compact-view-p application)))
+       (loop for row in (application--shell-completion-rows application (getf shell :details))
+             append (cons (terminal-span ':plain (string #\Newline))
+                          (application--tool-row-spans application row)))))))
 
 (-> application--transcript-source-value (list function) t)
 (defun application--transcript-source-value (key build)

@@ -78,6 +78,8 @@ explicit safety declaration; admission alone grants no replay authority."
                 :detached-p            (session-job-detached-p job)
                :created-at             (get-universal-time)
                :kind                   (if (typep job 'task-job) ':task ':tool)
+                :tool                  (when (typep job 'tool-execution-job)
+                                         (tool-execution-job-tool-name job))
                :specification          (when (typep job 'task-job)
                                          (copy-tree (task-job-item job))))
          :require-absent t)))

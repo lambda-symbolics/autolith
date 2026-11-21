@@ -80,6 +80,13 @@
                                  (not (application-compact-view-p application)))
             :body            (unless metadata-only-p
                                (cond
+                                 ((getf completion :transcript-shell)
+                                  (when (or (eq state ':failure)
+                                            (not (application-compact-view-p application)))
+                                    (application--tool-outcome-body
+                                     application
+                                     (application--shell-completion-rows
+                                      application (getf (getf completion :transcript-shell) :details)))))
                                  ((and (eq state ':failure) (non-empty-string-p summary))
                                   (application--tool-outcome-body
                                    application

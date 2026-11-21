@@ -1195,19 +1195,56 @@ retained value is credential-redacted or projected."
     :initarg       :sections
     :reader        mcp-content-result-sections
     :type          list
-    :documentation "Ordered content kinds and character ranges in the result text."))
+    :documentation "Ordered content kinds and character ranges in the result text.")
+   (structured-content
+    :initarg       :structured-content
+    :initform      nil
+    :reader        mcp-content-result-structured-content
+    :documentation "Bounded portable native structured content for display."))
   (:documentation "An MCP outcome retaining content boundaries for transcript replay."))
 
+(-> mcp-tools--transcript-value (t) t)
+(defun mcp-tools--transcript-value (value)
+  "Project native MCP VALUE into bounded, portable transcript metadata."
+  (let ((remaining 64))
+    (labels ((project (item depth)
+               (cond
+                 ((or (minusp (decf remaining)) (zerop depth))
+                  "…")
+                 ((json-object-p item)
+                  (cons ':mcp-object
+                        (loop for key being the hash-keys of item using (hash-value field)
+                              repeat 12
+                              collect (list (bounded-string key :limit 80)
+                                            (project field (1- depth))))))
+                 ((stringp item)
+                  (bounded-string item :limit 160))
+                 ((vectorp item)
+                  (cons ':mcp-array
+                        (loop for index below (min 12 (length item))
+                              collect (project (aref item index) (1- depth)))))
+                 ((json-false-p item)
+                  ':mcp-false)
+                 (t
+                  item))))
+      (project value 8))))
+
 (defmethod tool-result-details ((result mcp-content-result))
-  "Persist content boundaries without duplicating result text or image data."
-  (list :mcp-content :sections (mcp-content-result-sections result)))
+  "Persist section boundaries and the bounded structured display value."
+  (list :mcp-content        :sections (mcp-content-result-sections result)
+        :structured-content (mcp-content-result-structured-content result)))
 
 (defmethod tool-contract--prefix-details ((result mcp-content-result) length)
   "Keep MCP section ranges within the external prefix retained before a diagnostic."
-  (list :mcp-content :sections
+  (list :mcp-content        :sections
         (loop for (kind start end) in (mcp-content-result-sections result)
               when (<= start length)
-                collect (list kind start (min end length)))))
+               collect (list kind start (min end length)))
+        :structured-content (when (some (lambda (section)
+                                          (and (eq (first section) ':structured)
+                                               (<= (third section) length)))
+                                        (mcp-content-result-sections result))
+                              (mcp-content-result-structured-content result))))
 
 (defparameter *mcp-image-encoded-maximum-characters* (* 48 1024 1024)
   "The maximum base64 characters accepted from one MCP image block.")
@@ -1476,22 +1513,21 @@ retained value is credential-redacted or projected."
     tool-result)
 (defun mcp-tools--call-result (tool context result)
   "Project one raw MCP RESULT into an Autolith tool result."
-  (let* ((runtime (mcp-provider-tool-runtime tool))
+  (let* ((runtime            (mcp-provider-tool-runtime tool))
          (source-name
            (format nil "mcp://~A/~A"
                    (mcp-server-runtime-name runtime)
                    (mcp-tool-name (mcp-provider-tool-raw-tool tool))))
-         (error-p (mcp-call-result-error-p result)))
+         (error-p            (mcp-call-result-error-p result))
+         (structured-content (mcp-tools--sanitize-value (mcp-call-result-structured-content result))))
     (multiple-value-bind (content attachments provider-blocks sections)
         (mcp-tools--render-content
          context
          (mcp-tools--sanitize-value
           (mcp-call-result-content result))
          source-name
-         :structured-content
-         (mcp-tools--sanitize-value
-          (mcp-call-result-structured-content result))
-         :include-images-p (not error-p))
+         :structured-content structured-content
+         :include-images-p   (not error-p))
       (let ((rendered
               (if (non-empty-string-p content)
                   content
@@ -1500,7 +1536,8 @@ retained value is credential-redacted or projected."
          (if error-p
              (tool-failure rendered)
              (tool-success rendered :content-blocks (when attachments provider-blocks)))
-         'mcp-content-result :sections sections)))))
+         'mcp-content-result :sections sections
+         :structured-content           (mcp-tools--transcript-value structured-content))))))
 
 
 ;;;; -- MCP Tool Execution --

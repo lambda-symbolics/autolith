@@ -2403,7 +2403,32 @@
                  (replayed (conversation-record-entry
                             application (first (conversation-records-newest loaded 1)))))
             (test-assert (equal live replayed)
-                         "durable replay uses retained native details with the same spans")))))))
+                         "durable replay uses retained native details with the same spans"))))
+      (let* ((output   "{\"shape\":[1,2]}")
+             (details  (list :exit-code 0 :output-streams
+                             (list (list :stream ':stdout :head output :complete-p t))))
+             (envelope "(:TOOL-EXECUTION :JOB (:RESULT NIL))"))
+        (dolist (case (list (list "test.output" output nil output)
+                            (list "shell.run" envelope details output)
+                            (list "shell.run" envelope nil "result details unavailable")))
+          (destructuring-bind (tool text metadata expected) case
+            (let ((record (list :tool-result :tool tool :status ':ok :output text :details metadata)))
+              (conversation-append-tool-result conversation (make-identifier) :tool-name tool
+                                               :output text :success-p t :details metadata)
+              (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                     (replay (first (conversation-records-newest loaded 1))))
+                (dolist (source (list record replay))
+                  (let ((shown (test-terminal-row-text (conversation-record-entry application source))))
+                    (test-assert (and (search expected shown) (not (search envelope shown)))
+                                 "live and replay preserve literal text without displaying a missing native envelope")))))))
+        (let* ((entry (conversation-record-entry
+                       application
+                       (list :message :role ':user :automatic-p t :content envelope
+                             :job-completion (list :job-id "exec:19" :outcome ':success :summary envelope
+                                                   :transcript-shell (list :details details)))))
+               (shown (test-terminal-row-text entry)))
+          (test-assert (and (search output shown) (not (search envelope shown)))
+                       "a shell completion displays typed capture, not the summary envelope"))))))
 
 (-> test-native-role-and-continuity-presentation () null)
 (defun test-native-role-and-continuity-presentation ()

@@ -15,40 +15,6 @@
 (defparameter *application-tool-inspection-lines* 24
   "The maximum introspection lines shown in the terminal transcript.")
 
-(-> application--fenced-output-rows (application string integer) (option list))
-(defun application--fenced-output-rows (application text limit)
-  "Render explicit Markdown code fences within a bounded tool-output rail."
-  (when (or (search "```" text) (search "~~~" text))
-    (let* ((renderer (application--markdown-renderer application))
-           (safe     (sanitize-text (bounded-string text :limit 16384)))
-           (rows     (append
-                      (loop for line in (uiop:split-string safe :separator '(#\Newline))
-                            append (application--markdown-rows renderer line))
-                      (termdown:markdown-render-finish renderer))))
-      (append
-       (loop for row in (subseq rows 0 (min limit (length rows)))
-             collect (cons (terminal-span ':dim "│ ") row))
-       (when (> (length rows) limit)
-         (list (list (terminal-span ':dim "… more content"))))))))
-
-(-> application--code-output-rows
-    (application string &key (:limit integer) (:json-p boolean))
-    (option list))
-(defun application--code-output-rows
-    (application text &key (limit *application-tool-output-lines*) json-p)
-  "Format self-identifying code output without reading Lisp or accessing files.
-
-With JSON-P, render complete JSON captures as source rather than nested fields.
-Shell output is not assumed to be shell source."
-  (let ((trimmed (string-left-trim '(#\Space #\Tab #\Newline #\Return) text)))
-    (or (application--fenced-output-rows application text limit)
-        (when (uiop:string-prefix-p "(:" trimmed)
-          (application--source-preview-rows
-           text :language *application-common-lisp-language* :limit limit))
-        (when (and json-p (nth-value 1 (application--structured-output-value text)))
-          (application--source-preview-rows
-           text :language (language-find "json" :errorp nil) :limit limit)))))
-
 (-> application--preview-rows
     (string terminal-style integer &key (:gutter (option string)))
     list)
@@ -1804,45 +1770,10 @@ OPERATION's own declared target line so they stay numbered."
          output)
      ':plain *application-tool-output-lines* :gutter "│ ")))
 
-(-> application--structured-output-value (string) (values t boolean))
-(defun application--structured-output-value (output)
-  "Decode OUTPUT as a complete JSON object or array for transcript display.
-
-Treat other output, including malformed untrusted JSON, as bounded tool text."
-  (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
-    (if (and (plusp (length trimmed))
-             (member (char trimmed 0) '(#\{ #\[))
-             (<= (length trimmed) 131072))
-        (handler-case
-            (let ((value (json-decode
-                          trimmed :limits (make-json-limits :maximum-depth     32
-                                                           :maximum-characters 131072))))
-              (if (or (json-object-p value)
-                      (and (vectorp value) (not (stringp value))))
-                  (values value t)
-                  (values nil nil)))
-          (error ()
-            (values nil nil)))
-        (values nil nil))))
-
-(-> application--structured-output-rows (application string) list)
-(defun application--structured-output-rows (application output)
-  "Return bounded recursive fields for JSON OUTPUT or a safe text preview."
-  (multiple-value-bind (value structured-p)
-      (application--structured-output-value output)
-    (if structured-p
-        (let* ((*application-tool-structure-budget* 64)
-               (rows                                (if (json-object-p value)
-                                                        (application--structured-object-rows application value :depth 8)
-                                                        (application--structured-value-rows application "result" value :depth 8))))
-          (if (or (> (length rows) *application-tool-output-lines*)
-                  (minusp *application-tool-structure-budget*))
-              (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
-                      (list (list (terminal-span ':dim "… more fields"))))
-              rows))
-        (or (application--code-output-rows application output)
-            (application--preview-rows output ':dim *application-tool-output-lines*
-                                       :gutter "│ ")))))
+(-> application--tool-text-rows (string) list)
+(defun application--tool-text-rows (output)
+  "Render bounded OUTPUT as literal text, without inferring a data format."
+  (application--preview-rows output ':dim *application-tool-output-lines* :gutter "│ "))
 
 (-> application--mcp-content-sections (t string) list)
 (defun application--mcp-content-sections (details output)
@@ -1867,8 +1798,8 @@ Treat other output, including malformed untrusted JSON, as bounded tool text."
 (defun application--mcp-content-rows (application record)
   "Format validated MCP content sections independently within one row budget."
   (let* ((output    (or (getf (rest record) :output) ""))
-         (sections  (application--mcp-content-sections
-                     (getf (rest record) :details) output))
+         (details   (getf (rest record) :details))
+         (sections  (application--mcp-content-sections details output))
          (rows      nil)
          (processed 0))
     (dolist (section sections)
@@ -1876,11 +1807,13 @@ Treat other output, including malformed untrusted JSON, as bounded tool text."
         (return))
       (incf processed)
       (destructuring-bind (kind start end) section
-        (declare (ignore kind))
         (setf rows
               (append rows
-                      (application--structured-output-rows
-                       application (subseq output start end))))))
+                      (ecase kind
+                        (:text
+                         (application--tool-text-rows (subseq output start end)))
+                        (:structured
+                         (application--mcp-structured-rows application details)))))))
     (if (or (> (length rows) *application-tool-output-lines*)
             (< processed (length sections)))
         (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
@@ -1901,6 +1834,8 @@ lists, independently of the producer's transport limits."
                  (cond
                    ((stringp value)
                     (bounded-string value :limit 500))
+                   ((eq value ':mcp-false)
+                    (json-false))
                    ((keywordp value)
                     (string-downcase (symbol-name value)))
                    ((or (null value) (numberp value) (eq value t) (json-false-p value))
@@ -1919,6 +1854,18 @@ lists, independently of the producer's transport limits."
                                          (project item (1- depth))))
                                  value))
                       object))
+                   ((and (consp value) (eq (first value) ':mcp-object))
+                    (let ((object (make-hash-table :test #'equal)))
+                      (loop for tail on (rest value) for field = (first tail) repeat 13
+                            do (unless (and (consp field) (stringp (first field))
+                                            (consp (rest field)) (null (rest (rest field))))
+                                 (return-from invalid (values nil nil)))
+                               (setf (gethash (first field) object) (project (second field) (1- depth))))
+                      object))
+                   ((and (consp value) (eq (first value) ':mcp-array))
+                    (coerce (loop for tail on (rest value) repeat 13
+                                  collect (project (first tail) (1- depth)))
+                            'vector))
                    ((consp value)
                     (if (keywordp (first value))
                         (let ((object (make-hash-table :test #'equal))
@@ -1954,7 +1901,7 @@ lists, independently of the producer's transport limits."
         (when (consp details)
           (let ((tagged-p (member (first details)
                                   '(:task-run :task-agents :job-list :job-get :job-wait
-                                    :job-cancel :job-send :mission))))
+                                     :job-cancel :job-send :mission :mcp-content))))
             (when (or tagged-p
                       (member (first details)
                               '(:job :continuity-list :classification :job-id :execution-id)))
@@ -1962,6 +1909,22 @@ lists, independently of the producer's transport limits."
                 (if (json-object-p value)
                     (values value t)
                     (values nil nil))))))))))
+
+(-> application--mcp-structured-rows (application list) list)
+(defun application--mcp-structured-rows (application details)
+  "Render an MCP structured section from the native portable value only."
+  (multiple-value-bind (value valid-p)
+      (application--native-details-value details)
+    (let ((content                             (and valid-p (json-get value "structured-content")))
+          (*application-tool-structure-budget* 64))
+      (cond
+        ((json-object-p content)
+         (or (application--structured-object-rows application content :depth 8)
+             (list (list (terminal-span ':dim "empty structured content")))))
+        (content
+         (application--structured-value-rows application "result" content :depth 8))
+        (t
+         (list (list (terminal-span ':dim "structured content unavailable"))))))))
 
 (-> application--native-job-rows (application json-object) list)
 (defun application--native-job-rows (application object)
@@ -2064,23 +2027,36 @@ The same projection is used for retained tool details and inspector snapshots."
   (application--native-details-rows
    application (list :tool-result :details (list :job snapshot))))
 
+(-> application--structured-result-output-p (list) boolean)
+(defun application--structured-result-output-p (record)
+  "Identify producer-owned envelopes without inspecting model-facing output."
+  (let* ((properties (rest record))
+         (details    (getf properties :details)))
+    (or (and (consp details) (eq (first details) ':tool-execution))
+        (and (application--tool-result-success-p record)
+             (not (null (member (getf properties :tool)
+                                '("shell.run" "task.run" "task.agents" "job.list"
+                                  "job.get" "job.wait" "job.cancel" "job.send" "job.continuity")
+                                :test #'equal)))))))
+
 (-> application--generic-tool-result-entry (application list) list)
 (defun application--generic-tool-result-entry (application record)
-  "Return a readable fallback entry for tool result RECORD.
-
-This also formats JSON returned by dynamic tools as bounded fields instead of
-re-emitting untrusted serialized JSON."
+  "Return a readable fallback entry using native details or bounded literal text."
   (let ((output (or (getf (rest record) :output) "")))
     (application--tool-result-entry
      application
      record
-     :rows (or (application--native-details-rows application record)
+     :rows (or (application--mcp-content-rows application record)
+               (application--native-details-rows application record)
                (application--evaluation-result-rows record)
-               (application--mcp-content-rows application record)
-               (if (application--tool-result-success-p record)
-                   (application--structured-output-rows application output)
-                   (application--failure-result-rows
-                    output :tool-name (getf (rest record) :tool)))))))
+               (cond
+                 ((application--structured-result-output-p record)
+                  (list (list (terminal-span ':dim "result details unavailable"))))
+                 ((application--tool-result-success-p record)
+                  (application--tool-text-rows output))
+                 (t
+                  (application--failure-result-rows
+                   output :tool-name (getf (rest record) :tool))))))))
 
 (-> application--tool-execution-handoff-status (list) string)
 (defun application--tool-execution-handoff-status (handoff)
@@ -2147,11 +2123,15 @@ the call itself."
     (tool (application application) record)
   "Present native background handoffs before any tool-specific output renderer."
   (declare (ignore tool))
-  (let ((handoff (application--tool-execution-handoff record)))
-    (if handoff
-        (application--tool-execution-handoff-entry
-         application (getf (rest record) :tool) handoff)
-        (call-next-method))))
+  (let ((handoff (application--tool-execution-handoff record))
+        (name    (getf (rest record) :tool)))
+    (cond
+      (handoff
+       (application--tool-execution-handoff-entry application name handoff))
+      ((equal name "shell.run")
+       (or (application--shell-result-entry application record) (call-next-method)))
+      (t
+       (call-next-method)))))
 
 (defmethod application-tool-result-entry
     ((tool tool) (application application) record)
@@ -2235,6 +2215,7 @@ Mark reports that repeat an active papercut as already reported."
 (-> application--shell-section-rows (application list boolean) list)
 (defun application--shell-section-rows (application section labeled-p)
   "Return SECTION's bounded stream samples without interpreting output prose."
+  (declare (ignore application))
   (let* ((stream   (getf section :stream))
          (stderr-p (eq stream ':stderr))
          (text     (concatenate 'string (or (getf section :head) "")
@@ -2256,10 +2237,8 @@ Mark reports that repeat an active papercut as already reported."
        ((not (getf section :complete-p))
         (list (list (terminal-span ':notice "output truncated")))))
      (unless (string= text "")
-       (or (unless stderr-p
-             (application--code-output-rows application text :json-p t))
-           (application--preview-rows text (if stderr-p ':failure ':dim)
-                                      *application-tool-output-lines* :gutter "│ "))))))
+       (application--preview-rows text (if stderr-p ':failure ':dim)
+                                  *application-tool-output-lines* :gutter "│ ")))))
 
 (-> application--shell-result-rows (application list) list)
 (defun application--shell-result-rows (application details)
@@ -2313,8 +2292,8 @@ Mark reports that repeat an active papercut as already reported."
                                       :complete-p    (eq t (json-get section "complete-p"))
                                       :unavailable-p (eq t (json-get section "unavailable-p")))))))))))
 
-(defmethod application-tool-result-entry
-    ((tool shell-run-tool) (application application) record)
+(-> application--shell-result-entry (application list) (option list))
+(defun application--shell-result-entry (application record)
   "Present typed shell outcomes and stream previews, never model-facing metadata prose."
   (let* ((raw       (getf (rest record) :details))
          (details   (and (proper-list-p raw) (evenp (length raw))
@@ -2334,7 +2313,19 @@ Mark reports that repeat an active papercut as already reported."
                              "exit unavailable"))
          :detail (application--tool-result-timing record)
          :rows   (application--shell-result-rows application details))
-        (call-next-method))))
+        nil)))
+
+(-> application--shell-completion-rows (application t) list)
+(defun application--shell-completion-rows (application details)
+  "Show a completion's retained shell metadata and bounded stream samples."
+  (let* ((valid-p (and (proper-list-p details) (evenp (length details))
+                       (every #'keywordp (plist-keys details))))
+         (log     (and valid-p (first (getf details :shell-logs))))
+         (exit    (and valid-p (or (getf details :exit-code) (getf log :exit-code)))))
+    (append (when (integerp exit)
+              (list (list (terminal-span (if (zerop exit) ':success ':failure)
+                                         (format nil "exit ~D" exit)))))
+            (when valid-p (application--shell-result-rows application details)))))
 
 (-> application--first-line-summary (string) string)
 (defun application--first-line-summary (output)
