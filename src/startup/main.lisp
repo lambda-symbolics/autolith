@@ -764,14 +764,15 @@ dependencies."
     (clingon:command
      &key (:open-requested-p boolean)
           (:open-id (option string))
+          (:new-directory (option pathname))
           (:authenticate-p boolean)
           (:authentication-selection (option string))
           (:authentication-method (option keyword)))
     null)
 (defun main--start-session
-    (command &key open-requested-p open-id authenticate-p
+    (command &key open-requested-p open-id new-directory authenticate-p
                   authentication-selection authentication-method)
-  "Start one interactive Autolith session from COMMAND's parsed options."
+  "Start an Autolith session from COMMAND and create a new channel for NEW-DIRECTORY when supplied."
   (main--register-local-source-trees)
   (setf *world-image-selection*
         (cond
@@ -792,6 +793,8 @@ dependencies."
                                :immutable-p                 immutable-p
                                :defer-provider-validation-p t
                                (append (main--site-root-arguments command)
+                                       (when new-directory
+                                         (list :working-directory new-directory))
                                        (main--model-arguments command)))))
               (terminal-theme-install (config :terminal-theme base))
               base))
@@ -806,17 +809,17 @@ dependencies."
            (when (and (null handoff-record) open-id)
              (main-resolve-conversation configuration open-id)))
          (recovery-state
-           (if handoff-record
+            (if (or handoff-record new-directory)
                (list nil nil)
                (multiple-value-list
                 (application-recovery-state configuration))))
          (recovery-conversation-id (first recovery-state))
          (recovery-diagnosis
-           (and (null handoff-record) (null effective-open-id)
-                (application-recovery-diagnosis-prompt configuration)))
+            (and (not (or handoff-record new-directory effective-open-id))
+                 (application-recovery-diagnosis-prompt configuration)))
          (conversation-id          (or effective-open-id recovery-conversation-id))
          (latest-p                 (and effective-open-requested-p (null conversation-id)))
-         (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record)))
+         (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record new-directory)))
          (image-state-loaded-p
            (and authenticate-p
                 (or pristine-p handoff-record
@@ -861,6 +864,7 @@ dependencies."
          :immutable-p        immutable-p
          :conversation-id    conversation-id
          :attachment-mode    attachment-mode
+         :new-p              (not (null new-directory))
          :inbox-p            inbox-p
          :latest-p           latest-p
          :welcome-p          inbox-p
@@ -916,7 +920,7 @@ ends the start with the reason; no session runs in this terminal instead."
                          :switch-p           (not attach-expected-p)
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
-                       :new-p                new-p)
+                         :new-p              new-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1217,13 +1221,13 @@ still shows the boot panel keeps it until the user starts the session."
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
      (:conversation-id (option string)) (:attachment-mode (member :control :read-only))
-     (:pick-channel-p boolean) (:inbox-p boolean) (:latest-p boolean) (:welcome-p boolean)
+     (:pick-channel-p boolean) (:new-p boolean) (:inbox-p boolean) (:latest-p boolean) (:welcome-p boolean)
      (:recovery-diagnosis (option string)) (:launch list))
     (values boolean list))
 (defun main--run-world-client
        (configuration
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
-        pick-channel-p inbox-p latest-p welcome-p recovery-diagnosis launch)
+        pick-channel-p new-p inbox-p latest-p welcome-p recovery-diagnosis launch)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
 Interactive switches wait for discovery and attachment until completion or cancellation.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
@@ -1259,10 +1263,11 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :immutable-p        immutable-p
                                                  :conversation-id    conversation-id
                                                  :pick-channel-p     pick-channel-p
+                                                 :new-p              new-p
                                                  :inbox-p            inbox-p
                                                  :latest-p           latest-p
                                                  :recovery-diagnosis recovery-diagnosis
-                                                :launch              launch)))
+                                                 :launch             launch)))
                  :start-p (not (null (terminal--terminal-mode-or-nil
                                       (world-terminal-screen-terminal screen))))
                  :boot-p  (config :boot-screen-p configuration))))
@@ -1461,11 +1466,16 @@ Return success and bounded secondary cleanup metadata without replacing a primar
 
 (-> main--new-command () clingon:command)
 (defun main--new-command ()
-  "Return the command that creates a hosted channel without attaching."
+  "Return the command that creates a channel and attaches unless asked not to."
   (make-command
    :name        "new"
-   :description "create a new channel without attaching"
-   :usage       "[DIRECTORY]"
+   :description "create and open a new channel"
+   :usage       "[DIRECTORY] [-d|--detached]"
+   :options     (list (make-option ':flag
+                                   :short-name  #\d
+                                   :long-name   "detached"
+                                   :key         ':detached
+                                   :description "create the channel without attaching"))
    :handler
    (lambda (command)
      (let* ((argument  (main--single-selection command "directory"))
@@ -1475,16 +1485,18 @@ Return success and bounded secondary cleanup metadata without replacing a primar
        (unless (uiop:directory-exists-p directory)
          (error 'configuration-error :message
                 (format nil "The directory ~A does not exist." directory)))
-       (let* ((configuration (world-terminal--client-configuration))
-              (identifier    (world-client-open
-                              configuration
-                              :directory         directory
-                              :permission-mode   (or (config :permission-mode configuration) ':ask)
-                              :new-p             t
-                              :attach-expected-p nil)))
-         (world-terminal--write-styled-line
-          *standard-output* (channel-open-instruction identifier)
-          (world-terminal--status-output-styled-p *standard-output*)))))))
+       (if (getopt command ':detached)
+           (let* ((configuration (world-terminal--client-configuration))
+                  (identifier    (world-client-open
+                                  configuration
+                                  :directory         directory
+                                  :permission-mode   (or (config :permission-mode configuration) ':ask)
+                                  :new-p             t
+                                  :attach-expected-p nil)))
+             (world-terminal--write-styled-line
+              *standard-output* (channel-open-instruction identifier)
+              (world-terminal--status-output-styled-p *standard-output*)))
+           (main--start-session command :new-directory directory))))))
 
 (-> main--fork-command () clingon:command)
 (defun main--fork-command ()

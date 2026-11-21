@@ -1748,15 +1748,16 @@ Otherwise, change the permission mode inside the conversation with
 Control a channel with the following commands:
 
 #+BEGIN_SRC sh
-autolith new    [DIRECTORY]
+autolith new    [DIRECTORY] [-d|--detached]
 autolith tell   TARGET "message"
 autolith pause  [TARGET]
 autolith detach [TARGET]
 #+END_SRC
 
-Use =autolith new= to create a fresh channel without attaching. Pass a
-=DIRECTORY= to use it instead of the current directory. Run the printed
-=autolith open ID= command to attach.
+Use =autolith new= to create and open a fresh channel. Pass a =DIRECTORY= to use
+it instead of the current directory. With =-d= or =--detached=, create the
+channel without attaching, then use the printed =autolith open ID= command to
+attach later.
 
 Use a channel ID, a unique part of one, an agent's name with or without =@=,
 a participant ID, or =inbox= as =TARGET=.

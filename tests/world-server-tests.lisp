@@ -979,11 +979,11 @@ the version the client says it is, when it says one."
       (list (list 'world-terminal--client-configuration (lambda () configuration)))
       (lambda ()
         (let ((identifiers nil))
-          (dotimes (index 2)
+          (dolist (flag '("-d" "--detached"))
             (let* ((output
                      (with-output-to-string (*standard-output*)
                        (let ((command (parse-command-line (main--top-level-command)
-                                                          (list "new" (namestring root)))))
+                                                          (list "new" flag (namestring root)))))
                          (funcall (command-handler command) command))))
                    (host (find-if-not (lambda (host)
                                         (member (world-host-channel host) identifiers :test #'equal))
