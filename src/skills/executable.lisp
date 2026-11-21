@@ -197,11 +197,11 @@ Only tools declared by exact name enter the host bridge."
                   (executable-skill--fail ':result-transport "Executable result envelope is invalid."))
                 (fourth envelope))
             (sexp-config-error (condition)
-              (executable-skill--fail ':result-transport (sexp-config-error-message condition))))))
+              (executable-skill--fail ':result-transport (sexp-config-error-message condition)))))
       (ls-compat.files:file-too-large ()
         (executable-skill--fail ':result-transport "Executable result exceeds the transport byte limit."))
       (ls-compat.files:file-changed ()
-        (executable-skill--fail ':result-transport "Executable result changed while reading."))))
+        (executable-skill--fail ':result-transport "Executable result changed while reading.")))))
 
 (-> executable-skill--record-result (list) tool-result)
 (defun executable-skill--record-result (value)

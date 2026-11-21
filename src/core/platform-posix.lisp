@@ -292,15 +292,15 @@
   (ls-compat.posix:executable-path-p pathname))
 
 (defmethod platform-make-temporary-directory ((platform posix-platform)
-                                            parent prefix)
+                                              parent prefix)
   "Create a private temporary directory through ls-compat."
   (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
     (file-error (condition)
       (platform--file-failure ':create parent condition))))
 
 (defmethod platform-delete-directory-tree ((platform posix-platform) pathname
-                                         &rest arguments
-                                         &key validate if-does-not-exist)
+                                           &rest arguments
+                                           &key validate if-does-not-exist)
   "Remove PATHNAME's tree through ls-compat with the caller's policy."
   (declare (ignore platform validate if-does-not-exist))
   (apply #'ls-compat.posix:delete-directory-tree pathname arguments))

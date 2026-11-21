@@ -237,20 +237,20 @@
                     (progn (executable-skill--read-result pathname "fixture" :directory-status status) nil)
                   (executable-skill-error () t)) "preconstruction depth and node bounds reject publication"))
              (let ((saved-directory (merge-pathnames "transport-original/" (config :cache-root configuration)))
-                   (open-function   (symbol-function 'platform-open-regular-file))
+                   (open-function   (symbol-function 'ls-compat.posix:open-regular-file))
                    (opened-stream   nil))
                (unwind-protect
                     (test-call-with-function-replacements
                      (list
-                      (list 'platform-open-regular-file
-                            (lambda (platform path &key follow-links-p)
-                              (rename-file directory saved-directory)
-                              (executable-skill-tests--write
-                               path "(:token \"fixture\" :record (:success-p t :value :substituted))")
-                              (multiple-value-bind (stream file-status)
-                                  (funcall open-function platform path :follow-links-p follow-links-p)
-                                (setf opened-stream stream)
-                                (values stream file-status)))))
+                       (list 'ls-compat.posix:open-regular-file
+                             (lambda (path &rest arguments)
+                               (rename-file directory saved-directory)
+                               (executable-skill-tests--write
+                                path "(:token \"fixture\" :record (:success-p t :value :substituted))")
+                               (multiple-value-bind (stream file-status)
+                                   (apply open-function path arguments)
+                                 (setf opened-stream stream)
+                                 (values stream file-status)))))
                      (lambda ()
                        (test-assert
                         (handler-case

@@ -151,16 +151,10 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
   (template win32-handle))
 (win32--define win32--get-file-attributes "GetFileAttributesW" win32-dword
   (name win32-wide-string))
-(win32--define win32--set-file-attributes "SetFileAttributesW" win32-bool
-  (name win32-wide-string) (attributes win32-dword))
-(win32--define win32--set-environment-variable "SetEnvironmentVariableW" win32-bool
-  (name win32-wide-string) (value win32-wide-string))
-(win32--define win32--wputenv "_wputenv" sb-alien:int (entry win32-wide-string))
 (win32--define win32--create-directory "CreateDirectoryW" win32-bool
   (name win32-wide-string) (security (* t)))
 (win32--define win32--open-process "OpenProcess" win32-handle
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
-
 
 (defmethod platform-process-resident-bytes ((platform win32-platform) process-id)
   "Observe the native working set of PROCESS-ID."
@@ -202,9 +196,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (defparameter *win32-create-new* 1
   "The CreateFileW disposition that exclusively creates an absent file.")
 
-(defparameter *win32-file-attribute-readonly* #x1
-  "FILE_ATTRIBUTE_READONLY.")
-
 (defparameter *win32-file-attribute-directory* #x10
   "FILE_ATTRIBUTE_DIRECTORY.")
 
@@ -217,8 +208,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (defparameter *win32-invalid-file-attributes* #xFFFFFFFF
   "The GetFileAttributesW result meaning failure.")
 
-(defparameter *win32-error-environment-variable-not-found* 203
-  "ERROR_ENVVAR_NOT_FOUND, reported when removing a variable that is absent.")
 (defparameter *win32-process-terminate* #x1
   "The OpenProcess access right that allows TerminateProcess.")
 
@@ -230,7 +219,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (defparameter *win32-standard-output-handle* #xFFFFFFF5
   "STD_OUTPUT_HANDLE as the unsigned argument GetStdHandle takes.")
-
 
 (defparameter *win32-resize-poll-seconds* 0.25
   "How often the resize watcher compares the console window size.")
@@ -513,13 +501,6 @@ state, and cache under the local one, each in its own subdirectory."
       (win32--fail ':protect pathname))
     attributes))
 
-(-> win32--set-attributes (pathname integer) null)
-(defun win32--set-attributes (pathname attributes)
-  "Set PATHNAME's file attributes to ATTRIBUTES."
-  (when (zerop (win32--set-file-attributes (win32--namestring pathname) attributes))
-    (win32--fail ':protect pathname))
-  nil)
-
 (defmethod platform-make-private ((platform win32-platform) pathname
                                   &key read-only-p)
   "Grant PATHNAME to the owner and SYSTEM only through its access control list.
@@ -601,15 +582,15 @@ Autolith publishes read-only lives below a private root anyway."
       (platform--file-failure ':status pathname condition))))
 
 (defmethod platform-make-temporary-directory ((platform win32-platform)
-                                            parent prefix)
+                                              parent prefix)
   "Create a private temporary directory through ls-compat."
   (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
     (file-error (condition)
       (platform--file-failure ':create parent condition))))
 
 (defmethod platform-delete-directory-tree ((platform win32-platform) pathname
-                                         &rest arguments
-                                         &key validate if-does-not-exist)
+                                           &rest arguments
+                                           &key validate if-does-not-exist)
   "Remove PATHNAME's tree through ls-compat with the caller's policy."
   (declare (ignore platform validate if-does-not-exist))
   (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
