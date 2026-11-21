@@ -391,6 +391,10 @@
     :reader        tool-result-content
     :type          string
     :documentation "The bounded model-visible result.")
+   (details
+    :initarg       :details
+    :initform      nil
+    :documentation "Portable bounded semantics for consumers of the result.")
    (image-attachments
     :initarg  :image-attachments
     :initform nil
@@ -443,7 +447,7 @@
 (defgeneric tool-result-details (result)
   (:documentation "Return RESULT's machine-readable details, or NIL if it has none.")
   (:method ((result tool-result))
-    nil))
+    (slot-value result 'details)))
 
 (-> tool-result--normalize-content-blocks (list) list)
 (defun tool-result--normalize-content-blocks (blocks)
@@ -470,10 +474,10 @@ returns a resource URI where the complete text can be read, or NIL if storage
 is unavailable. Without a URI, the result's tail is discarded.")
 
 (-> tool-success
-    (t &key (:image-attachments list) (:content-blocks list))
+    (t &key (:image-attachments list) (:content-blocks list) (:details t))
     tool-result)
-(defun tool-success (content &key image-attachments content-blocks)
-  "Return a successful bounded tool result with optional multimodal output."
+(defun tool-success (content &key image-attachments content-blocks details)
+  "Return a successful bounded tool result with optional content blocks and DETAILS."
   (when (and image-attachments content-blocks)
     (error 'tool-error
            :message
@@ -505,6 +509,7 @@ is unavailable. Without a URI, the result's tail is discarded.")
                                        *tool-result-overflow-function*)
                    :image-attachments attachments
                    :content-blocks    blocks
+                   :details           details
                    :success-p         t
                    :category          ':success)))
 
@@ -536,13 +541,14 @@ is unavailable. Without a URI, the result's tail is discarded.")
     (error ()
       nil)))
 
-(-> tool-failure (t &key (:code (option keyword)) (:denied-p boolean)) tool-result)
-(defun tool-failure (content &key code denied-p)
-  "Return a bounded terminal failure with optional CODE and authority refusal DENIED-P."
+(-> tool-failure (t &key (:code (option keyword)) (:denied-p boolean) (:details t)) tool-result)
+(defun tool-failure (content &key code denied-p details)
+  "Return a bounded terminal failure with optional CODE, denial status and DETAILS."
   (make-instance 'tool-result
                  :content    (bounded-string
                               content
                               :overflow-uri-function *tool-result-overflow-function*)
+                 :details    details
                  :success-p  nil
                  :category   ':failure
                  :error-code code
