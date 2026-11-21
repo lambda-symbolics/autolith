@@ -2040,22 +2040,29 @@ process without releasing the lease, exercising kernel cleanup."
         (test-conversation--call-with-diagnostic-holder
          configuration identifier
          (lambda (pid request)
-           (flet ((observe (expected)
-                    (let* ((condition (test-conversation--busy-condition configuration identifier))
-                           (text      (main--startup-error-text condition)))
-                      (test-assert (= pid (conversation-in-use-owner-pid condition))
-                                   "the OS snapshot names the actual launched holder")
-                      (test-assert (and (search (write-to-string pid) text)
-                                        (eq expected (world-terminal-owner-reachability record identifier pid))
-                                        (if (eq expected ':reachable)
-                                            (not (search "kill " text))
-                                            (search (format nil "kill ~D" pid) text)))
-                                   "only a definitely absent record offers user-controlled stop advice"))))
-             (observe ':reachable)
+            (flet ((observe (phase expected)
+                     (let* ((condition   (test-conversation--busy-condition configuration identifier))
+                            (text        (main--startup-error-text condition))
+                            (actual      (world-terminal-owner-reachability record identifier pid))
+                            (stop-advice (search (format nil "kill ~D" pid) text)))
+                       (test-assert (= pid (conversation-in-use-owner-pid condition))
+                                    "the OS snapshot names the actual launched holder")
+                       (test-assert (equal record (main--conversation-owner-record condition))
+                                    "startup diagnostics query the holder's image selection")
+                       (test-assert (eq expected actual)
+                                    (format nil "~A: expected ~A, got ~A (record present: ~A)"
+                                            phase expected actual (not (null (probe-file record)))))
+                       (test-assert (and (search (write-to-string pid) text)
+                                         (if (eq expected ':reachable)
+                                             (not (search "kill " text))
+                                             stop-advice))
+                                    (format nil "~A: only a definitely absent record offers stop advice"
+                                            phase)))))
+             (observe ':initial ':reachable)
              (test-conversation--owner-query-cases record identifier pid)
              (test-conversation--owner-quiesced
-              configuration request (lambda () (observe ':no-reachable-endpoint)))
-             (observe ':reachable))
+               configuration request (lambda () (observe ':quiesced ':no-reachable-endpoint)))
+             (observe ':resumed ':reachable))
            (test-call-with-function-replacements
             (list (list 'lease-acquire
                         (lambda (path &rest options)

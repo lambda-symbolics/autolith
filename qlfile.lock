@@ -164,8 +164,8 @@
   :version "git-e51a0a6f4ee8ee59a4b8294f0712622c10c50599"))
 ("image-daemon" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "a77ec5d5830dafe70461f5d44a73714d8b7d4692")
-  :version "git-a77ec5d5830dafe70461f5d44a73714d8b7d4692"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "52e48c219eb22ca7a3740cb9565ef5cf68c21b6c")
+  :version "git-52e48c219eb22ca7a3740cb9565ef5cf68c21b6c"))
 ("lisp-em" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/lisp-em.git" :ref "c949c9a25589b4b8bd09862a326c17e262399b44")
@@ -176,8 +176,8 @@
   :version "git-7219ac3fffecc37de977fcbd143c33bb7703ade4"))
 ("ls-flock" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-flock.git" :ref "ee9fc57a46a396e6386d61f81a6df926ca9f9906")
-  :version "git-ee9fc57a46a396e6386d61f81a6df926ca9f9906"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-flock.git" :ref "944d1dfd50597150f1fc4cd887e9bf4237aabf2c")
+  :version "git-944d1dfd50597150f1fc4cd887e9bf4237aabf2c"))
 ("idsmall" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/idsmall.git" :ref "09d098b458134008620b81f9e6e507a56cb0c40c")

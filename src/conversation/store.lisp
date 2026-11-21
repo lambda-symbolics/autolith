@@ -840,7 +840,6 @@ compaction checkpoint cites records by these."
   (merge-pathnames "conversation-leases.lock"
                    (config :state-root configuration)))
 
-
 (declaim (inline conversation--lease-in-use))
 
 (-> conversation--lease-in-use (string pathname pathname &key (:owner-pid (option (integer 1)))) null)

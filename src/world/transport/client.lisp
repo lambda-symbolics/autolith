@@ -128,7 +128,8 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
             (unless (platform-file-status-same-object-p
                      before (platform-stream-status *platform* stream))
               (return-from world-terminal-owner-reachability ':unknown))
-            (let ((record (image-daemon:daemon-registry-read-stream stream :maximum-octets 65536)))
+            (let ((record (image-daemon:daemon-registry-read-stream
+                           stream :extension-keywords '(:checkpoint-reconnect-id))))
               (unless (and record
                            (string= (world-terminal--record-session-id record) identifier)
                            (eql (getf (rest record) :pid) owner-pid))
