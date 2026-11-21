@@ -78,16 +78,16 @@
 (defun shell-log--safe-path (configuration path)
   "Reject links and non-directory ancestors under the managed data root."
   (handler-case
-      (let ((root (uiop:ensure-directory-pathname (config :data-root configuration))))
-        (unless (uiop:subpathp path root)
-          (shell-log--fail "Shell log path escaped private storage." path))
-        (loop for current = path then (uiop:pathname-parent-directory-pathname current)
-              while (and current (uiop:subpathp current root))
-              for status = (platform-path-status *platform* current :follow-links-p nil)
-              when (and status (not (member (platform-file-status-kind status)
-                                           '(:file :directory))))
-                do (shell-log--fail "Shell log storage contains a link or special file." current)
-              when (equal current root) do (return)))
+      (let* ((root (uiop:ensure-directory-pathname (config :data-root configuration)))
+             (inspection (ls-compat.files:confined-path-inspect
+                          path root :root-policy ':root-inclusive))
+             (status (ls-compat.files:confined-path-inspection-status inspection)))
+        (unless (member status '(:file :directory :missing))
+          (shell-log--fail
+           (or (ls-compat.files:confined-path-inspection-message inspection)
+               "Shell log storage contains a link or special file.")
+           (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
+               path))))
     (platform-error (condition)
       (shell-log--fail (format nil "Cannot inspect shell log storage: ~A" condition) path)))
   path)

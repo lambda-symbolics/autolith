@@ -162,53 +162,19 @@ single floats, and every source node needs at least one octet."
       (uiop:parse-native-namestring
        (concatenate 'string (uiop:native-namestring pathname) "/"))))
 
-(-> data-transfer--relative-components (pathname pathname) list)
-(defun data-transfer--relative-components (pathname root)
-  "Return PATHNAME's literal components below directory ROOT, rejecting escapes.
-
-The components come from the parsed pathname rather than from a native
-namestring, so no host directory separator ever has to be split out of a name."
-  (let* ((directory (data-transfer--directory-pathname root))
-         (relative  (uiop:enough-pathname pathname directory))
-         (file      (uiop:native-namestring
-                     (make-pathname :host nil :device nil :directory nil
-                                    :defaults relative))))
-    (when (uiop:absolute-pathname-p relative)
-      (data-transfer--fail pathname ':invalid "Path escapes the data root."))
-    (append (rest (pathname-directory relative))
-            (if (string= file "")
-                nil
-                (list file)))))
-
-(-> data-transfer--safe-path-p (t) boolean)
-(defun data-transfer--safe-path-p (path)
-  "Return true for a nonempty proper relative component list."
-  (and (listp path) (integerp (list-length path)) path
-       (every #'data-transfer--native-component-p path) t))
-
-(-> data-transfer--path (pathname list) pathname)
-(defun data-transfer--path (root components)
-  "Construct a confined pathname from validated literal COMPONENTS."
-  (unless (data-transfer--safe-path-p components)
-    (data-transfer--fail root ':invalid "Invalid relative archive path."))
-  (merge-pathnames
-   (uiop:parse-native-namestring (format nil "~{~A~^/~}" components)) root))
-
 (-> data-transfer--check-path (pathname pathname) null)
 (defun data-transfer--check-path (root pathname)
   "Reject symbolic links and nonregular files below the trusted ROOT."
-  (let ((parts   (data-transfer--relative-components pathname root))
-        (current root))
-    (unless (every #'data-transfer--native-component-p parts)
-      (data-transfer--fail pathname ':invalid "Path escapes the data root."))
-    (dolist (part parts)
-      (setf current (merge-pathnames (uiop:parse-native-namestring part) current))
-      (let ((status (platform-path-status *platform* current)))
-        (when (and status
-                   (not (member (platform-file-status-kind status)
-                                '(:directory :file))))
-          (data-transfer--fail current ':invalid "Symbolic links and special files are not transferable.")))
-      (setf current (data-transfer--directory-pathname current))))
+  (let ((inspection (ls-compat.files:confined-path-inspect
+                     pathname root :root-policy ':below-root)))
+    (when (member (ls-compat.files:confined-path-inspection-status inspection)
+                  '(:symbolic-link :special :not-directory :failed))
+      (data-transfer--fail
+       (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
+           pathname)
+       ':invalid
+       (or (ls-compat.files:confined-path-inspection-message inspection)
+           "Symbolic links and special files are not transferable."))))
   nil)
 
 (-> data-transfer--publish-files (list &key (:roots list)) integer)
