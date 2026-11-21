@@ -43,6 +43,7 @@
                 #:outcome-restart-names
                 #:outcome-selected-restart-name
                 #:recovery
+                #:recovery-kinds
                 #:recovery-report
                 #:recovery-error
                 #:safe-backtrace
