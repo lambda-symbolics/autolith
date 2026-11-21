@@ -15,14 +15,13 @@
 (defun telemetry--take-upload-body (controller)
   "Take a FIFO prefix bounded by encoded envelope bytes and span count under the lock."
   (let* ((queue       (telemetry-controller-queue controller))
-         (empty-bytes (length (babel:string-to-octets
-                               (json-encode (telemetry--envelope controller nil)) :encoding :utf-8)))
+         (empty-bytes (length (json-encode-utf8 (telemetry--envelope controller nil))))
          (bytes       empty-bytes)
          (count       0)
          (spans       nil))
     (loop while queue
           for span = (first queue)
-          for size = (length (babel:string-to-octets (json-encode span) :encoding :utf-8))
+          for size = (length (json-encode-utf8 span))
           for next-bytes = (+ bytes size (if spans 1 0))
           do (cond
                ((> (+ empty-bytes size) *telemetry-upload-byte-limit*)

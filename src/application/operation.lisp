@@ -892,45 +892,42 @@ snapshot."
 
 (defmethod application-operation-invoke
     ((operation application-tool-operation) application arguments &key context)
-  "Invoke a tool through its decoder, execution method, and caller's explicit capabilities."
+  "Invoke a tool through the registry's native or textual path."
   (let* ((tool           (application-operation-backend operation))
          (canonical-name (tool-canonical-name tool))
+         (tool-context   (or context (application-operation--tool-context application)))
          (json-arguments (if (hash-table-p arguments)
                              arguments
                              (application-operation--tool-arguments arguments tool)))
-         (decoded-arguments
-           (tool-decode-arguments tool (json-encode json-arguments))))
-    (unless (json-object-p decoded-arguments)
+         (ui             (and (slot-boundp application 'ui)
+                             (application-ui application)))
+         (previous-activity (and ui (terminal-ui-local-activity ui)))
+         (result
+           (unwind-protect
+                (progn
+                  (when ui
+                    (application-set-local-activity
+                     application (format nil "running ~A" canonical-name)))
+                  (tool-registry-execute-native-call
+                   (or (tool-context-registry tool-context)
+                       (application-tool-registry application))
+                   (json-object "namespace" (tool-namespace tool)
+                               "name" (tool-name tool)
+                               "call_id" (tool-context-call-id tool-context)
+                               "arguments" json-arguments)
+                   tool-context))
+             (when ui
+               (application-set-local-activity application previous-activity)))))
+    (unless (tool-result-success-p result)
       (error 'tool-error
-             :message
-             (format nil "Arguments for ~A are not a JSON object." canonical-name)
+             :message   (tool-failure-summary tool (tool-result-content result))
              :tool-name canonical-name))
-    (let* ((ui                (and (slot-boundp application 'ui)
-                                   (application-ui application)))
-           (previous-activity (and ui (terminal-ui-local-activity ui)))
-           (result
-             (unwind-protect
-                  (progn
-                    (when ui
-                      (application-set-local-activity
-                       application (format nil "running ~A" canonical-name)))
-                    (tool-execute
-                     tool
-                     (or context (application-operation--tool-context application))
-                     decoded-arguments))
-               (when ui
-                 (application-set-local-activity application previous-activity)))))
-      (unless (tool-result-success-p result)
-        (error 'tool-error
-               :message   (tool-failure-summary tool (tool-result-content result))
-               :tool-name canonical-name))
-      (when *application-lisp-tool-results*
-        (let ((content (tool-result-content result)))
-          ;; A reused content identity is ambiguous, even for a plain report.
-          (setf (gethash content *application-lisp-tool-results*)
-                (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
-                  (application-lisp--snapshot-tool-value result application canonical-name)))))
-      (tool-result-content result))))
+    (when *application-lisp-tool-results*
+      (let ((content (tool-result-content result)))
+        (setf (gethash content *application-lisp-tool-results*)
+              (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
+                (application-lisp--snapshot-tool-value result application canonical-name)))))
+    (tool-result-content result)))
 
 (defmethod application-operation-invoke
     ((operation application-local-operation) application arguments &key context)

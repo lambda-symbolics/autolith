@@ -176,6 +176,7 @@
   test-telemetry-diagnostic-upload-bounds)
 
 (define-test-suite telemetry
+  test-telemetry-json-value-boundaries
   test-telemetry-background-start-failure
   test-telemetry-background-completion
   test-telemetry-background-progress
@@ -665,6 +666,7 @@
   test-diagnosis-commands)
 
 (define-test-suite contracts
+  test-contract-json-value-semantics
   test-contract-repeated-variables
   test-contract-resource-admission
   test-contract-admission-reload
@@ -1299,6 +1301,9 @@
 
 (define-test-suite tool
   test-tool-registry
+
+  test-tool-native-dispatch
+  test-tool-native-result-boundaries
   test-tool-argument-name-correction
   test-tool-registry-restrict
   test-tool-result-overflow
@@ -1823,6 +1828,7 @@
   test-application-create-unwind-safety
   test-application-reconnect-unwind-safety
   test-application-task-presentation
+  test-application-structured-output-boundaries
   test-working-directory-command
   test-effort-switch
   test-public-goal-actions

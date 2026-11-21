@@ -12,23 +12,32 @@
 ;;;; -- Tool Calls --
 
 (-> procedure--call
-    (tool-context string &key (:arguments (satisfies argo:json-object-p)) (:index integer))
+    (tool-context string &key (:arguments t) (:index integer))
     (values tool-result &rest t))
 (defun procedure--call (context tool-name &key arguments index)
-  "Execute step INDEX: call TOOL-NAME with ARGUMENTS through CONTEXT's registry."
+  "Execute step INDEX with detached native ARGUMENTS through CONTEXT's registry."
   (let ((tool (find tool-name (tool-registry-tools (tool-context-registry context))
                     :key #'tool-canonical-name :test #'string=)))
     (if (null tool)
         (tool-failure (format nil "Tool ~A is not available here." tool-name))
-        (tool-registry-execute-call
+        (tool-registry-execute-native-call
          (tool-context-registry context)
          (json-object "type" "function_call"
-                      "call_id" (format nil "~@[~A/~]procedure-~D" (tool-context-call-id context)
-                                        (1+ index))
                       "namespace" (tool-namespace tool)
                       "name" (tool-name tool)
-                      "arguments" (json-encode arguments))
+                      "call_id" (format nil "~@[~A/~]procedure-~D"
+                                        (tool-context-call-id context) (1+ index))
+                      "arguments" arguments)
          context))))
+
+(-> procedure--result-output (tool-result) t)
+(defun procedure--result-output (result)
+  "Return RESULT's delivered object or array, decoding arbitrary text when needed."
+  (if (tool-result-native-present-p result)
+      (let ((value (tool-result-native-value result)))
+        (and (or (json-object-p value) (and (vectorp value) (not (stringp value))))
+             value))
+      (procedure--decode-output (tool-result-content result))))
 
 
 ;;;; -- Public Functions --
@@ -77,9 +86,7 @@ declined admission, or unmet contract requirements. Record the run and return
                                        (procedure--excerpt (tool-result-content result)
                                                            *procedure-run-output-excerpt-limit*)))
                  (loop-finish))
-               (setf outputs (append outputs
-                                     (list (procedure--decode-output
-                                            (tool-result-content result)))))))
+               (setf outputs (append outputs (list (procedure--result-output result))))))
     (let ((status    (if failure ':failed ':ok))
           (completed (count-if (lambda (report) (getf report :success-p)) reports)))
       (procedure-record-run configuration identifier

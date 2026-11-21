@@ -243,6 +243,8 @@
                      (test-call-with-function-replacements
                       (list (list 'bt:make-thread
                                   (lambda (&rest arguments)
+
+
                                     (declare (ignore arguments))
                                     (error "Injected thread creation failure."))))
                       (lambda ()
@@ -262,4 +264,36 @@
                  '("tool" "run"))
           "The later upload contains both the queued event and final summary."))))
    :background-uploads-p t)
+  nil)
+
+(-> test-telemetry-json-value-boundaries () null)
+(defun test-telemetry-json-value-boundaries ()
+  "Check the canonical digest and UTF-8 upload admission boundaries."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (let ((arguments (json-object "b" (json-array 1 1/10)
+                                   "a" nil
+                                   "false" ':json-false)))
+       (test-assert
+        (equal (ironclad:byte-array-to-hex-string
+                (telemetry--argument-digest arguments "tool" "trace"))
+               "04acfe745f790f647fff0cec5bd60803e93f5f4d4a4e0d895d690d6210706a5f")
+        "The digest uses the legacy sorted canonical bytes.")
+       (test-assert
+        (null (telemetry--argument-digest
+               (json-object "text" (make-string 40000 :initial-element #\Newline))
+               "tool" "trace"))
+        "Escaped output beyond the character limit has no digest."))
+     (let* ((first       (json-object "text" "é"))
+            (second      (json-object "text" "ž"))
+            (empty-bytes (length (json-encode-utf8 (telemetry--envelope *telemetry-controller* nil))))
+            (first-bytes (length (json-encode-utf8 first))))
+       (let ((*telemetry-upload-byte-limit* (+ empty-bytes first-bytes)))
+         (setf (telemetry-controller-queue *telemetry-controller*) (list first second))
+         (telemetry--take-upload-body *telemetry-controller*)
+         (test-assert (equal (telemetry-controller-queue *telemetry-controller*) (list second))
+                      "Exactly one multibyte span fits the byte budget."))))
+   :background-uploads-p nil)
   nil)

@@ -687,11 +687,11 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                  (multiple-value-bind (bindings matched-p) (procedure-match-input procedure request)
                    (let ((binding (assoc "value" bindings :test #'string=)))
                      (test-assert (and matched-p binding
-                                       (procedure-json-equal-p (rest binding) next-value))
+                                       (json-value-equal-p (rest binding) next-value))
                                   (format nil "~A bind the next request's JSON value" description))
                      (when binding
                        (test-assert
-                        (procedure-json-equal-p
+                        (json-value-equal-p
                          (procedure-template-instantiate
                           (getf (first (getf (rest procedure) :steps)) :arguments) bindings nil)
                          (json-object "value" next-value))

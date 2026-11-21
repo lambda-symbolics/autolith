@@ -532,20 +532,23 @@ Skip unavailable tools, known observations, and calls refused by contracts."
 
 (-> knowledge--run-probe (tool-context list) list)
 (defun knowledge--run-probe (context probe)
-  "Run PROBE through CONTEXT's tool registry and return what it observed."
+  "Run PROBE through CONTEXT's registry and return what it observed."
   (let* ((arguments     (knowledge--probe-arguments probe))
-         (tool          (tool-registry-resolve (tool-context-registry context) (getf probe :tool)))
+         (tool          (tool-registry-resolve (tool-context-registry context)
+                                              (getf probe :tool)))
          (result        (if tool
-                            (tool-registry-execute-call
+                            (tool-registry-execute-native-call
                              (tool-context-registry context)
                              (json-object "type" "function_call"
-                                          "call_id" (format nil "~@[~A/~]probe" (tool-context-call-id context))
                                           "namespace" (tool-namespace tool)
                                           "name" (tool-name tool)
-                                          "arguments" (json-encode arguments))
+                                          "call_id" (format nil "~@[~A/~]probe"
+                                                            (tool-context-call-id context))
+                                          "arguments" arguments)
                              context)
-                            (tool-failure (format nil "Tool ~A is unavailable or its display name is ambiguous."
-                                                  (getf probe :tool)))))
+                            (tool-failure
+                             (format nil "Tool ~A is unavailable or its display name is ambiguous."
+                                     (getf probe :tool)))))
          (configuration (tool-context-configuration context))
          (view          (knowledge-view-current configuration)))
     (list :tool           (getf probe :tool)

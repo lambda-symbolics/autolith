@@ -62,7 +62,7 @@ differ in shape or type."
 
                (parameter-with-values (values)
                  (find-if (lambda (parameter)
-                            (every #'procedure-json-equal-p (getf parameter :values) values))
+                            (every #'json-value-equal-p (getf parameter :values) values))
                           parameters))
 
                (hole-with-values (values)
@@ -111,7 +111,7 @@ differ in shape or type."
                (generalize (values key step)
                  (let ((first-value (first values)))
                    (cond
-                     ((every (lambda (value) (procedure-json-equal-p value first-value)) values)
+                     ((every (lambda (value) (json-value-equal-p value first-value)) values)
                       (list :json (json-encode first-value)))
                      ((every #'json-object-p values)
                       (generalize-object values step))
@@ -377,12 +377,11 @@ recorded version. Nothing is learned when knowledge is off."
 OUTPUTS holds each example's decoded results; only steps before STEP count."
   (loop for earlier below step
         do (loop for (path . leaf) in (procedure--output-leaves (nth earlier (first outputs)))
-                 when (and (procedure-json-equal-p leaf (first values))
+                 when (and (json-value-equal-p leaf (first values))
                            (every (lambda (value example-outputs)
                                     (multiple-value-bind (found present-p)
-                                        (procedure-json-path-value (nth earlier example-outputs)
-                                                                   path)
-                                      (and present-p (procedure-json-equal-p found value))))
+                                        (json-path-get-present (nth earlier example-outputs) path)
+                                      (and present-p (json-value-equal-p found value))))
                                   values outputs))
                    do (return-from procedure--output-reference (list :from earlier path))))
   nil)
@@ -499,7 +498,7 @@ counts share no pattern."
   (let ((type (procedure--values-type values)))
     (and type
          (every (lambda (word value)
-                  (procedure-json-equal-p (procedure--parse-value word type) value))
+                  (json-value-equal-p (procedure--parse-value word type) value))
                 hole values)
          t)))
 

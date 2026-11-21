@@ -136,42 +136,6 @@
 
 ;;;; -- Templates --
 
-(-> procedure-json-equal-p (t t) boolean)
-(defun procedure-json-equal-p (left right)
-  "Return true when decoded JSON values LEFT and RIGHT are equal, ignoring object key order."
-  (cond
-    ((and (json-object-p left) (json-object-p right))
-     (and (= (hash-table-count left) (hash-table-count right))
-          (loop for key being the hash-keys of left using (hash-value value)
-                always (multiple-value-bind (other present-p) (gethash key right)
-                         (and present-p (procedure-json-equal-p value other))))))
-    ((and (vectorp left) (not (stringp left)) (vectorp right) (not (stringp right)))
-     (and (= (length left) (length right))
-          (every #'procedure-json-equal-p left right)))
-    ((and (numberp left) (numberp right))
-     (= left right))
-    (t
-     (equal left right))))
-
-(-> procedure-json-path-value (t list) (values t boolean))
-(defun procedure-json-path-value (value path)
-  "Return the part of decoded JSON VALUE at PATH and whether it exists.
-
-PATH lists object keys and array indexes from the outside in."
-  (block walk
-    (dolist (key path)
-      (cond
-        ((and (stringp key) (json-object-p value))
-         (multiple-value-bind (next present-p) (gethash key value)
-           (unless present-p
-             (return-from walk (values nil nil)))
-           (setf value next)))
-        ((and (integerp key) (vectorp value) (not (stringp value)) (< key (length value)))
-         (setf value (aref value key)))
-        (t
-         (return-from walk (values nil nil)))))
-    (values value t)))
-
 (-> procedure-template-instantiate (list list list) t)
 (defun procedure-template-instantiate (template bindings outputs)
   "Return the JSON value TEMPLATE describes, given parameter BINDINGS and earlier OUTPUTS.
@@ -191,7 +155,7 @@ KNOWLEDGE-ERROR with code :MISSING-OUTPUT."
     (:from
      (multiple-value-bind (value present-p)
          (if (< (second template) (length outputs))
-             (procedure-json-path-value (nth (second template) outputs) (third template))
+             (json-path-get-present (nth (second template) outputs) (third template))
              (values nil nil))
        (unless present-p
          (knowledge--fail ':missing-output (third template)
@@ -218,7 +182,7 @@ steps' decoded results that :FROM templates must agree with."
   (block match
     (ecase (first template)
       (:json
-       (values bindings (procedure-json-equal-p value (json-decode (second template)))))
+       (values bindings (json-value-equal-p value (json-decode (second template)))))
       (:param
        (procedure--bind bindings (second template) value))
       (:text
@@ -229,9 +193,9 @@ steps' decoded results that :FROM templates must agree with."
       (:from
        (multiple-value-bind (expected present-p)
            (if (< (second template) (length outputs))
-               (procedure-json-path-value (nth (second template) outputs) (third template))
+               (json-path-get-present (nth (second template) outputs) (third template))
                (values nil nil))
-         (values bindings (and present-p (procedure-json-equal-p expected value)))))
+         (values bindings (and present-p (json-value-equal-p expected value)))))
       (:object
        (unless (and (json-object-p value)
                     (= (hash-table-count value) (length (rest template))))
@@ -673,7 +637,7 @@ Return the bindings and whether VALUE agreed."
     (cond
       ((null binding)
        (values (acons name value bindings) t))
-      ((procedure-json-equal-p (rest binding) value)
+      ((json-value-equal-p (rest binding) value)
        (values bindings t))
       (t
        (values bindings nil)))))

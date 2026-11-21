@@ -52,10 +52,13 @@
 ;;;; -- Methods --
 
 (defmethod tool-execute ((tool emacs-tool) (context tool-context) (arguments hash-table))
-  "Run TOOL's Emacs request, turning server failures into tool errors."
+  "Run TOOL's Emacs request, preserving an exact structured result when available."
   (let ((name (format nil "emacs.~A" (tool-name tool))))
     (handler-case
-        (tool-success (json-encode (emacs-tool--execute tool context arguments)))
+        (let ((value (emacs-tool--execute tool context arguments)))
+          (tool-success (json-encode value)
+                        :native-value value
+                        :native-present-p (hash-table-p value)))
       (emacs-server-error (condition)
         (error 'tool-error :message (autolith-error-message condition) :tool-name name)))))
 

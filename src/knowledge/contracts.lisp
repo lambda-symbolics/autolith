@@ -260,22 +260,6 @@ Refuse if a concurrent edit replaced the proposed definition."
 
 ;;;; -- Calls --
 
-(-> knowledge--json-path (t list) (values t boolean))
-(defun knowledge--json-path (value path)
-  "Return the JSON value at PATH of keys and indexes below VALUE, and whether it exists."
-  (if (null path)
-      (values value t)
-      (let ((key (first path)))
-        (cond
-          ((and (hash-table-p value) (nth-value 1 (gethash key value)))
-           (knowledge--json-path (gethash key value) (rest path)))
-          ((and (vectorp value) (not (stringp value))
-                (every #'digit-char-p key) (plusp (length key))
-                (< (parse-integer key) (length value)))
-           (knowledge--json-path (aref value (parse-integer key)) (rest path)))
-          (t
-           (values nil nil))))))
-
 (-> knowledge--reference-value (string hash-table t) (values t boolean))
 (defun knowledge--reference-value (reference arguments result)
   "Return the value REFERENCE names in the call ARGUMENTS or its decoded RESULT."
@@ -283,28 +267,10 @@ Refuse if a concurrent edit replaced the proposed definition."
          (path   (uiop:split-string (subseq reference (if rooted 5 (min 8 (length reference))))
                                     :separator '(#\.))))
     (if rooted
-        (knowledge--json-path arguments path)
+        (json-path-get-present arguments path :decimal-indices-p t)
         (if (string= reference "$result")
             (values result t)
-            (knowledge--json-path result path)))))
-
-(-> knowledge--json-equal-p (t t) boolean)
-(defun knowledge--json-equal-p (left right)
-  "Compare decoded JSON values structurally, with case-sensitive strings and keys."
-  (cond
-    ((and (hash-table-p left) (hash-table-p right))
-     (and (= (hash-table-count left) (hash-table-count right))
-          (loop for key being the hash-keys of left using (hash-value value)
-                always (multiple-value-bind (other present-p) (gethash key right)
-                         (and present-p (knowledge--json-equal-p value other))))))
-    ((and (vectorp left) (not (stringp left))
-          (vectorp right) (not (stringp right)))
-     (and (= (length left) (length right))
-          (every #'knowledge--json-equal-p left right)))
-    ((and (numberp left) (numberp right))
-     (= left right))
-    (t
-     (equal left right))))
+            (json-path-get-present result path :decimal-indices-p t)))))
 
 (-> knowledge--contract-bindings (list hash-table) (values list boolean))
 (defun knowledge--contract-bindings (contract arguments)
@@ -320,10 +286,11 @@ Refuse if a concurrent edit replaced the proposed definition."
              (cond
                ((null binding)
                 (push (cons (rest condition) value) environment))
-               ((not (knowledge--json-equal-p (rest binding) value))
+               ((not (json-value-equal-p (rest binding) value))
                 (return (values nil nil))))))
-          ((not (knowledge--json-equal-p (rest condition) value))
+          ((not (json-value-equal-p (rest condition) value))
            (return (values nil nil))))))))
+
 
 (-> knowledge--typed-environment (list list function) list)
 (defun knowledge--typed-environment (patterns environment schema-function)
@@ -414,9 +381,11 @@ claim identities. Incomplete searches and ambiguous environments refuse the call
 
 Requirement claim identities are retained in the evidence source. Mapping errors
 never change the external action's outcome and never disappear silently."
-  (let* ((decoded   (handler-case (json-decode (tool-result-content result))
-                      (json-error ()
-                        nil)))
+  (let* ((decoded   (if (tool-result-native-present-p result)
+                        (tool-result-native-value result)
+                        (handler-case (json-decode (tool-result-content result))
+                          (json-error ()
+                            nil))))
          (base      (knowledge-base-read configuration))
          (workspace (knowledge--workspace configuration))
          (claims    nil)

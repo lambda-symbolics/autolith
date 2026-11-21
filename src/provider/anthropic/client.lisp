@@ -181,7 +181,7 @@ instructions and delivers no context."
 (-> anthropic--unmarked-messages (vector) vector)
 (defun anthropic--unmarked-messages (messages)
   "Copy MESSAGES without cache placement metadata for chronological comparison."
-  (let ((copy (json-decode (json-encode messages))))
+  (let ((copy (json-normalize messages)))
     (loop for message across copy
           do (loop for block across (json-get message "content")
                    do (remhash "cache_control" block)))
@@ -200,16 +200,16 @@ an independent message, without mutating a previously dispatched message."
        (values messages t))
       ((or (< (length plain) count)
            (not (loop for index below (1- count)
-                      always (equalp (aref plain index) (aref prefix index)))))
+                      always (json-value-equal-p (aref plain index) (aref prefix index)))))
        (values #() nil))
       (t
        (let* ((previous (aref prefix (1- count)))
               (current  (aref plain (1- count)))
               (before   (json-get previous "content"))
               (after    (json-get current "content")))
-         (if (and (equal (json-get previous "role") (json-get current "role"))
+         (if (and (json-value-equal-p (json-get previous "role") (json-get current "role"))
                   (<= (length before) (length after))
-                  (equalp before (subseq after 0 (length before))))
+                  (json-value-equal-p before (subseq after 0 (length before))))
              (values
               (concatenate
                'vector
@@ -270,7 +270,7 @@ text is never persisted. Cache markers may move within the four-breakpoint budge
           (when compatible-p
             (setf (gethash "messages" request)
                   (concatenate 'vector
-                               (json-decode (json-encode (getf prior :messages)))
+                               (json-normalize (getf prior :messages))
                                tail
                                (unless (equal context-key (getf prior :context)) suffix)))))))
     (anthropic--bound-cache-markers request)
@@ -280,7 +280,7 @@ text is never persisted. Cache markers may move within the four-breakpoint budge
                   :candidate
                   (list :request request :history digests :context context-key :header header
                         :canonical canonical
-                        :messages  (json-decode (json-encode (json-get request "messages")))))))
+                        :messages (json-normalize (json-get request "messages"))))))
     request))
 
 (-> anthropic--note-dispatched-request (conversation json-object) null)
@@ -289,12 +289,12 @@ text is never persisted. Cache markers may move within the four-breakpoint budge
   (let* ((candidate (getf (conversation-anthropic-request-state conversation) :candidate))
          (built     (getf candidate :request)))
     (when (and built
-               (equalp (getf candidate :messages) (json-get request "messages"))
-               (let ((original   (json-object-copy built))
-                     (dispatched (json-object-copy request)))
+               (json-value-equal-p (getf candidate :messages) (json-get request "messages"))
+               (let ((original   (json-normalize built))
+                     (dispatched (json-normalize request)))
                  (remhash "max_tokens" original)
                  (remhash "max_tokens" dispatched)
-                 (equalp original dispatched)))
+                 (json-value-equal-p original dispatched)))
       (remf candidate :request)
       (setf (conversation-anthropic-request-state conversation) (list :prefix candidate))))
   nil)

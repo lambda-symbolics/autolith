@@ -380,7 +380,7 @@ repeating the task's external effects is safe; it is an assertion, not a test."
          (conversation (tool-context-conversation context))
          (observer     (tool-context-observer context))
          (call         (json-object "namespace" namespace "name" name
-                                    "call_id" call-id "arguments" (json-encode arguments))))
+                                    "call_id" call-id "arguments" arguments)))
     (unless tool
       (task-continuity--fail "The requested recovery operation is not registered."))
     (let ((policy (and (boundp '*worker-host-tool-policy*)
@@ -388,33 +388,34 @@ repeating the task's external effects is safe; it is an assertion, not a test."
       (when (and (getf policy :restricted-p)
                  (not (member (tool-canonical-name tool) (getf policy :allowlist)
                               :test #'equal)))
-        (task-continuity--fail "The originating capability scope withholds this action." :code ':authority)))
+        (task-continuity--fail "The originating capability scope withholds this action."
+                               :code ':authority)))
     (conversation-append-record
      conversation (list :task-inspector-call :call-id call-id
-                        :parent-call-id      (tool-context-call-id context)
-                        :tool                (tool-canonical-name tool)
-                        :arguments           (json-encode arguments)))
+                        :parent-call-id (tool-context-call-id context)
+                        :tool (tool-canonical-name tool)
+                        :arguments (json-encode arguments)))
     (let* ((nested-context
              (make-instance
               'tool-context :configuration (tool-context-configuration context)
               :conversation conversation :worker (tool-context-worker context)
               :registry registry :agent (tool-context-agent context)
               :observer observer :call-id call-id
-              :mutation-checker            (tool-context-mutation-checker context)
+              :mutation-checker (tool-context-mutation-checker context)
               :command-authorization-function
               (tool-context-command-authorization-function context)
               :tool-authorization-function
               (tool-context-tool-authorization-function context)))
            (result
              (flet ((execute ()
-                      (tool-registry-execute-call registry call nested-context)))
+                      (tool-registry-execute-native-call registry call nested-context)))
                (if observer
                    (agent-observer-call-with-tool-execution observer call-id #'execute)
                    (execute)))))
       (conversation-append-record
        conversation (list :task-inspector-result :call-id call-id
-                          :success-p             (tool-result-success-p result)
-                          :content               (bounded-string (tool-result-content result) :limit 8000)))
+                          :success-p (tool-result-success-p result)
+                          :content (bounded-string (tool-result-content result) :limit 8000)))
       (values result call-id))))
 
 (-> task-continuity-revive

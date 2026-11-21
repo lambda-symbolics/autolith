@@ -395,6 +395,17 @@
     :initarg       :details
     :initform      nil
     :documentation "Portable bounded semantics for consumers of the result.")
+   (native-value
+    :initarg       :native-value
+    :initform      nil
+    :reader        tool-result-native-value
+    :documentation "The exact detached native value delivered by this result.")
+   (native-present-p
+    :initarg       :native-present-p
+    :initform      nil
+    :reader        tool-result-native-present-p
+    :type          boolean
+    :documentation "Whether NATIVE-VALUE is an intentional delivered value.")
    (image-attachments
     :initarg  :image-attachments
     :initform nil
@@ -474,10 +485,12 @@ returns a resource URI where the complete text can be read, or NIL if storage
 is unavailable. Without a URI, the result's tail is discarded.")
 
 (-> tool-success
-    (t &key (:image-attachments list) (:content-blocks list) (:details t))
+    (t &key (:image-attachments list) (:content-blocks list) (:details t)
+         (:native-value t) (:native-present-p boolean))
     tool-result)
-(defun tool-success (content &key image-attachments content-blocks details)
-  "Return a successful bounded tool result with optional content blocks and DETAILS."
+(defun tool-success (content &key image-attachments content-blocks details
+                                  native-value native-present-p)
+  "Return a successful bounded tool result with optional native delivered data."
   (when (and image-attachments content-blocks)
     (error 'tool-error
            :message
@@ -498,20 +511,30 @@ is unavailable. Without a URI, the result's tail is discarded.")
                   image-attachments))))
          (blocks (tool-result--normalize-content-blocks raw-blocks))
          (attachments
-           (remove-if-not
-            (lambda (block)
-              (typep block 'image-attachment))
-            blocks)))
+           (remove-if-not (lambda (block) (typep block 'image-attachment)) blocks))
+         (bounded-content
+           (bounded-string content
+                           :overflow-uri-function *tool-result-overflow-function*))
+         (native-copy
+           (when (and native-present-p (null blocks)
+                      (stringp content) (string= content bounded-content))
+             (handler-case
+                 (cons t (json-normalize native-value))
+               (error () nil))))
+         (native-valid-p
+           (and native-copy
+                (handler-case
+                    (string= (json-encode (rest native-copy)) bounded-content)
+                  (error () nil)))))
     (make-instance 'tool-result
-                   :content           (bounded-string
-                                       content
-                                       :overflow-uri-function
-                                       *tool-result-overflow-function*)
+                   :content          bounded-content
                    :image-attachments attachments
-                   :content-blocks    blocks
-                   :details           details
-                   :success-p         t
-                   :category          ':success)))
+                   :content-blocks   blocks
+                   :details          details
+                   :native-value     (and native-valid-p (rest native-copy))
+                   :native-present-p native-valid-p
+                   :success-p        t
+                   :category         ':success)))
 
 (defgeneric agent-record-overflow-context (agent digest)
   (:documentation "Record an emitted context DIGEST on AGENT's durable producer record."))
@@ -975,7 +998,9 @@ so direct adapter calls never accumulate notes in the global value.")
   "Append NOTES, oldest first, to RESULT's model-visible content."
   (when notes
     (setf (slot-value result 'content)
-          (format nil "~A~%~{Note: ~A~%~}" (tool-result-content result) notes)))
+          (format nil "~A~%~{Note: ~A~%~}" (tool-result-content result) notes)
+          (slot-value result 'native-value) nil
+          (slot-value result 'native-present-p) nil))
   result)
 
 (defmethod tool-execute
@@ -1525,6 +1550,7 @@ one wins and the duplicate is dropped."
                               (mapcar (lambda (name)
                                         (let ((suggestion (rest (assoc name suggestions :test #'equal))))
                                           (if suggestion
+
                                               (format nil "~A (did you mean ~A?)" name suggestion)
                                               name))) names)
                               names))
@@ -1541,9 +1567,19 @@ one wins and the duplicate is dropped."
                                            "arguments" retry)))
          :code code)))))
 
-(-> tool-registry-execute-call
-    (tool-registry json-object tool-context)
-    tool-result)
+(defgeneric tool-decode-native-arguments (tool arguments)
+  (:documentation
+   "Detach native ARGUMENTS with TOOL's decoding policy.
+Custom textual decoders receive encoded input unless they specialize this protocol."))
+
+(defmethod tool-decode-native-arguments ((tool tool) arguments)
+  "Normalize the default decoder's input; preserve custom textual decoding."
+  (let* ((decoder #'tool-decode-arguments)
+         (methods (compute-applicable-methods decoder (list tool "")))
+         (default (find-method decoder nil (list (find-class 'tool) (find-class 't)))))
+    (if (and (null (rest methods)) (eq (first methods) default))
+        (json-normalize arguments)
+        (tool-decode-arguments tool (json-encode arguments)))))
 (-> tool-registry--only-named (tool-registry string) (option tool))
 (defun tool-registry--only-named (registry name)
   "Return the single tool called NAME across namespaces, when unique.
@@ -1566,8 +1602,11 @@ signals with the candidate canonical names."
       (t
        (first matches)))))
 
-(defun tool-registry-execute-call (registry call context)
-  "Validate and execute one Responses function CALL through REGISTRY."
+(-> tool-registry--execute-call
+    (tool-registry json-object tool-context &key (:native-p boolean))
+    tool-result)
+(defun tool-registry--execute-call (registry call context &key native-p)
+  "Validate and execute CALL, selecting native decoding only for internal callers."
   (let* ((namespace      (json-get call "namespace"))
          (name           (json-get call "name"))
          (canonical-name (function-call-canonical-name call))
@@ -1587,10 +1626,14 @@ signals with the candidate canonical names."
               (error 'tool-error
                      :message   (format nil "Unknown tool ~A." canonical-name)
                      :tool-name canonical-name))
-            (let ((arguments
-                    (tool-decode-arguments
-                     tool
-                     (or (json-get call "arguments") "{}"))))
+            (let* ((source
+                     (if native-p
+                         (multiple-value-bind (value present-p) (gethash "arguments" call)
+                           (if present-p value (json-object)))
+                         (or (json-get call "arguments") "{}")))
+                   (arguments (if native-p
+                                  (tool-decode-native-arguments tool source)
+                                  (tool-decode-arguments tool source))))
               (unless (json-object-p arguments)
                 (error 'tool-error
                        :message   (format nil "Arguments for ~A are not a JSON object."
@@ -1620,3 +1663,18 @@ signals with the candidate canonical names."
          :details  (when (typep condition 'self-correctable-error)
                      (list :evaluation (self-correctable-error-sections condition)))
          :denied-p (typep condition '(or tool-authority-denied command-authorization-unavailable)))))))
+
+
+(-> tool-registry-execute-call
+    (tool-registry json-object tool-context)
+    tool-result)
+(defun tool-registry-execute-call (registry call context)
+  "Validate and execute one textual provider function CALL through REGISTRY."
+  (tool-registry--execute-call registry call context))
+
+(-> tool-registry-execute-native-call
+    (tool-registry json-object tool-context)
+    tool-result)
+(defun tool-registry-execute-native-call (registry call context)
+  "Execute internal CALL through the shared registry path with detached arguments."
+  (tool-registry--execute-call registry call context :native-p t))

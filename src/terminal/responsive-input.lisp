@@ -2830,48 +2830,8 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
 
 (-> application--pretty-tool-arguments (t) string)
 (defun application--pretty-tool-arguments (arguments)
-  "Indent encoded JSON structurally, preserving every string and scalar."
-  (let ((source    (json-encode arguments))
-        (depth     0)
-        (quoted-p  nil)
-        (escaped-p nil))
-    (with-output-to-string (stream)
-      (labels ((line-break ()
-                 (terpri stream)
-                 (dotimes (index (* 2 depth))
-                   (write-char #\Space stream))))
-        (loop for character across source
-              for index from 0
-              for previous = (and (plusp index) (char source (1- index)))
-              for next = (and (< (1+ index) (length source)) (char source (1+ index)))
-              do (cond
-                   (quoted-p
-                    (write-char character stream)
-                    (cond
-                      (escaped-p
-                       (setf escaped-p nil))
-                      ((char= character #\\)
-                       (setf escaped-p t))
-                      ((char= character #\")
-                       (setf quoted-p nil))))
-                   ((char= character #\")
-                    (setf quoted-p t)
-                    (write-char character stream))
-                   ((find character "{[")
-                    (write-char character stream)
-                    (incf depth)
-                    (unless (and next (find next "}]")) (line-break)))
-                   ((find character "}]")
-                    (decf depth)
-                    (unless (and previous (find previous "{[")) (line-break))
-                    (write-char character stream))
-                   ((char= character #\,)
-                    (write-char character stream)
-                    (line-break))
-                   ((char= character #\:)
-                    (write-string ": " stream))
-                   (t
-                    (write-char character stream))))))))
+  "Return ARGUMENTS as structurally pretty JSON."
+  (json-encode-pretty arguments :indentation 2))
 
 (-> application--tool-authorization-request-entry (tool json-object) list)
 (defun application--tool-authorization-request-entry (tool arguments)

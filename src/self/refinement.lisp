@@ -273,7 +273,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
          (uri       (and (json-object-p arguments) (json-get arguments "uri"))))
     (unless (json-object-p arguments)
       (refinement--reject ':invalid "Owner arguments must be a JSON object."))
-    (when (equal (json-encode (json-get arguments "async")) "true")
+    (when (json-true-p (json-get arguments "async"))
       (refinement--reject ':invalid "Refinement requires completed owner operations, not explicit asynchronous handoffs."))
     (when (and (not (eq scope :global))
                (or (and (equal namespace "self")

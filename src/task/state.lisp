@@ -599,3 +599,12 @@ parent, and borrowed capabilities are released at terminal state."))
 (defmethod tool-decode-arguments ((tool task-job-tool) source)
   "Decode job tool values without conflating JSON false and null."
   (task-json-decode source :tool-name (tool-canonical-name tool)))
+
+
+(defmethod tool-decode-native-arguments ((tool task-agents-tool) arguments)
+  "Detach child.roles values with its textual decoder's marker policy."
+  (task-json-normalize arguments :tool-name (tool-canonical-name tool)))
+
+(defmethod tool-decode-native-arguments ((tool task-job-tool) arguments)
+  "Detach job values with their textual decoder's marker policy."
+  (task-json-normalize arguments :tool-name (tool-canonical-name tool)))

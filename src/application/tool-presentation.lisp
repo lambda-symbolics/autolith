@@ -1804,29 +1804,6 @@ OPERATION's own declared target line so they stay numbered."
          output)
      ':plain *application-tool-output-lines* :gutter "│ ")))
 
-(-> application--structured-json-safe-p (string) boolean)
-(defun application--structured-json-safe-p (text)
-  "Bound JSON input size and nesting before invoking the recursive decoder."
-  (and (<= (length text) 131072)
-       (loop with depth = 0
-             with quoted-p = nil
-             with escaped-p = nil
-             for character across text
-             do (cond
-                  (escaped-p
-                   (setf escaped-p nil))
-                  ((and quoted-p (char= character #\\))
-                   (setf escaped-p t))
-                  ((char= character #\")
-                   (setf quoted-p (not quoted-p)))
-                  ((not quoted-p)
-                   (case character
-                     ((#\{ #\[)
-                      (incf depth))
-                     ((#\} #\])
-                      (decf depth)))))
-             never (> depth 32))))
-
 (-> application--structured-output-value (string) (values t boolean))
 (defun application--structured-output-value (output)
   "Decode OUTPUT as a complete JSON object or array for transcript display.
@@ -1835,9 +1812,11 @@ Treat other output, including malformed untrusted JSON, as bounded tool text."
   (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
     (if (and (plusp (length trimmed))
              (member (char trimmed 0) '(#\{ #\[))
-             (application--structured-json-safe-p trimmed))
+             (<= (length trimmed) 131072))
         (handler-case
-            (let ((value (json-decode trimmed)))
+            (let ((value (json-decode
+                          trimmed :limits (make-json-limits :maximum-depth 32
+                                                           :maximum-characters 131072))))
               (if (or (json-object-p value)
                       (and (vectorp value) (not (stringp value))))
                   (values value t)

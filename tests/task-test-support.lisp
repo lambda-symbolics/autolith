@@ -267,7 +267,7 @@
       (push (conversation-identifier conversation)
             (task-test-provider-conversation-identifiers provider))
       (push
-       (mapcar (lambda (item) (json-decode (json-encode item))) inputs)
+         (mapcar #'json-normalize inputs)
        (task-test-provider-request-inputs provider))
       (pushnew (current-thread) (task-test-provider-threads provider) :test #'eq)
       (setf request-number (task-test-provider-request-count provider)

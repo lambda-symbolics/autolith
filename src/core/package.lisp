@@ -1194,6 +1194,8 @@
                 #:json-boolean
                 #:json-decode
                 #:json-encode
+                #:json-encode-pretty
+                #:json-encode-sorted
                 #:json-encode-utf8
                 #:json-error
                 #:json-false
@@ -1201,14 +1203,17 @@
                 #:json-get
                 #:json-get-present
                 #:json-limits
+                #:json-normalize
                 #:json-object
                 #:json-object-copy
                 #:json-object-p
                 #:json-object-source-p
+                #:json-path-get-present
                 #:json-string-member-p
                 #:json-string=
                 #:json-true-p
                 #:json-value
+                #:json-value-equal-p
                 #:make-json-limits)
   (:import-from #:ls-compat
                 #:internal-real-time-seconds

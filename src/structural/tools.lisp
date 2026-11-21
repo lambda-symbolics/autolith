@@ -69,9 +69,12 @@
        (structural--fail ':unknown-operation "Unknown structural operation.")))))
 
 (defmethod tool-execute ((tool structural-tool) (context tool-context) (arguments hash-table))
-  "Return bounded structural results, translating library failures into typed tool failures."
+  "Return bounded structural results with an exact native delivered value."
   (handler-case
-      (tool-success (json-encode (structural--execute tool context arguments)))
+      (let ((value (structural--execute tool context arguments)))
+        (tool-success (json-encode value)
+                      :native-value value
+                      :native-present-p t))
     (clasted:structural-error (condition)
       (structural--fail (clasted:structural-error-code condition) (princ-to-string condition)))))
 

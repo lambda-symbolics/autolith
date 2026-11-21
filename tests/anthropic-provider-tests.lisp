@@ -591,13 +591,13 @@
                (tools        (continuation-tool-namespaces))
                (previous     nil)
                (sent         nil))
-          (labels ((unmarked (messages)
-                     "Copy wire messages without cache placement metadata."
-                     (let ((copy (json-decode (json-encode messages))))
-                       (loop for message across copy
-                             do (loop for block across (json-get message "content")
-                                      do (remhash "cache_control" block)))
-                       copy))
+            (labels ((unmarked (messages)
+                       "Copy wire messages without cache placement metadata independently."
+                       (let ((copy (json-normalize messages)))
+                         (loop for message across copy
+                               do (loop for block across (json-get message "content")
+                                        do (remhash "cache_control" block)))
+                         copy))
 
                    (build ()
                      "Build and dispatch one request, checking the prior wire prefix and marker budget."
@@ -652,6 +652,44 @@
              (lambda ()
                (conversation-append-user-message conversation "Question")
                (build)
+                 (let* ((shared (json-object "nested" (json-object "label" "same")))
+                        (wire (json-array
+                               (json-object "role" "user" "content"
+                                            (json-array
+                                             (json-object "type" "text" "payload" shared)
+                                             (json-object "type" "text" "payload" shared)))))
+                        (copy (anthropic--unmarked-messages wire))
+                        (first-block (aref (json-get (aref copy 0) "content") 0))
+                        (second-block (aref (json-get (aref copy 0) "content") 1)))
+                   (let* ((first-nested (json-get (json-get first-block "payload") "nested"))
+                          (second-nested (json-get (json-get second-block "payload") "nested"))
+                          (first-label (gethash "label" first-nested))
+                          (first-key (first (loop for key being the hash-keys of first-nested collect key))))
+                     (setf (char first-label 0) #\X
+                           (char first-key 0) #\X)
+                     (test-assert (and (equal (gethash "label" second-nested) "same")
+                                       (equal (gethash "label" (json-get (json-get (aref (json-get (aref wire 0) "content") 0) "payload") "nested")) "same"))
+                                   "Repeated Anthropic values detach mutable strings and keys"))
+                 (multiple-value-bind (tail matches-p)
+                     (anthropic--appended-messages
+                      (json-array (json-object "role" "User" "content" (json-array "same")))
+                      (json-array (json-object "role" "user" "content" (json-array "same"))))
+                   (test-assert (and (null matches-p) (zerop (length tail)))
+                                "Changed-case prefix content does not reuse the cache"))
+                 (let ((request
+                         (json-object "messages"
+                                      (json-array
+                                       (json-object "role" "user" "content"
+                                                    (json-array
+                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
+                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
+                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
+                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
+                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))))))))
+                   (anthropic--bound-cache-markers request)
+                   (test-assert (= 4 (count-if (lambda (block) (json-get block "cache_control"))
+                                               (json-get (aref (json-get request "messages") 0) "content")))
+                                "Anthropic cache marker admission remains bounded"))
                (dotimes (index 6)
                  (tool-round index)
                  (let ((request (build)))
@@ -683,3 +721,4 @@
                                    (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
                               "Request-local prefixes are neither durable history nor restart state")))))))))
   nil)
+)

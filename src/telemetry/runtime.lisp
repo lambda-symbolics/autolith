@@ -614,35 +614,15 @@ Different primary identities become mixed; missing response names never inherit 
 (defun telemetry--argument-digest (arguments tool trace-id)
   "Hash bounded canonical JSON with fresh run salt; retain only the local digest."
   (handler-case
-      (let* ((limits    (make-json-limits :maximum-characters 65536 :maximum-depth 24
-                                        :maximum-nodes 4096 :maximum-string-characters 65536
-                                        :maximum-aggregate-string-characters 65536))
-             ;; Validate before traversing user arguments, including cycles and large atoms.
-             (validated (json-decode (json-encode arguments :limits limits) :limits limits))
-             (canonical
-               (with-output-to-string (stream)
-                 (labels ((emit (value)
-                            (cond
-                              ((hash-table-p value)
-                               (write-char #\{ stream)
-                               (loop for key in (sort (loop for key being the hash-keys of value collect key) #'string<)
-                                     for first-p = t then nil
-                                     do (unless first-p (write-char #\, stream))
-                                        (write-string (json-encode key) stream) (write-char #\: stream)
-                                        (emit (gethash key value)))
-                               (write-char #\} stream))
-                              ((and (vectorp value) (not (stringp value)))
-                               (write-char #\[ stream)
-                               (loop for item across value for first-p = t then nil
-                                     do (unless first-p (write-char #\, stream)) (emit item))
-                               (write-char #\] stream))
-                              (t
-                               (write-string (json-encode value) stream)))))
-                   (emit validated)))))
+      (let ((limits (make-json-limits :maximum-characters 65536 :maximum-depth 24
+                                     :maximum-nodes 4096 :maximum-string-characters 65536
+                                     :maximum-aggregate-string-characters 65536)))
         (ironclad:digest-sequence
-         :sha256 (babel:string-to-octets
-                  (concatenate 'string trace-id (if (stringp tool) tool "") canonical)
-                  :encoding :utf-8)))
+         :sha256
+         (babel:string-to-octets
+          (concatenate 'string trace-id (if (stringp tool) tool "")
+                       (json-encode-sorted arguments :limits limits))
+          :encoding :utf-8)))
     (error () nil)))
 
 (-> telemetry--error-code (t) (option string))
