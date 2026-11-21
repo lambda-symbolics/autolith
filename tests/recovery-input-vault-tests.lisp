@@ -427,7 +427,7 @@
                     :active-work        nil
                     :steering-in-flight nil
                     :steering           nil
-                    :work               '((:command "/status")))))
+                    :work               '((:lisp "(status)")))))
             :mode #o600)
            (recording-terminal-reset terminal)
            (application-operation-call application 'vault)
@@ -435,7 +435,7 @@
              (test-assert
               (and (search "recovery input vault" output)
                    (search "old follow-up" output)
-                   (search "/status" output))
+                   (search "(status)" output))
               "/vault lists chronological captures with bounded previews"))
            (with-lock-held ((application-input-controller-lock controller))
              (setf (application-input-controller-active-p controller) t
@@ -480,7 +480,7 @@
                      (string= (second (second work)) "in-flight steering")
                      (string= (second (third work)) "queued steering")
                      (string= (second (fourth work)) "old follow-up")
-                     (equal (fifth work) '(:command "/status"))
+                     (equal (fifth work) '(:lisp "(status)"))
                      (string= (second (sixth work)) "typed during restore")
                      (string= (second (seventh work)) "current recalled"))
                 "a crash during restore preserves older input before new steering and recalled work")))

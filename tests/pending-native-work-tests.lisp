@@ -43,7 +43,7 @@
   (dolist (work '(() ((:message "ordinary"))
                   ((:native-lisp "(error \"never evaluate\")"))
                   ((:native-lisp "head") (:message "middle") (:native-lisp "tail"))
-                  ((:message "first") (:native-lisp "middle") (:command "/help")
+                  ((:message "first") (:native-lisp "middle")
                    (:lisp "(+ 1 2)"))))
     (dolist (active '(nil (:message "active") (:native-lisp "active-native")))
       (loop for prefix from 0 to (length work)

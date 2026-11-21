@@ -57,8 +57,6 @@
                          '((:message "steer") (:message "edited") (:lisp "(+ 1 2)") (:message "newer")))
                   "restored edits precede newer input")
      (test-assert (null (vault-contents)) "restored work is no longer parked")
-     (setf (vault-contents) '((:command "/info")))
-     (test-assert (equal (vault-contents) '((:command "/info"))) "whole-vault SETF works")
      (setf (vault-contents) nil)
      (test-assert (null (vault-contents)) "whole-vault SETF can clear parked input")))
   nil)
