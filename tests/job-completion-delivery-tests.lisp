@@ -92,10 +92,8 @@
               (let* ((conversation (agent-conversation fresh))
                      (record       (first (conversation-records-newest conversation 1)))
                      (properties   (rest record))
-                     (compact      (application-tests--ui-application :columns 100))
-                     (expanded     (application-tests--ui-application
-                                    :columns 100 :compact-view-p nil))
-                     (entry        (conversation-record-entry compact record))
+                     (application  (application-tests--ui-application :columns 100))
+                     (entry        (conversation-record-entry application record))
                      (text         (test-terminal-row-text entry)))
                 (test-assert
                  (and (getf properties :automatic-p)
@@ -106,11 +104,7 @@
                  (and (eq (terminal-span-style (first entry)) ':notice)
                       (< (length text) 200)
                       (not (find #\Newline text)))
-                 "compact completion output is one automated status row without its payload")
-                (test-assert
-                 (< (length (test-terminal-row-text
-                             (conversation-record-entry expanded record))) 650)
-                 "expanded completion output bounds its readable summary")
+                 "completion output is one automated status row without its payload")
                 (test-assert
                  (equal (conversation-input-history conversation)
                         '("Start asynchronous work."))
@@ -119,7 +113,7 @@
                   (remf (rest older) :job-completion)
                   (test-assert
                    (eq (terminal-span-style
-                        (first (conversation-record-entry compact older))) ':notice)
+                        (first (conversation-record-entry application older))) ':notice)
                    "older completion receipts retain automated attribution without body parsing"))
                 (let ((user (copy-tree record)))
                   (remf (rest user) :automatic-p)
@@ -127,7 +121,7 @@
                   (remf (rest user) :job-completion)
                   (test-assert
                    (eq (terminal-span-style
-                        (first (conversation-record-entry compact user))) ':user)
+                        (first (conversation-record-entry application user))) ':user)
                    "a real user message with the same text retains user attribution")))
               (test-assert (null (task-completion-deliver fresh))
                            "repeated wakeups do not append duplicate messages")

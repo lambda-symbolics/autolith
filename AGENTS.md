@@ -250,7 +250,7 @@ and keyword arguments in multi-line calls.
 ### Command notation
 
 Document Autolith commands in canonical Common Lisp form, such as `(status)` or
-`(settings :compact-view-p nil)`. Use these same forms at the prompt.
+`(settings :turn-timestamps-p t)`. Use these same forms at the prompt.
 
 ### Conditions, Restarts, and Returns
 

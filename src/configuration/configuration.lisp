@@ -403,13 +403,6 @@ exist yet, and is only put in directory form."
   :scope                            :durable
   :default                          t)
 
-(define-setting :compact-view-p (boolean-setting)
-  :label                        "Compact view"
-  :group                        :transcript
-  :documentation                "Whether verbose tool calls are condensed and routine results hidden."
-  :scope                        :durable
-  :default                      t)
-
 (define-setting :turn-timestamps-p (boolean-setting)
   :label                           "Turn timestamps"
   :group                           :transcript

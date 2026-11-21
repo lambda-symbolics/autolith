@@ -3,12 +3,10 @@
 ;;;; -- Application Tool Outcomes --
 
 (-> application-tool-outcome-tests--application
-    (configuration &key (:identifier string) (:compact-view-p boolean)
-                   (:fullscreen-p boolean)) application)
+    (configuration &key (:identifier string) (:fullscreen-p boolean)) application)
 (defun application-tool-outcome-tests--application
-    (configuration &key (identifier "outcomes") (compact-view-p t) (fullscreen-p t))
+    (configuration &key (identifier "outcomes") (fullscreen-p t))
   "Construct an application with an isolated conversation and deterministic UI."
-  (setf (config :compact-view-p configuration) compact-view-p)
   (make-instance 'application
                  :configuration configuration
                  :conversation  (conversation-create configuration :identifier identifier)
@@ -283,57 +281,52 @@
                      "an outcome does not complete another conversation's equal call ID"))))
   nil)
 
-(-> test-application-tool-outcomes-compact-and-prominent () null)
-(defun test-application-tool-outcomes-compact-and-prominent ()
-  "Update hidden successes and retain expanded output and prominent result notices."
-  (dolist (compact-p '(t nil))
-    (with-test-configuration (configuration)
-      (let ((application (application-tool-outcome-tests--application
-                          configuration :compact-view-p compact-p)))
-        (application-tool-outcome-tests--present
-         application (application-tool-outcome-tests--call 1 "success")
-         (application-tool-outcome-tests--result 2 "success" :output "ordinary output"))
+(-> test-application-tool-outcomes-success-visibility () null)
+(defun test-application-tool-outcomes-success-visibility ()
+  "Update hidden successes and retain prominent result notices."
+  (with-test-configuration (configuration)
+    (let ((application (application-tool-outcome-tests--application configuration)))
+      (application-tool-outcome-tests--present
+       application (application-tool-outcome-tests--call 1 "success")
+       (application-tool-outcome-tests--result 2 "success" :output "ordinary output"))
+      (let ((text (application-tool-outcome-tests--text application)))
+        (test-assert (and (search "✓ (resource.read :uri" text)
+                          (not (search "ordinary output" text)))
+                     "successful calls omit ordinary output"))
+      (let ((call   (application-tool-outcome-tests--call 3 "notice"))
+            (result (application-tool-outcome-tests--result 4 "notice" :output "report details")))
+        (setf (getf (rest call) :wire-json)
+              (json-encode (json-object "type" "function_call" "namespace" "papercut"
+                                        "name" "report" "call_id" "notice" "arguments" "{}"))
+              (getf (rest result) :tool) "papercut.report")
+        (application-tool-outcome-tests--present application call result)
         (let ((text (application-tool-outcome-tests--text application)))
-          (test-assert (and (search "✓ (resource.read :uri" text)
-                            (eql (not compact-p) (not (null (search "ordinary output" text)))))
-                       "only expanded presentation retains ordinary successful output"))
-        (let ((call   (application-tool-outcome-tests--call 3 "notice"))
-              (result (application-tool-outcome-tests--result 4 "notice" :output "report details")))
-          (setf (getf (rest call) :wire-json)
-                (json-encode (json-object "type" "function_call" "namespace" "papercut"
-                                          "name" "report" "call_id" "notice" "arguments" "{}"))
-                (getf (rest result) :tool) "papercut.report")
-          (application-tool-outcome-tests--present application call result)
-          (let ((text (application-tool-outcome-tests--text application)))
-            (test-assert (and (search "✓ (papercut.report)" text)
-                              (search "PAPERCUT RECORDED" text) (search "report details" text))
-                         "successful prominent notices retain their heading and body"))))))
+          (test-assert (and (search "✓ (papercut.report)" text)
+                            (search "PAPERCUT RECORDED" text) (search "report details" text))
+                       "successful prominent notices retain their heading and body")))))
   nil)
 
 (-> test-application-tool-outcomes-background-lifecycle () null)
 (defun test-application-tool-outcomes-background-lifecycle ()
   "Keep handoffs pending, then complete their own call from job identity."
-  (dolist (compact-p '(t nil))
-    (dolist (outcome '(:success :failure :cancelled :aborted))
-      (with-test-configuration (configuration)
-        (let* ((application (application-tool-outcome-tests--application
-                             configuration :compact-view-p compact-p))
-               (handoff     (application-tool-outcome-tests--result 2 "handoff" :output "background")))
-          (setf (getf (rest handoff) :details)
-                (list :tool-execution :handed-off-p t :job (list :id "job-1")))
-          (application-tool-outcome-tests--present
-           application (application-tool-outcome-tests--call 1 "handoff") handoff)
-          (test-assert (search "▸ (resource.read :uri" (application-tool-outcome-tests--text application))
-                       "handed-off invocations are pending before terminal completion")
-          (application-tool-outcome-tests--present
-           application (application-tool-outcome-tests--completion
-                        3 "job-1" :outcome outcome :summary "terminal summary"))
-          (let* ((success-p (eq outcome ':success))
-                 (retain-p  (or (not success-p) (not compact-p)))
-                 (text      (application-tool-outcome-tests--text application)))
-            (test-assert (and (search (if success-p "✓ (resource.read :uri" "! (resource.read :uri") text)
-                              (eql retain-p (not (null (search "terminal summary" text)))))
-                         "job outcomes retain failures and expanded successful summaries"))))))
+  (dolist (outcome '(:success :failure :cancelled :aborted))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application configuration))
+             (handoff     (application-tool-outcome-tests--result 2 "handoff" :output "background")))
+        (setf (getf (rest handoff) :details)
+              (list :tool-execution :handed-off-p t :job (list :id "job-1")))
+        (application-tool-outcome-tests--present
+         application (application-tool-outcome-tests--call 1 "handoff") handoff)
+        (test-assert (search "▸ (resource.read :uri" (application-tool-outcome-tests--text application))
+                     "handed-off invocations are pending before terminal completion")
+        (application-tool-outcome-tests--present
+         application (application-tool-outcome-tests--completion
+                      3 "job-1" :outcome outcome :summary "terminal summary"))
+        (let ((success-p (eq outcome ':success))
+              (text      (application-tool-outcome-tests--text application)))
+          (test-assert (and (search (if success-p "✓ (resource.read :uri" "! (resource.read :uri") text)
+                            (eql (not success-p) (not (null (search "terminal summary" text)))))
+                       "job outcomes show summaries only for unsuccessful completions")))))
   nil)
 
 (-> test-application-tool-outcomes-inline-compatibility () null)

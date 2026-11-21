@@ -151,10 +151,8 @@ model. Provider calls use deterministic =mcp__*= namespaces and encoded
 operation names. In the terminal, calls and results use
 =configured-server.raw-tool= labels; schema discovery shows the server name.
 
-Use =(settings :compact-view-p nil)= to expand successful MCP answers into styled fields.
-With compact tools enabled, successful answers collapse regardless of server
-annotations. Failures are visible in either mode. Text and structured content
-sections share one bounded preview.
+Successful answers collapse regardless of server annotations. Failures are
+visible. Text and structured content sections share one bounded preview.
 
 #+BEGIN_SRC lisp
 (mcp.status)

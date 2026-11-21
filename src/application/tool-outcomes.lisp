@@ -80,13 +80,11 @@
          (summary    (getf completion :summary)))
     (when job-key
       (list :kind ':completion :job-key job-key :state state
-            :retain-output-p (or (not (eq state ':success))
-                                 (not (application-compact-view-p application)))
+            :retain-output-p (not (eq state ':success))
             :body            (unless metadata-only-p
                                (cond
                                  ((getf completion :transcript-shell)
-                                  (when (or (eq state ':failure)
-                                            (not (application-compact-view-p application)))
+                                  (when (eq state ':failure)
                                     (application--tool-outcome-body
                                      application
                                      (application--shell-completion-rows
@@ -96,9 +94,7 @@
                                    application
                                    (application--failure-result-rows summary)))
                                  ((eq state ':pending)
-                                  (cons (terminal-span ':plain (string #\Newline)) entry))
-                                 ((not (application-compact-view-p application))
-                                  (application--entry-body entry))))))))
+                                  (cons (terminal-span ':plain (string #\Newline)) entry))))))))
 
 (-> application--record-tool-outcome-basic
     (application list list &key (:item t) (:metadata-only-p boolean)) (option list))

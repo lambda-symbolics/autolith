@@ -762,7 +762,7 @@
                                               :definition definition :parent-agent parent
                                               :root-identifier          "ancestor"
                                               :item                     (list :task assignment)))
-           (application  (application-tests--ui-application :columns 100 :compact-view-p nil)))
+           (application  (application-tests--ui-application :columns 100)))
       (unwind-protect
            (progn
              (conversation-append-user-message source "Delegate the review.")

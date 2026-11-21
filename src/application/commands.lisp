@@ -424,9 +424,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
        (list "cache misses"
              (application--toggle-state
               (application-cache-miss-notices-p application)))
-       (list "compact view"
-             (application--toggle-state
-              (application-compact-view-p application)))
        (list "STE"
              (application--toggle-state
               (config :simple-technical-english-p configuration)))
@@ -2326,9 +2323,8 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 (defun application-apply-setting (application name value)
   "Set NAME to VALUE for APPLICATION and apply the runtime side effects.
 
-Settings with runtime consequences, such as the provider's reasoning
-summaries or the transcript pagination, go through their dedicated setters so
-the settings page and commands use the same setters."
+Settings with runtime consequences, such as provider reasoning summaries,
+use the same setters in the settings page and commands."
   (let* ((configuration (if (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))
                             (telemetry-consent-configuration (application-configuration application))
                             (application-configuration application)))
@@ -2354,11 +2350,6 @@ the settings page and commands use the same setters."
       ((:idle-compaction-p :prompt-cache-retention-seconds)
        (setf (config name configuration) value)
        (application-idle-compaction-wake application))
-      (:compact-view-p
-       (unless (eq (application-compact-view-p application) value)
-         (setf (application-compact-view-p application) value)
-         (application-reset-history-pagination application))
-       (application-publish-recovery-session application))
       ((:knowledge-mode :diagnosis-p)
        (setf (config name configuration) value)
        ;; The model's resource operations and documentation depend on the

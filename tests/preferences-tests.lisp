@@ -57,7 +57,7 @@ Source precedence, source recording, and value rejection belong to setinka."
                  (merge-pathnames "preferences.sexp" (config :config-root configuration)))
           "global preferences live under the config root")
          (let ((created (preferences-tests--create configuration)))
-           (dolist (case '((:reasoning-traces-p t) (:compact-view-p t)
+           (dolist (case '((:reasoning-traces-p t)
                            (:turn-timestamps-p nil) (:cache-miss-notices-p nil)
                            (:simple-technical-english-p nil)
                            (:session-title-generation-p t)
@@ -100,7 +100,7 @@ Source precedence, source recording, and value rejection belong to setinka."
          (snapshot-write pathname
                          '(:preferences :version 8
                            :model "gpt-5.6-typo" :reasoning-effort "bogus"
-                           :compact-view-p nil :future-key 7))
+                           :cache-miss-notices-p t :future-key 7))
          (let ((created (preferences-tests--create configuration)))
            (test-assert (string= (config :model created) *default-model*)
                         "an unsupported durable model is dropped")
@@ -110,7 +110,7 @@ Source precedence, source recording, and value rejection belong to setinka."
            (setf (config :turn-timestamps-p created) t)
            (let ((plist (preferences-tests--file-plist configuration)))
              (test-assert (and (= (getf plist :future-key) 7)
-                               (not (getf plist :compact-view-p))
+                               (eq (getf plist :cache-miss-notices-p) t)
                                (eq (getf plist :turn-timestamps-p) t))
                           "storing one value keeps unknown and unrelated keys"))
            (snapshot-write pathname '(:preferences :version 8 :cache-miss-notices-p t))
@@ -127,7 +127,7 @@ Source precedence, source recording, and value rejection belong to setinka."
          (let ((plist (preferences--read configuration)))
            (test-assert (string= (getf plist :model) "first")
                         "duplicate preference keys use their first value"))
-         (preferences-store configuration :compact-view-p t)
+         (preferences-store configuration :turn-timestamps-p t)
          (test-assert (string= (getf (preferences-tests--file-plist configuration)
                                     :model)
                               "first")
@@ -154,9 +154,9 @@ Source precedence, source recording, and value rejection belong to setinka."
             (preferences-tests--warned-p
              (lambda () (setf created (preferences-tests--create configuration))))
             "a truncated file is reported and ignored")
-           (setf (config :compact-view-p created) nil)
+           (setf (config :reasoning-traces-p created) nil)
            (test-assert (equal (preferences-tests--file-plist configuration)
-                               '(:compact-view-p nil))
+                               '(:reasoning-traces-p nil))
                         "the next store replaces a damaged file"))
         nil)))))
 

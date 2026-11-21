@@ -1013,48 +1013,6 @@ structural discriminator as a readable heading instead."
                "…")))))
     (layout-fit-text visible width)))
 
-(-> application--task-run-prose-rows
-    (application string
-     &key (:indent string) (:style terminal-style) (:limit integer))
-    list)
-(defun application--task-run-prose-rows
-    (application text &key (indent "") (style ':plain)
-                            (limit *application-tool-call-lines*))
-  "Return bounded wrapped prose rows with a subdued rail."
-  (let* ((prefix        (format nil "~A│ " indent))
-         (columns
-           (application--transcript-columns application))
-         (width         (max 1
-                             (- columns
-                                3
-                                (text-cell-width prefix))))
-         (bounded       (bounded-string text :limit 8000))
-         (wrapped
-           (loop for line in (or (application--display-lines bounded)
-                                 (list ""))
-                 append (or (wrap-text line width) (list ""))))
-         (visible-count (min limit (length wrapped)))
-         (omitted       (- (length wrapped) visible-count)))
-    (append
-     (loop for line in (subseq wrapped 0 visible-count)
-           collect (list (terminal-span ':dim prefix)
-                         (terminal-span style line)))
-     (when (plusp omitted)
-       (list
-        (list
-         (terminal-span
-          ':dim
-          (format nil "~A… +~D more row~:P" indent omitted))))))))
-
-(-> application--task-run-mode-label (keyword) string)
-(defun application--task-run-mode-label (mode)
-  "Return one readable presentation label for task MODE."
-  (ecase mode
-    (:detached
-     "detached")
-    (:synchronous
-     "synchronous")))
-
 (-> application--task-run-compact-context-row
     (application string)
     list)
@@ -1124,63 +1082,20 @@ structural discriminator as a readable heading instead."
                application
                (getf item :context))))))))
 
-(-> application--task-run-expanded-item-rows
-    (application list)
-    list)
-(defun application--task-run-expanded-item-rows (application item)
-  "Return a full readable section for one task presentation ITEM."
-  (let ((name (getf item :name)))
-    (append
-     (list
-      (list
-       (terminal-span
-        ':dim
-        (format nil "task ~D" (getf item :index)))
-       (terminal-span
-        ':agent-name
-        (if name (format nil " · ~A" name) ""))))
-     (application--tool-field-rows
-      application
-      (list
-       (list :label "role"
-             :value (getf item :agent)
-             :style ':agent-role)
-       (list :label "mode"
-             :value (application--task-run-mode-label
-                     (getf item :mode)))))
-     (when (getf item :context)
-       (append
-        (list (application--tool-section-row "task context"))
-        (application--task-run-prose-rows
-         application
-         (getf item :context))))
-     (list (application--tool-section-row "assignment"))
-     (application--task-run-prose-rows
-      application
-      (getf item :task)))))
-
 (-> application--task-run-rows
     (application json-object)
     list)
 (defun application--task-run-rows (application arguments)
   "Lay out the same normalized descriptions used to execute child.spawn."
   (handler-case
-      (let ((items (task-normalize-arguments arguments)))
-        (if (application-compact-view-p application)
-            (application--task-run-compact-item-rows application items)
-            (loop for item in items
-                  for first-p = t then nil
-                  append (append
-                          (unless first-p (list nil))
-                          (application--task-run-expanded-item-rows
-                           application item)))))
+      (application--task-run-compact-item-rows application (task-normalize-arguments arguments))
     (tool-error (condition)
       (list (application--tool-section-row
              (format nil "invalid task request: ~A" condition))))))
 
 (defmethod application-tool-call-entry
     ((tool task-run-tool) (application application) (call hash-table))
-  "Present child.spawn children as structured compact or expanded prose."
+  "Present child.spawn children as structured assignment previews."
   (let ((arguments (application--task-run-arguments tool call)))
     (application--tool-entry
      application
@@ -1914,7 +1829,8 @@ lists, independently of the producer's transport limits."
 (defun application--mcp-structured-rows (application details)
   "Render an MCP structured section from the native portable value only."
   (multiple-value-bind (value valid-p)
-      (application--native-details-value details)
+      (application--native-details-value
+       (list :mcp-content :structured-content (getf (rest details) :structured-content)))
     (let ((content                             (and valid-p (json-get value "structured-content")))
           (*application-tool-structure-budget* 64))
       (cond
@@ -1987,7 +1903,9 @@ lists, independently of the producer's transport limits."
 (defun application--native-details-rows (application record)
   "Render retained portable native details with bounded semantic fields."
   (multiple-value-bind (value valid-p)
-      (application--native-details-value (getf (rest record) :details))
+      (let ((details (getf (rest record) :details)))
+        (unless (and (consp details) (eq (first details) ':mcp-content))
+          (application--native-details-value details)))
     (when valid-p
       (let* ((job      (json-get value "job"))
              (items    (or (json-get value "results") (json-get value "jobs")
@@ -2099,24 +2017,13 @@ A job that is still queued or running offers its job.cancel call. The agent's
 tool result, the user's own tool call and the user's background evaluation all
 show this entry outside the fullscreen transcript, which notes the state on
 the call itself."
-  (let* ((job         (getf (rest handoff) :job))
-         (description (getf job :description)))
+  (let ((job (getf (rest handoff) :job)))
     (terminal-ui--job-cancel-widget
      (application--tool-entry
       application
       :style  (if (eq (getf job :state) ':failed) ':failure ':notice)
       :header (format nil "↪ ~A" (application--tool-display-name application tool-name))
-      :detail (application--tool-execution-handoff-status handoff)
-      :rows   (unless (application-compact-view-p application)
-               (application--tool-field-rows
-                application
-                (append
-                 (when (non-empty-string-p description)
-                   (list (list :label "task"
-                               :value (bounded-string description :limit 200))))
-                 (when (eq (getf (rest handoff) :handoff-reason) ':grace-expired)
-                   (list (list :label "handoff"
-                               :value "blocking wait expired")))))))
+      :detail (application--tool-execution-handoff-status handoff))
      (getf job :id))))
 
 (defmethod application-tool-result-entry :around

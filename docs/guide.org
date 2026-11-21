@@ -454,8 +454,8 @@ windows use =startLine= and =lineCount= and include the observed revision. Shell
 windows use =byteOffset= and =byteCount= and require session ownership.
 
 For a command, send =arguments= as a JSON array in Lisp argument order. For
-example, =(settings :compact-view-p nil)= takes
-=[{"keyword":"compact-view-p"}, false]=. A keyword is an object with exactly one
+example, =(settings :turn-timestamps-p t)= takes
+=[{"keyword":"turn-timestamps-p"}, true]=. A keyword is an object with exactly one
 =keyword= member whose value is a nonempty string. For a tool, send =arguments=
 as an object keyed by parameter name. Operations with =terminalWithoutArguments=
 require an argument to avoid a terminal picker. During an active turn,

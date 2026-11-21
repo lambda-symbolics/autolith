@@ -356,9 +356,6 @@ Clicking the rendered call's header inserts it into the composer.")
 (define-application-setting-accessor application-reasoning-traces-p :reasoning-traces-p
   "Return whether provider-visible reasoning summaries appear in the transcript.")
 
-(define-application-setting-accessor application-compact-view-p :compact-view-p
-  "Return whether verbose tool calls are condensed and routine results hidden.")
-
 (define-application-setting-accessor application-turn-timestamps-p :turn-timestamps-p
   "Return whether user and assistant headers show local timestamps.")
 
@@ -2905,24 +2902,17 @@ A channel message shows its sender and channel instead of an operation."
                         "cancelled")
                        (otherwise
                         "result received"))))
-    (append
-     (application--transcript-entry
-      application
-      :style     (if (eq outcome ':failure) ':failure ':notice)
-      :header    (format nil "▸ job ~A" status)
-      :detail    (when (stringp identifier) identifier)
-      :timestamp (getf properties :time)
-      :body      (when (and (not shell)
-                            (or (eq outcome ':cancellation-pending)
-                                (not (application-compact-view-p application)))
-                            (non-empty-string-p summary))
-                   (if (> (length summary) 500)
-                       (concatenate 'string (subseq summary 0 500) "…")
-                       summary)))
-     (when (and shell (not (application-compact-view-p application)))
-       (loop for row in (application--shell-completion-rows application (getf shell :details))
-             append (cons (terminal-span ':plain (string #\Newline))
-                          (application--tool-row-spans application row)))))))
+    (application--transcript-entry
+     application
+     :style     (if (eq outcome ':failure) ':failure ':notice)
+     :header    (format nil "▸ job ~A" status)
+     :detail    (when (stringp identifier) identifier)
+     :timestamp (getf properties :time)
+     :body      (when (and (not shell) (eq outcome ':cancellation-pending)
+                           (non-empty-string-p summary))
+                  (if (> (length summary) 500)
+                      (concatenate 'string (subseq summary 0 500) "…")
+                      summary)))))
 
 (-> application--transcript-source-value (list function) t)
 (defun application--transcript-source-value (key build)
@@ -3132,8 +3122,7 @@ the entry's text as a :PRESENT event."
 (-> application--tool-result-visible-p (application list) boolean)
 (defun application--tool-result-visible-p (application record)
   "Return true when tool RECORD has a visible standalone result."
-  (or (not (application-compact-view-p application))
-      (not (eq (getf (rest record) :status) ':ok))
+  (or (not (eq (getf (rest record) :status) ':ok))
       (not (null (application--tool-execution-handoff record)))
       (application--compact-tool-result-visible-p
        application (getf (rest record) :tool))))
@@ -4687,7 +4676,6 @@ clients as :TEXT, :REASONING and :STATUS events."
                 (cond
                   ((string= tool-name "skill.load")
                    (if (and (getf details :success-p)
-                            (application-compact-view-p application)
                             (nth-value
                              2
                              (application--skill-load-result-details

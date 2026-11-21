@@ -998,7 +998,6 @@
   test-rename-command
   test-channel-id-command
   test-application-typed-boolean-controls
-  test-application-compact-setting-transitions
   test-application-settings-command
   test-application-mcp-reload-capability-change
   test-command-view-fields-and-mcp
@@ -1780,11 +1779,11 @@
   test-lisp-rainbow-display-scope
   test-lisp-source-result-highlighting
   test-evaluation-value-highlighting
-  test-tool-code-output-highlighting
+  test-tool-output-literal-presentation
   test-raw-diff-output-presentation
   test-resource-source-highlighting
   test-search-source-highlighting
-  test-lsp-result-severity-presentation
+  test-lsp-result-visibility
   test-tool-execution-handoff-presentation
   test-recovery-cursor-normalization
   test-fatal-boundaries-keep-backtraces
@@ -1844,7 +1843,7 @@
   test-application-tool-outcomes-interleaved
   test-application-resource-edit-failure-placement
   test-application-tool-outcomes-scoped-identities
-  test-application-tool-outcomes-compact-and-prominent
+  test-application-tool-outcomes-success-visibility
   test-application-tool-outcomes-background-lifecycle
   test-application-tool-outcomes-inline-compatibility
   test-application-tool-outcomes-transient

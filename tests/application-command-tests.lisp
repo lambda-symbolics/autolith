@@ -854,40 +854,6 @@
               "status and invalid controls do not change state or preferences")))))))
   nil)
 
-(-> test-application-compact-setting-transitions () null)
-(defun test-application-compact-setting-transitions ()
-  "Test compact view pagination and recovery when applying the setting."
-  (test-call-with-typed-control-application
-   (lambda (application root observations)
-     (declare (ignore root observations))
-     (let ((configuration (application-configuration application))
-           (resets        0)
-           (publications  0))
-       (test-call-with-function-replacements
-        (list
-         (list 'application-reset-history-pagination
-               (lambda (candidate)
-                 (declare (ignore candidate))
-                 (incf resets)))
-         (list 'application-publish-recovery-session
-               (lambda (candidate)
-                 (declare (ignore candidate))
-                 (incf publications))))
-        (lambda ()
-           (dolist (transition '((nil t) (t nil) (t t) (nil nil)))
-             (destructuring-bind (before after) transition
-               (setf (config :compact-view-p configuration) before
-                     resets 0
-                     publications 0)
-               (application-apply-setting application ':compact-view-p after)
-               (test-assert (eq after (config :compact-view-p configuration))
-                            "the setting applies the compact view value")
-               (test-assert (= resets (if (eq before after) 0 1))
-                            "a change in compact view resets pagination exactly once")
-               (test-assert (= publications 1)
-                            "applying compact view publishes recovery once"))))))))
-  nil)
-
 (defclass application-authentication-test-provider (model-provider)
   ((stream
     :initform      nil

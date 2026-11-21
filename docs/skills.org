@@ -116,10 +116,8 @@ still be selected.
 - Every inference provider request gets a bounded catalog when Skills exist.
 - The catalog contains names, descriptions, and original source paths.
 - =skill.load= records the selected name for the current logical turn.
-- In compact tool view, the terminal finalizes a visible
-  =◆ loaded skill: NAME= transcript marker when selection succeeds. The marker
-  survives ordinary redraws but is not written to durable conversation history.
-  Expanded tool view presents the ordinary transient =skill.load= result instead.
+- The terminal shows a =◆ loaded skill: NAME= marker when selection succeeds.
+  The marker survives redraws and is not written to conversation history.
 - At the next provider boundary, Autolith rereads the original source. A
   changed =SKILL.md= is rehashed and reconverted before its current Markdown
   body is injected.

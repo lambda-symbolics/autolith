@@ -441,25 +441,7 @@
                (test-assert
                 (and (null (search "◆ " output))
                      (= (terminal-tests--substring-count "skill.load" output) 1))
-                "failed and malformed Skill results use one ordinary result")))
-           (setf (application-compact-view-p application) nil)
-           (recording-terminal-reset terminal)
-           (funcall
-            send-status
-            ':tool-call-completed
-            (list :tool      "skill.load"
-                  :success-p t
-                  :output    "Selected skill expanded-view for this logical turn."
-                  :details
-                  '(:kind :skill-load
-                    :name "expanded-view"
-                    :newly-selected-p t)))
-           (let ((output (recording-terminal-output terminal)))
-             (test-assert
-              (and (null (search "◆ loaded skill" output))
-                   (= (terminal-tests--substring-count "✓ skill.load" output) 1)
-                   (search "Selected skill expanded-view" output))
-              "expanded tool view presents its ordinary result exactly once")))
+                "failed and malformed Skill results use one ordinary result"))))
       (ignore-errors (terminal-ui-stop ui))
       (platform-delete-directory-tree *platform* root
                                       :validate          t

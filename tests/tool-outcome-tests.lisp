@@ -218,7 +218,6 @@
                                                                         :job (:id "exec:origin" :state :running)))))
              (call-key                                (application--tool-outcome-key application ':call "origin"))
              (job-key                                 (application--tool-outcome-key application ':job "exec:origin")))
-        (setf (application-compact-view-p application) nil)
         (with-terminal-ui (ui ui)
           (terminal-ui-present-records ui (list (application--record-presentation application call)))
           (setf (terminal-ui-live-output-suspended-p ui) deferred-p)

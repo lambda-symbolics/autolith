@@ -4079,8 +4079,7 @@
                                  (mcp-tool-registry-register-manager registry manager)
                                  registry))
                   (tool        (test-mcp--tool-with-raw-name registry "read/file"))
-                  (application (application-tests--ui-application
-                                :columns 120 :compact-view-p nil))
+                  (application (application-tests--ui-application :columns 120))
                   (call        (json-object "type" "function_call"
                                             "namespace" (tool-namespace tool)
                                             "name" (tool-name tool)
@@ -4094,14 +4093,10 @@
                        (conversation-record-entry
                         application
                         (list :tool-result :tool (tool-canonical-name tool)
-                              :status ':ok :output "done"))
-                       (conversation-record-entry
-                        application
-                        (list :tool-result :tool (tool-canonical-name tool)
                               :status ':error :output "unavailable"))))
                (let ((text (terminal--spans-text entry)))
                  (test-assert (search "Test Server.read/file" text)
-                              "MCP calls and both result statuses show the exact readable identity")
+                             "MCP calls and failures show the exact readable identity")
                  (test-assert (not (search (tool-canonical-name tool) text))
                               "MCP wire identifiers do not enter the displayed entry")))
              (let ((text
@@ -4142,10 +4137,10 @@
                       (record (list :tool-result :tool (tool-canonical-name tool)
                                     :status ':ok :output "answer")))
                  (test-assert (null (conversation-record-entry application record))
-                              "compact mode collapses every successful MCP answer")
+                             "successful MCP answers collapse")
                  (setf (getf (rest record) :status) ':error)
                  (test-assert (conversation-record-entry application record)
-                              "compact mode exposes MCP failures")))
+                             "MCP failures remain visible")))
              (let* ((tool (test-mcp--tool-with-raw-name registry "read/file"))
                     (result
                       (mcp-tools--call-result
@@ -4161,17 +4156,16 @@
                (conversation-append-tool-result
                 conversation "mcp-answer" :tool-name (tool-canonical-name tool)
                 :output                              (tool-result-content result)
-                :details (tool-result-details result) :success-p t)
-               (setf (application-compact-view-p application) nil)
+                :details (tool-result-details result) :success-p nil)
                (let* ((record (first (conversation-records-newest conversation 1)))
                       (entry  (conversation-record-entry application record))
                       (text   (terminal--spans-text entry)))
-                 (dolist (value '("btc_price_usd" "82225" "exchange" "test-market"
-                                  "updated_at" "2026-10-16"))
-                   (test-assert (search value text)
-                                "expanded MCP replies format every persisted content section"))
-                 (test-assert (not (find #\{ text))
-                              "expanded MCP replies use field layout rather than serialized objects")
+                 (test-assert (and (search "{\"btc_price_usd\":82225.0}" text)
+                                   (search "{\"exchange\":\"test-market\"}" text))
+                              "MCP text sections that look like JSON are literal")
+                 (test-assert (and (search "updated_at" text) (search "2026-10-16" text)
+                                   (not (search "{\"updated_at\"" text)))
+                              "only the native structured section uses field layout")
                  (let ((*application-tool-output-lines* 1))
                    (test-assert
                     (= (length (application--mcp-content-rows application record)) 2)
@@ -4182,7 +4176,7 @@
 (-> test-mcp-malformed-presentation-metadata () null)
 (defun test-mcp-malformed-presentation-metadata ()
   "Fall back to readable output when replayed MCP section metadata is invalid."
-  (let ((application (application-tests--ui-application :columns 80 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 80)))
     (dolist (details
               '((:mcp-content :sections ((:text -1 1)))
                 (:mcp-content :sections ((:text 3 2)))
@@ -4193,7 +4187,7 @@
                 (:mcp-content :sections (:text 0 3))
                 (:mcp-content :sections . 1)))
       (let* ((record (list :tool-result :tool "unavailable.operation"
-                           :status ':ok :output "{\"answer\":42}"
+                            :status ':error :output "{\"answer\":42}"
                            :details     details))
              (entry  (conversation-record-entry application record)))
         (test-assert (and entry
@@ -4232,8 +4226,7 @@
                                              :tool-registry registry :worker ':unused)))
                (agent-run-user-turn agent "read the scripted file")
                (mcp-manager-close manager)
-               (setf (application-tool-registry application) (make-instance 'tool-registry)
-                     (application-compact-view-p application) nil)
+               (setf (application-tool-registry application) (make-instance 'tool-registry))
                (let* ((loaded        (conversation-load (conversation-pathname conversation)))
                       (records       (let ((records nil))
                                        (conversation-map-records loaded (lambda (record) (push record records)))
@@ -4248,11 +4241,13 @@
                               "the actual agent round persists a call and correlated result")
                  (dolist (record (list call-record result-record))
                    (test-assert (equal label (getf (rest record) :tool-label))
-                                "readable identity survives loading the conversation")
-                   (let ((text (terminal--spans-text (conversation-record-entry application record))))
-                     (test-assert (search label text) "unregistered tool headers use the saved label")
-                     (test-assert (not (search (tool-canonical-name tool) text))
-                                  "encoded identity is absent from replay presentation")))
+                               "readable identity survives loading the conversation"))
+                 (let ((text (terminal--spans-text (conversation-record-entry application call-record))))
+                   (test-assert (search label text) "unregistered tool calls use the saved label")
+                   (test-assert (not (search (tool-canonical-name tool) text))
+                                "encoded identity is absent from replay presentation"))
+                 (test-assert (null (conversation-record-entry application result-record))
+                              "unregistered successful MCP results are hidden")
                  (test-assert (string= wire-json (getf (rest call-record) :wire-json))
                               "the persisted provider call retains its exact identity")
                  (test-assert (equal (tool-canonical-name tool) (getf (rest result-record) :tool))

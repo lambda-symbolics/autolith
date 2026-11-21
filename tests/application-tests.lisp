@@ -3,21 +3,22 @@
 ;;;; -- Presentation Test Support --
 
 (-> application-tests--ui-application
-    (&key (:columns integer) (:reasoning-traces-p boolean)
-          (:compact-view-p boolean))
-    application)
-(defun application-tests--ui-application
-    (&key (columns 40) reasoning-traces-p (compact-view-p t))
+    (&key (:columns integer) (:reasoning-traces-p boolean)) application)
+(defun application-tests--ui-application (&key (columns 40) reasoning-traces-p)
   "Return a nonpersistent application presenting into a recording terminal."
   (let ((*configuration-store* nil))
     (make-instance 'application
-                   :configuration (make-configuration
-                                   :reasoning-traces-p reasoning-traces-p
-                                   :compact-view-p     compact-view-p)
+                   :configuration (make-configuration :reasoning-traces-p reasoning-traces-p)
                    :tool-registry (make-default-tool-registry)
                    :ui            (terminal-ui-create
                                    :terminal (make-instance 'recording-terminal
                                                             :columns columns)))))
+
+(-> application-tests--render-tool-result (application list) list)
+(defun application-tests--render-tool-result (application record)
+  "Exercise formatting independently of whether RECORD receives a transcript row."
+  (application-tool-result-entry
+   (application--find-tool application (getf (rest record) :tool)) application record))
 
 (-> test-presentation-configuration-isolation () null)
 (defun test-presentation-configuration-isolation ()
@@ -35,10 +36,10 @@
                 (presentation (application-configuration application)))
            (test-assert (null (setinka:configuration-store presentation))
                         "Recording UI configuration must not own a durable store.")
-           (setf (application-compact-view-p application) nil)
-           (test-assert (not (application-compact-view-p application))
+           (setf (application-turn-timestamps-p application) t)
+           (test-assert (application-turn-timestamps-p application)
                         "Recording UI settings must remain mutable.")
-           (test-assert (config :compact-view-p configuration)
+           (test-assert (not (config :turn-timestamps-p configuration))
                         "A presentation change must not affect the enclosing fixture."))))
       (test-assert (null writes)
                    "Presentation fixtures must never attempt durable writes.")))
@@ -2381,7 +2382,7 @@
   "Present native job identities, outcomes and progress from live and durable data."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
-           (application  (application-tests--ui-application :columns 100 :compact-view-p nil)))
+           (application  (application-tests--ui-application :columns 100)))
       (dolist (case '((:running :notice) (:failed :failure)
                       (:cancelled :notice) (:completed :success)))
         (let* ((details (list :job-get :durable-p nil
@@ -2389,7 +2390,9 @@
                                              :summary "Review complete" :progress '(:duration-ms 42))))
                (record  (list :tool-result :tool "job.get" :status ':ok
                               :output "#.(error \"never read output\")" :details details))
-               (live    (conversation-record-entry application record)))
+               (live    (application-tests--render-tool-result application record)))
+          (test-assert (null (conversation-record-entry application record))
+                       "a successful job lookup has no standalone transcript row")
           (test-assert (and (search "worker-1" (test-terminal-row-text live))
                             (search "reviewer" (test-terminal-row-text live))
                             (search "42 ms" (test-terminal-row-text live))
@@ -2400,7 +2403,7 @@
                                            :output                                   (getf (rest record) :output)
                                            :success-p t :details details)
           (let* ((loaded   (conversation-load (conversation-pathname conversation)))
-                 (replayed (conversation-record-entry
+                 (replayed (application-tests--render-tool-result
                             application (first (conversation-records-newest loaded 1)))))
             (test-assert (equal live replayed)
                          "durable replay uses retained native details with the same spans"))))
@@ -2412,9 +2415,11 @@
                             (list "shell.run" envelope details output)
                             (list "shell.run" envelope nil "result details unavailable")))
           (destructuring-bind (tool text metadata expected) case
-            (let ((record (list :tool-result :tool tool :status ':ok :output text :details metadata)))
+            (let* ((success-p (equal tool "shell.run"))
+                   (record    (list :tool-result :tool tool :status (if success-p ':ok ':error)
+                                    :output text :details metadata)))
               (conversation-append-tool-result conversation (make-identifier) :tool-name tool
-                                               :output text :success-p t :details metadata)
+                                               :output text :success-p success-p :details metadata)
               (let* ((loaded (conversation-load (conversation-pathname conversation)))
                      (replay (first (conversation-records-newest loaded 1))))
                 (dolist (source (list record replay))
@@ -2427,13 +2432,14 @@
                              :job-completion (list :job-id "exec:19" :outcome ':success :summary envelope
                                                    :transcript-shell (list :details details)))))
                (shown (test-terminal-row-text entry)))
-          (test-assert (and (search output shown) (not (search envelope shown)))
-                       "a shell completion displays typed capture, not the summary envelope"))))))
+          (test-assert (and (search "completed" shown)
+                            (not (search output shown)) (not (search envelope shown)))
+                       "a successful background shell completion omits capture and envelope"))))))
 
 (-> test-native-role-and-continuity-presentation () null)
 (defun test-native-role-and-continuity-presentation ()
   "Show rejected roles and completed jobs with failed retained outcomes."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (case (list (list "child.roles"
                               (task--agents-page '((:kind :diagnostic :name "broken" :cause "invalid role")) 0 20)
                               "broken" "invalid role")
@@ -2441,7 +2447,7 @@
                               '(:classification :completed :job-id "completed-worker"
                                 :result (:status :failure :error "gate rejected"))
                               "completed-worker" "gate rejected")))
-      (let* ((record (list :tool-result :tool (first case) :status ':ok
+      (let* ((record (list :tool-result :tool (first case) :status ':error
                            :output "native output" :details (second case)))
              (entry  (conversation-record-entry application record))
              (text   (test-terminal-row-text entry)))
@@ -2458,10 +2464,10 @@
 (-> test-native-tool-result-presentation-bounds () null)
 (defun test-native-tool-result-presentation-bounds ()
   "Bound hostile native details, malformed metadata and deeply nested JSON."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (details '(nil :corrupt (:job) (:job-get :job) (:job-get :job (:id))))
       (let ((entry (conversation-record-entry
-                    application (list :tool-result :tool "job.get" :status ':ok
+                    application (list :tool-result :tool "job.get" :status ':error
                                       :output "fallback" :details details))))
         (test-assert (search "fallback" (test-terminal-row-text entry))
                      "malformed or absent native details use bounded text fallback")))
@@ -2472,20 +2478,20 @@
                    "cyclic native progress is bounded before presentation")))
   (let* ((summary (make-string 10000 :initial-element #\x))
          (items   (loop repeat 1000 collect (list :id "bounded" :state ':failed :summary summary)))
-         (record  (list :tool-result :tool "child.spawn" :status ':ok
+         (record  (list :tool-result :tool "child.spawn" :status ':error
                         :output "native output" :details (list :task-run :results items))))
     (dolist (width '(1 4 12))
-      (let* ((application (application-tests--ui-application :columns width :compact-view-p nil))
+      (let* ((application (application-tests--ui-application :columns width))
              (entry       (conversation-record-entry application record))
              (lines       (application--display-lines (test-terminal-row-text entry))))
         (test-assert (< (length lines) 40) "native result rows are bounded independently of input size")
         (test-assert (every (lambda (line) (<= (text-cell-width line) width)) lines)
                      "native result rows fit narrow terminals"))))
-  (let* ((application (application-tests--ui-application :columns 12 :compact-view-p nil))
+  (let* ((application (application-tests--ui-application :columns 12))
          (output      (concatenate 'string (make-string 10000 :initial-element #\[)
                                    "0" (make-string 10000 :initial-element #\])))
          (entry       (conversation-record-entry
-                       application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
+                       application (list :tool-result :tool "unknown.run" :status ':error :output output))))
     (test-assert (< (length (test-terminal-row-text entry)) 100)
                  "excessively nested JSON uses safe bounded text instead of recursive decoding")))
 
@@ -2537,7 +2543,7 @@
 (-> test-lisp-rainbow-display-scope () null)
 (defun test-lisp-rainbow-display-scope ()
   "Apply nesting colors to Lisp tool and local input, source and values only."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (namespace '("lisp" "self"))
       (let ((entry (response-item-entry
                     application
@@ -2548,7 +2554,7 @@
                      "Lisp evaluation tool inputs receive nesting colors.")))
     (dolist (name '("lisp.eval" "self.eval" "lisp.describe" "lisp.source" "self.diff"))
       (let* ((source-p (member name '("lisp.source" "self.diff") :test #'equal))
-             (entry    (conversation-record-entry
+             (entry    (application-tests--render-tool-result
                         application (list :tool-result :tool name :status ':ok
                                           :output  (if source-p "(list (list 1))" "")
                                           :details (unless source-p
@@ -2569,11 +2575,11 @@
 (-> test-lisp-source-result-highlighting () null)
 (defun test-lisp-source-result-highlighting ()
   "Present returned Lisp source and mutation forms using syntax token roles."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (name '("lisp.source" "self.diff"))
       (let* ((record (list :tool-result :tool name :status ':ok
                            :output "(defun greet () \"hello\")"))
-             (entry  (conversation-record-entry application record)))
+             (entry  (application-tests--render-tool-result application record)))
         (test-assert (and (find ':syntax-keyword entry :key #'terminal-span-style)
                           (find ':syntax-function entry :key #'terminal-span-style)
                           (find ':syntax-string entry :key #'terminal-span-style))
@@ -2582,29 +2588,30 @@
 (-> test-evaluation-value-highlighting () null)
 (defun test-evaluation-value-highlighting ()
   "Highlight Lisp values separately from arbitrary captured output."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (name '("lisp.eval" "lisp.scratchpad-run" "self.eval" "lisp.describe"))
       (let* ((record
                 (list :tool-result :tool name :status ':ok
                       :details '(:evaluation (:output "a captured message" :values "(:answer 42 :text \"hello\")"))))
-             (entry (conversation-record-entry application record)))
+             (entry (application-tests--render-tool-result application record)))
         (test-assert (and (find ':syntax-number entry :key #'terminal-span-style)
                           (find ':syntax-string entry :key #'terminal-span-style))
                      "Evaluation values retain Lisp token roles.")
         (test-assert (search "a captured message" (test-terminal-row-text entry))
                      "Captured output is presented independently of Lisp values.")))))
 
-(-> test-tool-code-output-highlighting () null)
-(defun test-tool-code-output-highlighting ()
-  "Format explicit code payloads through generic and shell result boundaries."
-  (let* ((application (application-tests--ui-application :columns 100 :compact-view-p nil))
+(-> test-tool-output-literal-presentation () null)
+(defun test-tool-output-literal-presentation ()
+  "Preserve literal output, rails, terminal safety and row bounds."
+  (let* ((application (application-tests--ui-application :columns 100))
          (json        "{\"answer\":42,\"message\":\"hello\"}"))
     (dolist (output (list (format nil "```json~%~A~%```" json)
                           "(:state :ready :message \"hello\")"))
-      (let ((entry (conversation-record-entry
+      (let ((entry (application-tests--render-tool-result
                     application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
-        (test-assert (find ':syntax-string entry :key #'terminal-span-style)
-                     "Self-identifying code receives syntax token roles in generic results.")
+        (test-assert (every (lambda (line) (search line (test-terminal-row-text entry)))
+                            (application--display-lines output))
+                     "code-like text and fences are presented literally")
         (test-assert (find-if (lambda (span) (search "│" (terminal-span-text span))) entry)
                      "Formatted tool content retains a left rail.")))
     (let* ((entry (conversation-record-entry
@@ -2612,23 +2619,20 @@
                    (list :tool-result :tool "shell.run" :status ':ok
                          :details (list :exit-code 0 :output-streams
                                         (list (list :stream ':combined :head json :complete-p t)))))))
-      (test-assert (and (find ':syntax-string entry :key #'terminal-span-style)
-                        (find ':syntax-number entry :key #'terminal-span-style))
-                   "Complete JSON stdout is highlighted rather than assumed to be shell source."))
+      (test-assert (and (search json (test-terminal-row-text entry))
+                        (not (find ':syntax-number entry :key #'terminal-span-style)))
+                   "JSON-looking stdout is presented literally"))
     (let* ((output (format nil "```lisp~%#.(error ~S)~%~C[2J~%```" "do not read tool text" #\Esc))
-           (entry  (conversation-record-entry
+           (entry  (application-tests--render-tool-result
                     application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
       (test-assert (not (find #\Esc (test-terminal-row-text entry)))
                    "Code output is terminal-safe and is never evaluated.")
-      (let ((widget (find-if #'termdown:widget-p entry)))
-        (test-assert (and widget
-                          (eq ':copy (first (termdown:widget-action widget)))
-                          (search "do not read tool text"
-                                  (second (termdown:widget-action widget))))
-                     "Fenced tool code retains its copy action and source payload.")))
+      (test-assert (and (search "do not read tool text" (test-terminal-row-text entry))
+                        (notany #'termdown:widget-p entry))
+                   "fenced text is not treated as an executable or copyable code block"))
     (let* ((*application-tool-output-lines* 4)
            (output                          (format nil "```json~%[~%~{~A~%~}]~%```" (make-list 30 :initial-element "42,")))
-           (entry                           (conversation-record-entry
+           (entry                           (application-tests--render-tool-result
                                              application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
       (test-assert (<= (count #\Newline (test-terminal-row-text entry)) 6)
                    "Fenced output obeys the tool row budget."))))
@@ -2636,7 +2640,7 @@
 (-> test-raw-diff-output-presentation () null)
 (defun test-raw-diff-output-presentation ()
   "Preserve captured diff prefixes and indentation beneath one output rail."
-  (let* ((application (application-tests--ui-application :columns 100 :compact-view-p nil))
+  (let* ((application (application-tests--ui-application :columns 100))
          (lines       '("diff --git a/demo.lisp b/demo.lisp"
                         "index abcdef0..1234567 100644"
                         "--- a/demo.lisp"
@@ -2660,7 +2664,7 @@
                     ("shell.run" "stdout" 6)))
       (destructuring-bind (tool stream limit) case
         (let* ((*application-tool-output-lines* limit)
-               (entry                           (conversation-record-entry
+               (entry                           (application-tests--render-tool-result
                                                  application
                                                  (list :tool-result :tool tool :status ':ok :output diff
                                                        :details (when stream
@@ -2686,8 +2690,7 @@
 (-> test-resource-source-highlighting () null)
 (defun test-resource-source-highlighting ()
   "Render retained numbered file contents without depending on live file state."
-  (let ((expanded (application-tests--ui-application :columns 100 :compact-view-p nil))
-        (compact  (application-tests--ui-application :columns 100)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (case '(("source.lisp" "(defun greet () \"hello\")" :syntax-function)
                     ("data.json" "{\"answer\":42}" :syntax-number)
                     ("task.sh" "echo \"hello\"" :syntax-string)
@@ -2697,7 +2700,7 @@
                               :lines (list (list 1 (cl-hashline:line-anchor source) source))))
                (record  (list :tool-result :tool "resource.read" :status ':ok
                               :details (list :resource-read details)))
-               (entry   (conversation-record-entry expanded record))
+               (entry   (application-tests--render-tool-result application record))
                (text    (test-terminal-row-text entry)))
           (test-assert (and (search source text)
                             (search (cl-hashline:line-anchor source) text)
@@ -2707,24 +2710,23 @@
                                  (member (terminal-span-style span)
                                          *terminal-parenthesis-style-names*)) entry)
                        "Resource source previews do not use Lisp nesting colors.")
-          (test-assert (not (search source (test-terminal-row-text
-                                            (conversation-record-entry compact record))))
-                       "Resource source formatting respects compact result suppression.")
+          (test-assert (null (conversation-record-entry application record))
+                       "successful resource reads omit their standalone result")
           (let ((failed (copy-list record)))
             (setf (getf (rest failed) :status) ':error)
             (test-assert (not (find ':syntax-function
-                                    (conversation-record-entry expanded failed)
+                                    (conversation-record-entry application failed)
                                     :key #'terminal-span-style))
                          "Failed reads use the condition renderer rather than source formatting.")))))))
 
 (-> test-search-source-highlighting () null)
 (defun test-search-source-highlighting ()
   "Highlight retained source snippets while preserving match locations and text."
-  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 100)))
     (dolist (path '("src/demo.lisp" "C:\\work\\demo.lisp"))
       (let* ((source "(defun greet () \"hello\")")
              (output (format nil "1 match~%~A:12:3 [git:clean]~%  > 12  ~A" path source))
-             (entry  (conversation-record-entry
+             (entry  (application-tests--render-tool-result
                       application (list :tool-result :tool "search.content" :status ':ok :output output))))
         (test-assert (and (search source (test-terminal-row-text entry))
                           (search (format nil "~A:12:3" path) (test-terminal-row-text entry))
@@ -2732,26 +2734,24 @@
                           (find ':syntax-string entry :key #'terminal-span-style))
                      "Search source preserves paths and coordinates while exposing syntax roles.")))))
 
-(-> test-lsp-result-severity-presentation () null)
-(defun test-lsp-result-severity-presentation ()
-  "Distinguish transport success, server failure and diagnostic severity in spans."
-  (let ((application (application-tests--ui-application :columns 120 :compact-view-p nil)))
-    (dolist (case '((1 :failure) (2 :notice) (3 :hint) (4 :dim)))
+(-> test-lsp-result-visibility () null)
+(defun test-lsp-result-visibility ()
+  "Hide successful diagnostics and display failed transport output literally."
+  (let ((application (application-tests--ui-application :columns 120)))
+    (dolist (severity '(1 2 3 4))
       (let* ((output (lsp-tool--render
-                      (vector (json-object "server" "broken" "error" "offline")
-                              (json-object "server" "working" "result"
-                                           (json-object "status" "reported" "diagnostics"
-                                                        (vector (json-object "severity" (first case)
+                      (vector (json-object "server" "working" "result"
+                                           (json-object "diagnostics"
+                                                        (vector (json-object "severity" severity
                                                                              "message" "diagnostic")))))))
-             (entry  (conversation-record-entry
-                      application (list :tool-result :tool "lsp.diagnostics" :status ':ok :output output))))
-        (test-assert (and (eq (terminal-span-style (first entry)) ':success)
-                          (find-if (lambda (span) (and (eq (terminal-span-style span) ':failure)
-                                                       (string= (terminal-span-text span) "offline"))) entry)
-                          (find-if (lambda (span) (and (eq (terminal-span-style span) (second case))
-                                                       (string= (terminal-span-text span)
-                                                                (princ-to-string (first case))))) entry))
-                     "server and diagnostic severity spans are independent of transport success")))))
+             (record (list :tool-result :tool "lsp.diagnostics" :status ':ok :output output)))
+        (test-assert (null (conversation-record-entry application record))
+                     "successful diagnostics do not have a standalone row")
+        (setf (getf (rest record) :status) ':error)
+        (let ((entry (conversation-record-entry application record)))
+          (test-assert (and (eq (terminal-span-style (first entry)) ':failure)
+                            (search output (test-terminal-row-text entry)))
+                       "failed diagnostics show the literal result beneath the failure header"))))))
 
 (-> test-tool-execution-handoff-presentation () null)
 (defun test-tool-execution-handoff-presentation ()
@@ -2762,11 +2762,8 @@
      (let ((lock       (make-lock "Handoff presentation gate"))
            (gate       (make-condition-variable))
            (released-p nil)
-           (compact    (application-tests--ui-application :columns 100))
-           (expanded   (application-tests--ui-application
-                        :columns 100 :compact-view-p nil)))
-       (setf (application-conversation compact) (agent-conversation parent)
-             (application-conversation expanded) (agent-conversation parent))
+           (compact    (application-tests--ui-application :columns 100)))
+       (setf (application-conversation compact) (agent-conversation parent))
        (unwind-protect
             (loop for async-p in '(t nil)
                   for reason in '(:requested :grace-expired)
@@ -2823,16 +2820,9 @@
                                             :group)))
                          "a running handoff highlights every clickable cancellation token"))
                       (test-assert
-                       (search "Run repository checks"
-                               (test-terminal-row-text
-                                (conversation-record-entry expanded record)))
-                       "expanded handoffs show the submitted task description")
-                      (when (eq reason ':grace-expired)
-                        (test-assert
-                         (search "blocking wait expired"
-                                 (test-terminal-row-text
-                                  (conversation-record-entry expanded record)))
-                         "an expired blocking wait explains why execution moved to the background"))
+                       (not (or (search "Run repository checks" text)
+                                (search "blocking wait expired" text)))
+                       "handoffs omit the submitted description and wait explanation")
                       (dolist (tool-name '("shell.run" "lisp.load-system" "unregistered.run"))
                         (dolist (case '((:queued "queued" :notice)
                                         (:running "running" :notice)
@@ -2853,11 +2843,7 @@
                                     (search identifier text)
                                     (< (length text) 200)
                                     (not (find #\Newline text)))
-                               "background status is visible for specialized, normally hidden and missing tools"))
-                            (test-assert
-                             (< (length (test-terminal-row-text
-                                         (conversation-record-entry expanded variant))) 400)
-                             "expanded handoff metadata is bounded independently of its serialized payload"))))
+                               "background status is visible for specialized, normally hidden and missing tools")))))
                       (let ((text-only (copy-tree record)))
                         (remf (rest text-only) :details)
                         (test-assert
@@ -2878,9 +2864,7 @@
 (-> test-transcript-entries () null)
 (defun test-transcript-entries ()
   "Test styled transcript entry construction, wrapping, and output bounds."
-  (let ((application (application-tests--ui-application
-                      :columns        40
-                      :compact-view-p nil)))
+  (let ((application (application-tests--ui-application :columns 40)))
     (let ((item
             (json-object
              "type" "reasoning"
@@ -3007,9 +2991,7 @@
               "name" "read"
               "arguments" "{\"uri\":\"workspace:x\"} trailing"))
            (wide-application
-             (application-tests--ui-application
-              :columns        80
-              :compact-view-p nil))
+             (application-tests--ui-application :columns 80))
            (entry (response-item-entry wide-application call))
            (text  (test-terminal-row-text entry)))
       (test-assert
@@ -3017,9 +2999,7 @@
             (not (find #\Newline text)))
        "malformed provider arguments retain the tool header without fabricated fields"))
     (let* ((narrow-application
-             (application-tests--ui-application
-              :columns        20
-              :compact-view-p nil))
+             (application-tests--ui-application :columns 20))
            (entry
              (response-item-entry
               narrow-application
@@ -3041,7 +3021,7 @@
             (char= (char header (1- (length header))) #\…))
        "provider-controlled tool names are sanitized and width-bounded"))
     (let ((inline (response-item-entry
-                   (application-tests--ui-application :columns 100 :compact-view-p nil)
+                   (application-tests--ui-application :columns 100)
                    (json-object
                     "type" "function_call" "namespace" "odd" "name" "tool"
                     "arguments" "{\"z\":false,\"a key)\":true,\"nested\":{\"value\":null}}"))))
@@ -3050,7 +3030,7 @@
                    "short call arguments fold into one header line"))
     (let* ((entry
              (response-item-entry
-              (application-tests--ui-application :columns 40 :compact-view-p nil)
+              (application-tests--ui-application :columns 40)
               (json-object
                "type" "function_call" "namespace" "odd" "name" "tool"
                "arguments" "{\"z\":false,\"a key)\":true,\"nested\":{\"value\":null}}")))
@@ -3071,7 +3051,7 @@
       (dolist (uri '("memory:workspace" "workspace:example" "extension:example"))
         (let* ((entry
                  (response-item-entry
-                  (application-tests--ui-application :columns columns :compact-view-p nil)
+                  (application-tests--ui-application :columns columns)
                   (json-object
                    "type" "function_call" "namespace" "resource" "name" "edit"
                    "arguments"
@@ -3145,7 +3125,7 @@
             (not (search "{\"forms\"" text)))
        "lisp.eval calls show a parenthesized name above their source rail"))
     (let* ((entry (response-item-entry
-                   (application-tests--ui-application :columns 100 :compact-view-p nil)
+                   (application-tests--ui-application :columns 100)
                    (json-object
                     "type" "function_call"
                     "namespace" "shell"
@@ -3175,7 +3155,7 @@
         (destructuring-bind (namespace name arguments) case
           (let* ((entry
                    (response-item-entry
-                    (application-tests--ui-application :columns columns :compact-view-p nil)
+                    (application-tests--ui-application :columns columns)
                     (json-object "type" "function_call" "namespace" namespace "name" name
                                  "arguments" (json-encode arguments))))
                  (lines (uiop:split-string (test-terminal-row-text entry)
@@ -3251,7 +3231,7 @@
                         '("Execution" "bytes retained" "shell-log:" "Log:")))
            (format nil "shell.run shows ~A without capture metadata: ~S" label text)))))
     (let* ((entry (conversation-record-entry
-                   (application-tests--ui-application :columns 100 :compact-view-p nil)
+                   (application-tests--ui-application :columns 100)
                    (list :tool-result :seq 8 :time 0 :call-id "edit"
                          :tool "resource.edit" :status ':ok
                          :details (list :resource-edit (list :summary             "Applied replace-lines 3-4."
@@ -3262,7 +3242,7 @@
                         (= (count #\Newline text) 1))
                    "resource.edit shows one compact delimiter notice after the edit outcome"))
     (let* ((entry (conversation-record-entry
-                   (application-tests--ui-application :columns 100 :compact-view-p nil)
+                   (application-tests--ui-application :columns 100)
                    (list :tool-result :seq 9 :time 0 :call-id "parens"
                          :tool "lisp.paren-check" :status ':ok
                          :output (format nil "Path: src/~%Checked 1,204 of 1,204 recognized ~
@@ -3295,7 +3275,7 @@
                         (search "values" text)
                         (find (terminal-span :syntax-number "42") entry :test #'equal))
                    "self.eval results separate captured output from values"))
-    (let* ((entry (conversation-record-entry
+    (let* ((entry (application-tests--render-tool-result
                    application
                    (list :tool-result :seq 6 :time 0 :call-id 5
                          :tool "lisp.describe" :status ':ok
@@ -3384,7 +3364,7 @@
       (dolist (fits-p '(nil t))
         (let* ((columns (+ width (if fits-p 1 0)))
                (entry   (response-item-entry
-                         (application-tests--ui-application :columns columns :compact-view-p nil)
+                         (application-tests--ui-application :columns columns)
                          (json-object "type" "function_call" "namespace" "odd" "name" "tool"
                                       "arguments" (json-encode (json-object "value" value)))))
                (text    (test-terminal-row-text entry)))
@@ -3400,7 +3380,7 @@
                        (uiop:split-string text :separator '(#\Newline))))
            "inline and table presentations preserve keyword styling and width bounds")))))
   (let* ((entry (response-item-entry
-                 (application-tests--ui-application :columns 24 :compact-view-p nil)
+                 (application-tests--ui-application :columns 24)
                  (json-object "type" "function_call" "namespace" "odd" "name" "tool"
                               "arguments" "{\"value\":\"alpha beta gamma delta epsilon zeta\"}")))
          (text  (test-terminal-row-text entry)))
@@ -9098,49 +9078,35 @@
          (replacement-orchestrator nil))
     (unwind-protect
          (progn
-           (let ((compact-p (application-compact-view-p application)))
-             (unwind-protect
-              (progn
-                (dolist (arguments
-                         (list (json-object "task" "Default request")
-                               (json-object "task" "Context request"
-                                            "context" "Background context")))
-                  (let* ((item (first (task-normalize-arguments arguments)))
-                         (call (json-object
-                                "type" "function_call"
-                                "namespace" (tool-namespace run-tool)
-                                "name" (tool-name run-tool)
-                                "arguments" (json-encode arguments))))
-                    (test-assert (eq ':detached (getf item :mode))
-                                 "normalized requests describe detached execution")
-                    (setf (application-compact-view-p application) nil)
-                    (let ((text (test-terminal-row-text
-                                 (response-item-entry application call))))
-                      (test-assert
-                       (and (search (application--task-run-mode-label ':detached) text)
-                            (search (getf item :task) text)
-                            (not (search "invalid" text)))
-                       "normalized transcript modes match execution descriptions"))
-                    (setf (application-compact-view-p application) t)
-                    (test-assert
-                     (search (getf item :task)
-                             (test-terminal-row-text
-                              (response-item-entry application call)))
-                     "compact task layout consumes normalized assignments")))
-                (dolist (arguments
-                         (list (json-object "task" "Invalid context" "context" 7)
-                               (json-object "task" "Invalid policy"
-                                            "completion-policy" "invalid")))
-                  (let ((call (json-object "type" "function_call"
-                                           "namespace" (tool-namespace run-tool)
-                                           "name" (tool-name run-tool)
-                                           "arguments" (json-encode arguments))))
-                    (test-assert
-                     (search "invalid task request"
-                             (test-terminal-row-text
-                              (response-item-entry application call)))
-                     "normalized presentations use execution's request validation"))))
-              (setf (application-compact-view-p application) compact-p)))
+           (dolist (arguments
+                    (list (json-object "task" "Default request")
+                          (json-object "task" "Context request" "context" "Background context")))
+             (let* ((item (first (task-normalize-arguments arguments)))
+                    (call (json-object "type" "function_call"
+                                       "namespace" (tool-namespace run-tool)
+                                       "name" (tool-name run-tool)
+                                       "arguments" (json-encode arguments))))
+               (test-assert (eq ':detached (getf item :mode))
+                            "normalized requests describe detached execution")
+               (dolist (restored-call (list call (json-decode (json-encode call))))
+                 (let ((text (test-terminal-row-text (response-item-entry application restored-call))))
+                   (test-assert
+                    (and (search "detached" text)
+                         (search (getf item :task) text)
+                         (or (not (getf item :context)) (search (getf item :context) text)))
+                    "live and restored task rows show normalized assignments and context")))))
+           (dolist (arguments
+                    (list (json-object "task" "Invalid context" "context" 7)
+                          (json-object "task" "Invalid policy" "completion-policy" "invalid")))
+             (let ((call (json-object "type" "function_call"
+                                      "namespace" (tool-namespace run-tool)
+                                      "name" (tool-name run-tool)
+                                      "arguments" (json-encode arguments))))
+               (dolist (restored-call (list call (json-decode (json-encode call))))
+                 (test-assert
+                  (search "invalid task request"
+                          (test-terminal-row-text (response-item-entry application restored-call)))
+                  "live and restored presentations use execution's request validation"))))
            (application-connect-task-presentation application)
            (application-connect-task-presentation application)
            (test-assert
