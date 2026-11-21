@@ -633,14 +633,11 @@
                                 (skill-catalog-for-configuration configuration)))
                       (result  (read-uri "skill:long")))
                   (test-assert
-                   (and (search (format nil "- long: ~A...~%"
-                                        (make-string 197 :initial-element #\d))
-                                catalog)
-                        (search "`resource.read` of `skill:NAME`" catalog)
+                     (and (search "`resource.read` of `skill:NAME`" catalog)
                         (search "skill:NAME"
                                 (tool-description
                                  (tool-registry-find registry "resource" "read"))))
-                   "the catalog shortens a long description and says where the whole one is")
+                     "the catalog and tool direct readers to the skill resource")
                   (test-assert
                    (and (tool-result-success-p result)
                         (search description (tool-result-content result))

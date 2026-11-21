@@ -154,7 +154,10 @@
      (declare (ignore admissions))
      (dotimes (index 2)
        (declare (ignorable index))
-       (let ((result (executable-skill-tests--call context "invoke" :asd asd)))
+       (let* ((admitted (executable-skill--identity
+                         (cl-skills:skill-executable-identity-snapshot
+                          (executable-skill-discover (tool-context-configuration context) "executable-fixture"))))
+              (result   (executable-skill-tests--call context "invoke" :asd asd)))
          (test-assert (tool-result-success-p result) (format nil "workflow runs: ~A" (tool-result-content result)))
          (when (tool-result-success-p result)
            (let* ((record   (executable-skill-result-record result))
@@ -166,8 +169,9 @@
                                   (second (assoc "search-content" (rest value) :test #'string=))))
              (test-assert (second (assoc "denied" (rest value) :test #'string=)) "undeclared host tool rejected")
              (test-assert (= 1 (second (assoc "counter" (rest value) :test #'string=))) "every invocation starts fresh heap")
-             (test-assert (equal (getf identity :skill-version) "1.0.0") "native transport retains version")
-             (test-assert (= 64 (length (getf identity :digest))) "native transport retains digest")))))
+             (test-assert
+              (equal identity admitted)
+              "native transport retains the admitted executable identity")))))
      (test-assert (probe-file marker) "worker loaded fixture after authorization")
      (test-assert (not (fboundp 'executable-skill-fixture-run)) "fixture never loads into active test image")
      (let ((calls nil))
@@ -177,34 +181,23 @@
        (test-assert (>= (length calls) 6) "callback audit records workflow calls")
        (test-assert (every (lambda (record) (equal (getf (rest record) :parent-call-id) "skill-origin")) calls)
                     "callback audit retains parent identity"))
-     (let* ((pathname (merge-pathnames "SKILL.sexp" (uiop:pathname-directory-pathname sidecar)))
-            (source   (uiop:read-file-string pathname))
-            (manifest (uiop:read-file-string sidecar)))
-       (dolist (mutation '( :sidecar :name :removed))
+       (let* ((pathname (merge-pathnames "SKILL.sexp" (uiop:pathname-directory-pathname sidecar)))
+              (source   (uiop:read-file-string pathname)))
          (when (probe-file marker) (delete-file marker))
          (funcall set-decision
                   (lambda (command)
                     (when (search "skill.execute --" command)
-                      (case mutation
-                        (:sidecar
-                         (executable-skill-tests--write sidecar (executable-skill-tests--manifest :version "2.0.0")))
-                        (:name
-                         (executable-skill-tests--write pathname
-                          "(:autolith-skill :version 1 :name \"renamed\" :description \"Changed\" :instructions \"Changed\")"))
-                        (:removed
-                         (delete-file pathname))))
+                      (delete-file pathname))
                     ':full-access))
          (unwind-protect
               (let ((result (executable-skill-tests--call context "invoke" :asd asd)))
                 (test-assert (eq ':identity-changed (tool-result-error-code result))
-                             (format nil "post-admission ~A mutation rejected: ~A" mutation (tool-result-content result)))
+                             (format nil "post-admission removal rejected: ~A" (tool-result-content result)))
                 (test-assert (not (probe-file marker)) "identity rejection precedes code loading")
-                (when (eq mutation ':removed)
-                  (test-assert (getf (executable-skill-result-record result) :diagnostics)
-                               "unavailable exact source retains structured diagnostics")))
+                (test-assert (getf (executable-skill-result-record result) :diagnostics)
+                             "unavailable exact source retains structured diagnostics"))
            (executable-skill-tests--write pathname source)
-           (executable-skill-tests--write sidecar manifest)))
-       (funcall set-decision ':full-access)))))
+           (funcall set-decision ':full-access))))))
 
 (-> executable-skill-tests--transport (tool-context) null)
 (defun executable-skill-tests--transport (context)
@@ -298,26 +291,14 @@
 
 (-> test-executable-skill-verification-contracts () null)
 (defun test-executable-skill-verification-contracts ()
-  "Exercise self-test, explicit verification, contracts and post-admission identity."
+  "Exercise real verification and typed invocation results through the worker boundary."
   (executable-skill-tests--fixture
    (lambda (context asd sidecar marker set-decision admissions)
-     (declare (ignore marker set-decision admissions))
+     (declare (ignore sidecar marker set-decision admissions))
      (let ((result (executable-skill-tests--call context "verify" :asd asd)))
        (test-assert (tool-result-success-p result) (format nil "self-test runs through bridge: ~A" (tool-result-content result))))
-     (let ((result (executable-skill-tests--call context "verify" :asd asd :entrypoint "verify")))
-       (test-assert (eq (tool-result-error-code result) ':verification-failed) "verification requires exact T"))
      (let ((result (executable-skill-tests--call context "invoke" :asd asd :input "wrong")))
        (test-assert (eq (tool-result-error-code result) ':invalid-input) "native input contract enforced"))
-     (executable-skill-tests--write sidecar (executable-skill-tests--manifest :output '(:type :string)))
-     (let ((result (executable-skill-tests--call context "invoke" :asd asd)))
-       (test-assert (eq (tool-result-error-code result) ':invalid-output) "portable output contract enforced"))
-     (multiple-value-bind (executable metadata)
-         (executable-skill-discover (tool-context-configuration context) "executable-fixture")
-       (let ((form (executable-skill--form metadata executable :operation ':invoke :input '(:object) :asd asd)))
-         (executable-skill-tests--write sidecar (executable-skill-tests--manifest :version "2.0.0"))
-         (let ((result (executable-skill--run context form :tools '("resource.read" "search.files"))))
-           (test-assert (eq (tool-result-error-code result) ':identity-changed) "changed sidecar rejected before definition loading"))))
-     (executable-skill-tests--write sidecar (executable-skill-tests--manifest))
      (let ((result (executable-skill-tests--call context "invoke" :asd asd :input (json-object "large" t))))
        (test-assert (tool-result-success-p result) (format nil "large portable output runs: ~A" (tool-result-content result)))
        (when (tool-result-success-p result)

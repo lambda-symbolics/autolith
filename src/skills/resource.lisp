@@ -61,7 +61,8 @@
 ;;;; -- Global Skill Source Resources --
 
 (defclass skill-source-resource (workspace-file-resource)
-  ()
+  ((name :initarg :name :reader skill-source-resource-name :type string
+         :documentation "Validated name requested in the authoring URI."))
   (:documentation "The effective source file in one named user-global skill directory."))
 
 (defclass skill-source-resolver (resource-resolver)
@@ -78,18 +79,37 @@
   (declare (ignore resolver))
   "skill-source:NAME accepts original-line operations and replace-empty for a missing source. Autolith validates the complete result before publishing it.")
 
+(-> skill-source--check-entry (pathname symbol) null)
+(defun skill-source--check-entry (pathname kind)
+  "Require a missing entry or an entry of KIND, without following a final link."
+  (let ((status (platform-path-status *platform* pathname :follow-links-p nil)))
+    (when (and status (not (eq kind (platform-file-status-kind status))))
+      (error 'tool-error :message "A global skill source must be a regular file in its own skill directory, without symbolic links.")))
+  nil)
+
+(-> skill-source--check-directory (pathname pathname) null)
+(defun skill-source--check-directory (directory root)
+  "Check caller-owned directory confinement before probing source entries."
+  (skill-source--check-entry root ':directory)
+  (skill-source--check-entry directory ':directory)
+  (unless (workspace-tool--read-path-allowed-p directory (list root))
+    (error 'tool-error :message "A global skill source must be in its configured skill root."))
+  nil)
+
 (defmethod resource-resolver-resolve ((resolver skill-source-resolver) identifier (context tool-context))
   "Resolve an exact skill directory under the caller's global config root."
   (unless (cl-skills:skill-name-valid-p identifier)
     (error 'tool-error :message "Use a skill name of 1-64 lowercase ASCII letters, digits or single internal hyphens."))
-  (let* ((root     (skill-global-root (tool-context-configuration context)))
-         (markdown (merge-pathnames (format nil "~A/SKILL.md" identifier) root))
-         (native   (make-pathname :type "sexp" :defaults markdown))
-         (resource (make-instance 'skill-source-resource
-                                  :uri      (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
-                                  :pathname (if (platform-path-status *platform* native) native markdown))))
-    (workspace-file-check-path resource context)
-    resource))
+  (let* ((root      (skill-global-root (tool-context-configuration context)))
+         (directory (merge-pathnames (format nil "~A/" identifier) root)))
+    (skill-source--check-directory directory root)
+    (multiple-value-bind (selected markdown) (cl-skills:skill-directory-source-pathname directory)
+      (let ((resource (make-instance 'skill-source-resource
+                                     :name     identifier
+                                     :uri      (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
+                                     :pathname (or selected markdown))))
+        (workspace-file-check-path resource context)
+        resource))))
 
 (defmethod workspace-file-resource-access-roots ((resource skill-source-resource) (context tool-context))
   "Allow this resource to access its configured user-global skill root."
@@ -101,16 +121,13 @@
   (let* ((path      (workspace-file-resource-pathname resource))
          (directory (uiop:pathname-directory-pathname path))
          (root      (first (workspace-file-resource-access-roots resource context))))
-    (unless (and (workspace-tool--read-path-allowed-p path (list root))
-                 (loop for (candidate kind) in (list (list root ':directory)
-                                                     (list directory ':directory)
-                                                     (list path ':file))
-                       for status = (platform-path-status *platform* candidate)
-                       always (or (null status) (eq kind (platform-file-status-kind status)))))
-      (error 'tool-error :message "A global skill source must be a regular file in its own skill directory, without symbolic links."))
-    (when (and (string= "md" (pathname-type path))
-               (platform-path-status *platform* (make-pathname :type "sexp" :defaults path)))
-      (error 'tool-error :message "A native SKILL.sexp now takes precedence. Reread the skill source before editing."))))
+    (skill-source--check-directory directory root)
+    (skill-source--check-entry path ':file)
+    (unless (workspace-tool--read-path-allowed-p path (list root))
+      (error 'tool-error :message "A global skill source must be in its configured skill root."))
+    (multiple-value-bind (selected markdown) (cl-skills:skill-directory-source-pathname directory)
+      (unless (equal path (or selected markdown))
+        (error 'tool-error :message "The effective skill source changed. Reread the skill source before editing.")))))
 
 (defmethod resource-capabilities ((resource skill-source-resource) (context tool-context))
   "Allow only direct observation and validated revisioned edits."
@@ -148,11 +165,11 @@
   "Validate the complete replacement before staging any bytes."
   (declare (ignore base))
   (let ((pathname (workspace-file-resource-pathname resource)))
-    (unless (<= (length content) (* 256 1024))
-      (error 'tool-error :tool-name "resource.edit" :message "Skill sources may contain at most 262144 characters."))
     (handler-case
-        (let ((name (cl-skills:skill-source-validate content pathname)))
-          (unless (string= name (first (last (pathname-directory pathname))))
+        (let ((name (cl-skills:skill-source-validate
+                     content pathname :file-character-limit
+                     (min (* 256 1024) cl-skills:*skill-file-character-limit*))))
+          (unless (string= name (skill-source-resource-name resource))
             (error 'tool-error :tool-name "resource.edit" :message "A global skill name must match its directory.")))
       (cl-skills:skill-validation-error (condition)
         (error 'tool-error :tool-name "resource.edit"

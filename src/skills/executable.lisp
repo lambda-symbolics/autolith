@@ -42,26 +42,21 @@
   "Retain library discovery and contract failure codes at the product boundary."
   (cl-skills:skill-executable-error-kind condition))
 
-(-> executable-skill--identity (t) list)
-(defun executable-skill--identity (executable)
-  "Return stable declared versions, dependencies and exact sidecar identity."
-  (let ((manifest (cl-skills:skill-executable-manifest executable)))
-    (list :pathname       (namestring (cl-skills:skill-executable-pathname executable))
-          :digest         (cl-skills:skill-executable-digest executable)
-          :skill-version  (getf manifest :skill-version)
-          :system         (getf manifest :system)
-          :system-version (getf manifest :system-version)
-          :dependencies   (getf manifest :dependencies))))
+(-> executable-skill--identity (list) list)
+(defun executable-skill--identity (snapshot)
+  "Project the reportable version and sidecar identity from SNAPSHOT."
+  (loop for key in '(:pathname :digest :skill-version :system :system-version :dependencies)
+        append (list key (getf snapshot key))))
 
-(-> executable-skill--admit (tool-context t &key (:asd (option pathname))) list)
-(defun executable-skill--admit (context executable &key asd)
+(-> executable-skill--admit (tool-context list &key (:asd (option pathname))) list)
+(defun executable-skill--admit (context snapshot &key asd)
   "Check declared host-tool requirements and require explicit full-access command authorization for code execution.
 Capabilities are declarations for the ordinary command authorizer, not grants.
 Only tools declared by exact name enter the host bridge."
-  (let* ((manifest  (cl-skills:skill-executable-manifest executable))
+  (let* ((manifest  (getf snapshot :manifest))
          (arguments (json-object "host-tools" (coerce (getf manifest :tools) 'vector)))
          (names     (worker-host--allowlist context arguments))
-         (identity  (executable-skill--identity executable))
+         (identity  (executable-skill--identity snapshot))
          (command   (format nil "skill.execute -- ~S :manifest ~S :asd ~S"
                             identity manifest (and asd (namestring asd)))))
     (unless (eq ':full-access
@@ -72,65 +67,39 @@ Only tools declared by exact name enter the host bridge."
                              "Executable Skill code requires explicit full-access command authorization."))
     names))
 
-(-> executable-skill--form (skill-metadata t &key (:operation keyword)
-                            (:input t) (:asd (option pathname))) string)
-(defun executable-skill--form (metadata executable &key operation input asd)
-  "Build the single worker form, retaining exact metadata and authorized identity."
-  (let ((identity (executable-skill--identity executable)))
+(-> executable-skill--form (list &key (:operation keyword) (:input t) (:asd (option pathname))) string)
+(defun executable-skill--form (snapshot &key operation input asd)
+  "Build a worker form that revalidates the exact identity before loading code."
+  (let ((identity (executable-skill--identity snapshot)))
     (with-standard-io-syntax
       (let ((*print-readably* t) (*print-pretty* nil))
         (write-to-string
-           `(block nil
-              (handler-case
-                  (multiple-value-bind (metadata diagnostic)
-                      (cl-skills:skill-metadata-discover
-                       ,(cl-skills:skill-metadata-pathname metadata)
-                       ,(cl-skills:skill-metadata-root metadata)
-                       :root-index ,(cl-skills:skill-metadata-root-index metadata)
-                       :cache-root ,(cl-skills:skill-metadata-cache-root metadata))
-                    (let ((executable (and metadata (cl-skills:skill-executable-discover metadata))))
-                      (unless (and metadata executable
-                                   (string= ,(skill-metadata-name metadata)
-                                            (cl-skills:skill-metadata-name metadata))
-                                   (equal ,(cl-skills:skill-metadata-canonical-pathname metadata)
-                                          (cl-skills:skill-metadata-canonical-pathname metadata))
-                                   (equal (getf ',identity :pathname)
-                                          (namestring (cl-skills:skill-executable-pathname executable)))
-                                   (equal (getf ',identity :digest)
-                                          (cl-skills:skill-executable-digest executable))
-                                   (equal ',(cl-skills:skill-executable-manifest executable)
-                                          (cl-skills:skill-executable-manifest executable)))
-                        (return (list :success-p nil :code ':identity-changed :identity ',identity
-                                      :diagnostics (when diagnostic
-                                                     (list (list :kind     (cl-skills:skill-diagnostic-kind diagnostic)
-                                                                 :pathname (namestring (cl-skills:skill-diagnostic-pathname diagnostic))
-                                                                 :message  (cl-skills:skill-diagnostic-message diagnostic))))
-                                      :message     (if diagnostic
-                                                       (format nil "Selected Skill revalidation failed: ~A"
-                                                               (cl-skills:skill-diagnostic-message diagnostic))
-                                                       "Selected Skill source or executable identity changed after admission."))))
-                     ,@(when asd `((asdf:load-asd (uiop:parse-native-namestring ,(namestring asd)))))
-                     (list :success-p t :identity ',identity :value
-                           ,(if (eq operation ':invoke)
-                                `(cl-skills:skill-executable-invoke
-                                  executable ',input
-                                  :authorize (lambda (value &key operation context)
-                                               (declare (ignore operation context))
-                                               (equal (getf ',identity :digest) (cl-skills:skill-executable-digest value)))
-                                  :loader (lambda (name &key context)
-                                            (declare (ignore context)) (asdf:load-system name))
-                                  :context (autolith:worker-tool-context))
-                                `(cl-skills:skill-executable-verify
-                                  executable :entrypoint ',operation
-                                  :authorize (lambda (value &key operation context)
-                                               (declare (ignore operation context))
-                                               (equal (getf ',identity :digest) (cl-skills:skill-executable-digest value)))
-                                  :loader (lambda (name &key context)
-                                            (declare (ignore context)) (asdf:load-system name))
-                                    :context (autolith:worker-tool-context))))))
-                (cl-skills:skill-executable-error (condition)
-                  (list :success-p nil :code (cl-skills:skill-executable-error-kind condition)
-                        :identity ',identity :message (princ-to-string condition))))))))))
+         `(handler-case
+              (let ((executable (cl-skills:skill-executable-rediscover ',snapshot)))
+                ,@(when asd `((asdf:load-asd (uiop:parse-native-namestring ,(namestring asd)))))
+                (flet ((authorize (value &key operation context)
+                         (declare (ignore operation context))
+                         (cl-skills:skill-executable-identity-matches-p value ',snapshot))
+                       (loader (name &key context)
+                         (declare (ignore context))
+                         (asdf:load-system name)))
+                  (list :success-p t :identity ',identity :value
+                        ,(if (eq operation ':invoke)
+                             `(cl-skills:skill-executable-invoke
+                               executable ',input :authorize #'authorize :loader #'loader
+                               :context (autolith:worker-tool-context))
+                             `(cl-skills:skill-executable-verify
+                               executable :entrypoint ',operation :authorize #'authorize :loader #'loader
+                               :context (autolith:worker-tool-context))))))
+            (cl-skills:skill-executable-error (condition)
+              (let ((diagnostic (cl-skills:skill-executable-error-diagnostic condition)))
+                (list :success-p nil :code (cl-skills:skill-executable-error-kind condition)
+                      :identity ',identity
+                      :diagnostics (when diagnostic
+                                     (list (list :kind (cl-skills:skill-diagnostic-kind diagnostic)
+                                                 :pathname (namestring (cl-skills:skill-diagnostic-pathname diagnostic))
+                                                 :message (cl-skills:skill-diagnostic-message diagnostic))))
+                      :message (princ-to-string condition))))))))))
 
 (defparameter *executable-skill-result-byte-limit* (* 1024 1024)
   "Maximum bytes in one executable result envelope, independently of tool previews.")
@@ -259,9 +228,8 @@ Only tools declared by exact name enter the host bridge."
 
 (defmethod tool-execute ((tool executable-skill-tool) (context tool-context) (arguments hash-table))
   "Admit before code loading, then run with captured policy in a disposable heap."
-  (multiple-value-bind (executable metadata)
-      (executable-skill-discover (tool-context-configuration context)
-                                 (skill-load-tool--name arguments))
+  (let ((executable (executable-skill-discover (tool-context-configuration context)
+                                              (skill-load-tool--name arguments))))
     (let* ((operation (if (eq (executable-skill-tool-operation tool) ':invoke)
                           ':invoke
                           (if (equal (tool-argument arguments "entrypoint") "verify")
@@ -270,12 +238,12 @@ Only tools declared by exact name enter the host bridge."
                         (cl-llm-provider-api:output-json->sexp
                          (tool-argument arguments "input" :required t))))
            (asd       (lisp-tool-asd-pathname context arguments (tool-canonical-name tool)))
-           (names     (executable-skill--admit context executable :asd asd))
-           (form      (executable-skill--form metadata executable
-                                              :operation operation :input input :asd asd)))
+           (snapshot  (cl-skills:skill-executable-identity-snapshot executable))
+           (names     (executable-skill--admit context snapshot :asd asd))
+           (form      (executable-skill--form snapshot :operation operation :input input :asd asd)))
       (lisp-tool-invoke-managed-execution
        context arguments :tool-name (tool-canonical-name tool)
-       :summary                     (format nil "Executable Skill ~A (~A)" (skill-metadata-name metadata) operation)
+       :summary                     (format nil "Executable Skill ~A (~A)" (getf snapshot :name) operation)
        :operation-function
        (lambda () (executable-skill--run context form :tools names))))))
 

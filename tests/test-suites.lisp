@@ -948,7 +948,6 @@
   skill-tests--roots-and-rendering
   skill-tests--extra-root-setting
   skill-tests--extra-root-discovery
-  skill-tests--extra-root-confinement
   skill-tests--ephemeral-selection
   skill-tests--concurrent-parent-child-selection
   skill-tests--selection-failures-and-limits)

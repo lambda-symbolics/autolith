@@ -238,22 +238,13 @@ bundled, then the configured extra skill roots in their given order."
 (-> skill--diagnostic-summary (skill-catalog) (option string))
 (defun skill--diagnostic-summary (catalog)
   "Return a bounded summary of non-routine CATALOG diagnostics."
-  (let* ((diagnostics
-           (remove ':missing-root
-                   (skill-catalog-diagnostics catalog)
-                   :key #'skill-diagnostic-kind))
-         (counts nil))
-    (dolist (diagnostic diagnostics)
-      (let* ((kind  (skill-diagnostic-kind diagnostic))
-             (entry (assoc kind counts)))
-        (if entry
-            (incf (rest entry))
-            (push (cons kind 1) counts))))
+  (let* ((diagnostics (cl-skills:skill-catalog-select-diagnostics catalog :exclude-kinds '(:missing-root)))
+         (counts      (cl-skills:skill-diagnostic-counts diagnostics)))
     (when counts
       (format nil
               "~D skill entr~:@P had diagnostics and were not silently applied (~{~(~A~): ~D~^, ~}). Run (skills) for bounded details."
               (length diagnostics)
-              (loop for (kind . count) in (nreverse counts)
+              (loop for (kind . count) in counts
                     append (list kind count))))))
 
 (-> skill--catalog-instruction (skill-catalog) string)
@@ -560,9 +551,7 @@ request that left them out would not match the prefix ordinary requests cached."
   "Return discovered skills and diagnostics for CONFIGURATION as a transcript entry."
   (let* ((catalog     (skill-catalog-for-configuration configuration))
          (skills      (skill-catalog-skills catalog))
-         (diagnostics (remove ':missing-root
-                              (skill-catalog-diagnostics catalog)
-                              :key #'skill-diagnostic-kind)))
+         (diagnostics (cl-skills:skill-catalog-select-diagnostics catalog :exclude-kinds '(:missing-root))))
     (flet ((shown (items)
              (subseq items 0 (min (length items) *skill-status-entry-limit*)))
 

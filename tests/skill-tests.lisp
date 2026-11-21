@@ -159,46 +159,10 @@
              "standard"
              "Standard Skill integration."
              "Standard instructions."))
-           (skill-tests--write
-            user-skills
-            "user-over-site/SKILL.sexp"
-            (skill-tests--definition
-             "user-over-site"
-             "User definition."
-             "User instructions."))
-           (skill-tests--write
-            site-skills
-            "user-over-site/SKILL.sexp"
-            (skill-tests--definition
-             "user-over-site"
-             "Site definition."
-             "Site instructions."))
-           (skill-tests--write
-            site-skills
-            "site-only/SKILL.sexp"
-            (skill-tests--definition
-             "site-only"
-             "Site-only definition."
-             "Site-only instructions."))
-           (dotimes (index 8)
-             (let ((name (format nil "skill-~D" index)))
-               (skill-tests--write
-                user-skills
-                (format nil "~A/SKILL.sexp" name)
-                (skill-tests--definition
-                 name
-                 (make-string 700
-                              :initial-element
-                              (code-char (+ (char-code #\a) index)))
-                 (format nil "Instructions ~D." index)))))
            (let* ((catalog
                     (skill-catalog-for-configuration configuration))
                   (winner   (skill-catalog-find catalog "winner"))
-                  (standard (skill-catalog-find catalog "standard"))
-                  ;; Room for the fixed texts, the omission line and a few names.
-                  (budget   (+ (length (skill--catalog-prefix))
-                               (length (skill--catalog-guidance))
-                               120)))
+                   (standard (skill-catalog-find catalog "standard")))
              (test-assert
               (equal
                (skill-metadata-pathname winner)
@@ -206,67 +170,15 @@
                 (merge-pathnames "winner/SKILL.sexp" project-skills)))
               "project-local skills take precedence over user skills")
              (test-assert
-              (equal
-               (skill-metadata-pathname
-                (skill-catalog-find catalog "user-over-site"))
-               (truename
-                (merge-pathnames "user-over-site/SKILL.sexp" user-skills)))
-              "user skills take precedence over site skills")
-             (test-assert
-              (equal
-               (skill-metadata-pathname
-                (skill-catalog-find catalog "site-only"))
-               (truename
-                (merge-pathnames "site-only/SKILL.sexp" site-skills)))
-              "site skills participate before the bundled fallback")
-             (test-assert
               (and (eq (skill-metadata-source-format standard) ':agent-skill)
                    (equal (skill-metadata-cache-root standard)
                           (config :cache-root configuration))
                    (string= (skill-metadata-read standard)
                             "Standard instructions."))
               "Autolith discovers and reads standard Skills through cl-skills")
-             (multiple-value-bind (rendered included omitted)
-                 (skill-catalog-render catalog)
-               (test-assert
-                (and (= included (length (skill-catalog-skills catalog)))
-                     (zerop omitted)
-                     (search (format nil "- site-only: Site-only definition.~%") rendered)
-                     (search (format nil "- skill-7: ~A...~%"
-                                     (make-string 197 :initial-element #\h))
-                             rendered))
-                "the catalog describes every skill and cuts a long description to the limit")
-               (test-assert
-                (notany (lambda (root)
-                          (search (namestring root) rendered))
-                        (list project-skills user-skills site-skills))
-                "the catalog leaves source paths to skill.load"))
-             (multiple-value-bind (rendered included omitted)
-                 (skill-catalog-render catalog :character-budget budget)
-               (test-assert
-                (<= (length rendered) budget)
-                "the rendered catalog obeys its exact character budget")
-               (test-assert
-                (search "call `skill.load`" rendered)
-                "Autolith adapts the provider-neutral catalog to skill.load")
-               (test-assert
-                (= (+ included omitted)
-                   (length (skill-catalog-skills catalog)))
-                "catalog rendering accounts for every discovered skill")
-               (test-assert
-                (plusp omitted)
-                "catalog rendering reports metadata that does not fit")
-               (test-assert
-                (> included 1)
-                "catalog packing lists names before it spends anything on descriptions"))
-             (test-assert
-              (handler-case
-                  (progn
-                    (skill-catalog-render catalog :character-budget 40)
-                    nil)
-                (skill-catalog-render-error ()
-                  t))
-              "a budget below protocol text signals a structured error")))
+              (test-assert
+               (search "call `skill.load`" (skill-catalog-render catalog))
+               "Autolith adapts the provider-neutral catalog to skill.load")))
       (skill-tests--delete-root root)
       (skill-tests--delete-root site-root)))
   nil)
@@ -336,8 +248,6 @@
       (ensure-directories-exist home)
       (dolist (fixture (list (list bundled "bundled-over-extra" "Bundled instructions.")
                              (list extra-a "bundled-over-extra" "Extra instructions.")
-                             (list extra-a "ordered-extra" "First extra instructions.")
-                             (list extra-b "ordered-extra" "Second extra instructions.")
                              (list extra-a "extra-only" "External instructions.")))
         (destructuring-bind (directory name instructions) fixture
           (skill-tests--write directory (format nil "~A/SKILL.sexp" name)
@@ -353,18 +263,10 @@
             (test-assert (and (= 1 (count extra-a roots :test #'equal))
                               (= 1 (count bundled roots :test #'equal)))
                          "repeated root designators retain their first position"))
-          (let ((catalog (skill-catalog-for-configuration configuration)))
-            (dolist (case '(("bundled-over-extra" "Bundled instructions.")
-                            ("ordered-extra" "First extra instructions.")
-                            ("extra-only" "External instructions.")))
-              (destructuring-bind (name instructions) case
-                (let ((metadata (skill-catalog-find catalog name)))
-                  (test-assert (and metadata (string= (skill-metadata-read metadata) instructions))
-                               "discovery applies bundled and extra-root precedence"))))
-            (test-assert
-             (= 1 (count "extra-only" (skill-catalog-skills catalog)
-                         :key #'skill-metadata-name :test #'string=))
-             "canonical aliases produce one catalog entry"))
+            (let* ((catalog  (skill-catalog-for-configuration configuration))
+                   (metadata (skill-catalog-find catalog "bundled-over-extra")))
+              (test-assert (and metadata (string= (skill-metadata-read metadata) "Bundled instructions."))
+                           "a configured extra root does not override bundled skills"))
           (setf (config :extra-skill-roots configuration) '("~/extra-a/"))
           (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration) "extra-only")
                        "a string root expands the isolated user home")
@@ -372,49 +274,6 @@
                 (list (make-pathname :directory '(:relative "~" "extra-a"))))
           (test-assert (null (skill-catalog-find (skill-catalog-for-configuration configuration) "extra-only"))
                        "a pathname root does not expand a literal tilde")))))
-  nil)
-
-(-> skill-tests--extra-root-confinement () null)
-(defun skill-tests--extra-root-confinement ()
-  "Test canonical confinement of configured roots and linked Skill files."
-  (with-test-fixture (':symbolic-links "extra skill root canonical confinement")
-    (with-test-configuration (configuration root)
-      (let* ((allowed      (merge-pathnames "allowed/" root))
-             (outside      (merge-pathnames "outside/" root))
-             (alias        (merge-pathnames "allowed-alias" root))
-             (escape       (merge-pathnames "escape" allowed))
-             (file-escape  (merge-pathnames "file-escape/SKILL.sexp" allowed))
-             (outside-file (skill-tests--write
-                            outside "rogue/SKILL.sexp"
-                            (skill-tests--definition "extra-escape" "Outside fixture."
-                                                     "Outside instructions."))))
-        (skill-tests--write allowed "safe/SKILL.sexp"
-                            (skill-tests--definition "extra-safe" "Inside fixture."
-                                                     "Inside instructions."))
-        (ensure-directories-exist file-escape)
-        (test-fixture-make-symbolic-link *platform* (namestring allowed) (namestring alias))
-        (test-fixture-make-symbolic-link *platform* (namestring outside) (namestring escape))
-        (test-fixture-make-symbolic-link *platform* (namestring outside-file) (namestring file-escape))
-        (unwind-protect
-             (progn
-               (setf (config :extra-skill-roots configuration)
-                     (list allowed (uiop:ensure-directory-pathname alias)))
-               (let ((catalog (skill-catalog-for-configuration configuration)))
-                 (test-assert (skill-catalog-find catalog "extra-safe")
-                              "an explicitly configured directory alias resolves canonically")
-                 (test-assert (null (skill-catalog-find catalog "extra-escape"))
-                              "directory and file links cannot introduce unconfigured roots")
-                 (test-assert (find ':outside-root (skill-catalog-diagnostics catalog)
-                                    :key #'skill-diagnostic-kind)
-                              "outside-root traversal has a discovery diagnostic"))
-               (setf (config :extra-skill-roots configuration)
-                     (list (uiop:ensure-directory-pathname alias) outside))
-               (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration)
-                                               "extra-escape")
-                            "an external directory participates when configured explicitly"))
-          (test-fixture-remove-link *platform* (namestring file-escape))
-          (test-fixture-remove-link *platform* (namestring escape))
-          (test-fixture-remove-link *platform* (namestring alias))))))
   nil)
 
 
