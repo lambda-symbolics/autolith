@@ -165,16 +165,19 @@ single floats, and every source node needs at least one octet."
 (-> data-transfer--check-path (pathname pathname) null)
 (defun data-transfer--check-path (root pathname)
   "Reject symbolic links and nonregular files below the trusted ROOT."
-  (let ((inspection (ls-compat.files:confined-path-inspect
-                     pathname root :root-policy ':below-root)))
-    (when (member (ls-compat.files:confined-path-inspection-status inspection)
-                  '(:symbolic-link :special :not-directory :failed))
-      (data-transfer--fail
-       (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
-           pathname)
-       ':invalid
-       (or (ls-compat.files:confined-path-inspection-message inspection)
-           "Symbolic links and special files are not transferable."))))
+  (let ((directory (data-transfer--directory-pathname root)))
+    (unless (uiop:subpathp pathname directory)
+      (data-transfer--fail pathname ':invalid "Path escapes the data root."))
+    (let ((inspection (ls-compat.files:confined-path-inspect
+                       pathname directory :root-policy ':below-root)))
+      (when (member (ls-compat.files:confined-path-inspection-status inspection)
+                    '(:symbolic-link :special :not-directory :failed))
+        (data-transfer--fail
+         (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
+             pathname)
+         ':invalid
+         (or (ls-compat.files:confined-path-inspection-message inspection)
+             "Symbolic links and special files are not transferable.")))))
   nil)
 
 (-> data-transfer--publish-files (list &key (:roots list)) integer)
