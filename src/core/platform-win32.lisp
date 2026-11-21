@@ -156,8 +156,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (win32--define win32--set-environment-variable "SetEnvironmentVariableW" win32-bool
   (name win32-wide-string) (value win32-wide-string))
 (win32--define win32--wputenv "_wputenv" sb-alien:int (entry win32-wide-string))
-(win32--define win32--set-file-time "SetFileTime" win32-bool
-  (handle win32-handle) (creation (* t)) (access (* t)) (write (* t)))
 (win32--define win32--create-directory "CreateDirectoryW" win32-bool
   (name win32-wide-string) (security (* t)))
 (win32--define win32--open-process "OpenProcess" win32-handle
@@ -194,9 +192,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (defparameter *win32-generic-write* #x40000000
   "GENERIC_WRITE, which includes READ_CONTROL for security queries.")
-
-(defparameter *win32-file-write-attributes* #x100
-  "FILE_WRITE_ATTRIBUTES, enough access to change file times.")
 
 (defparameter *win32-share-all* 7
   "FILE_SHARE_READ, FILE_SHARE_WRITE, and FILE_SHARE_DELETE together.")
@@ -236,8 +231,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (defparameter *win32-standard-output-handle* #xFFFFFFF5
   "STD_OUTPUT_HANDLE as the unsigned argument GetStdHandle takes.")
 
-(defparameter *win32-filetime-epoch-offset* 9435484800
-  "Seconds from the FILETIME epoch of 1601 to the universal-time epoch of 1900.")
 
 (defparameter *win32-resize-poll-seconds* 0.25
   "How often the resize watcher compares the console window size.")
@@ -421,18 +414,21 @@ protocol."
 
 ;;;; -- Security --
 
-(-> win32--mode (pathname) (integer 0 #o777))
-(defun win32--mode (pathname)
-  "Return the permission bits ls-compat derives from PATHNAME's access control list."
+(-> win32--call-metadata (keyword function) t)
+(defun win32--call-metadata (operation function)
+  "Translate ls-compat metadata failures into platform conditions."
   (handler-case
-      (ls-compat.posix:file-mode pathname)
+      (funcall function)
     (ls-compat.posix:mode-failed (condition)
       (error 'platform-error
              :message   (ls-compat.posix:mode-failed-message condition)
-             :operation ':protect
-             :pathname  pathname
+             :operation operation
+             :pathname  (file-error-pathname condition)
              :reason    ':failed
-             :code      nil))))
+             :code      nil))
+    (ls-compat.posix:file-operation-failed (condition)
+      (win32--signal operation (file-error-pathname condition)
+                     (ls-compat.posix:file-operation-failed-code condition)))))
 
 (-> win32--set-mode (pathname (integer 0 #o777)) null)
 (defun win32--set-mode (pathname mode)
@@ -561,23 +557,16 @@ Autolith publishes read-only lives below a private root anyway."
 
 (defmethod platform-file-permissions ((platform win32-platform) pathname)
   "Capture the ACL mode mapping and native read-only attribute."
-  (let ((attributes (win32--get-file-attributes (win32--namestring pathname))))
-    (when (= attributes *win32-invalid-file-attributes*)
-      (win32--fail ':protect pathname))
-    (list (win32--mode pathname)
-          (not (zerop (logand attributes *win32-file-attribute-readonly*))))))
+  (declare (ignore platform))
+  (win32--call-metadata ':protect
+                        (lambda () (ls-compat.posix:file-permissions pathname))))
 
 (defmethod (setf platform-file-permissions) (permissions (platform win32-platform) pathname)
   "Restore the captured mode mapping and read-only attribute."
-  (win32--set-mode pathname (first permissions))
-  (let ((attributes (win32--get-file-attributes (win32--namestring pathname))))
-    (when (= attributes *win32-invalid-file-attributes*)
-      (win32--fail ':protect pathname))
-    (win32--set-attributes
-     pathname (if (second permissions)
-                  (logior attributes *win32-file-attribute-readonly*)
-                  (logandc2 attributes *win32-file-attribute-readonly*))))
-  permissions)
+  (declare (ignore platform))
+  (win32--call-metadata ':protect
+                        (lambda ()
+                          (setf (ls-compat.posix:file-permissions pathname) permissions))))
 
 (defmethod platform-delete-file ((platform win32-platform) pathname)
   "Remove the exact native pathname through ls-compat."
@@ -588,26 +577,16 @@ Autolith publishes read-only lives below a private root anyway."
 (defmethod platform-copy-file-permissions ((platform win32-platform)
                                            source target)
   "Give TARGET the permissions SOURCE's access control list expresses."
-  (win32--set-mode target (win32--mode source)))
+  (declare (ignore platform))
+  (win32--call-metadata ':protect
+                        (lambda () (ls-compat.posix:copy-file-permissions source target))))
 
 (defmethod platform-set-file-times ((platform win32-platform) pathname
                                     universal-time)
-  "Set PATHNAME's access and write times with SetFileTime."
-  (let ((handle (win32--create-file (win32--namestring pathname)
-                                    *win32-file-write-attributes* *win32-share-all*
-                                    nil *win32-open-existing*
-                                    *win32-file-flag-backup-semantics* 0)))
-    (when (= handle *win32-invalid-handle*)
-      (win32--fail ':times pathname))
-    (unwind-protect
-         (sb-alien:with-alien ((filetime (sb-alien:unsigned 64)))
-           (setf filetime (* (max 0 (+ universal-time *win32-filetime-epoch-offset*))
-                             10000000))
-           (when (zerop (win32--set-file-time handle nil (sb-alien:addr filetime)
-                                              (sb-alien:addr filetime)))
-             (win32--fail ':times pathname)))
-      (win32--close-handle handle)))
-  nil)
+  "Set PATHNAME's access and write times."
+  (declare (ignore platform))
+  (win32--call-metadata ':times
+                        (lambda () (ls-compat.posix:set-file-times pathname universal-time))))
 
 (defmethod platform-replace-file ((platform win32-platform) source target)
   "Rename SOURCE over TARGET through ls-compat."

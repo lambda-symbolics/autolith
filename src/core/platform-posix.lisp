@@ -58,11 +58,19 @@
 
 (-> posix--call (keyword (option pathname) function) t)
 (defun posix--call (operation pathname function)
-  "Call FUNCTION, translating an SB-POSIX failure of OPERATION on PATHNAME."
+  "Call FUNCTION, translating native and ls-compat failures of OPERATION."
   (handler-case
       (funcall function)
     (sb-posix:syscall-error (condition)
-      (posix--signal operation pathname condition))))
+      (posix--signal operation pathname condition))
+    (ls-compat.posix:file-operation-failed (condition)
+      (let ((code (ls-compat.posix:file-operation-failed-code condition)))
+        (error 'platform-error
+               :message   (ls-compat.posix:file-operation-failed-message condition)
+               :operation operation
+               :pathname  (file-error-pathname condition)
+               :reason    (if code (posix--failure-reason code) ':failed)
+               :code      code)))))
 
 (-> posix--namestring (pathname) string)
 (defun posix--namestring (pathname)
@@ -226,11 +234,17 @@
 
 (defmethod platform-file-permissions ((platform posix-platform) pathname)
   "Capture PATHNAME's permission bits."
-  (logand #o7777 (posix--mode pathname)))
+  (declare (ignore platform))
+  (posix--call ':protect pathname
+               (lambda ()
+                 (ls-compat.posix:file-permissions pathname))))
 
 (defmethod (setf platform-file-permissions) (permissions (platform posix-platform) pathname)
-  "Restore captured permission bits with CHMOD."
-  (posix--change-mode pathname permissions)
+  "Restore captured permission bits."
+  (declare (ignore platform))
+  (posix--call ':protect pathname
+               (lambda ()
+                 (setf (ls-compat.posix:file-permissions pathname) permissions)))
   permissions)
 
 (defmethod platform-delete-file ((platform posix-platform) pathname)
@@ -254,17 +268,18 @@
 (defmethod platform-copy-file-permissions ((platform posix-platform)
                                            source target)
   "Copy SOURCE's permission bits onto TARGET."
-  (posix--change-mode target (logand #o7777 (posix--mode source))))
+  (declare (ignore platform))
+  (posix--call ':protect target
+               (lambda ()
+                 (ls-compat.posix:copy-file-permissions source target))))
 
 (defmethod platform-set-file-times ((platform posix-platform) pathname
                                     universal-time)
-  "Set PATHNAME's access and modification times with UTIME."
-  (let ((unix-time (max 0 (universal-time->unix-time universal-time))))
-    (posix--call ':times pathname
-                 (lambda ()
-                   (sb-posix:utime (posix--namestring pathname)
-                                   unix-time unix-time))))
-  nil)
+  "Set PATHNAME's access and modification times."
+  (declare (ignore platform))
+  (posix--call ':times pathname
+               (lambda ()
+                 (ls-compat.posix:set-file-times pathname universal-time))))
 
 (defmethod platform-replace-file ((platform posix-platform) source target)
   "Rename SOURCE over TARGET through ls-compat."
