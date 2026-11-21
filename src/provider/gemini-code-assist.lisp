@@ -309,17 +309,19 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                provider
                (lambda (method target request)
                  (ecase method
-                   (:post (gemini-code-assist--post-once
-                           provider credentials :method target :request request))
-                   (:get (gemini-code-assist--get-once provider credentials target))))
+                   (:post
+                    (gemini-code-assist--post-once
+                     provider credentials :method target :request request))
+                   (:get
+                    (gemini-code-assist--get-once provider credentials target))))
                :project project :sleep-function *bounded-retry-sleep-function*)
             (cl-llm-provider-api:gemini-code-assist-setup-error (condition)
               (error 'gemini-code-assist-setup-error
-                     :stage (cl-llm-provider-api:gemini-code-assist-setup-error-stage condition)
-                     :message (cl-llm-provider-api:provider-api-error-message condition)
-                     :status (provider-error-status condition)
+                     :stage      (cl-llm-provider-api:gemini-code-assist-setup-error-stage condition)
+                     :message    (cl-llm-provider-api:provider-api-error-message condition)
+                     :status     (provider-error-status condition)
                      :request-id (provider-error-request-id condition)
-                     :response (provider-error-response condition))))
+                     :response   (provider-error-response condition))))
         (when missing-project-stage
           (gemini-code-assist--project-required load-response missing-project-stage))
         (setf (gemini-code-assist-provider-project provider) effective

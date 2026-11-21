@@ -396,7 +396,6 @@ chunk."
         :stream-usage-p               stream-usage-p))
      :source                   source)))
 
-
 (defmethod provider-request-object
            ((provider openai-compatible-provider) (conversation conversation)
             (tool-namespaces vector)
@@ -435,15 +434,15 @@ chunk."
                 (provider-shared-items-split items durable-history)
               (make-instance
                'cl-llm-provider-api:wire-request
-               :model (config :model configuration)
-               :items items
+               :model  (config :model configuration)
+               :items  items
                :prefix (list (system-prompt configuration))
                :suffix (if compaction-p
                            (list *compaction-instructions*)
                            (list goal-context context))
                :options
-               (list :shared-items shared
-                     :tool-choice  *provider-tool-choice*
+               (list :shared-items            shared
+                     :tool-choice             *provider-tool-choice*
                      :stream-usage-p
                      (openai-compatible-provider-stream-usage-p provider)
                      :reasoning-parameter

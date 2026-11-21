@@ -274,10 +274,10 @@
 (-> gemini-code-assist-test--setup-adapter () null)
 (defun gemini-code-assist-test--setup-adapter ()
   "Test caller credential forwarding and completed setup state."
-  (let ((provider (gemini-code-assist-test--provider))
+  (let ((provider    (gemini-code-assist-test--provider))
         (credentials (make-instance 'oauth-credentials :access-token "fixture-token"
-                                    :expires-at (+ (get-universal-time) 3600)))
-        (attempts 0))
+                                    :expires-at                      (+ (get-universal-time) 3600)))
+        (attempts    0))
     (test-assert
      (and (provider-retryable-status-p provider 499 nil)
           (provider-retryable-status-p provider 599 nil)

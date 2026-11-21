@@ -860,7 +860,6 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-
 (-> test-openai-compatible-provider () null)
 (defun test-openai-compatible-provider ()
   "Test registration, product projection, authentication and request policy."

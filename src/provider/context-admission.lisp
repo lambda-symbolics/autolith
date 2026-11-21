@@ -70,7 +70,6 @@ may use provider token counts when available; the default is not a tokenizer."))
               :tool-header (provider-cache-prefix--entry tools)
               :header-text (list prompt (json-encode tools)))))))
 
-
 (-> provider-context--header-charge (list list) (integer 0))
 (defun provider-context--header-charge (sample components)
   "Charge one token per inserted or replacement UTF-8 byte of changed headers."
