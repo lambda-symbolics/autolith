@@ -1152,24 +1152,14 @@ namespace while opaque protocol identifiers continue using MAKE-IDENTIFIER."
 (-> identifier-select (string list &key (:key function)) t)
 (defun identifier-select (reference entities &key (key #'identity))
   "Select an exact identity first, otherwise a unique nonempty prefix."
-  (or (find reference entities :key key :test #'string=)
-      (when (plusp (length reference))
-        (let ((matches (remove-if-not
-                        (lambda (entity)
-                          (uiop:string-prefix-p reference (funcall key entity)))
-                        entities)))
-          (when (rest matches)
-            (error 'identifier-ambiguity :reference reference
-                   :identifiers                     (mapcar key matches)))
-          (first matches)))))
+  (handler-case
+      (idsmall:identifier-select reference entities :key key)
+    (idsmall:identifier-ambiguity (condition)
+      (error 'identifier-ambiguity
+             :reference   (idsmall:identifier-ambiguity-reference condition)
+             :identifiers (idsmall:identifier-ambiguity-identifiers condition)))))
 
 (-> identifier-reference (string list &key (:minimum-length (integer 1 *))) string)
 (defun identifier-reference (identifier identifiers &key (minimum-length 7))
   "Return the shortest distinguishing prefix at least MINIMUM-LENGTH long."
-  (loop for end from (min minimum-length (length identifier)) to (length identifier)
-        for prefix = (subseq identifier 0 end)
-        when (handler-case
-                 (equal identifier (identifier-select prefix identifiers))
-               (identifier-ambiguity () nil))
-          return prefix
-        finally (return identifier)))
+  (idsmall:identifier-reference identifier identifiers :minimum-length minimum-length))

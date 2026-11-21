@@ -180,8 +180,8 @@
   :version "git-ee9fc57a46a396e6386d61f81a6df926ca9f9906"))
 ("idsmall" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/idsmall.git" :ref "00cdcc08c95079298bff996be49e40a5319fae58")
-  :version "git-00cdcc08c95079298bff996be49e40a5319fae58"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/idsmall.git" :ref "09d098b458134008620b81f9e6e507a56cb0c40c")
+  :version "git-09d098b458134008620b81f9e6e507a56cb0c40c"))
 ("mcparen" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "1279e3cd0e7e275dd3c01146ecdf4bd2690fd313")

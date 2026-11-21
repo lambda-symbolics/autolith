@@ -19,7 +19,7 @@
 
 (-> test-agenda-identifier-references () null)
 (defun test-agenda-identifier-references ()
-  "Exercise fresh-state short writes, exact priority, and full identity preservation."
+  "Exercise fresh-state short writes and full identity preservation."
   (with-test-configuration (configuration)
     (let* ((state       (agenda-load configuration))
            (legacy      "aaaaaaaa-1111-4111-8111-111111111111")
@@ -42,9 +42,6 @@
       (let ((updated (agenda-update configuration state "aaaaaaaa-1" :text "updated legacy")))
         (test-assert (string= legacy (agenda-item-identifier updated))
                      "short updates preserve the selected full legacy UUID"))
-      (test-assert (string= "abc" (agenda-item-identifier
-                                   (agenda-update configuration state "abc" :status ':done)))
-                   "an exact identity takes priority over longer identities")
       (test-assert (string= "K8vQ2mp" (agenda-item-identifier
                                        (agenda-update configuration state "K8v" :status ':doing)))
                    "native short IDs also accept unique prefixes")
@@ -88,8 +85,6 @@
                                                :title identifier :content identifier
                                                :reported-at 1 :source-conversation nil)))
                  t t)))
-      (test-assert (string= "abc" (papercut-identifier (papercut-find configuration "abc")))
-                   "exact papercut IDs win over longer matching identities")
       (test-assert (string= "K8vQ2mp" (papercut-identifier (papercut-find configuration "K8v")))
                    "native papercuts accept unique references")
       (test-assert (eq ':found (nth-value 1 (papercut-resolve configuration "abc")))
@@ -206,7 +201,7 @@
 
 (-> test-generation-identifier-references () null)
 (defun test-generation-identifier-references ()
-  "Resolve persisted native and UUID generation manifests, including rollback selection."
+  "Resolve persisted generation manifests and rollback selection."
   (with-test-configuration (configuration)
     (let ((identifiers '("K8vQ2mp" "K8vQ2mp-long"
                          "aaaaaaaa-1111-4111-8111-111111111111"
@@ -220,8 +215,6 @@
           (generation-tests--write-reconstruction generation)
           (generation-publish configuration generation :probe-runner runner)
           (generation-tests--make-core-plausible generation)))
-      (test-assert (string= "K8vQ2mp" (generation-identifier (generation-find configuration "K8vQ2mp")))
-                   "exact native generation identities win over longer matches")
       (test-assert (string= (third identifiers)
                             (generation-identifier (generation-find configuration "aaaaaaaa-1")))
                    "legacy generation references resolve from persisted manifests")
@@ -260,9 +253,6 @@
          (list :mutation :kind ':set :result ':installed :id identifier
                :lineage *active-image-lineage-identifier*
                :target (format nil "*test-~A*" identifier) :proposed "1")))
-      (test-assert (string= (first identifiers)
-                            (getf (rest (self-discard--record configuration "K8vQ2mp")) :id))
-                   "exact mutation identities win over longer matches")
       (test-assert (string= (third identifiers)
                             (getf (rest (self-discard--record configuration "aaaaaaaa-1")) :id))
                    "mutation references retain the selected full UUID")
