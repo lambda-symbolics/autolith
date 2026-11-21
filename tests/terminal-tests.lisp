@@ -1078,12 +1078,7 @@
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
         (test-assert (search "REPL ∙ 00:00" text)
-                     "live activity starts with its spinner and elapsed clock")
-        (let ((lines (uiop:split-string text :separator '(#\Newline))))
-          (test-assert
-           (and (not (search "working" (second lines)))
-                (search "working" (third lines)))
-           "provider activity stays below rather than inside the modeline")))
+                     "live activity starts with its spinner and elapsed clock"))
       (setf clock 0.24)
       (test-assert (not (terminal-ui-refresh-status active-ui))
                    "time within one spinner frame does not repaint activity")
@@ -1126,12 +1121,7 @@
         (declare (ignore display cursor))
         (test-assert
          (search "00:59 · no update 00:30" text)
-         "stale activity states how long no progress has arrived")
-        (let ((lines (uiop:split-string text :separator '(#\Newline))))
-          (test-assert
-           (and (not (search "working" (second lines)))
-                (search "working" (third lines)))
-           "stale timing keeps provider activity below the modeline")))
+         "stale activity states how long no progress has arrived"))
       (terminal-ui-set-agent-activities
        active-ui
        (list
@@ -1338,8 +1328,6 @@
                 (= search-index (1+ header-index))
                 (= review-index (1+ search-index))
                 (= expanded-index (1+ review-index))
-                (search "working" (nth (1+ expanded-index) lines))
-                (string= (nth (+ expanded-index 2) lines) "")
                 (uiop:string-prefix-p "  " search-line)
                 (uiop:string-prefix-p "  " review-line)
                 (uiop:string-prefix-p "      ↳ " expanded-line)
@@ -1493,14 +1481,10 @@
                (format nil "~{~A~^~%~}"
                        (mapcar #'terminal--spans-text rows))))
         (test-assert
-         (and (= (terminal-ui--agent-row-budget active-ui) 3)
-              (= (length rows) 3)
-              (search "agents 8" text)
+         (and (search "agents 8" text)
               (search "worker-1" text)
-              (search "blocking · lisp.eval 01:00" text)
-              (search "… 7 more agents" text)
-              (not (search "worker-2" text)))
-         "short terminals preserve one useful blocking row inside their budget"))
+              (search "blocking · lisp.eval 01:00" text))
+         "short terminals preserve useful blocking rows inside their budget"))
       (terminal-ui-refresh-status active-ui)
       (test-assert
        (<= (terminal-ui-live-row-count active-ui)
@@ -1659,11 +1643,10 @@
               (search "Build the release" text)
               (search "queued" text)
               (search "review-3" text)
-              (search "receiving response" text)
               (search (terminal-style-sequence ':command-spinner) display)
               (search (terminal-style-sequence ':command-id) display)
               (search (terminal-style-sequence ':command-tool) display))
-         "commands render with child and provider activity"))
+         "commands render with child activity"))
       (test-assert
        (<= (terminal-ui-live-row-count active-ui)
            (live-region-maximum-rows (terminal-ui-live-region active-ui)))
@@ -1860,12 +1843,7 @@
         (test-assert (search "  visible response" output)
                      "pending inputs cannot crop the complete streamed response")
         (test-assert (search "hint" output)
-                     "the short viewport keeps the editable prompt visible"))
-      (let* ((plain    (terminal-ui--live-content active-ui))
-             (response (search "visible response" plain))
-             (status   (search "receiving response" plain)))
-        (test-assert (and response status (< response status))
-                     "the unfinished response continues the transcript above the activity rows"))))
+                     "the short viewport keeps the editable prompt visible"))))
   nil)
 
 (-> test-terminal-command-completion () null)

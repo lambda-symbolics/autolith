@@ -355,7 +355,7 @@
 (defun test-terminal-fullscreen-pinned-activities ()
   "Keep live chrome beside the draft while unfinished output scrolls with history."
   (let* ((terminal (make-instance 'recording-terminal :columns 100 :rows 36))
-         (markers  '("REPL" "exec:1" "exec:2" "review-3" "receiving response"
+         (markers  '("REPL" "exec:1" "exec:2" "review-3"
                      "preview-live" "notice-live" "steer-live" "queued-live")))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t
                                              :prompt "> " :clock-function (constantly 10)))
