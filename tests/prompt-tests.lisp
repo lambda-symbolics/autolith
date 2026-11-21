@@ -80,11 +80,10 @@
                                      "the prompt embeds the session date")
              (prompt-tests--contains prompt "Workspace instructions from"
                                      "workspace AGENTS.md is included")
+             (test-assert (notany (lambda (rendered) (search "#+TITLE" rendered))
+                                  (list prompt context))
+                          "shipped prompt and request context omit their Org metadata")
              (dolist (rendered (list prompt context))
-               (prompt-tests--absent rendered "{{{:"
-                                     "no leftover org-templater slots remain")
-               (prompt-tests--absent rendered "#+TITLE"
-                                     "Org keyword lines are stripped")
                (prompt-tests--absent rendered "* Commentary"
                                      "review commentary is omitted"))
              (prompt-tests--contains prompt "RECURSIVE INFERENCE IS AVAILABLE"

@@ -282,29 +282,17 @@ line separating lessons. Reject duplicate IDs and malformed metadata."
 
 (-> onboarding-source-text (string &optional hash-table) string)
 (defun onboarding-source-text (name &optional (variables (make-hash-table :test #'eq)))
-  "Render the named onboarding text block with VARIABLES on demand.
+  "Render a named onboarding_text block from the raw tour source with VARIABLES.
 
-Place #+name: NAME immediately above #+begin_onboarding_text inside the
-introductory comment. End with #+end_onboarding_text. Lesson parsing ignores
-these UI templates; their placeholders are expanded only by this function."
-  (let ((named-p   nil)
-        (collect-p nil)
-        (lines     nil))
-    (with-input-from-string (input (onboarding-source--read))
-      (loop for line = (read-line input nil nil)
-            while line
-            do (cond
-                 ((and collect-p (string-equal line "#+end_onboarding_text"))
-                  (return-from onboarding-source-text
-                    (org-templater:render :template (format nil "~{~A~^~%~}" (nreverse lines))
-                                         :config    variables)))
-                 (collect-p
-                  (push line lines))
-                 ((and named-p (string-equal line "#+begin_onboarding_text"))
-                  (setf collect-p t))
-                 (t
-                  (setf named-p (string-equal line (concatenate 'string "#+name: " name)))))))
-    (onboarding-source--fail (format nil "Missing or unclosed text block ~S" name))))
+The block may be inside the introductory comment or stand alone. Lesson
+parsing ignores these UI templates; expand their placeholders on demand."
+  (handler-case
+      (org-templater:render-named-block :template   (onboarding-source--read)
+                                       :name       name
+                                       :block-type "onboarding_text"
+                                       :config     variables)
+    (org-templater:named-block-error (condition)
+      (onboarding-source--fail (princ-to-string condition)))))
 
 (-> onboarding-pages (configuration) list)
 (defun onboarding-pages (configuration)

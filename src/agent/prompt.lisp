@@ -177,33 +177,6 @@ prompt instead of the full Autolith persona.")
       (setf *request-context-template-cache*
             (uiop:read-file-string (request-context--template-path)))))
 
-(-> system-prompt--org-keyword-line-p (string) boolean)
-(defun system-prompt--org-keyword-line-p (line)
-  "Return true when LINE is an Org keyword such as #+TITLE."
-  (let ((trimmed (string-left-trim '(#\Space #\Tab) line)))
-    (and (>= (length trimmed) 2)
-         (char= (char trimmed 0) #\#)
-         (char= (char trimmed 1) #\+)
-         t)))
-
-(-> system-prompt--drop-org-keyword-lines (string) string)
-(defun system-prompt--drop-org-keyword-lines (text)
-  "Return TEXT without Org keyword lines."
-  (let ((emittedp nil))
-    (with-output-to-string (out)
-      (with-input-from-string (in text)
-        (loop for line = (read-line in nil nil)
-              while line
-              unless (system-prompt--org-keyword-line-p line)
-                do (when emittedp
-                     (terpri out))
-                   (write-string line out)
-                   (setf emittedp t)))
-      (when (and (plusp (length text))
-                 (char= (char text (1- (length text))) #\Newline)
-                 emittedp)
-        (terpri out)))))
-
 (-> system-prompt--config (configuration) hash-table)
 (defun system-prompt--config (configuration)
   "Return the stable org-templater bindings for CONFIGURATION."
@@ -287,12 +260,10 @@ prompt instead of the full Autolith persona.")
 (defun request-context-session-state
     (configuration &key (hurry-up-p *request-context-hurry-up-p*))
   "Render mutable session state for delivery behind conversation history."
-  (string-left-trim
-   '(#\Newline)
-   (system-prompt--drop-org-keyword-lines
-    (org-templater:render
-     :template (request-context--template)
-     :config   (request-context--config configuration :hurry-up-p hurry-up-p)))))
+  (org-templater:render
+   :template       (request-context--template)
+   :config         (request-context--config configuration :hurry-up-p hurry-up-p)
+   :output-profile ':prompt))
 
 (-> system-prompt (configuration) string)
 (defun system-prompt (configuration)
@@ -300,9 +271,7 @@ prompt instead of the full Autolith persona.")
 
 Rebuild the prompt for each provider request, including after compaction."
   (or *system-prompt-override*
-      (string-left-trim
-       '(#\Newline)
-       (system-prompt--drop-org-keyword-lines
-        (org-templater:render
-         :template (system-prompt--template)
-         :config   (system-prompt--config configuration))))))
+      (org-templater:render
+       :template       (system-prompt--template)
+       :config         (system-prompt--config configuration)
+       :output-profile ':prompt)))

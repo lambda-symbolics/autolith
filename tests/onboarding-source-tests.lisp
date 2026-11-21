@@ -129,24 +129,11 @@
 
 (-> test-onboarding-source-text () null)
 (defun test-onboarding-source-text ()
-  "Expand named UI text only on demand, reading edits on the next invocation."
-  (let ((source    (format nil "#+begin_comment~%#+name: fixture~%#+begin_onboarding_text~%{{{:current}}}/{{{:count}}}~%{{{:action}}}~%#+end_onboarding_text~%#+end_comment~%"))
-        (variables (make-hash-table :test #'eq)))
-    (setf (gethash ':current variables) 2
-          (gethash ':count variables) 19
-          (gethash ':action variables) "Continue")
-    (test-call-with-function-replacements
-     (list (list 'onboarding-source--read (lambda () source)))
-     (lambda ()
-       (test-assert (string= (format nil "2/19~%Continue")
-                             (onboarding-source-text "fixture" variables))
-                    "named sections interpolate runtime slots and preserve line breaks")
-       (setf source (format nil "#+name: fixture~%#+begin_onboarding_text~%Edited~%#+end_onboarding_text~%"))
-       (test-assert (string= "Edited" (onboarding-source-text "fixture"))
-                    "later reads observe edited text")
-       (test-assert (handler-case (progn (onboarding-source-text "missing") nil)
-                      (onboarding-source-error () t))
-                    "missing named sections signal a source error"))))
+  "Map named-block errors locally and share one source snapshot per tour."
+  (let ((*onboarding-source-snapshot* ""))
+    (test-assert (handler-case (progn (onboarding-source-text "missing") nil)
+                   (onboarding-source-error () t))
+                 "missing named sections signal a source error"))
   (let* ((source    (format nil "#+name: fixture~%#+begin_onboarding_text~%{{{:action}}}~%#+end_onboarding_text~%"))
          (original  source)
          (variables (make-hash-table :test #'eq))
