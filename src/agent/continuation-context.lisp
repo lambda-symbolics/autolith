@@ -275,8 +275,8 @@ view. A fact's label gives the address the memory resource reads it at."
 (defun continuation--evidence-reference (evidence)
   "Return a reference to the user message or tool result EVIDENCE describes.
 
-Its label gives the address the conversation resource reads the record at, so
-the record stays reachable from a conversation that adopts the checkpoint."
+Its label gives the channel history address and record sequence so the record
+can be read after another conversation adopts the checkpoint."
   (destructuring-bind (&key conversation sequence text call-id tool status &allow-other-keys)
       evidence
     (let ((identity (list :conversation conversation :sequence sequence))
