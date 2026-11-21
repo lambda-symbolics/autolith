@@ -1,4 +1,3 @@
-#+TITLE: Autolith
 #+SUBTITLE: The self-modifying Common Lisp neurosymbolic agent
 #+STARTUP: content
 
