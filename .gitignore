@@ -6,3 +6,4 @@ result
 .bundle-libs/
 dist/
 var/
+bin/cl-exec-sandbox-bundle.ps1

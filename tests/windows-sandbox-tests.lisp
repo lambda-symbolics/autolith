@@ -105,7 +105,7 @@
 
 (-> test-windows-sandbox-bundle-installation () null)
 (defun test-windows-sandbox-bundle-installation ()
-  "Exercise complete bundle selection and private native generation publication."
+  "Exercise Autolith's install-root authority and helper environment selection."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (let ((script (merge-pathnames "script/check-windows-sandbox-bundle.ps1"

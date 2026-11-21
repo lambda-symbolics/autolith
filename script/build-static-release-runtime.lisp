@@ -38,25 +38,11 @@
 
            (build-sandbox-helpers ()
              "Build the locked cl-exec-sandbox helpers as static executables."
-             (let* ((sandbox-root
-                      (asdf:system-source-directory :cl-exec-sandbox))
-                    (compiler (or (uiop:getenv "CC") "cc"))
-                    (helpers
-                      '(("helper/cl-exec-sandbox-helper.c"
-                         "build/cl-exec-sandbox-helper")
-                        ("helper/cl-exec-sandbox-process-group.c"
-                         "build/cl-exec-sandbox-process-group"))))
-               (loop for (source-name target-name) in helpers
-                     for source = (merge-pathnames source-name sandbox-root)
-                     for target = (merge-pathnames target-name sandbox-root)
-                     do (unless (probe-file source)
-                          (fail "the locked sandbox helper source ~A is absent."
-                                source-name))
-                        (uiop:ensure-all-directories-exist (list target))
-                        (run (list compiler "-static" "-std=c11" "-O2"
-                                   "-Wall" "-Wextra" "-Werror" "-pedantic"
-                                   (namestring source) "-o" (namestring target)))
-                     collect target)))
+             (let* ((sandbox-root (asdf:system-source-directory :cl-exec-sandbox))
+                    (builder      (merge-pathnames "scripts/build-helper" sandbox-root)))
+               (unless (probe-file builder)
+                 (fail "the locked sandbox helper builder is absent."))
+               (run (list "/usr/bin/env" "bash" (namestring builder) "--static"))))
 
            (build-color-archive ()
              "Build ColorLisp's native sources into COLOR-ARCHIVE."

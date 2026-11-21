@@ -29,16 +29,17 @@ try {
   & (Join-Path $root 'bin\autolith-runtime.ps1') --script (Join-Path $PSScriptRoot 'windows-colorlisp.lisp') copy (Join-Path $release 'native\colorlisp.dll')
   if ($LASTEXITCODE -ne 0) { throw 'ColorLisp packaging or highlighting failed.' }
   . (Join-Path $root 'bin\autolith-sandbox.ps1')
-  $helper = Get-AutolithSandboxSelection (Get-AutolithSandboxRoot)
+  Copy-Item -LiteralPath $AutolithSandboxBundleScript -Destination (Join-Path $packagedSource 'bin\cl-exec-sandbox-bundle.ps1')
+  $helper = Get-ClExecSandboxSelection (Get-AutolithSandboxRoot)
   $generation = Split-Path -Parent $helper
   $identity = Split-Path -Leaf $generation
   $bundleRoot = Join-Path $release 'native\sandbox'
   $packagedGeneration = Join-Path $bundleRoot $identity
   New-Item -ItemType Directory -Path $packagedGeneration -Force | Out-Null
-  foreach ($file in $AutolithSandboxFiles) {
+  foreach ($file in $ClExecSandboxFiles) {
     Copy-Item -LiteralPath (Join-Path $generation $file) -Destination (Join-Path $packagedGeneration $file)
   }
-  if ((Get-AutolithSandboxIdentity $packagedGeneration) -cne $identity) { throw 'Packaged sandbox bundle is corrupt.' }
+  if ((Get-ClExecSandboxIdentity $packagedGeneration) -cne $identity) { throw 'Packaged sandbox bundle is corrupt.' }
   [IO.File]::WriteAllText((Join-Path $bundleRoot 'selected'), $identity + "`n", [Text.Encoding]::ASCII)
   . (Join-Path $root 'bin\autolith-openssl.ps1')
   $openssl = Find-AutolithOpenSsl -SourceRoot $root
