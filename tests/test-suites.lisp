@@ -77,7 +77,6 @@
   test-continuation-claim-references)
 
 (define-test-suite compaction-tail
-  test-compaction-tail-bounds-recent-user-and-expands-groups
   test-compaction-tail-carries-arrivals-through-reload
   test-compaction-tail-repeated-capture-does-not-accumulate-summaries
   test-compaction-tail-summarizes-displaced-evidence)

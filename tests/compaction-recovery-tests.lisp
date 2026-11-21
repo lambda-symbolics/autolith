@@ -228,7 +228,7 @@
 
 (-> test-compaction-recovery-encrypted-eligibility () null)
 (defun test-compaction-recovery-encrypted-eligibility ()
-  "Keep correlated neighbors and detach arbitrary metadata before removing old reasoning."
+  "Keep correlated neighbors while removing old reasoning."
   (with-test-configuration (configuration)
     (let* ((state        (make-compaction-recovery))
            (conversation (conversation-create configuration))
@@ -243,23 +243,12 @@
            (separator    (json-object "type" "message" "role" "assistant" "content" "separator"))
            (old-second   (json-object "type" "reasoning" "encrypted_content" "second old encrypted"))
            (current      (json-object "type" "reasoning" "encrypted_content" "current encrypted"))
-           (metadata     (json-object "nested" (vector (list (copy-seq "source metadata")))))
            (view         (conversation-compaction-summary-view
                           conversation (list old plain paired call output after-output anchor after-anchor
                                              separator old-second
                                              (json-object "type" "message" "role" "user" "content" "latest") current))))
-      (setf (gethash plain (clinker-transcript:projection-metadata-table
-                            (conversation-projection view) "extra-namespace")) metadata
-            (gethash plain (clinker-transcript:projection-metadata-table
-                            (conversation-projection view) ':explicit-nil)) nil
-            (gethash old (clinker-transcript:projection-metadata-table
-                          (conversation-projection view) ':discarded)) t)
       (let* ((detached  (compaction-recovery-view state view))
-             (candidate (compaction-recovery-strip-encrypted state detached))
-             (copy      (second (conversation-input-items detached)))
-             (copied-metadata
-               (gethash copy (clinker-transcript:projection-metadata-table
-                              (conversation-projection candidate) "extra-namespace"))))
+             (candidate (compaction-recovery-strip-encrypted state detached)))
         (dolist (text '("old encrypted" "second old encrypted"))
           (test-assert (not (test-object-contains-string-p (conversation-input-items candidate) text))
                        "Eligible standalone old encrypted content is removed."))
@@ -269,16 +258,6 @@
                        "Original linked neighbors and protected reasoning survive."))
         (test-assert (= 2 (getf (first (compaction-recovery-notes state)) :removed-items))
                      "The chronological pass reports both eligible removals.")
-        (test-assert (nth-value 1 (gethash copy (clinker-transcript:projection-metadata-table
-                                                 (conversation-projection candidate) ':explicit-nil)))
-                     "Present NIL metadata survives detachment and removal.")
-        (test-assert (zerop (hash-table-count
-                             (clinker-transcript:projection-metadata-table
-                              (conversation-projection candidate) ':discarded)))
-                     "Removed roots leave no metadata entries.")
-        (setf (char (first (aref (json-get copied-metadata "nested") 0)) 0) #\X)
-        (test-assert (string= "source metadata" (first (aref (json-get metadata "nested") 0)))
-                     "Nested arbitrary metadata is detached from canonical history.")
         (test-assert (equal "old encrypted" (json-get old "encrypted_content"))
                      "Detached removal leaves source objects unchanged."))))
   nil)

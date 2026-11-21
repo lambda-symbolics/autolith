@@ -2144,8 +2144,8 @@ already owns its metadata and is installed without an additional remap."
                                  items
                                  (clinker-transcript:make-projection :items items)))))
     (unless (typep items 'clinker-transcript:projection)
-      (conversation-compaction--copy-metadata
-       (conversation-projection conversation) (conversation-projection view) items))
+      (clinker-transcript:projection-copy-metadata
+       (conversation-projection conversation) (conversation-projection view)))
     (when family
       (dolist (item (conversation-input-items view))
         (setf (gethash item (conversation-input-item-families view)) family)))

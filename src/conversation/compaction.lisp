@@ -38,15 +38,6 @@
    (clinker-transcript:missing-output-repair-call-id repair)
    *conversation-interrupted-tool-output*))
 
-(-> conversation-compaction--copy-metadata
-    (clinker-transcript:projection clinker-transcript:projection list) null)
-(defun conversation-compaction--copy-metadata (source target items)
-  "Copy all named metadata for retained EQ ITEMS from SOURCE to TARGET."
-  (let ((remap (make-hash-table :test #'eq)))
-    (dolist (item items) (setf (gethash item remap) item))
-    (clinker-transcript:projection-copy-metadata source target :remap remap))
-  nil)
-
 (-> conversation-compaction-capture (conversation) conversation-compaction)
 (defun conversation-compaction-capture (conversation)
   "Capture a fixed durable cutoff before any compaction provider request.
@@ -189,8 +180,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
             (ephemeral-items
               (mapcar (lambda (entry) (getf entry :item))
                       (conversation-ephemeral-input-entries conversation))))
-         (conversation-compaction--copy-metadata
-          (conversation-projection conversation) projection items)
+        (clinker-transcript:projection-copy-metadata
+         (conversation-projection conversation) projection)
          (conversation-compaction--mark-checkpoint
           projection (first (last replacement-items)) (getf (rest record) :continuation))
          (setf (getf (rest record) :through-seq)
@@ -205,8 +196,10 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
          ;; Prepare all state before durable publication, including transient items.
          (clinker-transcript:projection-replace
           projection (append items ephemeral-items))
-         (conversation-compaction--copy-metadata
-          (conversation-projection conversation) projection ephemeral-items)
+        (let ((remap (make-hash-table :test #'eq)))
+          (dolist (item ephemeral-items) (setf (gethash item remap) item))
+          (clinker-transcript:projection-copy-metadata
+           (conversation-projection conversation) projection :remap remap))
        (when validate-projection
          (let ((candidate (conversation-compaction-summary-view conversation nil)))
            (setf (slot-value candidate 'projection) projection)

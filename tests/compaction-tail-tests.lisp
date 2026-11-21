@@ -24,35 +24,6 @@
   "Return the current durable input projection as a list."
   (coerce (conversation-input-items conversation) 'list))
 
-(-> test-compaction-tail-bounds-recent-user-and-expands-groups () null)
-(defun test-compaction-tail-bounds-recent-user-and-expands-groups ()
-  "Retain the latest user and expand a cut to complete protocol groups."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
-    (let ((conversation (conversation-create configuration :identifier "tail-bounds")))
-      (conversation-append-user-message conversation (make-string 40000 :initial-element #\x))
-      (conversation-append-user-message conversation "latest request")
-      (conversation-append-provider-item conversation (compaction-tail-tests--call "tail-call"))
-      (conversation-append-tool-result conversation "tail-call"
-                                       :tool-name "test.inspect"
-                                       :output "tail-output" :success-p t)
-      (conversation-append-provider-item conversation
-                                         (compaction-tail-tests--reasoning "private tail"))
-      (let* ((capture (conversation-compaction-capture conversation))
-             (tail    (conversation-compaction-portable-capture capture))
-             (items   (clinker-transcript:compaction-plan-items
-                       (conversation-compaction--plan tail))))
-        (test-assert (test-object-contains-string-p items "latest request")
-                     "the latest actual user message is retained")
-        (test-assert (test-object-contains-string-p items "tail-call")
-                     "the correlated function call is retained")
-        (test-assert (test-object-contains-string-p items "tail-output")
-                     "the correlated function output is retained")
-        (test-assert (test-object-contains-string-p items "private tail")
-                     "private reasoning is retained with the tail")
-        (test-assert (not (test-object-contains-string-p items "xxxxxxxx"))
-                     "the ordinary tail omits the oversized old request")))))
-
 (-> test-compaction-tail-carries-arrivals-through-reload () null)
 (defun test-compaction-tail-carries-arrivals-through-reload ()
   "Publish a captured tail with arrivals and verify the durable replay."

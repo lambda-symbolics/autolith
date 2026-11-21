@@ -124,11 +124,10 @@ configured window. Read existing metadata only, without discovery or preparation
              (setf start index))
     (let ((protected (position-if (lambda (item) (gethash item (compaction-recovery-protected state))) items)))
       (when protected (setf start (min start protected))))
-    (let* ((plan (clinker-transcript:make-compaction-plan
-                  (conversation-projection view) :cutoff start
-                  :repaired-output-p                     #'conversation-compaction--repaired-output-p))
-           (tail (clinker-transcript:compaction-plan-items plan)))
-      (min start (- (length items) (length tail))))))
+    (let ((plan (clinker-transcript:make-compaction-plan
+                 (conversation-projection view) :cutoff start
+                 :repaired-output-p #'conversation-compaction--repaired-output-p)))
+      (min start (clinker-transcript:compaction-plan-retained-start plan)))))
 
 (-> compaction-recovery-stub-candidates (compaction-recovery conversation) list)
 (defun compaction-recovery-stub-candidates (state view)
@@ -308,10 +307,10 @@ conversation and signals the final refusal."
              (tail      (clinker-transcript:compaction-plan-items plan))
              (tail-view (conversation-compaction-summary-view source tail)))
         ;; The portable summary view excludes tail metadata; use the captured plan.
-        (conversation-compaction--copy-metadata
+        (clinker-transcript:projection-copy-metadata
          (clinker-transcript:compaction-plan-projection
           plan :repair-output #'conversation-compaction--repair-output)
-         (conversation-projection tail-view) tail)
+         (conversation-projection tail-view))
         (let ((view (compaction-recovery-view state tail-view)))
           (make-instance
            'conversation-compaction
