@@ -29,7 +29,7 @@
           (:help-topic t) (:help-order t))
     application-command)
 (defun help-tests--command
-    (&key (definition-name 'help-tests--dynamic-command) (name "/commands")
+    (&key (definition-name 'help-tests--dynamic-command) (name "commands")
           aliases help-topic help-order)
   "Create a callable fixture command with explicit help metadata."
   (application-command-create

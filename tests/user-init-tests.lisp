@@ -288,7 +288,7 @@
                     :identifier \"user-init-transaction\"
                     :instruction \"old contributor\"))
                  (define-application-command user-init-tests--command
-                     (:name \"/user-init-test\"
+                     (:name \"user-init-test\"
                       :argument nil
                       :description \"exercise user command registration\"
                       :tip \"exists only in the user-init test.\"

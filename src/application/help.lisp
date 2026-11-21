@@ -309,7 +309,7 @@ Choose a namespace or a tool name, for example `(help :lisp)` or `(help \"lisp.e
   (or (find name operations :test #'string-equal :key #'application-operation-name)
       (find-if (lambda (entry)
                  (and (typep entry 'application-command-operation)
-                      (member (concatenate 'string "/" name)
+                      (member name
                               (application-command-aliases (application-operation-backend entry))
                               :test #'string-equal)))
                operations)))
