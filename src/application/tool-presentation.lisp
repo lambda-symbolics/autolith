@@ -2283,9 +2283,12 @@ Mark reports that repeat an active papercut as already reported."
      (when labeled-p
        (list (application--tool-section-row
               (ecase stream
-                (:stdout "stdout")
-                (:stderr "stderr")
-                (:combined "output")))))
+                (:stdout
+                 "stdout")
+                (:stderr
+                 "stderr")
+                (:combined
+                 "output")))))
      (cond
        ((getf section :unavailable-p)
         (list (list (terminal-span ':notice "output preview unavailable"))))
@@ -2336,18 +2339,19 @@ Mark reports that repeat an active papercut as already reported."
               (when (and (vectorp streams) (not (stringp streams)))
                 (loop for section across streams
                       when (json-object-p section)
-                        collect (list :stream (cond
-                                                ((equal (json-get section "stream") "stderr")
-                                                 ':stderr)
-                                                ((equal (json-get section "stream") "stdout")
-                                                 ':stdout)
-                                                (t
-                                                 ':combined))
-                                      :head (json-get section "head")
-                                      :tail (json-get section "tail")
-                                      :omitted-p (eq t (json-get section "omitted-p"))
-                                      :complete-p (eq t (json-get section "complete-p"))
+                        collect (list :stream        (cond
+                                                       ((equal (json-get section "stream") "stderr")
+                                                        ':stderr)
+                                                       ((equal (json-get section "stream") "stdout")
+                                                        ':stdout)
+                                                       (t
+                                                        ':combined))
+                                      :head          (json-get section "head")
+                                      :tail          (json-get section "tail")
+                                      :omitted-p     (eq t (json-get section "omitted-p"))
+                                      :complete-p    (eq t (json-get section "complete-p"))
                                       :unavailable-p (eq t (json-get section "unavailable-p")))))))))))
+
 (defmethod application-tool-result-entry
     ((tool shell-run-tool) (application application) record)
   "Present typed shell outcomes and stream previews, never model-facing metadata prose."

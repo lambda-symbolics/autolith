@@ -4185,10 +4185,10 @@ other channels show their model, since no agent reads it."
          (call-id   (getf details :call-id))
          (record    (list :tool-result
                           :call-id call-id
-                          :tool   tool-name
-                          :status (if (getf details :success-p) ':ok ':error)
+                          :tool    tool-name
+                          :status  (if (getf details :success-p) ':ok ':error)
                           :details (conversation--bounded-tool-details (getf details :details))
-                          :output (or (getf details :output) ""))))
+                          :output  (or (getf details :output) ""))))
     (when tool
       (if (and (terminal-ui-fullscreen-p (application-ui application))
                (non-empty-string-p call-id))

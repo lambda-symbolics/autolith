@@ -4,9 +4,9 @@
 
 (defclass shell-command-tool-result (tool-result)
   ((details
-    :initarg       :details
-    :reader        tool-result-details
-    :type          list
+    :initarg        :details
+    :reader         tool-result-details
+    :type           list
      :documentation "Portable execution metadata and bounded output samples."))
   (:documentation "A bounded shell preview with independently readable retained output."))
 
@@ -93,10 +93,10 @@
           (multiple-value-bind (head tail omitted)
               (cl-exec-sandbox:sample-capture
                capture :head-bytes (floor budget 4) :tail-bytes (- budget (floor budget 4)))
-            (list :stream stream
-                  :head (cl-exec-sandbox:decode-capture-bytes head)
-                  :tail (cl-exec-sandbox:decode-capture-bytes tail)
-                  :omitted-p (plusp omitted)
+            (list :stream     stream
+                  :head       (cl-exec-sandbox:decode-capture-bytes head)
+                  :tail       (cl-exec-sandbox:decode-capture-bytes tail)
+                  :omitted-p  (plusp omitted)
                   :complete-p (cl-exec-sandbox:sandbox-capture-complete-p capture)))
         (file-error ()
           (list :stream stream :unavailable-p t)))
@@ -187,9 +187,9 @@ Keep publication ownership through preview construction and native cleanup."
                (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
                (list :exit-code          (sandbox-result-exit-code result)
                      :execution-status   (cl-exec-sandbox:sandbox-result-status result)
-                      :timed-out-p        (sandbox-result-timed-out-p result)
-                      :cancelled-p        (cl-exec-sandbox:sandbox-result-cancelled-p result)
-                      :output-streams     (shell-output--stream-details result output-limit)
+                      :timed-out-p       (sandbox-result-timed-out-p result)
+                      :cancelled-p       (cl-exec-sandbox:sandbox-result-cancelled-p result)
+                      :output-streams    (shell-output--stream-details result output-limit)
                      :shell-logs         (list (shell-log--public-metadata
                                                 (shell-log-artifact-metadata artifact)))
                      :capture-diagnostic diagnostic)
