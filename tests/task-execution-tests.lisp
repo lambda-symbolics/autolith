@@ -877,3 +877,56 @@
         (test-assert (task-orchestrator-close orchestrator)
                      "the fixture joins task writers before removing its state"))))
   nil)
+
+(-> test-task-child-configurable-model-alias () null)
+(defun test-task-child-configurable-model-alias ()
+  "Test that child tier aliases resolve through the durable setting."
+  (let ((configuration (configuration-copy (test-configuration) :provider-validation-p nil)))
+    (test-assert (string= "gpt-5.6-luna"
+                          (task--model-alias "@smol" configuration "gpt-6.1-sol"))
+                 "the default @smol alias keeps its Codex model")
+    (test-assert (not (child-model-alias-table-p '(("@smol" . 3))))
+                 "a tier alias must map to a non-empty model identifier")
+    (test-assert (configuration--child-model-aliases-problem
+                  '(("@SMOL" . "gpt-5.6-luna")) configuration)
+                 "a mis-cased tier alias is rejected")
+    (test-assert (configuration--child-model-aliases-problem
+                  '(("@typo" . "gpt-5.6-luna")) configuration)
+                 "an unknown tier alias is rejected")
+    (test-assert
+     (handler-case (progn (setf (config :child-model-aliases configuration)
+                                '(("@SMOL" . "gpt-5.6-luna")))
+                           nil)
+       (setting-invalid () t))
+     "a mis-cased tier alias cannot be saved")
+    (setf (config :child-model-aliases configuration)
+          '(("@smol" . "openrouter/tencent/hy4-flash")))
+    (test-assert (string= "openrouter/tencent/hy4-flash"
+                          (task--model-alias "@smol" configuration "gpt-6.1-sol"))
+                 "@smol uses the configured model identifier")
+    (test-assert (null (task--model-alias "@slow" configuration "gpt-6.1-sol"))
+                 "an unconfigured tier alias has no built-in fallback")
+    (test-assert (string= "gpt-6.1-sol"
+                          (task--model-alias "@task" configuration "gpt-6.1-sol"))
+                 "@task keeps following the parent model")
+    (let ((smol-definition
+            (task-agent-definition-create
+             :name             "alias-probe"
+             :description      "Probe configured child aliases."
+             :instructions     "Return a bounded probe result."
+             :models           '("@smol")
+             :source           :programmatic))
+          (slow-definition
+            (task-agent-definition-create
+             :name             "unconfigured-probe"
+             :description      "Probe an unconfigured child alias."
+             :instructions     "Return a bounded probe result."
+             :models           '("@slow")
+             :source           :programmatic)))
+      (test-assert (string= "openrouter/tencent/hy4-flash"
+                            (config :model (task-configuration-for-definition configuration smol-definition)))
+                   "a child role resolves its configured tier model")
+      (test-assert (string= "gpt-6.1-sol"
+                            (config :model (task-configuration-for-definition configuration slow-definition)))
+                   "an unconfigured child role follows the parent model")))
+  nil)

@@ -875,7 +875,8 @@
   test-preferences-provider-selection-controls
   test-preferences-mixed-provider-selection
   test-preferences-provider-selection-restoration
-  test-preferences-provider-aliases)
+  test-preferences-provider-aliases
+  test-preferences-child-model-aliases)
 
 (define-test-suite prompt-cache
   test-prompt-cache-miss-detection
@@ -1483,7 +1484,8 @@
   test-task-participant-state
   test-task-child-assignment-provenance
   test-task-child-sends-to-parent
-  test-task-child-shared-agent-loop)
+  test-task-child-shared-agent-loop
+  test-task-child-configurable-model-alias)
 
 (define-test-suite inference
   test-rlm-job-activity
