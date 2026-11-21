@@ -144,8 +144,8 @@
   :version "git-582986f8ccbd0bd206dde022f9f65837ae82357c"))
 ("clifff" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clifff.git" :ref "f6882b8bb7dc2e4b0808c2de0d48d0f87f398996")
-  :version "git-f6882b8bb7dc2e4b0808c2de0d48d0f87f398996"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clifff.git" :ref "128b6441f04f9eae626ceb4250903388270c24c5")
+  :version "git-128b6441f04f9eae626ceb4250903388270c24c5"))
 ("colorlisp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/colorlisp.git" :ref "c828aeae0f1bacce0ebe920958474a03042007fc")

@@ -155,14 +155,11 @@ which may no longer exist."
             (error 'tool-error
                    :message   "search.content mode applies only to a single query."
                    :tool-name "search.content"))
-          (unless (and patterns
-                       (every (lambda (pattern)
-                                (and (non-empty-string-p pattern)
-                                     (not (find #\Newline pattern))))
-                              patterns))
-            (error 'tool-error
-                   :message   "search.content patterns must be non-empty literal strings without newlines."
-                   :tool-name "search.content"))
+          (setf patterns
+                (handler-case (clifff:validate-literal-patterns patterns)
+                  (clifff:clifff-error (condition)
+                    (error 'tool-error :message  (princ-to-string condition)
+                                      :tool-name "search.content"))))
           (tool-success
            (search-worker-request
             (search-tool-engine tool)

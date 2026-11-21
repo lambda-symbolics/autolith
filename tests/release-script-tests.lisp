@@ -462,6 +462,21 @@ fi
          (sdk              (merge-pathnames "MacOSX.sdk/" fixture))
          (sdk-library      (merge-pathnames "usr/lib/" sdk))
          (event-log        (merge-pathnames "library-path.log" fixture)))
+    (let* ((clifff-directory (merge-pathnames "clifff/" fixture))
+           (clifff-archive   (merge-pathnames ".qlot/dists/clifff/archives/archive.tar.gz"
+                                               source-root)))
+      (ensure-directories-exist (merge-pathnames "placeholder" clifff-directory))
+      (uiop:run-program (list "tar" "-xzf" (namestring clifff-archive)
+                              "-C" (namestring clifff-directory)))
+      (let ((clifff-asd
+              (first (directory (merge-pathnames "clifff-ref-*/clifff.asd"
+                                                 clifff-directory)))))
+        (test-assert clifff-asd
+                     "the Darwin fff fixture extracts the locked Clifff dependency")
+        (release-script-tests--write-file
+         (merge-pathnames ".qlot/setup.lisp" fixture)
+         (format nil "(require :asdf)~%(asdf:load-asd ~S)~%"
+                 (namestring clifff-asd)))))
     (ensure-directories-exist (merge-pathnames "placeholder" sdk-library))
     (ensure-directories-exist (merge-pathnames ".git/placeholder" checkout))
     (ensure-directories-exist script)

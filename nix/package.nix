@@ -582,14 +582,14 @@ let
 
   fffLibrary = pkgs.rustPlatform.buildRustPackage {
     pname = "fff-c";
-    version = "0.11.0";
+    version = "unstable-${builtins.substring 0 7 fffSourceCommit}";
     src = pkgs.fetchFromGitHub {
       owner = "dmtrKovalenko";
       repo = "fff";
       rev = fffSourceCommit;
-      hash = "sha256-GSjvvdLkuezFUrHqiSeePa64VRb3tabOKZNqEE5XSAw=";
+      hash = "sha256-CKWthCiJzsonqqwrEacooZx6p1PbfXzWKprrartPfcQ=";
     };
-    cargoHash = "sha256-VKI7MnqCGis78qmYuBkViT96ZhG4Wy9vARdnmGV048A=";
+    cargoHash = "sha256-v9Bqp7kXtMPwTaoyiaMZA47AUjAN3EkCeSa94JWauyA=";
     cargoBuildFlags = [ "-p" "fff-c" ];
     cargoTestFlags = [ "-p" "fff-c" ];
     nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];

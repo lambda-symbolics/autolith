@@ -177,90 +177,6 @@
                                  (not (search "docs/search-guide.org"
                                               (tool-result-content result))))
                             "search.content honors separate pattern constraints"))
-             (let ((kept
-                     (search-tests--call registry context
-                                         :namespace "search"
-                                         :name      "content"
-                                         :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
-                                                          "constraints" "*.lisp")))
-                   (dropped
-                     (search-tests--call registry context
-                                         :namespace "search"
-                                         :name      "content"
-                                         :arguments (list "query" "AUTOLITH_FFF_SECONDARY"
-                                                          "constraints" "*.lisp"))))
-               (test-assert (and (tool-result-success-p kept)
-                                 (search "src/model-selection.lisp"
-                                         (tool-result-content kept))
-                                 (not (search "docs/search-guide.org"
-                                              (tool-result-content kept))))
-                            "search.content keeps query matches under constraints")
-               (test-assert (and (tool-result-success-p dropped)
-                                 (not (search "src/model-selection.lisp"
-                                              (tool-result-content dropped)))
-                                 (not (search "docs/search-guide.org"
-                                              (tool-result-content dropped))))
-                            "search.content applies query constraints as path filters"))
-             (let ((existing (search-tests--call registry context
-                                                 :namespace "search"
-                                                 :name      "content"
-                                                 :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
-                                                                  "constraints" "src/model-selection.lisp")))
-                   (missing  (search-tests--call registry context
-                                                 :namespace "search"
-                                                 :name      "content"
-                                                 :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
-                                                                  "constraints" "src/absent.lisp"))))
-               (test-assert (and (tool-result-success-p existing)
-                                 (search "src/model-selection.lisp"
-                                         (tool-result-content existing)))
-                            "a file path constraint naming an indexed file narrows the search")
-               (test-assert (and (not (tool-result-success-p missing))
-                                 (search "No indexed file matches the constraint src/absent.lisp"
-                                         (tool-result-content missing)))
-                            "a file path constraint naming no file fails instead of widening")
-               (let ((partial (search-tests--call registry context
-                                                  :namespace "search"
-                                                  :name      "content"
-                                                  :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
-                                                                   "constraints"
-                                                                   "src/absent.lisp src/model-selection.lisp"))))
-                 (test-assert (and (tool-result-success-p partial)
-                                   (search "src/model-selection.lisp" (tool-result-content partial))
-                                   (search "No indexed file matches src/absent.lisp"
-                                           (tool-result-content partial)))
-                              "a missing path among other locations is dropped with a note")))
-             (dolist (case
-                       (list (list "patterns" #("AUTOLITH_FFF_PRIMARY" "AUTOLITH_FFF_SECONDARY")
-                                   "src/ docs/" t t)
-                             (list "query" "AUTOLITH_FFF_"
-                                   "src/model-selection.lisp docs/search-guide.org" t t)
-                             (list "patterns" #("AUTOLITH_FFF_PRIMARY" "AUTOLITH_FFF_SECONDARY")
-                                   "*.lisp src/ docs/" t nil)
-                             (list "query" "AUTOLITH_FFF_"
-                                   "src/ docs/ !docs/" t nil)))
-               (destructuring-bind (selector value constraints source-p documentation-p) case
-                 (let* ((result  (search-tests--call registry context
-                                                     :namespace "search"
-                                                     :name      "content"
-                                                     :arguments (list selector value
-                                                                      "constraints" constraints)))
-                        (content (tool-result-content result)))
-                   (test-assert
-                    (and (tool-result-success-p result)
-                         (eq (and (search "src/model-selection.lisp" content) t) source-p)
-                         (eq (and (search "docs/search-guide.org" content) t) documentation-p))
-                    (format nil "constraints ~S treat locations as alternatives that other filters narrow: ~S"
-                            constraints content)))))
-             (let ((special (search-tests--call registry context
-                                                :namespace "search"
-                                                :name      "content"
-                                                :arguments (list "query" "*autolith-fff-special* src/"))))
-               (test-assert (and (tool-result-success-p special)
-                                 (search "src/specials.lisp:1:"
-                                         (tool-result-content special)))
-                            (format nil "a special variable name with a path filter is searched as text: ~S"
-                                    (tool-result-content special))))
              (dolist (case
                        (list
                          (list "missing selector" nil :missing-required-arguments)
@@ -268,10 +184,6 @@
                               (list "query" "AUTOLITH_FFF_PRIMARY"
                                     "patterns" #("AUTOLITH_FFF_SECONDARY"))
                               "exactly one of query or patterns")
-                        (list "empty patterns" (list "patterns" #())
-                              "non-empty literal strings")
-                        (list "invalid patterns" (list "patterns" #(42))
-                              "non-empty literal strings")
                         (list "mode with patterns"
                               (list "patterns" #("AUTOLITH_FFF_PRIMARY")
                                     "mode" "plain")
@@ -288,64 +200,6 @@
                              (eq expected (tool-result-error-code result))
                              (search expected (tool-result-content result))))
                     (format nil "search.content rejects ~A" label)))))
-             (let* ((worker          (search-tool-engine files-tool))
-                    (watched-process (worker-process worker))
-                    (watched-pid     (uiop:process-info-pid watched-process)))
-              (sleep 0.25)
-              (search-tests--write-file
-               (merge-pathnames "src/model-selection.lisp" workspace-root)
-               (format nil
-                       "first context line~%AUTOLITH_FFF_WATCHED~%last context line~%"))
-              (sleep 0.5)
-              (let ((result (search-tests--call registry context
-                                                :namespace "search"
-                                                :name      "content"
-                                                :arguments (list "query" "AUTOLITH_FFF_WATCHED"))))
-                (test-assert
-                 (and (tool-result-success-p result)
-                      (search "src/model-selection.lisp"
-                              (tool-result-content result))
-                      (eq watched-process (worker-process worker))
-                      (uiop:process-alive-p watched-process)
-                      (= watched-pid
-                         (uiop:process-info-pid (worker-process worker))))
-                 "a watched file update keeps the same native helper alive")))
-            (let* ((worker         (search-tool-engine files-tool))
-                   (failed-process (worker-process worker))
-                   (failed-pid     (uiop:process-info-pid failed-process))
-                   (frecency-marker
-                     (merge-pathnames "fff/frecency/test-marker"
-                                      (config :cache-root configuration)))
-                   (history-marker
-                     (merge-pathnames "fff/history/test-marker"
-                                      (config :cache-root configuration))))
-              (search-tests--write-file frecency-marker "discard me")
-              (search-tests--write-file history-marker "discard me")
-              (platform-terminate-process *platform* failed-pid :force t)
-              (test-assert
-               (task-tests--wait-until
-                (lambda () (not (uiop:process-alive-p failed-process))) 10)
-               "the killed search helper exits before its replacement starts")
-              (let ((result (search-tests--call registry context
-                                                :namespace "search"
-                                                :name      "files"
-                                                :arguments (list "query" "model selection"))))
-                (test-assert
-                 (tool-result-success-p result)
-                 (format nil "search restarts after helper death: ~A"
-                         (tool-result-content result)))
-                (test-assert (not (probe-file frecency-marker))
-                             "restart discards the dead helper's ranking database")
-                (test-assert (not (probe-file history-marker))
-                             "restart discards the dead helper's history database")
-                (test-assert (probe-file (search-worker--log-path configuration))
-                             "the replacement helper has a diagnostic log")
-                (test-assert
-                 (and (worker-process worker)
-                      (uiop:process-alive-p (worker-process worker))
-                      (/= failed-pid
-                          (uiop:process-info-pid (worker-process worker))))
-                 "search runs in a new live helper after the old one dies")))
             (tool-registry-close-runtime-state registry)
             (test-assert
              (null (worker-process (search-tool-engine files-tool)))

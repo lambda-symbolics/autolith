@@ -59,6 +59,12 @@
   (fff--prepare-darwin-build-environment)
   nil)
 
+(let ((root (uiop:pathname-parent-directory-pathname
+             (uiop:pathname-directory-pathname *load-truename*))))
+  (load (merge-pathnames ".qlot/setup.lisp" root))
+  (load (merge-pathnames "source/artifact.lisp"
+                         (asdf:system-source-directory "clifff"))))
+
 (let* ((script-path         (truename *load-truename*))
        (script-directory    (uiop:pathname-directory-pathname script-path))
        (source-root         (uiop:pathname-parent-directory-pathname script-directory))
@@ -70,59 +76,21 @@
                           (autolith-application-root :cache)))
        (install-root        (merge-pathnames "native/fff/"
                                              (autolith-application-root :data)))
-       (library-name #+darwin "libfff_c.dylib"
-                     #+win32 "fff_c.dll"
-                     #-(or darwin win32) "libfff_c.so")
+       (library-name        (uiop:symbol-call :clifff :fff-library-file-name))
        (library             (merge-pathnames library-name install-root))
        (static-build-p
          (equal (uiop:getenv "AUTOLITH_BUILD_STATIC_NATIVE") "1"))
        (static-library-name "libfff_c.a")
-       (static-library      (merge-pathnames static-library-name install-root))
-       (manifest            (merge-pathnames "manifest.sexp" install-root)))
+       (static-library      (merge-pathnames static-library-name install-root)))
   (labels ((run (command &key directory)
              "Run one build COMMAND, preserving its output."
              (uiop:run-program command
-                               :directory    directory
-                               :input        ':interactive
-                               :output       ':interactive
-                               :error-output ':interactive))
-
-           ;; This script runs standalone, before any library is loaded, so it
-           ;; writes the manifest itself; the form must stay the one clifff's
-           ;; FFF-LIBRARY-MANIFEST describes, which the runtime checks.
-           (manifest-current-p ()
-             "Return true when the installed private library matches COMMIT."
-             (and (probe-file library)
-                  (or (not static-build-p) (probe-file static-library))
-                  (probe-file manifest)
-                  (handler-case
-                      (with-open-file (stream manifest
-                                              :direction       ':input
-                                              :external-format ':utf-8)
-                        (let ((*read-eval* nil))
-                          (equal (read stream nil nil)
-                                 (list :fff-library
-                                       :version 1
-                                       :commit commit))))
-                    (error ()
-                      nil))))
-
-           (publish-file (source target)
-             "Atomically copy SOURCE over TARGET."
-             (let ((temporary
-                     (make-pathname
-                      :name     (format nil ".~A.~D"
-                                        (pathname-name target)
-                                        (sb-posix:getpid))
-                      :type     (pathname-type target)
-                      :defaults target)))
-               (unwind-protect
-                    (progn
-                      (uiop:copy-file source temporary)
-                      (uiop:rename-file-overwriting-target temporary target))
-                 (when (probe-file temporary)
-                   (delete-file temporary))))))
-    (if (manifest-current-p)
+                                 :directory directory
+                                 :input     ':interactive
+                                 :output    ':interactive
+                              :error-output ':interactive)))
+      (if (uiop:symbol-call :clifff              :fff-library-current-p library commit
+                             :required-artifacts (when static-build-p (list static-library)))
         (format t "~&The pinned private fff library is already installed at ~A.~%"
                 library)
         (progn
@@ -164,7 +132,7 @@
             (unless (probe-file built)
               (error "fff did not produce ~A." built))
             (ensure-directories-exist library)
-            (publish-file built library)
+            (uiop:symbol-call :clifff :fff-library-publish built library)
             (when static-build-p
               (let ((built-static
                       (merge-pathnames
@@ -172,26 +140,6 @@
                        checkout)))
                 (unless (probe-file built-static)
                   (error "fff did not produce ~A." built-static))
-                (publish-file built-static static-library)))
-            (let ((temporary
-                    (make-pathname
-                     :name     (format nil ".manifest.~D" (sb-posix:getpid))
-                     :type     "sexp"
-                     :defaults manifest)))
-              (unwind-protect
-                   (progn
-                     (with-open-file (stream temporary
-                                             :direction         ':output
-                                             :if-exists         ':supersede
-                                             :if-does-not-exist ':create
-                                             :external-format   ':utf-8)
-                       (prin1 (list :fff-library
-                                    :version 1
-                                    :commit commit)
-                              stream)
-                       (terpri stream)
-                       (finish-output stream))
-                     (uiop:rename-file-overwriting-target temporary manifest))
-                (when (probe-file temporary)
-                  (delete-file temporary))))
+                (uiop:symbol-call :clifff :fff-library-publish built-static static-library)))
+            (uiop:symbol-call :clifff :fff-library-write-manifest library commit)
             (format t "~&Installed the private fff library at ~A.~%" library))))))
