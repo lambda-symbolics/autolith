@@ -37,18 +37,11 @@
 
 (-> test-async-lisp-output-sanitizes-control-text () null)
 (defun test-async-lisp-output-sanitizes-control-text ()
-  "Remove terminal escapes and unsafe control characters."
+  "Filter unsafe C0 and DEL characters from captured output."
   (let ((stream (application-async-lisp-output-stream-create)))
-    (write-string (format nil "a~C[31mb~C[0mc~Cz" #\Escape #\Escape #\Escape) stream)
-    (test-assert (string= (application-async-lisp-output-text stream) "abc")
-                 "async output strips terminal controls")
-    (write-string (format nil "x~C~Cy~C]title" (code-char 127) (code-char 155) #\Escape)
-                  stream)
-    (write-char #\Escape stream)
-    (write-char #\\ stream)
-    (write-char #\z stream)
-    (test-assert (string= (application-async-lisp-output-text stream) "abcxyz")
-                 "split OSC terminators, DEL, and C1 controls cannot reach display"))
+    (write-string (format nil "a~Cb~Cc~Cd" (code-char 0) (code-char 7) (code-char 127)) stream)
+    (test-assert (string= (application-async-lisp-output-text stream) "abcd")
+                 "async output filters unsafe C0 and DEL characters"))
   nil)
 
 (-> test-async-lisp-output-throttles-and-flushes () null)

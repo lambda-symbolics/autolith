@@ -72,8 +72,8 @@
   :version "git-082f4d45d4cf0076c0c891f00e05d71957de6009"))
 ("cl-colorist" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-colorist.git" :ref "90f17af4fa3d2c0433030e15fffc0328f3863e29")
-  :version "git-90f17af4fa3d2c0433030e15fffc0328f3863e29"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-colorist.git" :ref "ea7dc43e58a5bf5c9ccb1288298ac666973ec8a0")
+  :version "git-ea7dc43e58a5bf5c9ccb1288298ac666973ec8a0"))
 ("cl+ssl" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/cl-plus-ssl/cl-plus-ssl.git" :ref "d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748")
