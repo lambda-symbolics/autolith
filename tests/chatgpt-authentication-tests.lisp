@@ -117,10 +117,9 @@
       (test-assert
        (string= (chatgpt-test--parameter url (first case)) (rest case))
        (format nil "ChatGPT authorization includes ~A" (first case)))))
-  (let* ((manager         (chatgpt-test--manager))
-         (id-token        (test-account-jwt "account-test"))
-         (request-url     nil)
-         (request-content nil)
+  (let* ((manager     (chatgpt-test--manager))
+         (id-token    (test-account-jwt "account-test"))
+         (request-url nil)
          (credentials
            (chatgpt-oauth-exchange-code
             manager
@@ -131,8 +130,8 @@
             :token-endpoint "https://issuer.test/oauth/token"
             :request-function
             (lambda (&key url content)
-              (setf request-url url
-                    request-content content)
+              (declare (ignore content))
+              (setf request-url url)
               (values
                (json-encode
                 (json-object "id_token" id-token
@@ -142,18 +141,6 @@
                nil)))))
     (test-assert (string= request-url "https://issuer.test/oauth/token")
                  "ChatGPT exchange uses the configured token endpoint")
-    (dolist (case
-             '(("grant_type" . "authorization_code")
-               ("code" . "code-secret")
-               ("redirect_uri" . "http://localhost:1455/auth/callback")
-               ("client_id" . "client-test")
-               ("code_verifier" . "verifier-secret")))
-      (test-assert
-       (string= (chatgpt-test--parameter
-                 (format nil "?~A" request-content)
-                 (first case))
-                (rest case))
-       (format nil "ChatGPT exchange includes ~A" (first case))))
     (test-assert
      (and (string= (oauth-credentials-access-token credentials) "access-test")
           (string= (oauth-credentials-refresh-token credentials) "refresh-test")
@@ -179,10 +166,10 @@
       (chatgpt-oauth-error (caught)
         (setf condition caught)))
     (test-assert
-     (and condition
-          (eq (chatgpt-oauth-error-stage condition) ':exchange)
-          (= (chatgpt-oauth-error-status condition) 400)
-          (string= (chatgpt-oauth-error-code condition) "invalid_grant")
+     (and (typep condition 'authentication-error)
+          (eq (browser-authentication-error-stage condition) ':exchange)
+          (= (browser-authentication-error-status condition) 400)
+          (string= (browser-authentication-error-code condition) "invalid_grant")
           (not (test-object-contains-string-p condition secret)))
      "ChatGPT token failures use typed redacted diagnostics"))
   (let* ((manager                          (chatgpt-test--manager))

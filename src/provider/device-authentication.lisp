@@ -245,14 +245,11 @@
            (device-authentication-issuer-url client "/deviceauth/callback"))
          (content
            (url-encode-params
-            (list
-             (cons "grant_type" "authorization_code")
-             (cons "code"
-                   (device-authorization-code-value authorization-code))
-             (cons "redirect_uri" redirect-url)
-             (cons "client_id" (device-authentication-client-id client))
-             (cons "code_verifier"
-                   (device-authorization-code-verifier authorization-code)))))
+            (browser-authentication-code-parameters
+             :client-id    (device-authentication-client-id client)
+             :code         (device-authorization-code-value authorization-code)
+             :verifier     (device-authorization-code-verifier authorization-code)
+             :redirect-uri redirect-url)))
          (document
            (device-authentication-json-request
             :client       client

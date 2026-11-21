@@ -310,7 +310,12 @@
                 #:browser-authentication-authorization-url
                 #:browser-authentication-await-loopback
                 #:browser-authentication-client
+                #:browser-authentication-code-parameters
                 #:browser-authentication-create-pkce
+                #:browser-authentication-error
+                #:browser-authentication-error-code
+                #:browser-authentication-error-stage
+                #:browser-authentication-error-status
                 #:browser-authentication-exchange-code
                 #:browser-authentication-login
                 #:browser-authentication-loopback-close
