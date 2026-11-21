@@ -1222,6 +1222,7 @@ with a notice. Keep its source presentation for later layout and history."
                         ui presentations :lay-out-p lay-out-p)
                       :presentations))
         (group   (or retention-group (list nil))))
+    (presentation--validate-transport-shape records)
     (labels ((partition (records presentations)
                "Return bounded cells for matching wire RECORDS and PRESENTATIONS."
                (let* ((event (list :ui :operation ':records :presentations records))
@@ -1232,17 +1233,12 @@ with a notice. Keep its source presentation for later layout and history."
                                  (append event (list :sequence          most-positive-fixnum
                                                        :record-sequence most-positive-fixnum)))
                               nil)
-                          (portable-value-error (condition)
-                            (if (eq (portable-value-error-reason condition) ':nodes)
-                                t
-                                (error condition)))
                           (image-daemon:daemon-error (condition)
                             (if (eq (image-daemon:daemon-error-operation condition) ':write-packet)
                                 t
                                 (error condition))))))
                 (cond
                   ((and split-p (null (rest records)))
-                   (presentation--validate-transport-shape event)
                    (let ((notice (presentation--overflow-record (first records))))
                       (image-daemon:daemon-packet-string
                        (list :ui :operation ':records :presentations (list notice)
