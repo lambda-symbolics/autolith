@@ -691,12 +691,13 @@ count."
           (handler-case
               (progn
                 (image-daemon:daemon-message-call (rest record)
-                                                  :action   ':channel
-                                                  :id       channel-identifier
-                                                  :sender   channel-identifier
-                                                  :receiver channel-identifier
-                                                  :payload  nil
-                                                  :timeout  2)
+                                                  :request-tag ':world-terminal-request
+                                                  :action      ':channel
+                                                  :id          channel-identifier
+                                                  :sender      channel-identifier
+                                                  :receiver    channel-identifier
+                                                  :payload     nil
+                                                  :timeout     2)
                 (push channel-identifier reached))
             (error ()
               nil)))))
