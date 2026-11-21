@@ -219,6 +219,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-task-presentation-listener
     :type          (option function)
     :documentation "The exact task event callback removed during reconnection.")
+   (world-turn-progress
+    :initform      nil
+    :accessor      application-world-turn-progress
+    :type          (option task-progress)
+    :documentation "Normalized hosted turn progress, guarded by the task presentation lock.")
    (world-child-activities
     :initform      nil
     :accessor      application-world-child-activities
@@ -4495,6 +4500,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                (application--reasoning-preview-rows application reasoning-text))))))
        :status-callback
        (lambda (status details)
+         (application-world-note-child-progress application status details)
          (stream-call
           (lambda ()
            (when (eq status ':provider-request-completed)

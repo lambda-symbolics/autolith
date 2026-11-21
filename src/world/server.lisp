@@ -682,14 +682,15 @@ REASON, when given, is what each attached terminal is told before it lets go."
           (let* ((agent  (find ':agent (world-channel-residents world channel) :key #'participant-kind))
                  (parent (and agent (participant-parent agent))))
             (when parent
-              (push (list :channel       channel
-                          :id            (conversation-identifier-display channel)
-                          :agent         (participant-name agent)
-                          :index         most-positive-fixnum
-                          :state         ':running
-                          :request-count 0
-                          :assignment    ""
-                          :detached      t)
+              (push (append (list :channel    channel
+                                  :id         (conversation-identifier-display channel)
+                                  :agent      (participant-name agent)
+                                  :index      most-positive-fixnum
+                                  :state      ':running
+                                  :assignment ""
+                                  :detached   t)
+                            (or (application-world-child-progress (world-host-application host))
+                                '(:request-count 0)))
                     (gethash parent rows)))))))
     (dolist (host hosts)
       (let ((agent (find ':agent (world-channel-residents world (world-host-channel host))

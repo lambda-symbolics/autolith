@@ -515,6 +515,30 @@ under the progress lock before releasing it to other threads."
           when (typep value '(integer 0 9223372036854775807))
             append (list key value))))
 
+(-> task-progress--note-status-locked
+    (task-progress &key (:status keyword) (:details list) (:now integer)) null)
+(defun task-progress--note-status-locked (progress &key status details now)
+  "Update normalized observer fields while the caller holds PROGRESS's lock."
+  (case status
+    (:provider-request-started
+     (setf (task-progress-request-count progress)
+           (or (getf details :request-number)
+               (1+ (task-progress-request-count progress)))))
+    (:provider-request-completed
+     (setf (task-progress-usage progress)
+           (task-progress--merge-usage (task-progress-usage progress) (getf details :usage))))
+    (:tool-call-started
+     (let ((tool (getf details :tool)))
+       (setf (task-progress-current-tool progress) tool
+             (task-progress-current-tool-started-at progress) (and tool now))))
+    (:tool-call-completed
+     (let ((tool (getf details :tool)))
+       (when tool (deque-push-back (task-progress-recent-tools progress) tool)))
+     (setf (task-progress-current-tool progress) nil
+           (task-progress-current-tool-started-at progress) nil)))
+  (setf (task-progress-updated-at progress) now)
+  nil)
+
 (-> task-progress-note-status (task-job keyword list) null)
 (defun task-progress-note-status (job status details)
   "Update JOB's normalized progress from one child observer STATUS event."
@@ -522,29 +546,8 @@ under the progress lock before releasing it to other threads."
         (event    nil)
         (now      (get-internal-real-time)))
     (with-lock-held ((task-progress-lock progress))
-      (case status
-        (:provider-request-started
-         (setf (task-progress-request-count progress)
-               (or (getf details :request-number)
-                   (1+ (task-progress-request-count progress)))))
-        (:provider-request-completed
-         (setf (task-progress-usage progress)
-               (task-progress--merge-usage
-                (task-progress-usage progress)
-                (getf details :usage))))
-        (:tool-call-started
-         (let ((tool (getf details :tool)))
-           (setf (task-progress-current-tool progress) tool
-                 (task-progress-current-tool-started-at progress)
-                 (and tool now))))
-        (:tool-call-completed
-         (let ((tool (getf details :tool)))
-           (when tool
-             (deque-push-back (task-progress-recent-tools progress) tool)))
-         (setf (task-progress-current-tool progress) nil
-               (task-progress-current-tool-started-at progress) nil)))
-      (setf (task-progress-updated-at progress) now
-            event
+      (task-progress--note-status-locked progress :status status :details details :now now)
+      (setf event
             (append
              (list :id              (job-identifier job)
                    :status          (task-progress-status progress)

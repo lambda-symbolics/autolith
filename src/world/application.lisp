@@ -531,11 +531,51 @@ cannot be read counts as present: the world never blocks a session."
 
 (-> application-world-note-child-turn (application keyword) null)
 (defun application-world-note-child-turn (application kind)
-  "Refresh parent activity rows when a hosted agent starts or ends a turn."
+  "Reset hosted turn progress and refresh its parent's activity rows."
   (let ((server (application-world-server application)))
     (when (and server (member kind *world-agent-turn-kinds*))
+      (let ((active-p (application-world--agent-turn-active-p application)))
+        (with-lock-held ((application-task-presentation-lock application))
+          (setf (application-world-turn-progress application)
+                (when active-p
+                  (let ((progress (make-instance 'task-progress)))
+                    (setf (task-progress-started-at progress) (get-internal-real-time))
+                    progress)))))
       (world-server-note-child-activities server)))
   nil)
+
+(-> application-world-note-child-progress (application keyword list) null)
+(defun application-world-note-child-progress (application status details)
+  "Record a hosted agent's observer event and schedule a parent activity refresh."
+  (let ((server (application-world-server application)))
+    (when (and server (member status '(:provider-request-started :provider-request-completed
+                                      :tool-call-started :tool-call-completed)))
+      (with-lock-held ((application-task-presentation-lock application))
+        (let ((progress (application-world-turn-progress application)))
+          (when progress
+            (with-lock-held ((task-progress-lock progress))
+              (task-progress--note-status-locked progress :status status :details details
+                                                        :now (get-internal-real-time))))))
+      (world-server-note-child-activities server)))
+  nil)
+
+(-> application-world-child-progress (application) list)
+(defun application-world-child-progress (application)
+  "Snapshot a hosted turn's request count and bounded chronological tool trace."
+  (with-lock-held ((application-task-presentation-lock application))
+    (let ((progress (application-world-turn-progress application)))
+      (when progress
+        (with-lock-held ((task-progress-lock progress))
+          (let ((now (get-internal-real-time)))
+            (list :request-count (task-progress-request-count progress)
+                  :current-tool (task-progress-current-tool progress)
+                  :current-tool-duration-ms
+                  (when (task-progress-current-tool-started-at progress)
+                    (task--milliseconds-between (task-progress-current-tool-started-at progress) now))
+                  :recent-tools (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
+                  :duration-ms
+                  (when (task-progress-started-at progress)
+                    (task--milliseconds-between (task-progress-started-at progress) now)))))))))
 
 (-> application-world--agent-turn-active-p (application) boolean)
 (defun application-world--agent-turn-active-p (application)
