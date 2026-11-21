@@ -626,7 +626,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
      (let* ((uri   (resource-observation-uri observation))
             (cause (format nil "No file exists at ~A" uri)))
        (tool-failure (format nil "~A; resource.edit can create it at the revision below.~%~A" cause content)
-                     :code ':not-found
+                     :code    ':not-found
                      :details (list :resource-read (list :cause (resource-tool--detail-text cause))))))
     (:file
      (tool-success content :details details))

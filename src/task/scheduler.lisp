@@ -493,14 +493,9 @@ The parent waits only its own cleanup budget; this execution remains running."
          (success-p  (and (listp record) (eq (getf record :status) ':success))))
     (if (string= (tool-execution-job-tool-name job) "shell.run")
         (shell-command-result content details success-p :code error-code :denied-p denied-p)
-        (let ((result (if success-p (tool-success content)
-                          (tool-failure content :code error-code :denied-p denied-p))))
-          (if details
-              (task-tool-result (tool-result-content result) details
-                                :success-p success-p
-                                :code      error-code
-                                :denied-p  denied-p)
-              result)))))
+        (if success-p
+            (tool-success content :details details)
+            (tool-failure content :code error-code :denied-p denied-p :details details)))))
 
 (-> task-orchestrator-start-execution-job
     (task-orchestrator agent

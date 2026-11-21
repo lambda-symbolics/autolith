@@ -900,6 +900,7 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
 (defun resource-tool--stale-edit-details (revision)
   "Identify a stale edit without retaining its model-facing recovery prose."
   (list :resource-edit (list :stale-revision (resource-tool--detail-text revision))))
+
 (defmethod resource-tool-edit
     ((resource single-operation-resource) (tool resource-edit-tool)
      (context tool-context) (arguments hash-table))

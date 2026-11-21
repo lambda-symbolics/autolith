@@ -215,10 +215,10 @@ An edit may produce an overlong line; its successful publication is still report
         (values (text-resource--read-result state body :total-lines total-lines :truncated-p truncated-p)
                 (when (and reading-p visible-ranges)
                   (list :resource-read
-                        (list :uri (resource-observation-uri observation)
-                              :lines (loop for number from start-line to last-line
-                                           for text = (aref lines (1- number))
-                                           collect (list number (cl-hashline:line-anchor text) text))
+                        (list :uri      (resource-observation-uri observation)
+                              :lines    (loop for number from start-line to last-line
+                                              for text = (aref lines (1- number))
+                                              collect (list number (cl-hashline:line-anchor text) text))
                               :elisions (remove nil
                                                 (list (when (> start-line 1)
                                                         (format nil "1-~D before" (1- start-line)))
@@ -283,16 +283,16 @@ An edit may produce an overlong line; its successful publication is still report
               (text-resource--operation-window normalized (length (text-resource-observation-lines observation)))
             (let* ((summary (format nil "Applied ~{~A~^; ~}."
                                     (mapcar (lambda (operation) (getf operation :summary)) normalized)))
-                   (result (format nil "~A~A~%~A"
-                                   summary (text-resource-edit-notice resource)
-                                   (text-resource--window-result context observation :start-line start-line
-                                                                                   :line-count line-count :carried carried)))
+                   (result  (format nil "~A~A~%~A"
+                                    summary (text-resource-edit-notice resource)
+                                    (text-resource--window-result context observation :start-line start-line
+                                                                                    :line-count line-count :carried carried)))
                    (path    (text-resource-source-pathname observation))
                    (warning (and path (lisp-source-edit-result-content
                                        "" path (resource-observation-content observation)))))
               (tool-success (if warning (concatenate 'string result warning) result)
                             :details (list :resource-edit
-                                           (list :summary (resource-tool--detail-text summary)
+                                           (list :summary             (resource-tool--detail-text summary)
                                                  :delimiter-warning-p (and warning (plusp (length warning)))))))))
       (resource-revision-stale ()
         (tool-failure

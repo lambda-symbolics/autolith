@@ -2355,7 +2355,7 @@ Mark reports that repeat an active papercut as already reported."
                              "exit unavailable"))
          :detail (application--tool-result-timing record)
          :rows   (application--shell-result-rows application details))
-        (application--tool-result-entry application record))))
+        (call-next-method))))
 
 (-> application--first-line-summary (string) string)
 (defun application--first-line-summary (output)
@@ -2372,8 +2372,8 @@ Mark reports that repeat an active papercut as already reported."
       ((and (application--tool-result-success-p record) summary)
        (application--tool-result-entry
         application record :detail summary
-        :rows (when (getf details :delimiter-warning-p)
-                (list (list (terminal-span ':notice "Lisp delimiter warning"))))))
+        :rows                      (when (getf details :delimiter-warning-p)
+                                     (list (list (terminal-span ':notice "Lisp delimiter warning"))))))
       ((and (not (application--tool-result-success-p record)) revision)
        (application--tool-result-entry
         application record
