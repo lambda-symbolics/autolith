@@ -881,33 +881,17 @@ nothing. No match signals an error unless ERROR-P is NIL."
                      (not (equal (participant-identifier participant) except))
                      (string-equal (participant-name participant) name))))
 
-(-> world-handle-suffixed (string (integer 1)) string)
-(defun world-handle-suffixed (base index)
-  "Return BASE for INDEX 1, else BASE numbered with INDEX, cut so the whole stays a handle.
-
-A base already at the handle length limit loses its tail to make room for
-the suffix, so a numbered handle is valid and the search for a free one
-ends."
-  (if (= index 1)
-      base
-      (let* ((suffix (format nil "-~D" index))
-             (room   (max 1 (- *world-handle-limit* (length suffix)))))
-        (concatenate 'string (subseq base 0 (min (length base) room)) suffix))))
-
 (-> world-unique-handle (world string) string)
 (defun world-unique-handle (world base)
-  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD and is not reserved.
-
-The names taken are gathered once, since a common base such as agent can
-need hundreds of suffixes."
+  "Choose a handle from BASE using WORLD's taken names and reserved mention."
   (let ((taken (make-hash-table :test #'equalp)))
     (loop for participant being the hash-values of (world--participant-table world)
           do (setf (gethash (participant-name participant) taken) t))
-    (loop for index from 1
-          for candidate = (world-handle-suffixed base index)
-          unless (or (gethash candidate taken)
-                     (world-handle-reserved-p candidate))
-            return candidate)))
+    (prezdivka:unique-base-name base
+                               (lambda (handle)
+                                 (or (gethash handle taken)
+                                     (world-handle-reserved-p handle)))
+                               :maximum-length *world-handle-limit*)))
 
 (-> world-handle-reserved-p (string) boolean)
 (defun world-handle-reserved-p (name)
