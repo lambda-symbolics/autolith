@@ -41,7 +41,7 @@ The process owner retains deadline, EOF handling and teardown authority."
   (sexp-config:read-next-source
    stream
    (make-source-grammar
-    :label "One-shot process data"
+    :label                     "One-shot process data"
     :maximum-depth 128 :maximum-nodes 65536 :maximum-string-characters (* 16 1024 1024)
     :improper-lists-permitted-p t :readable-strings-permitted-p t
     :octet-vectors-permitted-p t :qualified-common-lisp-symbols-permitted-p t

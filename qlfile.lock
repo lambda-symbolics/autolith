@@ -164,8 +164,8 @@
   :version "git-e51a0a6f4ee8ee59a4b8294f0712622c10c50599"))
 ("image-daemon" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "d9394567ac0c9846f4cb2c69f39ed3e558ef66d1")
-  :version "git-d9394567ac0c9846f4cb2c69f39ed3e558ef66d1"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "a77ec5d5830dafe70461f5d44a73714d8b7d4692")
+  :version "git-a77ec5d5830dafe70461f5d44a73714d8b7d4692"))
 ("lisp-em" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/lisp-em.git" :ref "c949c9a25589b4b8bd09862a326c17e262399b44")
@@ -192,8 +192,8 @@
   :version "git-a6d1a97626d0a385b6a167bdab4761f1edfd5e4b"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "9280b5bf0dc056dee49dcf8c9940f30c049015f9")
-  :version "git-9280b5bf0dc056dee49dcf8c9940f30c049015f9"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "51815089ac9b59fd7498d0ef6867d66b3e1a8b13")
+  :version "git-51815089ac9b59fd7498d0ef6867d66b3e1a8b13"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "3a92333e088d7d4d39d5d3a6bf1f7401e4b3606d")

@@ -44,7 +44,7 @@
                    (string= (task-agent-definition-instructions definition)
                             "Accept standard block comments."))
               "native role parsing accepts standard keyword, string, and block-comment adjacency"))
-           (let* ((pathname (merge-pathnames "incomplete.sexp" directory))
+           (let* ((pathname  (merge-pathnames "incomplete.sexp" directory))
                   (condition (task-tests--agent-definition-error
                               (task-tests--write-text pathname "(:name") :project)))
              (test-assert

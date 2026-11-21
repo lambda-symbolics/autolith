@@ -39,14 +39,14 @@ git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref c828aeae0f1
 git colordiff https://github.com/lambda-symbolics/colordiff.git :ref a8d229ae99dcd630bb4b32942e12791a7ea67a4d
 git parenchek https://github.com/lambda-symbolics/parenchek.git :ref 747c3f189bbc9fcaa22ab3f47d9ed5e6880a980b
 git org-templater https://github.com/lambda-symbolics/org-templater.git :ref e51a0a6f4ee8ee59a4b8294f0712622c10c50599
-git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref d9394567ac0c9846f4cb2c69f39ed3e558ef66d1
+git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref a77ec5d5830dafe70461f5d44a73714d8b7d4692
 git lisp-em https://github.com/lambda-symbolics/lisp-em.git :ref c949c9a25589b4b8bd09862a326c17e262399b44
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref 7219ac3fffecc37de977fcbd143c33bb7703ade4
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref ee9fc57a46a396e6386d61f81a6df926ca9f9906
 git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 09d098b458134008620b81f9e6e507a56cb0c40c
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 1279e3cd0e7e275dd3c01146ecdf4bd2690fd313
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref a6d1a97626d0a385b6a167bdab4761f1edfd5e4b
-git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 9280b5bf0dc056dee49dcf8c9940f30c049015f9
+git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 51815089ac9b59fd7498d0ef6867d66b3e1a8b13
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 3a92333e088d7d4d39d5d3a6bf1f7401e4b3606d
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref b933a913481bdcdc0ca0895f053d19eca314eac5
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref cded09d0c0d2a3c889f6fbb3414342b957978d74

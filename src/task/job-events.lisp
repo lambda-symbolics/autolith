@@ -74,9 +74,9 @@
      :label "Headless event" :keywords keywords
      :top-level-list-required-p stream-p
      :line-comments-permitted-p (not stream-p)
-     :whitespace-characters (if stream-p
-                                '(#\Space #\Tab #\Newline #\Return)
-                                '(#\Space #\Tab #\Newline #\Return #\Page))
+     :whitespace-characters     (if stream-p
+                                    '(#\Space #\Tab #\Newline #\Return)
+                                    '(#\Space #\Tab #\Newline #\Return #\Page))
      :maximum-depth 8 :maximum-nodes 256 :maximum-string-characters 4096
      :allowed-atom-predicate
      (lambda (value)

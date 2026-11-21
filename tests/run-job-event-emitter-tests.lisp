@@ -112,7 +112,7 @@
                 (lambda () (run-job-event-read-string "(:autolith-event")))
                "event reads expose a parse failure")
   (let* ((emitter (run-job-event-emitter-create "run-reject" (make-broadcast-stream)))
-         (cycle (list :count 1)))
+         (cycle   (list :count 1)))
     (setf (rest (rest cycle)) cycle)
     (unwind-protect
          (dolist (data (list cycle (make-list 300 :initial-element :count)
