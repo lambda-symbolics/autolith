@@ -156,8 +156,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (win32--define win32--set-environment-variable "SetEnvironmentVariableW" win32-bool
   (name win32-wide-string) (value win32-wide-string))
 (win32--define win32--wputenv "_wputenv" sb-alien:int (entry win32-wide-string))
-(win32--define win32--move-file-ex "MoveFileExW" win32-bool
-  (source win32-wide-string) (target win32-wide-string) (flags win32-dword))
 (win32--define win32--set-file-time "SetFileTime" win32-bool
   (handle win32-handle) (creation (* t)) (access (* t)) (write (* t)))
 (win32--define win32--create-directory "CreateDirectoryW" win32-bool
@@ -291,9 +289,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (defparameter *win32-error-environment-variable-not-found* 203
   "ERROR_ENVVAR_NOT_FOUND, reported when removing a variable that is absent.")
-
-(defparameter *win32-move-file-replace-existing* 1
-  "MOVEFILE_REPLACE_EXISTING.")
 
 (defparameter *win32-process-terminate* #x1
   "The OpenProcess access right that allows TerminateProcess.")
@@ -662,19 +657,10 @@ Autolith publishes read-only lives below a private root anyway."
   permissions)
 
 (defmethod platform-delete-file ((platform win32-platform) pathname)
-  "Clear a native read-only attribute for deletion and restore it if deletion fails."
-  (let ((attributes (win32--get-file-attributes (win32--namestring pathname)))
-        (complete-p nil))
-    (unwind-protect
-         (progn
-           (win32--clear-read-only-attribute pathname)
-           (delete-file pathname)
-           (setf complete-p t))
-      (when (and (not complete-p)
-                 (/= attributes *win32-invalid-file-attributes*)
-                 (platform-path-status platform pathname))
-        (win32--set-attributes pathname attributes))))
-  nil)
+  "Remove the exact native pathname through ls-compat."
+  (handler-case (ls-compat.posix:remove-file pathname)
+    (file-error (condition)
+      (platform--file-failure ':delete pathname condition))))
 
 (defmethod platform-copy-file-permissions ((platform win32-platform)
                                            source target)
@@ -700,24 +686,11 @@ Autolith publishes read-only lives below a private root anyway."
       (win32--close-handle handle)))
   nil)
 
-(-> win32--clear-read-only-attribute (pathname) null)
-(defun win32--clear-read-only-attribute (pathname)
-  "Clear PATHNAME's read-only attribute when it carries one."
-  (let ((attributes (win32--get-file-attributes (win32--namestring pathname))))
-    (when (and (/= attributes *win32-invalid-file-attributes*)
-               (logtest attributes *win32-file-attribute-readonly*))
-      (win32--set-attributes pathname
-                             (logandc2 attributes *win32-file-attribute-readonly*))))
-  nil)
-
 (defmethod platform-replace-file ((platform win32-platform) source target)
-  "Move SOURCE over TARGET, clearing a read-only attribute Windows would refuse."
-  (win32--clear-read-only-attribute target)
-  (when (zerop (win32--move-file-ex (win32--namestring source)
-                                    (win32--namestring target)
-                                    *win32-move-file-replace-existing*))
-    (win32--fail ':replace target))
-  nil)
+  "Rename SOURCE over TARGET through ls-compat."
+  (handler-case (ls-compat.posix:replace-file source target)
+    (file-error (condition)
+      (platform--file-failure ':replace target condition))))
 
 (-> win32--executable-extensions () list)
 (defun win32--executable-extensions ()
@@ -740,84 +713,18 @@ Autolith publishes read-only lives below a private root anyway."
          t)))
 
 (defmethod platform-make-temporary-directory ((platform win32-platform)
-                                              parent prefix)
-  "Create a private directory named PREFIX plus random characters below PARENT."
-  (loop for suffix = (map 'string
-                          (lambda (octet)
-                            (char "abcdefghijklmnopqrstuvwxyz0123456789"
-                                  (mod octet 36)))
-                          (random-data 8))
-        for directory = (uiop:ensure-directory-pathname
-                         (merge-pathnames (concatenate 'string prefix suffix) parent))
-        repeat 100
-        do (cond
-             ((not (zerop (win32--create-directory (win32--namestring directory) nil)))
-              (win32--set-mode directory #o700)
-              (return directory))
-             ((not (= (win32--get-last-error) *win32-error-already-exists*))
-              (win32--fail ':create directory)))
-        finally (error 'platform-error
-                       :message   "Could not find an unused temporary directory name."
-                       :operation ':create
-                       :pathname  parent
-                       :reason    ':exists)))
-
-(-> win32--directory-entry-pathname (win32-platform pathname string) pathname)
-(defun win32--directory-entry-pathname (platform directory name)
-  "Return native child NAME below DIRECTORY without portable pathname reinterpretation."
-  (platform-parse-namestring
-   platform (format nil "~A\\~A" (win32--namestring directory) name)))
-
-(-> win32--make-directory-tree-writable (win32-platform pathname) null)
-(defun win32--make-directory-tree-writable (platform directory)
-  "Recursively clear read-only attributes below DIRECTORY, including dot trees."
-  (multiple-value-bind (names more-p)
-      (platform-list-directory platform directory)
-    (declare (ignore more-p))
-    (dolist (name names)
-      (let* ((entry  (win32--directory-entry-pathname platform directory name))
-             (status (platform-path-status platform entry)))
-        (when status
-          (when (eq (platform-file-status-kind status) ':directory)
-            (win32--make-directory-tree-writable
-             platform (uiop:ensure-directory-pathname entry)))
-          (win32--clear-read-only-attribute entry)))))
-  (win32--clear-read-only-attribute directory)
-  nil)
-
-(-> win32--delete-directory-tree-with-retries
-    (win32-platform pathname list) t)
-(defun win32--delete-directory-tree-with-retries (platform pathname arguments)
-  "Delete PATHNAME, retrying transient Windows sharing and access failures."
-  (loop for attempt from 1 to 100
-        do (handler-case
-               (return (apply #'uiop:delete-directory-tree pathname arguments))
-             (file-error (condition)
-               (when (= attempt 100)
-                 (error condition))
-               (when (uiop:directory-exists-p pathname)
-                 ; mallet:suppress no-ignore-errors -- the next deletion attempt reports a failed repair
-                 (ignore-errors
-                   (win32--make-directory-tree-writable platform pathname)))
-               (sleep 0.1)))))
+                                            parent prefix)
+  "Create a private temporary directory through ls-compat."
+  (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
+    (file-error (condition)
+      (platform--file-failure ':create parent condition))))
 
 (defmethod platform-delete-directory-tree ((platform win32-platform) pathname
-                                           &rest arguments
-                                           &key (validate nil validate-p)
-                                             if-does-not-exist)
-  "Delete PATHNAME after recursively clearing attributes Windows refuses.
-
-Native enumeration includes dot-prefixed Git trees that UIOP wildcard traversal
-can omit. Bounded retries cover handles released just after a child process exits."
-  (declare (ignore if-does-not-exist))
-  (when (and validate-p
-             (pathnamep pathname)
-             (uiop:directory-pathname-p pathname)
-             (not (wild-pathname-p pathname))
-             (uiop:call-function validate pathname)
-             (uiop:directory-exists-p pathname))
-    (win32--make-directory-tree-writable platform pathname))
-  (win32--delete-directory-tree-with-retries platform pathname arguments))
+                                         &rest arguments
+                                         &key validate if-does-not-exist)
+  "Remove PATHNAME's tree through ls-compat with the caller's policy."
+  (declare (ignore platform validate if-does-not-exist))
+  (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
 
 
 ;;;; -- Terminal and Shell --
