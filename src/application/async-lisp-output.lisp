@@ -32,9 +32,9 @@
    (pending-omitted
     :initform 0 :accessor application-async-lisp-output-stream-pending-omitted
     :documentation "Saturating count of evicted pending characters.")
-   (escape-state
-    :initform nil :accessor application-async-lisp-output-stream-escape-state
-    :documentation "Current ANSI sequence state: NIL, :ESCAPE, :CSI, :OSC, or :OSC-ESCAPE.")
+   (ansi-parser
+    :initform (colorist:make-ansi-parser) :reader application-async-lisp-output-stream-ansi-parser
+    :documentation "Incremental ANSI parser used while the capture lock is held.")
    (last-display-time
     :initform 0.0d0 :accessor application-async-lisp-output-stream-last-display-time
     :documentation "Internal time in seconds of the last display delivery."))
@@ -77,32 +77,10 @@
     (application-async-lisp-output-stream character) null)
 (defun application-async-lisp-output-stream--accept (stream character)
   "Consume CHARACTER without retaining terminal escape sequences; caller holds the lock."
-  (case (application-async-lisp-output-stream-escape-state stream)
-    (:escape
-     (setf (application-async-lisp-output-stream-escape-state stream)
-           (case character (#\[
-                            ':csi)
-                           (#\]
-                            ':osc))))
-    (:csi
-     (when (<= 64 (char-code character) 126)
-       (setf (application-async-lisp-output-stream-escape-state stream) nil)))
-    (:osc
-     (cond
-       ((= (char-code character) 7)
-        (setf (application-async-lisp-output-stream-escape-state stream) nil))
-       ((char= character #\Escape)
-        (setf (application-async-lisp-output-stream-escape-state stream) ':osc-escape))))
-    (:osc-escape
-     (setf (application-async-lisp-output-stream-escape-state stream)
-           (unless (char= character #\\) ':osc)))
-    (otherwise
-     (cond
-       ((char= character #\Escape)
-        (setf (application-async-lisp-output-stream-escape-state stream) ':escape))
-       ((application-async-lisp-output-stream--safe-character-p character)
-        (bounded-output-stream--capture stream character)
-        (application-async-lisp-output-stream--pending stream character)))))
+  (when (and (colorist:ansi-parser-accept-p (application-async-lisp-output-stream-ansi-parser stream) character)
+             (application-async-lisp-output-stream--safe-character-p character))
+    (bounded-output-stream--capture stream character)
+    (application-async-lisp-output-stream--pending stream character))
   nil)
 
 (-> application-async-lisp-output-stream--pending-text
