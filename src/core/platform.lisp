@@ -145,19 +145,11 @@ Signal PLATFORM-ERROR with operation :DETACH when the process cannot detach."))
 (defgeneric platform-launch-detached-process
     (platform arguments &key directory output ticket)
   (:documentation
-   "Launch ARGUMENTS with a gated, owned process tree, writing OUTPUT.
-
-Write the launcher PID in handoff TICKET's launcher-pid sibling before releasing
-the startup gate. POSIX uses image-daemon's gated supervisor; Windows uses a
-suspended initial thread and a native Job Object. Return an owned process object."))
+   "Launch ARGUMENTS as an owned process tree and write its output to OUTPUT.
+Publish its launcher PID for handoff TICKET before letting the child run."))
 
 (defgeneric platform-release-process (platform process)
   (:documentation "Release caller resources without terminating the process."))
-
-(defmethod platform-release-process ((platform platform) process)
-  "Leave UIOP's process lifetime management to its runtime."
-  (declare (ignore platform process))
-  nil)
 
 (defgeneric platform-wait-process (platform process)
   (:documentation "Wait for PROCESS and release its operating-system resources."))
@@ -171,25 +163,49 @@ suspended initial thread and a native Job Object. Return an owned process object
 (defgeneric platform-terminate-process-object (platform process &key force)
   (:documentation "Terminate PROCESS."))
 
-(defmethod platform-process-object-pid ((platform platform) process)
-  "Return a UIOP process object's operating-system process ID."
+(-> platform--signal-handoff-error (image-daemon:handoff-process-error) null)
+(defun platform--signal-handoff-error (condition)
+  "Translate an image-daemon process failure at the platform boundary."
+  (error 'platform-error
+         :operation (image-daemon:daemon-error-operation condition)
+         :code      (image-daemon:handoff-process-error-code condition)
+         :message   (image-daemon:daemon-error-message condition)))
+
+(defmethod platform-launch-detached-process
+    ((platform platform) arguments &key directory output ticket)
+  "Start a detached handoff process through image-daemon."
   (declare (ignore platform))
-  (uiop:process-info-pid process))
+  (handler-bind ((image-daemon:handoff-process-error #'platform--signal-handoff-error))
+    (image-daemon:handoff-launch-supervised arguments ticket :directory directory :output output)))
+
+(defmethod platform-release-process ((platform platform) process)
+  "Release ownership of an image-daemon handoff process."
+  (declare (ignore platform))
+  (handler-bind ((image-daemon:handoff-process-error #'platform--signal-handoff-error))
+    (image-daemon:handoff-process-release process)))
+
+(defmethod platform-process-object-pid ((platform platform) process)
+  "Return the handoff launcher's operating-system process ID."
+  (declare (ignore platform))
+  (image-daemon:handoff-process-id process))
 
 (defmethod platform-process-object-alive-p ((platform platform) process)
-  "Return whether a UIOP process object is still running."
+  "Return whether the owned handoff process is still active."
   (declare (ignore platform))
-  (uiop:process-alive-p process))
+  (handler-bind ((image-daemon:handoff-process-error #'platform--signal-handoff-error))
+    (image-daemon:handoff-process-alive-p process)))
 
 (defmethod platform-terminate-process-object ((platform platform) process &key force)
-  "Terminate a UIOP process object."
+  "Terminate the owned handoff process."
   (declare (ignore platform))
-  (uiop:terminate-process process :urgent force))
+  (handler-bind ((image-daemon:handoff-process-error #'platform--signal-handoff-error))
+    (image-daemon:handoff-process-terminate process :force force)))
 
 (defmethod platform-wait-process ((platform platform) process)
-  "Wait for a UIOP process object."
+  "Wait for the owned handoff process to exit."
   (declare (ignore platform))
-  (uiop:wait-process process))
+  (handler-bind ((image-daemon:handoff-process-error #'platform--signal-handoff-error))
+    (image-daemon:handoff-process-wait process)))
 
 
 ;;;; -- Environment --

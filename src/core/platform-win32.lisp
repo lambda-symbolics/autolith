@@ -137,33 +137,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
   (flags win32-dword) (source (* t)) (message-id win32-dword)
   (language win32-dword) (buffer (* t)) (size win32-dword) (arguments (* t)))
 (win32--define win32--close-handle "CloseHandle" win32-bool (handle win32-handle))
-(win32--define win32--create-job-object "CreateJobObjectW" win32-handle
-  (security (* t)) (name win32-wide-string))
-(win32--define win32--assign-process-to-job-object "AssignProcessToJobObject" win32-bool
-  (job win32-handle) (process win32-handle))
-(win32--define win32--terminate-job-object "TerminateJobObject" win32-bool
-  (job win32-handle) (code win32-dword))
-(win32--define win32--resume-thread "ResumeThread" win32-dword
-  (thread win32-handle))
-(win32--define win32--initialize-attributes "InitializeProcThreadAttributeList"
-    win32-bool
-  (attributes (* t)) (count win32-dword) (flags win32-dword)
-  (size (* (sb-alien:unsigned 64))))
-(win32--define win32--update-attribute "UpdateProcThreadAttribute" win32-bool
-  (attributes (* t)) (flags win32-dword) (attribute (sb-alien:unsigned 64))
-  (value (* t)) (size (sb-alien:unsigned 64)) (previous (* t)) (returned (* t)))
-(win32--define win32--delete-attributes "DeleteProcThreadAttributeList" sb-alien:void
-  (attributes (* t)))
-(win32--define win32--query-job "QueryInformationJobObject" win32-bool
-  (job win32-handle) (class sb-alien:int) (information (* t))
-  (size win32-dword) (returned (* t)))
-(win32--define win32--set-job "SetInformationJobObject" win32-bool
-  (job win32-handle) (class sb-alien:int) (information (* t)) (size win32-dword))
-(win32--define win32--create-process "CreateProcessW" win32-bool
-  (application-name win32-wide-string) (command-line win32-wide-string)
-  (process-security (* t)) (thread-security (* t)) (inherit-handles win32-bool)
-  (creation-flags win32-dword) (environment (* t)) (directory win32-wide-string)
-  (startup-info (* t)) (process-information (* t)))
 (win32--define win32--get-current-directory "GetCurrentDirectoryW" win32-dword
   (length win32-dword) (buffer (* t)))
 (win32--define win32--create-mutex "CreateMutexW" win32-handle
@@ -268,12 +241,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
-(win32--define win32--get-current-process "GetCurrentProcess" win32-handle)
-(win32--define win32--duplicate-handle "DuplicateHandle" win32-bool
-  (source-process win32-handle) (source-handle win32-handle)
-  (target-process win32-handle) (target-handle (* win32-handle))
-  (desired-access win32-dword) (inherit-handle win32-bool)
-  (options win32-dword))
 (win32--define win32--get-std-handle "GetStdHandle" win32-handle (which win32-dword))
 (win32--define win32--get-console-mode "GetConsoleMode" win32-bool
   (handle win32-handle) (mode (* win32-dword)))
@@ -333,21 +300,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 
 (defparameter *win32-process-synchronize* #x100000
   "The OpenProcess access right that allows waiting for process termination.")
-
-(defparameter *win32-create-new-process-group* #x200
-  "CREATE_NEW_PROCESS_GROUP for a detached child.")
-
-(defparameter *win32-detached-process* #x8
-  "DETACHED_PROCESS for a child without the parent's console.")
-
-(defparameter *win32-startf-use-std-handles* #x100
-  "STARTF_USESTDHANDLES in STARTUPINFO.dwFlags.")
-
-(defparameter *win32-handle-flag-inherit* 1
-  "HANDLE_FLAG_INHERIT for child standard handles.")
-
-(defparameter *win32-duplicate-same-access* 2
-  "DUPLICATE_SAME_ACCESS for inherited handle copies.")
 
 (defparameter *win32-standard-input-handle* #xFFFFFFF6
   "STD_INPUT_HANDLE as the unsigned argument GetStdHandle takes.")
@@ -477,25 +429,6 @@ Keep the separator on drive roots."
   (declare (ignore platform))
   (not (null (member capability '(:detached-sessions :restartable-image-saver)))))
 
-(defclass win32-detached-process ()
-  ((handle
-    :initarg       :handle
-    :reader        win32-detached-process-handle
-    :documentation "The owned process handle.")
-   (job-handle
-    :initarg       :job-handle
-    :reader        win32-detached-process-job-handle
-    :documentation "The job containing the replacement and its descendants.")
-   (process-id
-    :initarg       :process-id
-    :reader        win32-detached-process-id
-    :documentation "The native process identifier.")
-   (closed-p
-    :initform      nil
-    :accessor      win32-detached-process-closed-p
-    :documentation "Whether the process handle has been closed."))
-  (:documentation "A native Windows process launched without a console attachment."))
-
 (defmethod platform-session-launch-command ((platform win32-platform) source-root)
   "Run the stable Lisp launcher directly, without cmd.exe argument parsing."
   (declare (ignore platform))
@@ -505,244 +438,6 @@ Keep the separator on drive roots."
              :message "The stable Autolith launcher is unavailable."))
     (list (namestring sb-ext:*runtime-pathname*) "--noinform"
           "--no-userinit" "--no-sysinit" "--script" (namestring launcher))))
-
-(-> win32--command-line-argument (string) string)
-(defun win32--command-line-argument (argument)
-  "Quote ARGUMENT for the Windows command-line parser."
-  (if (and (> (length argument) 0)
-           (not (find-if (lambda (character)
-                           (find character '(#\Space #\Tab #\")))
-                         argument)))
-      argument
-      (with-output-to-string (stream)
-        (write-char #\" stream)
-        (let ((slashes 0))
-          (loop for character across argument do
-            (if (char= character #\\)
-                (incf slashes)
-                (progn
-                  (dotimes (ignored (if (char= character #\")
-                                        (1+ (* 2 slashes))
-                                        slashes))
-                    (declare (ignorable ignored))
-                    (write-char #\\ stream))
-                  (setf slashes 0)
-                  (write-char character stream))))
-          (dotimes (ignored (* 2 slashes))
-            (declare (ignorable ignored))
-            (write-char #\\ stream)))
-        (write-char #\" stream))))
-
-(-> win32--command-line (list) string)
-(defun win32--command-line (arguments)
-  "Build a mutable CreateProcessW command line from ARGUMENTS."
-  (format nil "~{~A~^ ~}" (mapcar #'win32--command-line-argument arguments)))
-
-(-> win32--stream-handle (t) integer)
-(defun win32--stream-handle (stream)
-  "Return STREAM's native handle, or zero when it has none."
-  (if (and stream (find-symbol "FD-STREAM-FD" "SB-SYS")
-           (typep stream 'sb-sys:fd-stream))
-      (funcall (symbol-function (find-symbol "FD-STREAM-FD" "SB-SYS")) stream)
-      0))
-
-(-> win32--sap-uint64 (sb-sys:system-area-pointer (integer 0)) (unsigned-byte 64))
-(defun win32--sap-uint64 (sap offset)
-  "Read an unsigned 64-bit value from SAP at byte OFFSET."
-  (logior (sb-sys:sap-ref-32 sap offset)
-          (ash (sb-sys:sap-ref-32 sap (+ offset 4)) 32)))
-
-(-> win32--duplicate-inheritable-handle (integer) integer)
-(defun win32--duplicate-inheritable-handle (handle)
-  "Return an inheritable duplicate of HANDLE."
-  (sb-alien:with-alien ((copy win32-handle))
-    (unless
-        (plusp
-         (win32--duplicate-handle
-          (win32--get-current-process) handle
-          (win32--get-current-process) (sb-alien:addr copy)
-          0 1 *win32-duplicate-same-access*))
-      (win32--fail ':launch nil))
-    copy))
-
-(-> win32--null-handle () integer)
-(defun win32--null-handle ()
-  "Open NUL for use as valid child standard handles."
-  (let ((handle
-          (win32--create-file "NUL"
-                              (logior *win32-generic-read* *win32-generic-write*)
-                              *win32-share-all* nil *win32-open-existing*
-                              *win32-file-attribute-normal* 0)))
-    (when (= handle *win32-invalid-handle*)
-      (win32--fail ':launch nil))
-    handle))
-
-(-> win32--call-with-inherited-handles (list function) t)
-(defun win32--call-with-inherited-handles (handles function)
-  "Call FUNCTION with a native attribute list inheriting only HANDLES."
-  (sb-alien:with-alien ((size (sb-alien:unsigned 64) 0)
-                        (list (sb-alien:array win32-handle 3)))
-    (win32--initialize-attributes nil 1 0 (sb-alien:addr size))
-    (let ((attributes    (sb-alien:make-alien (sb-alien:unsigned 8) size))
-          (initialized-p nil))
-      (unwind-protect
-           (progn
-             (unless (plusp (win32--initialize-attributes attributes 1 0
-                                                         (sb-alien:addr size)))
-               (win32--fail ':launch nil))
-             (setf initialized-p t)
-             (loop for handle in handles for index from 0
-                   do (setf (sb-alien:deref list index) handle))
-             ;; PROC_THREAD_ATTRIBUTE_HANDLE_LIST, exactly three standard handles.
-             (unless (plusp (win32--update-attribute
-                             attributes 0 #x20002 (sb-alien:alien-sap list)
-                             24 nil nil))
-               (win32--fail ':launch nil))
-             (funcall function (sb-alien:alien-sap attributes)))
-        (when initialized-p (win32--delete-attributes attributes))
-        (sb-alien:free-alien attributes)))))
-
-(-> win32--job-kill-on-close (integer t) null)
-(defun win32--job-kill-on-close (job enabled-p)
-  "Enable or disable termination of JOB when its last handle is closed."
-  (sb-alien:with-alien ((limits (sb-alien:array (sb-alien:unsigned 8) 144)))
-    (let ((sap (sb-alien:alien-sap limits)))
-      (dotimes (index 144) (setf (sb-sys:sap-ref-8 sap index) 0))
-      (setf (sb-sys:sap-ref-32 sap 16) (if enabled-p #x2000 0))
-      (unless (plusp (win32--set-job job 9 sap 144))
-        (win32--fail ':launch nil)))))
-
-(defmethod platform-launch-detached-process
-    ((platform win32-platform) arguments
-     &key directory output ticket)
-  "Create a suspended process and assign it to a job before running user code.
-Terminate the job on abandonment. After a successful handoff, release
-ownership without terminating the detached session."
-  (declare (ignore platform))
-  (let ((launcher-pid-pathname
-          (and ticket
-               (image-daemon:handoff-ticket-sibling ticket ':launcher-pid)))
-        (handles        nil)
-        (process-handle 0)
-        (thread-handle  0)
-        (job-handle     0)
-        (completed-p    nil))
-    (unwind-protect
-         (let* ((null-source   (win32--null-handle))
-                (source-output (win32--stream-handle output)))
-           (push null-source handles)
-           (let* ((input (win32--duplicate-inheritable-handle null-source))
-                  (out   (progn
-                           (push input handles)
-                           (win32--duplicate-inheritable-handle
-                            (if (plusp source-output) source-output null-source))))
-                  (err   (progn
-                           (push out handles)
-                           (win32--duplicate-inheritable-handle
-                            (if (plusp source-output) source-output null-source)))))
-             (push err handles)
-             (setf job-handle (win32--create-job-object nil nil))
-             (when (zerop job-handle) (win32--fail ':launch nil))
-             (win32--job-kill-on-close job-handle t)
-             (win32--call-with-inherited-handles
-              (list input out err)
-              (lambda (attributes)
-                (sb-alien:with-alien
-                    ((startup (sb-alien:array (sb-alien:unsigned 8) 112))
-                     (information (sb-alien:array (sb-alien:unsigned 8) 24)))
-                  (let ((start (sb-alien:alien-sap startup))
-                        (info  (sb-alien:alien-sap information)))
-                    (dotimes (index 112) (setf (sb-sys:sap-ref-8 start index) 0))
-                    (dotimes (index 24) (setf (sb-sys:sap-ref-8 info index) 0))
-                    (setf (sb-sys:sap-ref-32 start 0) 112
-                          (sb-sys:sap-ref-32 start 60) *win32-startf-use-std-handles*
-                          (sb-sys:sap-ref-64 start 80) input
-                          (sb-sys:sap-ref-64 start 88) out
-                          (sb-sys:sap-ref-64 start 96) err
-                          (sb-sys:sap-ref-sap start 104) attributes)
-                    ;; CREATE_SUSPENDED and EXTENDED_STARTUPINFO_PRESENT.
-                    (unless (plusp (win32--create-process
-                                    (first arguments) (win32--command-line arguments)
-                                    nil nil 1
-                                    (logior #x4 #x80000 *win32-detached-process*
-                                            *win32-create-new-process-group*)
-                                    nil (win32--namestring directory) start info))
-                      (win32--fail ':launch nil))
-                    (setf process-handle (win32--sap-uint64 info 0)
-                          thread-handle (win32--sap-uint64 info 8))
-                    (unless (plusp (win32--assign-process-to-job-object
-                                    job-handle process-handle))
-                      (win32--fail ':launch nil))
-                    (let* ((pid     (sb-sys:sap-ref-32 info 16))
-                           (process (make-instance 'win32-detached-process
-                                                   :handle     process-handle
-                                                   :job-handle job-handle
-                                                   :process-id pid)))
-                      (when launcher-pid-pathname
-                        (with-open-file (stream launcher-pid-pathname
-                                                :direction ':output
-                                                :if-exists ':supersede)
-                          (format stream "~D~%" pid))
-                        (platform-make-private *platform* launcher-pid-pathname))
-                      (when (= (win32--resume-thread thread-handle) #xFFFFFFFF)
-                        (win32--fail ':launch nil))
-                      (setf completed-p t)
-                      process)))))))
-      (unless completed-p
-        (when (plusp job-handle) (win32--terminate-job-object job-handle 1))
-        (when (plusp process-handle)
-          (win32--terminate-process process-handle 1)
-          (win32--wait-for-single-object process-handle #xFFFFFFFF)
-          (win32--close-handle process-handle))
-        (when (plusp job-handle) (win32--close-handle job-handle)))
-      (when (plusp thread-handle) (win32--close-handle thread-handle))
-      (dolist (handle handles) (win32--close-handle handle)))))
-
-(defmethod platform-process-object-pid ((platform win32-platform)
-                                        (process win32-detached-process))
-  "Return the detached root's native process identifier."
-  (declare (ignore platform))
-  (win32-detached-process-id process))
-
-(defmethod platform-process-object-alive-p ((platform win32-platform)
-                                            (process win32-detached-process))
-  "Return true while any process in the owned job is still active."
-  (declare (ignore platform))
-  (and (not (win32-detached-process-closed-p process))
-       (sb-alien:with-alien ((accounting (sb-alien:array (sb-alien:unsigned 8) 48)))
-         (unless (plusp (win32--query-job
-                         (win32-detached-process-job-handle process) 1
-                         (sb-alien:alien-sap accounting) 48 nil))
-           (win32--fail ':process-state nil))
-         (plusp (sb-sys:sap-ref-32 (sb-alien:alien-sap accounting) 40)))))
-
-(defmethod platform-terminate-process-object
-    ((platform win32-platform) (process win32-detached-process) &key force)
-  "Terminate the entire owned tree, including children of an exited root."
-  (declare (ignore platform force))
-  (unless (win32-detached-process-closed-p process)
-    (unless (plusp (win32--terminate-job-object
-                    (win32-detached-process-job-handle process) 1))
-      (win32--fail ':terminate nil)))
-  nil)
-
-(defmethod platform-release-process ((platform win32-platform)
-                                     (process win32-detached-process))
-  "Release this caller's handles without terminating a successful handoff."
-  (declare (ignore platform))
-  (unless (win32-detached-process-closed-p process)
-    (win32--job-kill-on-close (win32-detached-process-job-handle process) nil)
-    (win32--close-handle (win32-detached-process-handle process))
-    (win32--close-handle (win32-detached-process-job-handle process))
-    (setf (win32-detached-process-closed-p process) t))
-  nil)
-
-(defmethod platform-wait-process ((platform win32-platform)
-                                  (process win32-detached-process))
-  "Wait for the entire owned tree, then release both native handles."
-  (loop while (platform-process-object-alive-p platform process) do (sleep 0.01))
-  (platform-release-process platform process)
-  t)
 
 (defmethod platform-process-alive-p ((platform win32-platform) process-id)
   "Read through ls-compat whether PROCESS-ID is still active."
