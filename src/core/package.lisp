@@ -1216,8 +1216,11 @@
                 #:json-value
                 #:make-json-limits)
   (:import-from #:ls-compat
+                #:internal-real-time-seconds
                 #:utf8-conversion-failed
                 #:utf8-octets-to-string
+                #:utf8-string-length
+                #:utf8-string-prefix-end
                 #:utf8-string-to-octets)
   (:import-from #:ls-compat.files
                 #:file-changed

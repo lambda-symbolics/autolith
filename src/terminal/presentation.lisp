@@ -536,7 +536,7 @@ UI, and every change reaches the clients as a (:ui ...) event."))
                                      :maximum-rows   1
                                      :write-function (constantly nil)
                                      :flush-function (constantly nil))
-               :clock-function      #'terminal-ui--monotonic-seconds
+               :clock-function      #'internal-real-time-seconds
                :prompt              prompt
                :prompt-padding      prompt-padding
                :placeholder         placeholder

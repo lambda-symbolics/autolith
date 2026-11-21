@@ -219,7 +219,7 @@ consumer in errors."))
   "Return RESOURCE's ordinary observation text within the consumer's UTF-8 limit."
   (let ((content (resource-observation-content (resource-observe resource context))))
     (when (and (stringp content)
-               (> (length (utf8-string-to-octets content)) maximum-bytes))
+               (> (utf8-string-length content) maximum-bytes))
       (error 'tool-error
              :message   (format nil "Resource ~A exceeds the ~:D-byte whole-text limit for ~A."
                                 (resource-uri resource) maximum-bytes tool-name)

@@ -176,7 +176,7 @@
          (*print-case* ':upcase) (*print-base* 10) (*print-radix* nil)
          (*print-array* t) (*package* (find-package :cl))
          (text (concatenate 'string (write-to-string record) (string #\Newline))))
-    (when (> (length (utf8-string-to-octets text)) *run-job-event-maximum-bytes*)
+    (when (> (utf8-string-length text) *run-job-event-maximum-bytes*)
       (run-job-event--error))
     text))
 
@@ -184,7 +184,7 @@
 (defun run-job-event-read-string (source)
   "Read exactly one byte-bounded event through sexp-config with read-eval disabled."
   (when (or (> (length source) *run-job-event-maximum-bytes*)
-            (> (length (utf8-string-to-octets source)) *run-job-event-maximum-bytes*))
+            (> (utf8-string-length source) *run-job-event-maximum-bytes*))
     (run-job-event--error))
   (let ((*read-eval* nil))
     (run-job-event-validate (read-source source (run-job-event--grammar)))))

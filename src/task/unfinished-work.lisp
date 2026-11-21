@@ -69,8 +69,7 @@
               (length (remove-duplicates (getf value :jobs)
                                          :key  (lambda (row) (getf row :execution-id))
                                          :test #'equal)))
-           (<= (length (utf8-string-to-octets
-                        (json-encode (task-unfinished-work--encode value))))
+           (<= (utf8-string-length (json-encode (task-unfinished-work--encode value)))
                *task-unfinished-work-maximum-octets*)
            t)
     (type-error () nil)))

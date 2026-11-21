@@ -104,7 +104,7 @@ and signal a TOOL-ERROR naming TOOL-NAME rather than return partial history."
         (bytes        0)
         (start        1))
     (flet ((write-part (text stream)
-             (incf bytes (length (utf8-string-to-octets text)))
+             (incf bytes (utf8-string-length text))
              (when (> bytes maximum-bytes)
                (error 'tool-error
                       :message   (format nil "Conversation ~A exceeds the ~:D-byte whole-history limit for ~A. Read it in windows with resource.read instead."

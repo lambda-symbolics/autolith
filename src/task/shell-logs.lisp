@@ -222,7 +222,7 @@ Disable measurement until resource resolution has checked ancestor ownership."
   "Atomically publish ARTIFACT metadata and restrict its permissions."
   (let* ((path     (shell-log--manifest-path (shell-log-capture-directory artifact)))
          (metadata (shell-log-artifact-metadata artifact)))
-    (when (> (length (utf8-string-to-octets (task--write-readable-sexp metadata)))
+    (when (> (utf8-string-length (task--write-readable-sexp metadata))
              *shell-log-manifest-byte-limit*)
       (shell-log--fail "Shell capture ownership metadata exceeds its finite allowance."))
     (shell-log--safe-path (shell-log-artifact-configuration artifact) path)
@@ -973,7 +973,7 @@ Release only when native writers and all live publication boundaries finish."
                  (list :observed-byte-count-known-p
                        (getf capture :observed-byte-count-known-p t)))))
     (unless (and (<= (length (getf public :captures)) 2)
-                 (<= (length (utf8-string-to-octets (task--write-readable-sexp public))) 2048))
+                 (<= (utf8-string-length (task--write-readable-sexp public)) 2048))
       (shell-log--fail "Shell log public metadata exceeds its bounded allowance."))
     public))
 

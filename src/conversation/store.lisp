@@ -3062,7 +3062,7 @@ output for one identifier, so it fails instead of poisoning replay."
         (let* ((text   (with-standard-io-syntax
                          (let ((*print-circle* nil) (*print-readably* t))
                            (write-to-string details))))
-               (octets (length (utf8-string-to-octets text))))
+               (octets (utf8-string-length text)))
           (if (<= octets *conversation-tool-details-maximum-octets*)
               details
               (list :omitted-p t :reason ':metadata-size-limit :octets octets))))

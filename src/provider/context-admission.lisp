@@ -320,7 +320,7 @@ that prefix. Count every new item and take no credit for removed reasoning."
                              (equal (provider-cache-prefix--entry old-prompt)
                                     (rest (assoc name (getf sample :wire-fields) :test #'equal))))
                         (provider-context--inserted-bytes old-prompt value)
-                        (length (utf8-string-to-octets (json-encode value)))))))))
+                        (utf8-string-length (json-encode value))))))))
 
 (-> provider-context--switched-input (model-provider hash-table &key (:context list) (:sample list))
     (values (integer 0) boolean boolean))

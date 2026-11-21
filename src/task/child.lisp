@@ -242,11 +242,6 @@ boundary cannot fit within that budget."
             context
             (namestring (config :working-directory child-configuration)))))
 
-(-> task--utf8-length (string) (integer 0))
-(defun task--utf8-length (text)
-  "Return the UTF-8 byte length of TEXT on the supported SBCL runtime."
-  (length (utf8-string-to-octets text)))
-
 (-> task--bounded-output ((option string)) string)
 (defun task--bounded-output (text)
   "Bound TEXT by configured UTF-8 bytes and lines, marking truncation."
@@ -263,18 +258,11 @@ boundary cannot fit within that budget."
          (line-text
           (format nil "~{~A~^~%~}"
                   (subseq lines 0 (min maximum-lines (length lines)))))
-         (byte-bounded-p (> (task--utf8-length line-text) maximum-bytes))
-         (bounded
-          (if byte-bounded-p
-              (let ((low 0) (high (length line-text)))
-                (loop while (< low high)
-                      for middle = (ceiling (+ low high) 2)
-                      if (<= (task--utf8-length (subseq line-text 0 middle))
-                             maximum-bytes)
-                      do (setf low middle) else
-                      do (setf high (1- middle)))
-                (subseq line-text 0 low))
-              line-text)))
+         (prefix-end     (utf8-string-prefix-end line-text maximum-bytes))
+         (byte-bounded-p (< prefix-end (length line-text)))
+         (bounded        (if byte-bounded-p
+                             (subseq line-text 0 prefix-end)
+                             line-text)))
     (if (or line-bounded-p byte-bounded-p)
         (format nil "~A~%... [task output truncated]" bounded)
         bounded)))

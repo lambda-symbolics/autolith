@@ -26,14 +26,8 @@
           "Ctrl-C pressed twice within ~A seconds; forcing Autolith to exit."
           (application-input-controller--interrupt-window-text)))
 
-(-> application-input-controller--monotonic-seconds () real)
-(defun application-input-controller--monotonic-seconds ()
-  "Return monotonically increasing process time in seconds."
-  (/ (get-internal-real-time)
-     (coerce internal-time-units-per-second 'double-float)))
-
 (defparameter *application-interrupt-clock-function*
-  #'application-input-controller--monotonic-seconds
+  #'internal-real-time-seconds
   "The monotonic clock captured by newly created input controllers.")
 
 (defparameter *application-forced-exit-function*
