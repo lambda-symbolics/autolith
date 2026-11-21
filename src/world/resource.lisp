@@ -59,7 +59,7 @@
 (defmethod resource-resolver-read-documentation ((resolver channel-resolver))
   "Document channel: reads."
   (declare (ignore resolver))
-  "channel:current describes the current channel (residents, subscribers, workspace, your children and whether each is busy) and then reads its history with the conversation: arguments. channel:id/<id> names another channel; channel:list shows the most recently changed channels, filtered by query and bounded by max-results.")
+  "channel:current describes the current channel (residents, subscribers, workspace, your children and whether each is busy) and reads its history. For a history window, use start-sequence and record-count; for search, use query and max-results. channel:id/<id> names another channel; channel:list shows the most recently changed channels, filtered by query and bounded by max-results.")
 
 (-> channel-resource--uri (channel-resolver string) string)
 (defun channel-resource--uri (resolver identifier)
