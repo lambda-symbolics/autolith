@@ -290,10 +290,10 @@
   permissions)
 
 (defmethod platform-delete-file ((platform posix-platform) pathname)
-  "Remove one exact native pathname with typed host failure reporting."
-  (posix--call ':delete pathname
-               (lambda () (sb-posix:unlink (posix--namestring pathname))))
-  nil)
+  "Remove the exact native pathname through ls-compat."
+  (handler-case (ls-compat.posix:remove-file pathname)
+    (file-error (condition)
+      (platform--file-failure ':delete pathname condition))))
 
 (defmethod platform-shell-session-delete-directory ((platform posix-platform) pathname)
   "Unlink substituted roots; recursively remove only an observed real directory."
@@ -323,12 +323,10 @@
   nil)
 
 (defmethod platform-replace-file ((platform posix-platform) source target)
-  "Rename SOURCE over TARGET with RENAME."
-  (posix--call ':replace target
-               (lambda ()
-                 (sb-posix:rename (posix--namestring source)
-                                  (posix--namestring target))))
-  nil)
+  "Rename SOURCE over TARGET through ls-compat."
+  (handler-case (ls-compat.posix:replace-file source target)
+    (file-error (condition)
+      (platform--file-failure ':replace target condition))))
 
 (defmethod platform-executable-file-p ((platform posix-platform) pathname)
   "Probe PATHNAME with ACCESS for execute permission."
@@ -338,22 +336,18 @@
       nil)))
 
 (defmethod platform-make-temporary-directory ((platform posix-platform)
-                                              parent prefix)
-  "Create the directory with MKDTEMP."
-  (uiop:ensure-directory-pathname
-   (posix--call ':create parent
-                (lambda ()
-                  (sb-posix:mkdtemp
-                   (posix--namestring
-                    (merge-pathnames (concatenate 'string prefix "XXXXXX")
-                                     parent)))))))
+                                            parent prefix)
+  "Create a private temporary directory through ls-compat."
+  (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
+    (file-error (condition)
+      (platform--file-failure ':create parent condition))))
 
 (defmethod platform-delete-directory-tree ((platform posix-platform) pathname
-                                           &rest arguments
-                                           &key validate if-does-not-exist)
-  "Delete PATHNAME's tree with UIOP; deletion here consults only the directory."
+                                         &rest arguments
+                                         &key validate if-does-not-exist)
+  "Remove PATHNAME's tree through ls-compat with the caller's policy."
   (declare (ignore platform validate if-does-not-exist))
-  (apply #'uiop:delete-directory-tree pathname arguments))
+  (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
 
 
 ;;;; -- Terminal and Shell --
