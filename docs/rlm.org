@@ -59,7 +59,7 @@ resource protocol under the caller's authority (so restricted frames
 stay confined to their readable scheme set), or a stored context
 object reference as =context:<sha256>=. A resource view reads the
 resource whole, up to =*rlm-view-maximum-bytes*= (4 MiB), so a
-=conversation:= view carries the complete durable history rather than
+=channel:current= view carries the complete durable history rather than
 the paged window =resource.read= returns. Each view materializes into a
 labeled block with a content digest, so a trace records exactly what
 the frame saw. Views are read-only and fixed for the frame's

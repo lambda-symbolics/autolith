@@ -77,7 +77,7 @@
 (defun refinement-tests--proposal (configuration context &key (target :live-change))
   "Propose an adaptation with concrete trajectory evidence and task criterion."
   (refinement-propose configuration :owner (conversation-identifier (tool-context-conversation context))
-                      :target target :evidence '("conversation:current sequences 12-24" "inference:fixture")
+                      :target target :evidence '("channel:current sequences 12-24" "inference:fixture")
                       :reason              "Simpler contextual guidance was tried first; repeated extra tool rounds persist."
                       :benefit             "Complete equivalent work in fewer tool operations."
                       :criterion           "Complete the fixture task in at most 10 operations, baseline 14."))

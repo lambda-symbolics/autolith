@@ -416,6 +416,7 @@ The second value lists the claims the rendering shows as facts."
           (:recipes
            (memory-knowledge--render-recipes))
           (:changes
+           ;; The viewer key is persisted; it is not a resource address.
            (memory-knowledge--render-changes
             configuration
             (format nil "conversation:~A"
