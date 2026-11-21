@@ -1055,7 +1055,6 @@
   test-conversation-process-lease
   test-conversation-lease-probe-open
   test-conversation-lease-owner-diagnostic
-  test-conversation-lease-owner-startup-report
   test-conversation-interrupted-tool-call
   test-conversation-late-duplicate-tool-output
   test-conversation-ephemeral-then-durable-call
