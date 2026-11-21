@@ -90,8 +90,8 @@
 (defmethod resource-observation-state-weight (alias (state text-resource-observation-state))
   "Count retained snapshot bytes."
   (declare (ignore alias))
-  (length (utf8-string-to-octets
-           (resource-observation-content (resource-observation-state-observation state)))))
+  (utf8-string-length
+   (resource-observation-content (resource-observation-state-observation state))))
 
 (defmethod resource-observation-state-maximum ((state text-resource-observation-state))
   "Bound retained text observations."

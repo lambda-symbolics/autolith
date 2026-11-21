@@ -61,7 +61,7 @@
 (defun mission-schedule--write (path record)
   "Atomically publish RECORD before changing visible scheduler state."
   (let ((text (format nil "~A~%" (task--write-readable-sexp record))))
-    (when (> (length (utf8-string-to-octets text)) *mission-schedule-snapshot-byte-limit*)
+    (when (> (utf8-string-length text) *mission-schedule-snapshot-byte-limit*)
       (mission--reject ':schedule-storage "The schedule snapshot exceeds its restoration byte bound."))
     (ensure-directories-exist path)
     (snapshot-write-text path text)))

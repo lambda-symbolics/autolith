@@ -26,7 +26,7 @@
 (defun task-continuity--write (path record &key require-absent)
   "Publish portable metadata only when it fits the bounded continuity reader."
   (let ((text (format nil "~A~%" (task--write-readable-sexp record))))
-    (when (> (length (utf8-string-to-octets text)) *task-continuity-maximum-octets*)
+    (when (> (utf8-string-length text) *task-continuity-maximum-octets*)
       (task-continuity--fail "Continuity metadata exceeds its readable UTF-8 size limit."
                              :code ':storage-limit))
     (snapshot-write-text path text :require-absent require-absent)))

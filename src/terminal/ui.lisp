@@ -56,12 +56,6 @@
   #("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
   "The shared running-child spinner cycle.")
 
-(-> terminal-ui--monotonic-seconds () real)
-(defun terminal-ui--monotonic-seconds ()
-  "Return monotonic process time in seconds for live activity accounting."
-  (/ (get-internal-real-time)
-     (coerce internal-time-units-per-second 'double-float)))
-
 (-> terminal-ui--raw-spans-text (list) string)
 (defun terminal-ui--raw-spans-text (spans)
   "Return the unsanitized text represented by SPANS."
@@ -152,7 +146,7 @@ offered only while the typed prefix no longer matches its primary."
     (&key terminal editor (prompt "> ") (placeholder "") completions
        completion-function completion-root path-search-function mention-function
        fullscreen-p message-header-prefixes (prompt-padding 1)
-       (clock-function #'terminal-ui--monotonic-seconds))
+       (clock-function #'internal-real-time-seconds))
   "Create a stream UI or a fullscreen viewport for TERMINAL.
 
 MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport

@@ -391,7 +391,7 @@ Apply the same bound during publication and reading so terminal success always
 identifies a readable secured artifact."
   (let ((text (task--write-readable-sexp (cl-worktree:artifact->plist artifact)
                                         :pretty-p t)))
-    (when (> (task--utf8-length text) *task-worktree-artifact-limit*)
+    (when (> (utf8-string-length text) *task-worktree-artifact-limit*)
       (task-worktree--error "The complete engineering artifact exceeds its storage limit."))
     (snapshot-write-text path text :require-absent require-absent)))
 

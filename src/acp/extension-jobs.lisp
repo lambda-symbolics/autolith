@@ -18,7 +18,7 @@
 
              (size (value)
                "Measure the UTF-8 wire encoding, including JSON escaping."
-               (length (utf8-string-to-octets (agentcomms:json-encode value)))))
+               (utf8-string-length (agentcomms:json-encode value))))
       (multiple-value-bind (total start next)
           (application-client--transcript-page
            (application-client--job-transcript-path application job)

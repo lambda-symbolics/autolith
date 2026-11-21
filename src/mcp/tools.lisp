@@ -950,8 +950,7 @@ retained value is credential-redacted or projected."
                (mcp-tools--provider-schema runtime (mcp-tool-input-schema tool)))
              (prepared-tool (mcp-tools--sanitize-tool tool :input-schema provider-schema))
              (retained-bytes
-               (length (utf8-string-to-octets
-                        (json-encode (mcp-tool-input-schema prepared-tool))))))
+               (utf8-string-length (json-encode (mcp-tool-input-schema prepared-tool)))))
         (when (> retained-bytes *mcp-maximum-tool-schema-bytes*)
           (mcp-tools--server-error
            (mcp-server-runtime-configuration runtime) nil

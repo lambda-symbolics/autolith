@@ -140,7 +140,7 @@ references it may cite. UNSUMMARIZED passes to MAKE-CONTINUATION."
                   (cl-llm-provider-api:output-value-error ()
                     nil))))
     (cond
-      ((> (length (utf8-string-to-octets arguments)) *continuation-submission-maximum-octets*)
+      ((> (utf8-string-length arguments) *continuation-submission-maximum-octets*)
        (values nil (format nil "the arguments are larger than ~:D bytes"
                            *continuation-submission-maximum-octets*)))
       ((null object)
@@ -205,8 +205,8 @@ references it may cite. UNSUMMARIZED passes to MAKE-CONTINUATION."
                    *continuation-maximum-references*))
           (unknown
            (format nil "the reference catalog does not list ~{~A~^, ~}" unknown))
-          ((> (length (utf8-string-to-octets
-                       (with-standard-io-syntax (prin1-to-string continuation))))
+          ((> (utf8-string-length
+               (with-standard-io-syntax (prin1-to-string continuation)))
               *continuation-maximum-octets*)
            (format nil "the checkpoint is larger than ~:D bytes"
                    *continuation-maximum-octets*)))))))

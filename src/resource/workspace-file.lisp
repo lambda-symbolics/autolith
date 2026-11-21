@@ -68,8 +68,7 @@
     (integer 0))
 (defun workspace-file--observation-retained-bytes (observation)
   "Return the number of UTF-8 bytes retained by OBSERVATION's exact snapshot."
-  (length (utf8-string-to-octets
-           (resource-observation-content observation))))
+  (utf8-string-length (resource-observation-content observation)))
 
 (defclass workspace-file-observation-state (text-resource-observation-state)
   ()

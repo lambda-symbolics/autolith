@@ -88,7 +88,7 @@
 (defun task-completion--write (path snapshot)
   "Atomically publish a bounded, portable subscription SNAPSHOT."
   (let ((text (format nil "~A~%" (task--write-readable-sexp snapshot))))
-    (when (> (length (utf8-string-to-octets text)) *task-completion-maximum-octets*)
+    (when (> (utf8-string-length text) *task-completion-maximum-octets*)
       (error 'task-completion-error :tool-name "job.get"
              :message                          "The completion snapshot exceeds its durable storage bound."))
     (ensure-directories-exist path)
