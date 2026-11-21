@@ -499,15 +499,6 @@
              :message "The stable Autolith launcher is unavailable."))
     (list (namestring pathname))))
 
-(defmethod platform-launch-detached-process
-    ((platform posix-platform) arguments
-     &key directory output ticket)
-  "Launch ARGUMENTS behind image-daemon's POSIX process-group supervisor."
-  (declare (ignore platform))
-  (image-daemon:handoff-launch-supervised arguments ticket
-                                          :directory directory
-                                          :output    output))
-
 
 ;;;; -- Lock Owner Snapshot --
 
