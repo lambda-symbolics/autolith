@@ -2804,84 +2804,32 @@ state before rethrowing its failure; a retry uses the same durable receipt."
                    (equal call-id (json-get candidate "call_id")))
            return candidate)))
 
-(-> conversation--unused-call-identifier
-    (conversation string &key (:provider-identifiers hash-table) (:reserved-identifiers hash-table))
-    string)
-(defun conversation--unused-call-identifier
-    (conversation call-id &key provider-identifiers reserved-identifiers)
-  "Return an identifier for CALL-ID that no table or conversation call names."
-  (labels ((available-p (candidate)
-             (and (not (gethash candidate provider-identifiers))
-                  (not (gethash candidate reserved-identifiers))
-                  (multiple-value-bind (durable ephemeral)
-                      (conversation--call-entry conversation candidate)
-                    (and (null durable) (null ephemeral))))))
-    (if (available-p call-id)
-        call-id
-        (loop for suffix from 2
-              for candidate = (format nil "~A-~D" call-id suffix)
-              when (available-p candidate)
-                return candidate))))
-
 (-> conversation-reconcile-call-identifiers (conversation list) hash-table)
 (defun conversation-reconcile-call-identifiers (conversation items)
-  "Give each call occurrence in ITEMS an unused identifier before persistence.
+  "Normalize incoming call identifiers under CONVERSATION's append lock.
 
-Reserve every original response identifier before choosing replacements. Return
-an equal hash-table containing the last replacement for each rewritten original
-identifier. A reference to an identifier repeated by multiple response calls is
-ambiguous and is refused before any item is mutated."
+Retain durable conflict and request-local promotion policy in the host. Return
+an equal hash table containing the last replacement for each rewritten identifier."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let ((provider-identifiers (make-hash-table :test #'equal))
-          (reserved-identifiers (make-hash-table :test #'equal))
-          (call-counts          (make-hash-table :test #'equal))
-          (call-objects         (make-hash-table :test #'eq))
-          (mapping              (make-hash-table :test #'equal))
-          (rewrites             nil))
-      (labels ((refuse (message)
-                 (error 'conversation-invariant-error
-                        :message  message
-                        :pathname (conversation-pathname conversation)
-                        :sequence (conversation-next-sequence conversation))))
-        (dolist (item items)
-          (let ((call-id (provider-item-call-identifier item)))
-            (when (non-empty-string-p call-id)
-              (setf (gethash call-id provider-identifiers) t)
-              (when (function-call-item-p item)
-                (when (gethash item call-objects)
-                  (refuse "A provider response repeats one call object; distinct occurrences need distinct objects."))
-                (setf (gethash item call-objects) t)
-                (incf (gethash call-id call-counts 0))))))
-        (dolist (item items)
-          (let ((call-id (provider-item-call-identifier item)))
-            (when (and (non-empty-string-p call-id)
-                       (not (function-call-item-p item))
-                       (> (gethash call-id call-counts 0) 1))
-              (refuse
-               "A provider response references an identifier shared by multiple calls; its output association is ambiguous."))))
-        (dolist (item items)
-          (let ((call-id (provider-item-call-identifier item)))
-            (when (and (non-empty-string-p call-id) (function-call-item-p item))
-              (let ((replacement
-                      (when (or (gethash call-id reserved-identifiers)
-                                (eq (conversation--call-status conversation item) ':conflict))
-                        (conversation--unused-call-identifier
-                         conversation call-id :provider-identifiers provider-identifiers
-                         :reserved-identifiers                      reserved-identifiers))))
-                (setf (gethash (or replacement call-id) reserved-identifiers) t)
-                (when replacement
-                  (setf (gethash call-id mapping) replacement)
-                  (push (cons item replacement) rewrites))))))
-        (dolist (item items)
-          (let* ((call-id     (provider-item-call-identifier item))
-                 (replacement (and (non-empty-string-p call-id)
-                                   (not (function-call-item-p item))
-                                   (gethash call-id mapping))))
-            (when replacement
-              (push (cons item replacement) rewrites))))
-        (dolist (rewrite (nreverse rewrites))
-          (setf (gethash "call_id" (first rewrite)) (rest rewrite))))
-      mapping)))
+    (handler-case
+        (clinker-transcript:normalize-call-identifiers
+         items
+         :occupied-p (lambda (identifier)
+                       (multiple-value-bind (durable ephemeral)
+                           (conversation--call-entry conversation identifier)
+                         (or durable ephemeral)))
+         :conflicting-call-p (lambda (item)
+                               (eq (conversation--call-status conversation item) ':conflict)))
+      (clinker-transcript:reconciliation-error (condition)
+        (error 'conversation-invariant-error
+               :message (case (clinker-transcript:projection-error-reason condition)
+                          (:repeated-call-object
+                           "A provider response repeats one call object; distinct occurrences need distinct objects.")
+                          (:ambiguous-call-reference
+                           "A provider response references an identifier shared by multiple calls; its output association is ambiguous.")
+                          (otherwise (princ-to-string condition)))
+               :pathname (conversation-pathname conversation)
+               :sequence (conversation-next-sequence conversation))))))
 
 (-> conversation--call-status (conversation json-object) symbol)
 (defun conversation--call-status (conversation item)
