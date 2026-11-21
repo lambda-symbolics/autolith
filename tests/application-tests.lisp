@@ -2652,12 +2652,12 @@
                     ("task.sh" "echo \"hello\"" :syntax-string)
                     ("notes.txt" "plain text" :plain)))
       (destructuring-bind (path source role) case
-        (let* ((details (list :uri (format nil "workspace:~A" path)
+        (let* ((details (list :uri   (format nil "workspace:~A" path)
                               :lines (list (list 1 (cl-hashline:line-anchor source) source))))
                (record  (list :tool-result :tool "resource.read" :status ':ok
                               :details (list :resource-read details)))
-               (entry  (conversation-record-entry expanded record))
-               (text   (test-terminal-row-text entry)))
+               (entry   (conversation-record-entry expanded record))
+               (text    (test-terminal-row-text entry)))
           (test-assert (and (search source text)
                             (search (cl-hashline:line-anchor source) text)
                             (find role entry :key #'terminal-span-style))
@@ -3213,7 +3213,7 @@
                    (application-tests--ui-application :columns 100 :compact-view-p nil)
                    (list :tool-result :seq 8 :time 0 :call-id "edit"
                          :tool "resource.edit" :status ':ok
-                         :details (list :resource-edit (list :summary "Applied replace-lines 3-4."
+                         :details (list :resource-edit (list :summary             "Applied replace-lines 3-4."
                                                              :delimiter-warning-p t)))))
            (text  (test-terminal-row-text entry)))
       (test-assert (and (search "Applied replace-lines 3-4" text)
@@ -3293,8 +3293,8 @@
                         application
                         (list :tool-result :tool "resource.read" :status ':error
                               :details (list :resource-read (list :cause "No file exists at workspace:gone.lisp"))
-                              :output (format nil "resource.read failed: ~A~%URI: workspace:gone.lisp~%Revision: R1~%Kind: missing~%Elided: none~%Content:~%"
-                                              cause)))))
+                              :output  (format nil "resource.read failed: ~A~%URI: workspace:gone.lisp~%Revision: R1~%Kind: missing~%Elided: none~%Content:~%"
+                                               cause)))))
            (text     (test-terminal-row-text entry)))
       (test-assert (and (find-if (lambda (span)
                                    (uiop:string-prefix-p "No file exists at workspace:"

@@ -467,7 +467,7 @@
              (handoff-job (result)
                "Return RESULT's visible handed-off execution job."
                (let* ((details    (tool-result-details result))
-                      (record     (and (listp details)
+                      (record     (and (tool-result-handed-off-p result)
                                        (getf (rest details) :job)))
                       (identifier (and record (getf record :id))))
                  (and identifier
@@ -828,7 +828,7 @@
              (execution-job (result tool-name)
                "Return RESULT's visible execution job for TOOL-NAME."
                (let* ((details    (tool-result-details result))
-                      (record     (and (listp details)
+                      (record     (and (tool-result-handed-off-p result)
                                        (getf (rest details) :job)))
                       (identifier (and record (getf record :id))))
                  (and identifier
