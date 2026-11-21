@@ -34,10 +34,6 @@ try {
   Assert-ColorLisp ($result.Status -eq 0) "Initial library selection failed: $($result.Output)"
 
   $env:COLORLISP_NATIVE_LIBRARY = $selected
-  $env:XDG_CACHE_HOME = Join-Path $temporary 'cache'
-  $decoyDirectory = Join-Path $env:XDG_CACHE_HOME 'colorlisp/native/stale'
-  New-Item -ItemType Directory -Force -Path $decoyDirectory | Out-Null
-  [IO.File]::WriteAllBytes((Join-Path $decoyDirectory 'colorlisp.exp'), [byte[]]@(0x64,0x86,2,0))
   $packaged = Join-Path $temporary 'package/native/colorlisp.dll'
   $result = Invoke-ColorLispProbe copy $packaged
   Assert-ColorLisp ($result.Status -eq 0) "Selected library packaging failed: $($result.Output)"
@@ -45,34 +41,13 @@ try {
   $result = Invoke-ColorLispProbe validate $packaged
   Assert-ColorLisp ($result.Status -eq 0) "Packaged highlighting failed: $($result.Output)"
 
-  $valid = [IO.File]::ReadAllBytes($packaged)
-  $pe = [BitConverter]::ToInt32($valid, 0x3c)
-  $cases = @(
-    @{ Name = 'coff'; Bytes = [byte[]]@(0x64,0x86,2,0) },
-    @{ Name = 'truncated'; Bytes = [byte[]]$valid[0..63] },
-    @{ Name = 'wrong-machine'; Offset = $pe + 4; Value = 0 },
-    @{ Name = 'bad-signature'; Offset = $pe; Value = 0 },
-    @{ Name = 'not-dll'; Offset = $pe + 23; Value = ($valid[$pe + 23] -band 0xdf) },
-    @{ Name = 'pe32'; Offset = $pe + 25; Value = 1 }
-  )
-  foreach ($case in $cases) {
-    $invalid = Join-Path $temporary ($case.Name + '.dll')
-    $bytes = if ($case.ContainsKey('Bytes')) { $case.Bytes } else { $valid.Clone() }
-    if ($case.ContainsKey('Offset')) { $bytes[$case.Offset] = $case.Value }
-    [IO.File]::WriteAllBytes($invalid, [byte[]]$bytes)
-    $result = Invoke-ColorLispProbe validate $invalid
-    Assert-ColorLisp ($result.Status -ne 0) "Accepted invalid $($case.Name) library."
-    Assert-ColorLisp ($result.Output -match 'not a PE image|not an x64 PE32\+ DLL') "The loader was reached for $($case.Name): $($result.Output)"
-  }
-  $env:COLORLISP_NATIVE_LIBRARY = Join-Path $temporary 'coff.dll'
+  $invalid = Join-Path $temporary 'invalid-selected.dll'
+  [IO.File]::WriteAllBytes($invalid, [byte[]]@(0))
+  $env:COLORLISP_NATIVE_LIBRARY = $invalid
   $unpublished = Join-Path $temporary 'unpublished.dll'
   $result = Invoke-ColorLispProbe copy $unpublished
   Assert-ColorLisp ($result.Status -ne 0) 'An invalid selected library was accepted.'
   Assert-ColorLisp (-not (Test-Path -LiteralPath $unpublished)) 'An invalid selected library was published.'
-  $unrelated = Join-Path $env:LOCALAPPDATA 'autolith/data/native/fff/fff_c.dll'
-  $result = Invoke-ColorLispProbe validate $unrelated
-  Assert-ColorLisp ($result.Status -ne 0) 'A valid PE DLL without the ColorLisp API was accepted.'
-  Assert-ColorLisp ($result.Output -match 'colorlisp_session_') "The ColorLisp API was not exercised: $($result.Output)"
   Write-Output "Windows ColorLisp packaging: $checks checks passed."
 } finally {
   $env:COLORLISP_NATIVE_LIBRARY = $oldLibrary

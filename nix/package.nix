@@ -324,19 +324,13 @@ let
     pname = "colorlisp-tree-sitter";
     version = qlotVersion "colorlisp";
     src = colorlispSource;
-    nativeBuildInputs = [ pkgs.findutils ];
+    nativeBuildInputs = [ pkgs.sbcl ];
     dontConfigure = true;
     buildPhase = ''
       runHook preBuild
-      cc ${colorlispSharedLibraryFlag} -fPIC -O2 -std=gnu11 -fvisibility=hidden \
-        -I vendor/tree-sitter/include \
-        -I vendor/tree-sitter/src \
-        $(find vendor/grammars -mindepth 1 -maxdepth 1 -type d -printf '-I %p ') \
-        -o libcolorlisp-tree-sitter${sharedLibrary} \
-        native/colorlisp-tree-sitter.c \
-        vendor/tree-sitter/src/lib.c \
-        $(find vendor/grammars -type f -name parser.c -print | sort) \
-        $(find vendor/grammars -type f -name scanner.c -print | sort)
+      sbcl --noinform --disable-debugger --script script/build-native.lisp \
+        shared "$PWD/libcolorlisp-tree-sitter${sharedLibrary}" \
+        "$CC" "$AR" "${colorlispSharedLibraryFlag}"
       runHook postBuild
     '';
     installPhase = ''
