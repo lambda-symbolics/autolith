@@ -19,23 +19,6 @@
   "Return the case-insensitive store key for PROVIDER-NAME."
   (string-downcase provider-name))
 
-(-> api-key--call-with-store-lock (pathname function) t)
-(defun api-key--call-with-store-lock (pathname function)
-  "Call FUNCTION while holding the process and filesystem API-key locks."
-  (let ((lock-pathname
-          (merge-pathnames
-           "api-keys.lock"
-           (uiop:pathname-directory-pathname pathname))))
-    (handler-case
-        (call-with-file-lock lock-pathname function)
-      (authentication-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'authentication-error
-               :message
-               (format nil "Could not lock the API-key store at ~A: ~A"
-                       lock-pathname cause))))))
-
 (-> api-key--invalid-store (pathname) null)
 (defun api-key--invalid-store (pathname)
   "Signal that PATHNAME is not a valid private API-key store."
@@ -54,46 +37,42 @@
   (and (listp entry)
        (getf (rest entry) :api-key)))
 
-(-> api-key--validate-entries (list pathname) list)
-(defun api-key--validate-entries (entries pathname)
-  "Validate API-key ENTRIES read from PATHNAME and return them unchanged."
-  (unless (listp entries)
-    (api-key--invalid-store pathname))
-  (let ((seen nil))
-    (dolist (entry entries)
-      (let ((provider-name (api-key--entry-provider-name entry))
-            (api-key       (api-key--entry-key entry)))
-        (unless (and (listp entry)
-                     (eq (first entry) :provider)
-                     (non-empty-string-p provider-name)
-                     (non-empty-string-p api-key))
-          (api-key--invalid-store pathname))
-        (let ((canonical-name (api-key--canonical-provider-name provider-name)))
-          (when (member canonical-name seen :test #'string=)
-            (api-key--invalid-store pathname))
-          (push canonical-name seen))))
-    entries))
+(-> api-key--valid-store-p (t) boolean)
+(defun api-key--valid-store-p (record)
+  "Check the credential record and provider-name uniqueness before exposing entries."
+  (and (sexp-store:record-check record
+                               :tag                  ':api-keys
+                               :versions             (list *api-key-store-version*)
+                               :allow-duplicate-keys t)
+       (let ((entries (getf (rest record) :providers))
+             (seen    (make-hash-table :test #'equal)))
+         (and (handler-case (integerp (list-length entries))
+                (type-error () nil))
+              (loop for entry in entries
+                    always (and (sexp-store:record-check entry
+                                                         :tag                  ':provider
+                                                         :allow-duplicate-keys t)
+                                (non-empty-string-p (api-key--entry-provider-name entry))
+                                (non-empty-string-p (api-key--entry-key entry))
+                                (let ((name (api-key--canonical-provider-name
+                                             (api-key--entry-provider-name entry))))
+                                  (unless (gethash name seen)
+                                    (setf (gethash name seen) t)))))))))
 
-(-> api-key--read-entries (pathname) list)
-(defun api-key--read-entries (pathname)
-  "Read and validate the provider entries in PATHNAME, or return NIL when absent."
-  (if (not (probe-file pathname))
-      nil
-      (handler-case
-          (let* ((record  (read-portable-form pathname))
-                 (version (and (listp record) (getf (rest record) :version)))
-                 (entries (and (listp record)
-                               (eq (first record) :api-keys)
-                               (getf (rest record) :providers))))
-            (unless (and (listp record)
-                         (eq (first record) :api-keys)
-                         (= version *api-key-store-version*))
-              (api-key--invalid-store pathname))
-            (api-key--validate-entries entries pathname))
-        (authentication-error (condition)
-          (error condition))
-        (error ()
-          (api-key--invalid-store pathname)))))
+(-> api-key--store (pathname) sexp-store:snapshot-store)
+(defun api-key--store (pathname)
+  "Build an uncached snapshot store using the stable API-key lock pathname."
+  (make-instance 'sexp-store:snapshot-store
+                 :pathname       pathname
+                 :lock-pathname  (merge-pathnames "api-keys.lock"
+                                                  (uiop:pathname-directory-pathname pathname))
+                 :initial-state  (constantly nil)
+                 :validator      #'api-key--valid-store-p
+                 :duplicate-keys ':first
+                 :decoder        (lambda (record) (getf (rest record) :providers))
+                 :encoder        (lambda (entries)
+                                   (sexp-store:make-record ':api-keys *api-key-store-version*
+                                                           :providers entries))))
 
 (-> api-key--entry-for (string list) (option list))
 (defun api-key--entry-for (provider-name entries)
@@ -111,26 +90,23 @@
 
 (defmethod credential-source-load ((source api-key-credential-source))
   "Load SOURCE's API key into request scope, without retaining it in the image."
-  (let ((pathname (credential-source-pathname source)))
-    (api-key--call-with-store-lock
-     pathname
-     (lambda ()
-       (let* ((entry        (api-key--entry-for
-                             (api-key-credential-source-provider-name source)
-                             (api-key--read-entries pathname)))
-              (access-token (and entry (api-key--entry-key entry))))
-         (when (non-empty-string-p access-token)
-           (make-instance
-            'oauth-credentials
-            :access-token  access-token
-            :refresh-token nil
-            :id-token      nil
-            :account-id
-            (format nil "api-key/~A"
-                    (api-key--canonical-provider-name
-                     (api-key-credential-source-provider-name source)))
-            :expires-at    nil
-            :source-path   pathname)))))))
+  (let* ((pathname     (credential-source-pathname source))
+         (entries      (handler-case (sexp-store:store-read (api-key--store pathname))
+                         (sexp-store:store-error ()
+                           (api-key--invalid-store pathname))))
+         (entry        (api-key--entry-for (api-key-credential-source-provider-name source) entries))
+         (access-token (and entry (api-key--entry-key entry))))
+    (when (non-empty-string-p access-token)
+      (make-instance
+       'oauth-credentials
+       :access-token  access-token
+       :refresh-token nil
+       :id-token      nil
+       :account-id    (format nil "api-key/~A"
+                              (api-key--canonical-provider-name
+                               (api-key-credential-source-provider-name source)))
+       :expires-at    nil
+       :source-path   pathname))))
 
 (defmethod credential-source-save ((source api-key-credential-source)
                                    (credentials oauth-credentials))
@@ -146,29 +122,16 @@
               (provider-name
                 (api-key--canonical-provider-name
                  (api-key-credential-source-provider-name source))))
-         (api-key--call-with-store-lock
-          pathname
-          (lambda ()
-            (let* ((entries (api-key--read-entries pathname))
-                   (updated-entry
-                     (list :provider
-                           :provider-name provider-name
-                           :api-key api-key)))
-              (ensure-directories-exist pathname)
-              (snapshot-write
-               pathname
-               (list :api-keys
-                     :version *api-key-store-version*
-                     :providers
-                     (append
-                      (remove-if
-                       (lambda (entry)
-                         (string= provider-name
-                                  (api-key--canonical-provider-name
-                                   (api-key--entry-provider-name entry))))
-                       entries)
-                      (list updated-entry))
-                :mode #o600))))))
+          (handler-case
+              (sexp-store:store-transact
+               (api-key--store pathname)
+               (lambda (entries)
+                 (let ((previous (api-key--entry-for provider-name entries))
+                       (current  (list :provider :provider-name provider-name :api-key api-key)))
+                   (values (append (remove previous entries :test #'eq) (list current))
+                           nil t))))
+            (sexp-store:store-error ()
+              (api-key--invalid-store pathname))))
        credentials))))
 
 

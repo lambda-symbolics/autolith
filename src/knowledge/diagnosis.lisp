@@ -17,9 +17,9 @@
 (-> knowledge-diagnosis-p (t) boolean)
 (defun knowledge-diagnosis-p (diagnosis)
   "Return true when DIAGNOSIS has the structure of a validated diagnosis."
-  (and (proper-list-p diagnosis)
+  (and (consp diagnosis)
        (eq (first diagnosis) :diagnosis)
-       (evenp (length (rest diagnosis)))
+       (plist-schema-p (rest diagnosis) :keyword-keys-p nil :allow-duplicate-keys t)
        (let ((properties (rest diagnosis)))
          (and (knowledge-rule-name-p (getf properties :id))
               (every #'knowledge-variable-p (getf properties :parameters))

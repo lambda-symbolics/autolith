@@ -175,8 +175,8 @@ Without a configuration, as in standalone tool registries, knowledge is active."
 (-> knowledge-evidence-source-p (t) boolean)
 (defun knowledge-evidence-source-p (source)
   "Return true when SOURCE is a portable evidence source description."
-  (and (proper-list-p source)
-       (evenp (length (rest source)))
+  (and (consp source)
+       (plist-schema-p (rest source) :keyword-keys-p nil :allow-duplicate-keys t)
        (let ((properties (rest source)))
          (flet ((optional-text-p (key limit)
                   (let ((value (getf properties key)))
@@ -250,18 +250,12 @@ Without a configuration, as in standalone tool registries, knowledge is active."
 (-> knowledge--properties-p (t) boolean)
 (defun knowledge--properties-p (properties)
   "Return true for a proper property list with unique keyword names."
-  (and (proper-list-p properties)
-       (evenp (length properties))
-       (loop with seen = nil
-             for (key nil) on properties by (partial #'nthcdr 2)
-             always (and (keywordp key)
-                         (not (member key seen))
-                         (progn (push key seen) t)))))
+  (plist-schema-p properties :keyword-keys-p t))
 
 (-> knowledge--record-valid-p (t) boolean)
 (defun knowledge--record-valid-p (record)
   "Return true when RECORD is well formed. Unknown kinds are left to the reducer."
-  (and (proper-list-p record)
+  (and (consp record)
        (keywordp (first record))
        (knowledge--properties-p (rest record))
        (case (first record)
@@ -344,8 +338,7 @@ Without a configuration, as in standalone tool registries, knowledge is active."
                  (case       (getf properties :case)))
             (and (eq (getf properties :scope) ':workspace)
                  (non-empty-string-p (getf properties :workspace))
-                 (proper-list-p case)
-                 (evenp (length case))
+                 (plist-schema-p case :keyword-keys-p nil :allow-duplicate-keys t)
                  (stringp (getf case :diagnosis))
                  (proper-list-p (getf case :remaining))
                  (proper-list-p (getf case :eliminated))

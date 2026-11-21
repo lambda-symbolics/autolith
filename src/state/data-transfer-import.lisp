@@ -62,7 +62,10 @@
       ((and old (not replace-p))
        (data-transfer--fail pathname ':conflict "The destination already contains different data."))
       (t
-       (list :path pathname :bytes bytes :old old :root root)))))
+       (list :pathname pathname
+             :octets   (coerce bytes '(vector (unsigned-byte 8)))
+             :expected old
+             :root     root)))))
 
 (-> data-transfer--check-session-identities (configuration list) null)
 (defun data-transfer--check-session-identities (configuration archive)
@@ -302,7 +305,7 @@
           (unless (and (probe-file path) (equal (snapshot-read path) form))
             (add (data-transfer--plan-write
                   path (data-transfer--forms-bytes (list form)) state-root))))))
-    (data-transfer--unique writes (lambda (write) (namestring (getf write :path))) nil)
+    (data-transfer--unique writes (lambda (write) (namestring (getf write :pathname))) nil)
     writes))
 
 (-> data-transfer--publish-writes (list) integer)
@@ -311,7 +314,7 @@
   (data-transfer--publish-files
    writes
    :roots (mapcar (lambda (write)
-                    (cons (namestring (getf write :path)) (getf write :root)))
+                    (cons (namestring (getf write :pathname)) (getf write :root)))
                   writes)))
 
 (-> data-transfer--install (configuration list) integer)

@@ -101,8 +101,8 @@ is distinguishable from merely touching it."
 (-> memory-source-record-p (t) boolean)
 (defun memory-source-record-p (record)
   "Return true when RECORD is one complete portable memory source."
-  (and (proper-list-p record)
-       (evenp (length (rest record)))
+  (and (consp record)
+       (plist-schema-p (rest record) :keyword-keys-p nil :allow-duplicate-keys t)
        (let ((properties (rest record)))
          (and (typep (getf properties :observed-at) 'timestamp)
               (case (first record)
@@ -132,8 +132,7 @@ is distinguishable from merely touching it."
   "Return true when RECORD names one premise and its observed digest.
 
 A premise is another memory, or with :KIND :CLAIM a structured knowledge claim."
-  (and (proper-list-p record)
-       (evenp (length record))
+  (and (plist-schema-p record :keyword-keys-p nil :allow-duplicate-keys t)
        (non-empty-string-p (getf record :id))
        (memory-source-digest-p (getf record :digest))
        (member (getf record :kind) '(nil :claim))

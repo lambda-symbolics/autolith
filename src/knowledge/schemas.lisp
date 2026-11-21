@@ -86,8 +86,7 @@ starting with a letter, with at least two segments."
 (-> knowledge--schema-argument-p (t) boolean)
 (defun knowledge--schema-argument-p (argument)
   "Return true when ARGUMENT is one valid schema argument plist."
-  (and (proper-list-p argument)
-       (evenp (length argument))
+  (and (plist-schema-p argument :keyword-keys-p nil :allow-duplicate-keys t)
        (knowledge-argument-name-p (getf argument :name))
        (typep (getf argument :type) 'knowledge-term-type)
        (let ((unit (getf argument :unit)))
@@ -99,9 +98,9 @@ starting with a letter, with at least two segments."
 (-> knowledge-schema-p (t) boolean)
 (defun knowledge-schema-p (schema)
   "Return true when SCHEMA is one complete portable predicate schema record."
-  (and (proper-list-p schema)
+  (and (consp schema)
        (eq (first schema) :schema)
-       (evenp (length (rest schema)))
+       (plist-schema-p (rest schema) :keyword-keys-p nil :allow-duplicate-keys t)
        (let* ((properties  (rest schema))
               (arguments   (getf properties :arguments))
               (key         (getf properties :key))

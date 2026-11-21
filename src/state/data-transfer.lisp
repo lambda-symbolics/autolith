@@ -65,11 +65,7 @@ Return the records and, for children, their excluded parent-owned file paths."))
 (-> data-transfer--properties-p (t list) boolean)
 (defun data-transfer--properties-p (value keys)
   "Return true for a proper plist containing each of KEYS exactly once."
-  (values
-   (record-check value :properties-p t :allow-other-keys nil
-                 :fields (mapcar (lambda (key)
-                                   (list :indicator key :required t))
-                                 keys))))
+  (sexp-store:plist-schema-p value :allowed-keys keys :required-keys keys))
 
 (defparameter *data-transfer-maximum-archive-bytes* (* 1024 1024 1024)
   "The largest archive read into memory by one transfer.")
@@ -196,18 +192,13 @@ single floats, and every source node needs at least one octet."
 
 (-> data-transfer--publish-files (list &key (:roots list)) integer)
 (defun data-transfer--publish-files (writes &key roots)
-  "Publish WRITES, plists of :PATH, :BYTES and :OLD, as one sexp-store transaction.
+  "Publish WRITES as sexp-store file descriptors under confined path checks.
 
-ROOTS pairs each path's namestring with the trusted root its path check uses.
-Conflicts and incomplete rollbacks become typed transfer failures."
+ROOTS pairs each path's namestring with its trusted root. Conflicts and
+incomplete rollbacks become typed transfer failures."
   (handler-case
       (files-publish
-       (mapcar (lambda (write)
-                 (list :pathname (getf write :path)
-                       :octets   (coerce (getf write :bytes) '(vector (unsigned-byte 8)))
-                       :expected (and (getf write :old)
-                                      (coerce (getf write :old) '(vector (unsigned-byte 8))))))
-               writes)
+       writes
        :check (lambda (pathname)
                 (let ((root (rest (assoc (namestring pathname) roots :test #'string=))))
                   (when root

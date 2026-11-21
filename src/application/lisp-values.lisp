@@ -83,14 +83,7 @@ does not change machine serialization or worker output."
 
 Bound the scan so circular, dotted, and long lists use the standard printer."
   (and (consp value)
-       (loop for tail = value then (nthcdr 2 tail)
-             repeat 100
-             do (unless (and (consp tail) (keywordp (first tail))
-                             (consp (rest tail)))
-                  (return nil))
-             when (null (nthcdr 2 tail))
-               return t
-             finally (return nil))))
+       (plist-schema-p value :keyword-keys-p t :maximum-length 200 :allow-duplicate-keys t)))
 
 (-> application-lisp-value--pprint-plist (stream list) null)
 (defun application-lisp-value--pprint-plist (stream value)

@@ -63,8 +63,7 @@
 (-> procedure-parameter-p (t) boolean)
 (defun procedure-parameter-p (parameter)
   "Return true when PARAMETER is a name, a value type, and an optional required suffix."
-  (and (proper-list-p parameter)
-       (evenp (length parameter))
+  (and (plist-schema-p parameter :keyword-keys-p nil :allow-duplicate-keys t)
        (knowledge-rule-name-p (getf parameter :name))
        (typep (getf parameter :type) 'procedure-parameter-type)
        (or (null (getf parameter :suffix))
@@ -75,9 +74,9 @@
 (-> procedure-p (t) boolean)
 (defun procedure-p (procedure)
   "Return true when PROCEDURE is well formed and refers only to its own parameters and earlier steps."
-  (and (proper-list-p procedure)
+  (and (consp procedure)
        (eq (first procedure) :procedure)
-       (evenp (length (rest procedure)))
+       (plist-schema-p (rest procedure) :keyword-keys-p nil :allow-duplicate-keys t)
        (let* ((properties (rest procedure))
               (parameters (getf properties :parameters))
               (steps      (getf properties :steps)))
@@ -91,8 +90,7 @@
                      (<= 1 (length steps) *procedure-step-limit*)
                      (loop for step in steps
                            for index from 0
-                           always (and (proper-list-p step)
-                                       (evenp (length step))
+                           always (and (plist-schema-p step :keyword-keys-p nil :allow-duplicate-keys t)
                                        (non-empty-string-p (getf step :tool))
                                        (procedure-template-p (getf step :arguments))
                                        (eq (first (getf step :arguments)) :object)

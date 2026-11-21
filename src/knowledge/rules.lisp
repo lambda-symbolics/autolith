@@ -545,9 +545,9 @@ restricted, not well typed, or exceeds its bounds."
 (-> knowledge-rule-p (t) boolean)
 (defun knowledge-rule-p (rule)
   "Return true when RULE has the structure of a validated rule record."
-  (and (proper-list-p rule)
+  (and (consp rule)
        (eq (first rule) :rule)
-       (evenp (length (rest rule)))
+       (plist-schema-p (rest rule) :keyword-keys-p nil :allow-duplicate-keys t)
        (knowledge-rule-name-p (getf (rest rule) :id))
        (proper-list-p (getf (rest rule) :premises))
        (getf (rest rule) :premises)

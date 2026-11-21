@@ -35,17 +35,7 @@
 (-> context-rule--plist-p (t) boolean)
 (defun context-rule--plist-p (value)
   "Return true for a finite even-length plist with unique keyword indicators."
-  (handler-case
-      (and (listp value)
-           (let ((length (list-length value)))
-             (and length (evenp length)
-                  (let ((keys (plist-keys value)))
-                    (and (every #'keywordp keys)
-                         (= (length keys)
-                            (length (remove-duplicates keys)))))))
-           t)
-    (type-error ()
-      nil)))
+  (plist-schema-p value :keyword-keys-p t))
 
 (-> context-rule--values (keyword t) list)
 (defun context-rule--values (field values)
@@ -125,19 +115,16 @@ strings in chronological order from the current durable provider projection."
 (-> context-rule--validate (t) list)
 (defun context-rule--validate (rule)
   "Return a detached validated rule without executing its declarative predicates."
-  (unless (and (context-rule--plist-p rule)
-               (loop for tail on rule by (partial #'nthcdr 2)
-                     always (member (first tail)
-                                    '(:id :when :instruction :priority :lifetime :workspace))))
+  (unless (plist-schema-p rule
+                          :allowed-keys '(:id :when :instruction :priority :lifetime :workspace))
     (context-rule--reject ':rule "A rule accepts only id, when, instruction, priority, lifetime and workspace."))
   (let ((predicates (getf rule :when))
         (workspace  (getf rule :workspace)))
     (context--validate-identifier (getf rule :id) "Context rule ID")
-    (unless (and predicates (context-rule--plist-p predicates)
-                 (loop for tail on predicates by (partial #'nthcdr 2)
-                       always (member (first tail)
-                                      '(:paths :languages :tools :namespaces :roles
-                                        :diagnostics :events :output-contains))))
+    (unless (and predicates
+                 (plist-schema-p predicates
+                                 :allowed-keys '(:paths :languages :tools :namespaces :roles
+                                                 :diagnostics :events :output-contains)))
       (context-rule--reject ':when "A rule requires at least one recognized metadata or output predicate."))
     (loop for (field values) on predicates by (partial #'nthcdr 2)
           do (unless (context-rule--values field values)

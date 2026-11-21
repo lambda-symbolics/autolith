@@ -26,9 +26,9 @@
 (-> knowledge-method-p (t) boolean)
 (defun knowledge-method-p (method)
   "Return true when METHOD has the structure of a validated method."
-  (and (proper-list-p method)
+  (and (consp method)
        (eq (first method) :method)
-       (evenp (length (rest method)))
+       (plist-schema-p (rest method) :keyword-keys-p nil :allow-duplicate-keys t)
        (let ((properties (rest method)))
          (and (knowledge-rule-name-p (getf properties :id))
               (knowledge--task-call-p (getf properties :task))

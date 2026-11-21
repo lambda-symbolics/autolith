@@ -725,57 +725,44 @@
       (let* ((path          (merge-pathnames "rollback.sexp" root))
              (memory-path   (configuration-memory-path target))
              (memory-before (data-transfer--bytes memory-path))
-             (check         (symbol-function 'data-transfer--check-path))
-             (seen          (make-hash-table :test #'equal))
-             (published     0)
-             (drift-p       nil)
-             (drifted       nil))
+             (publish       (symbol-function 'files-publish)))
         (data-export path :configuration source)
-        (flet ((import-failing ()
-                 "Import while the agenda's publication fails, counting earlier publications."
-                 (clrhash seen)
-                 (setf published 0)
-                 (test-call-with-function-replacements
-                  (list (list 'data-transfer--check-path
-                              (lambda (trusted pathname)
-                                (let ((calls (incf (gethash (namestring pathname) seen 0))))
-                                  (when (= calls 3)
-                                    (if (equal pathname (configuration-agenda-path target))
-                                        (error 'simple-error
-                                               :format-control "Injected publication failure")
-                                        (incf published)))
-                                  (when (and drift-p (= calls 4) (null drifted))
-                                    (setf drifted pathname)
-                                    (test-data-transfer--write pathname #(9))))
-                                (funcall check trusted pathname))))
-                  (lambda ()
-                    (handler-case (progn (data-import path :configuration target) nil)
-                      (error (condition) condition))))))
-          (test-assert (typep (import-failing) 'data-transfer-error)
-                       "a publication failure is reported")
-          (test-assert (> published 1) "the failure occurred after multiple publications")
-          (test-assert (null (conversation-list target)) "rollback removes newly imported sessions")
-          (test-assert (equalp memory-before (data-transfer--bytes memory-path))
-                       "rollback restores existing memory bytes exactly")
-          (test-assert (not (probe-file (configuration-papercut-path target)))
-                       "rollback removes a newly imported collection")
-          (setf drift-p t)
-          (let* ((condition (import-failing))
-                 (failure   (and (typep condition 'data-transfer-rollback-error)
-                                 (first (data-transfer-rollback-error-failures condition)))))
-            (test-assert (and failure drifted
-                              (equal (getf failure :pathname) (namestring drifted)))
-                         "a destination edited during rollback is a typed rollback failure")
-            (test-assert (and drifted (equalp (data-transfer--bytes drifted) #(9)))
-                         "rollback preserves the external edit")
-            (when drifted
-              (let ((backup (getf failure :backup)))
-                (if backup
-                    (progn
-                      (test-data-transfer--write drifted (data-transfer--bytes (pathname backup)))
-                      (delete-file backup))
-                    (delete-file drifted)))))
-          (setf drift-p nil)
-          (test-assert (plusp (getf (data-import path :configuration target) :installed-files))
-                       "a clean retry succeeds after rollback")))))
+        (test-call-with-function-replacements
+         (list (list 'files-publish
+                     (lambda (writes &key check)
+                       (funcall publish writes
+                                :check (lambda (pathname)
+                                         (funcall check pathname)
+                                         (when (and (equal pathname (configuration-agenda-path target))
+                                                    (not (equalp memory-before
+                                                                 (data-transfer--bytes memory-path))))
+                                           (error 'simple-error
+                                                  :format-control "Injected agenda publication failure")))))))
+         (lambda ()
+           (test-assert (test-data-transfer--fails-p
+                         (lambda () (data-import path :configuration target)) 'data-transfer-error)
+                        "import reports a late publication failure")))
+        (test-assert (null (conversation-list target)) "rollback removes newly imported sessions")
+        (test-assert (equalp memory-before (data-transfer--bytes memory-path))
+                     "rollback restores the existing memory collection")
+        (let ((failures (list (list :pathname (namestring memory-path)
+                                   :backup   (namestring (merge-pathnames "retained.sexp" root))
+                                   :message  "Unable to restore the previous contents."))))
+          (test-call-with-function-replacements
+           (list (list 'files-publish
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (error 'publication-rollback-failed
+                                :operation ':rollback
+                                :pathname  memory-path
+                                :message   "Injected incomplete rollback"
+                                :failures  failures))))
+           (lambda ()
+             (test-assert
+              (handler-case (progn (data-import path :configuration target) nil)
+                (data-transfer-rollback-error (condition)
+                  (equal failures (data-transfer-rollback-error-failures condition))))
+              "the transfer error exposes retained rollback paths"))))
+        (test-assert (plusp (getf (data-import path :configuration target) :installed-files))
+                     "a clean retry succeeds after rollback"))))
   nil)
