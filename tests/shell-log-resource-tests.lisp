@@ -123,37 +123,69 @@
 
 (-> shell-log-tests--descendant-authority () null)
 (defun shell-log-tests--descendant-authority ()
-  "Check current child ownership through the resolver, including sibling refusal."
+  "Dispatch bounded log reads as a child and distinguish ownership refusal from approval."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (context                        (shell-log-tests--context configuration "shell-descendants"))
+           (foreign                        (shell-log-tests--context configuration "shell-foreign"))
            (orchestrator                   (task-orchestrator-create))
+           (definition                     (task-agent-definition-create
+                                            :name "reader" :description "Read retained output."
+                                            :instructions "Read the capture." :tools '("resource.read")))
            (job                            (task-tests--make-job orchestrator :identifier "current-child"
-                                                                 :root-identifier         "shell-descendants"))
-           (agent                          (task-tests--child-viewer configuration job))
-           (child-context                  (make-instance 'tool-context :configuration configuration :worker nil
-                                                          :conversation (agent-conversation agent) :agent agent))
-           (artifact                       (shell-log-allocate context)))
-      (unwind-protect
-           (progn
-             (shell-log-tests--finish artifact (utf8-string-to-octets "owned descendant"))
-             (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
-                   (list (session-job-execution-identifier job)))
-             (shell-log--write-manifest artifact)
-             (test-assert
-              (tool-result-success-p (shell-log-tests--read
-                                      (shell-log-tests--resolve artifact child-context)
-                                      child-context (json-object)))
-              "A current child may inspect captures owned by its descendants")
-             (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
-                   (list "different-sibling-execution"))
-             (shell-log--write-manifest artifact)
-             (test-assert
-              (handler-case (progn (shell-log-tests--resolve artifact child-context) nil)
-                (resource-access-denied () t))
-              "A sibling execution is refused even within the same root session"))
-        (task-orchestrator-close orchestrator))))
+                                                                  :definition definition
+                                                                  :root-identifier "shell-descendants"))
+           (registry                       (task-child-tool-registry
+                                            (make-default-tool-registry :configuration configuration)
+                                            definition :orchestrator orchestrator :depth 1))
+           (child                          (task-tests--child-viewer configuration job :registry registry))
+           (artifact                       (shell-log-allocate context))
+           (foreign-artifact               (shell-log-allocate foreign))
+           (approval-requests              0))
+      (flet ((refuse-approval (operation arguments)
+               (declare (ignore operation arguments))
+               (incf approval-requests)
+               ':deny))
+        (let ((observer (callback-agent-observer-create
+                         :command-authorization-callback #'refuse-approval
+                         :tool-authorization-callback    #'refuse-approval)))
+          (flet ((read-log (capture arguments &key restricted-p)
+                   (setf (gethash "uri" arguments) (shell-log-reference capture))
+                   (getf (agent--execute-tool-plan
+                          child (list :call (json-object "namespace" "resource" "name" "read"
+                                                         "arguments" (json-encode arguments)))
+                          :observer observer :tool-restriction-p restricted-p)
+                         :result)))
+            (unwind-protect
+                 (progn
+                   (shell-log-tests--finish artifact (utf8-string-to-octets "owned descendant"))
+                   (shell-log-tests--finish foreign-artifact (utf8-string-to-octets "foreign output"))
+                   (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
+                         (list (session-job-execution-identifier job)))
+                   (shell-log--write-manifest artifact)
+                   (let ((range (read-log artifact (json-object "byte-offset" 6 "byte-count" 4)))
+                         (query (read-log artifact (json-object "query" "descendant" "max-results" 1))))
+                     (test-assert (and (tool-result-success-p range)
+                                       (search (format nil "Content:~%desc") (tool-result-content range)))
+                                  "A child reads a bounded byte window from its descendant's capture")
+                     (test-assert (and (tool-result-success-p query)
+                                       (search "6: owned descendant" (tool-result-content query)))
+                                  "A child searches its descendant's capture by byte offset"))
+                   (test-assert (eq ':access-denied (tool-result-error-code
+                                                     (read-log artifact (json-object) :restricted-p t)))
+                                "The workspace-only frame restriction excludes shell logs")
+                   (test-assert (eq ':access-denied (tool-result-error-code
+                                                     (read-log foreign-artifact (json-object))))
+                                "A child cannot read a capture from a foreign root session")
+                   (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
+                         (list "different-sibling-execution"))
+                   (shell-log--write-manifest artifact)
+                   (test-assert (eq ':access-denied (tool-result-error-code
+                                                     (read-log artifact (json-object "query" "owned"))))
+                                "A child cannot search a sibling's capture in the same session")
+                   (test-assert (zerop approval-requests) "Log reads do not ask for approval"))
+              (task-orchestrator-close orchestrator)))))))
   nil)
 
 (-> shell-log-tests--delivery-and-accounting () null)
