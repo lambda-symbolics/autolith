@@ -287,7 +287,9 @@ item to replace it completely or forget it.
 | =memory:all=                            | Read-only collection. Optional query and max-results.                            |
 | =memory:id/<percent-encoded-stable-id>= | Exact item. Replace completely or forget with =resource.edit=.                     |
 
-Task child agents cannot resolve memory resources.
+Use these resources when your role admits the corresponding resource
+tool and the turn permits the =memory:= scheme. Shared writes require
+a registered agent identity, regardless of parentage.
 Workspace scope is the default; use global scope only for
 cross-workspace user preferences or guidance.
 Never store credentials, secrets, transient progress, or guesses as

@@ -416,8 +416,10 @@ and test failures in the plan or agenda rather than the harness reports.
 Use a *note* for a preference or convention and a *fact* for a value you want to
 reuse with its evidence. An agent can edit its own notes through
 =memory:personal=. That scope follows the agent across channels and restarts.
-Top-level agents can also write shared workspace and global memories. Their
-children can read those shared memories.
+When the turn allows =memory:=, agents can read shared workspace and global
+memories with =resource.read=. Registered agents can write them with
+=resource.edit=. For child agents, the role must grant the corresponding tool,
+regardless of who created them.
 
 #+BEGIN_SRC lisp
 (memories)
