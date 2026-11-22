@@ -462,20 +462,6 @@ A theme that does not define STYLE renders it plainly instead of failing the row
   (text    "" :type string :read-only t)
   (display "" :type string :read-only t))
 
-(-> terminal--bar-spans
-    ((integer 0) (integer 0) (integer 0) &key (:track-style terminal-style) (:fill-style terminal-style))
-    list)
-(defun terminal--bar-spans (width start end &key (track-style ':progress-track) (fill-style ':progress-fill))
-  "Return a WIDTH-cell progress bar filled from cell START below END."
-  (flet ((segment (style character count)
-           (when (plusp count)
-             (list (terminal-span style (make-string count :initial-element character))))))
-    (let* ((end   (min width end))
-           (start (min start end)))
-      (append (segment track-style #\─ start)
-              (segment fill-style #\━ (- end start))
-              (segment track-style #\─ (- width end))))))
-
 
 ;;;; -- Markdown Presentation --
 

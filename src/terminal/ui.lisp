@@ -1872,10 +1872,10 @@ its parenthesis open, and are dropped once the name closes it itself."
      (cons (terminal-span ':compaction-label "COMPACTING")
            (when (plusp track-width)
             (cons (terminal-span ':status-progress-track "  ")
-                  (terminal--bar-spans track-width head-at
-                                       (+ head-at *terminal-ui-compaction-head-cells*)
-                                       :track-style ':status-progress-track
-                                       :fill-style  ':status-progress-fill))))
+                  (clinedi:progress-bar-spans
+                   track-width head-at (+ head-at *terminal-ui-compaction-head-cells*)
+                   :track-style ':status-progress-track
+                   :fill-style  ':status-progress-fill))))
      row-width)))
 
 (-> terminal-ui--status-sides-at (terminal-ui real integer) (values list list))

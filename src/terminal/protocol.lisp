@@ -56,14 +56,7 @@ hide its side panel while such frames show, as during the boot screen."))
         (completed-p nil))
     (unwind-protect
          (progn
-           (terminal--write
-            terminal
-            (concatenate 'string
-                         (alternate-screen-enter-sequence)
-                         (terminal-keyboard-enhancement-enable-sequence)
-                         (format nil "~C[2J~C[H" #\Escape #\Escape)
-                         (mouse-reporting-enable-sequence)))
-           (terminal-flush terminal)
+           (clinedi:terminal-enter-alternate-screen terminal)
            (setf completed-p t))
       (unless completed-p
         (terminal-screen-leave terminal token)))
@@ -72,15 +65,7 @@ hide its side panel while such frames show, as during the boot screen."))
 (defmethod terminal-screen-leave ((terminal terminal) token)
   "Leave the alternate buffer and its reporting modes, then restore the native mode TOKEN."
   (unwind-protect
-       (progn
-         (terminal--write
-          terminal
-          (concatenate 'string
-                       (format nil "~C[0m~C[?7h~C[?25h" #\Escape #\Escape #\Escape)
-                       (mouse-reporting-disable-sequence)
-                       (terminal-keyboard-enhancement-disable-sequence)
-                       (alternate-screen-leave-sequence)))
-         (terminal-flush terminal))
+       (clinedi:terminal-leave-alternate-screen terminal)
     (platform-terminal-restore-fullscreen *platform* token))
   nil)
 

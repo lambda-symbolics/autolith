@@ -80,8 +80,8 @@
   :version "git-d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "4aea0507ad880e1d3fccb9160630d14bbea0c328")
-  :version "git-4aea0507ad880e1d3fccb9160630d14bbea0c328"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "5c57e30a66bf5a3f5ac8b19a3306990f5184f451")
+  :version "git-5c57e30a66bf5a3f5ac8b19a3306990f5184f451"))
 ("clermaid" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clermaid.git" :ref "7a4497aff7514134dd69ab28b7d07c06335b7852")

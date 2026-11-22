@@ -476,8 +476,9 @@ highlight AGENT-NAME when known."
                  for index from 0 collect (list index row))
            :height height :width width :complete-p t)))
       (let* ((content-width (min 54 width))
-             (bar           (terminal--bar-spans content-width 0
-                                                 (floor (* content-width (1- step)) 6)))
+             (bar           (clinedi:progress-bar-spans
+                             content-width 0 (floor (* content-width (1- step)) 6)
+                             :track-style ':progress-track :fill-style ':progress-fill))
              (stage         (list (terminal-span ':legend-accent (format nil "~D/6" step))
                                   (terminal-span ':dim (format nil "  ~A" description))))
              (heading       (cons (terminal-span ':brand title)
