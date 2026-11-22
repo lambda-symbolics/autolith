@@ -142,8 +142,9 @@
                  "Append the result of the call CALL-ID."
                  (application-tool-outcome-history-tests--append
                   conversation (application-tool-outcome-tests--result 0 call-id))))
-        ;; The segments start at the sequences 1, 6, 13 and 20. The result of
-        ;; every split call is the second record of the next segment.
+        ;; Each recovery checkpoint starts a segment with a visible notice.
+        ;; The segments start at 1, 6, 13 and 20, with split call results
+        ;; immediately after their checkpoints.
         (dotimes (segment 4)
           (dolist (call-id (list (format nil "first-~D" segment) (format nil "second-~D" segment)))
             (append-call call-id)
@@ -151,7 +152,9 @@
           (when (< segment 3)
             (let ((call-id (format nil "split-~D" segment)))
               (append-call call-id)
-              (conversation-append-summary conversation (make-continuation :intent "rotation checkpoint"))
+              (conversation-append-summary
+               conversation (make-continuation :intent "rotation checkpoint")
+               :recovery '(:outcome :success :stages ((:tier :metadata))))
               (append-result call-id)))))
       (test-call-with-function-replacements
        (list (list 'conversation--map-segment-records
