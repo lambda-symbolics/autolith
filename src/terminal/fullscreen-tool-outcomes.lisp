@@ -109,7 +109,7 @@
                                (getf record :expanded-entry-layout))
                           (getf record :entry-layout)))
          (entry       (cond
-                        ((and layout (or (not entry-p) (eq (getf record :entry-kind) ':summary)))
+                        ((and layout (not entry-p))
                          (funcall layout width))
                         (entry-p
                          entry)

@@ -3226,16 +3226,6 @@
       (test-assert (and (search "1,204 files balanced" text)
                         (not (find #\Newline text)))
                    "a clean paren check is one line"))
-    (loop for (columns width) in '((40 40) (170 170))
-          for rule = (conversation-record-entry
-                      (application-tests--ui-application :columns columns)
-                      (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))
-          do (test-assert (and (= (termdown:spans-width rule) width)
-                               (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
-                               (eq (terminal-span-style (first rule)) ':success)
-                               (not (search "9" (test-terminal-row-text rule))))
-                          (format nil "at ~D columns compaction is a ~D-cell cut line without sequence numbers"
-                                  columns width)))
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 4 :time 0 :call-id 3
@@ -4045,7 +4035,7 @@
                     (mapped-pathnames nil)
                     (map-records-function
                       (symbol-function 'sexp-store:log-map)))
-               (let ((*application-history-page-size* 3))
+                (let ((*application-history-page-size* 2))
                  (test-call-with-function-replacements
                   (list
                    (list
@@ -4063,11 +4053,7 @@
                               (list (conversation-log-pathname loaded)))
                        (not (search "older-full-chunk" output))
                        (search "active-full-one" output)
-                       (search "active-full-two" output)
-                       (= (terminal-tests--substring-count
-                           "CONTEXT COMPACTED"
-                           output)
-                          1))
+                         (search "active-full-two" output))
                   "a full active chunk is the only segment scanned at startup"))
                (recording-terminal-reset terminal)
                (conversation-append-summary loaded (make-continuation :intent "rotated checkpoint"))
@@ -4078,9 +4064,6 @@
                  (test-assert
                   (and (= (terminal-tests--substring-count
                            "after-runtime-rotation" output)
-                          1)
-                       (= (terminal-tests--substring-count
-                           "CONTEXT COMPACTED" output)
                           1)
                        (= (application-render-generation application)
                           (conversation-log-generation loaded))
@@ -4093,6 +4076,7 @@
              (conversation-append-summary conversation (make-continuation :intent "middle checkpoint"))
              (conversation-append-user-message conversation "middle-chunk-message")
              (conversation-append-summary conversation (make-continuation :intent "active checkpoint"))
+              (conversation-append-user-message conversation "active-chunk-message")
              (let* ((loaded
                       (conversation-load (conversation-pathname conversation)))
                     (pathnames
@@ -4128,9 +4112,7 @@
                                 (list active previous))
                          (not (search "oldest-third-chunk" output))
                          (search "middle-chunk-message" output)
-                         (= (terminal-tests--substring-count
-                             "CONTEXT COMPACTED" output)
-                            2)
+                          (search "active-chunk-message" output)
                          (not (search "use (history) to load an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
                  (let* ((recovery-terminal
@@ -4161,9 +4143,7 @@
                      (test-assert
                       (and (equal (nreverse recovery-pathnames) (list active))
                            (not (search "middle-chunk-message" output))
-                           (= (terminal-tests--substring-count
-                               "CONTEXT COMPACTED" output)
-                              1))
+                            (search "active-chunk-message" output))
                       "zero-cursor recovery scans only the active chunk")))
                  (recording-terminal-reset terminal)
                  (application-render-history application)

@@ -2953,17 +2953,11 @@ A channel message shows its sender and channel instead of an operation."
        (when (application--tool-result-visible-p application record)
          (application-tool-result-entry tool application record))))
     (:summary
-     (application--compaction-rule application :recovery (getf (rest record) :recovery)))
+     (let ((notice (compaction-recovery-notice (getf (rest record) :recovery))))
+       (when notice
+         (application-notice-line notice))))
     (otherwise
      nil)))
-
-(-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
-(defun application--compaction-rule (application &key recovery)
-  "Return a compaction divider and its optional recovery notice."
-  (append (terminal-compaction-divider (application--transcript-columns application))
-          (when recovery
-            (cons (terminal-span ':plain (string #\Newline))
-                  (application-notice-line (compaction-recovery-notice recovery))))))
 
 (-> application--command-presentation-entry
     (application-command-invocation list)
@@ -3129,7 +3123,9 @@ the entry's text as a :PRESENT event."
      (application--tool-result-visible-p application record))
     (:assistant-yield
      (typep (getf (rest record) :job-count) '(integer 1)))
-    ((:summary :side-status)
+    (:summary
+     (not (null (getf (rest record) :recovery))))
+    (:side-status
      t)
     (otherwise
      nil)))
