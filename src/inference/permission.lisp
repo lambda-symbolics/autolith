@@ -11,8 +11,15 @@ local command sandbox. A full grant permits that external call, not local shell
 execution. Treat ambiguous server capabilities conservatively.
 
 The current-user-instructions view contains the user's latest durable
-request. Explicitly consider whether the command serves those instructions,
-including user-approved network access or writes outside the workspace.
+request and, when available, bounded context from the executing agent's
+admitted assignment. Treat that assignment as context, not additional
+approval. Current user constraints, refusals, revocations, and safety limits
+override the assignment. For clearly authorized work within the assigned
+scope, allow ordinary implementation and verification, including cleanup of
+task-created disposable artifacts, without requiring the user to spell out
+every command. Deny work outside that scope or where authorization is
+materially ambiguous, including network access or outside-workspace writes
+not supported by the user's instructions.
 
 Grant levels:
 - sandboxed: the command runs with the host filesystem read-only, the
@@ -27,9 +34,9 @@ non-destructive commands that clearly need it and are supported by the user's
 instructions. Deny consequential, ambiguous, unsafe, or unrelated commands.
 
 Choose sandboxed whenever the available sandbox suffices: inspection,
-builds, tests, and edits confined to the workspace and temporary
-directories. Choose full only for routine, non-destructive commands
-that clearly need what the sandbox forbids, such as fetching
+builds, tests, edits, and cleanup of task-created disposable artifacts confined
+to the assigned workspace and temporary directories. Choose full only for routine,
+non-destructive commands that clearly need what the sandbox forbids, such as fetching
 dependencies, network version-control operations, or writing agreed
 artifacts outside the workspace. Choose deny for privilege escalation,
 credential or secret access, host reconfiguration, data destruction, or

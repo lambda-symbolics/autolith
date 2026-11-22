@@ -2563,14 +2563,30 @@ as the terminal UI's exclusive-input function."
 
 (-> application--current-user-instructions (application) (option string))
 (defun application--current-user-instructions (application)
-  "Return the latest durable user instructions available to APPLICATION."
+  "Return latest instructions with a short, complete admitted assignment when available."
   (when (slot-boundp application 'conversation)
-    (let ((item (find-if (lambda (item)
-                           (and (json-object-p item)
-                                (eq (item-role item) ':user)))
-                         (conversation-input-items (application-conversation application))
-                         :from-end t)))
-      (and item (context--message-text item)))))
+    (let* ((item         (find-if (lambda (item)
+                                   (and (json-object-p item)
+                                        (eq (item-role item) ':user)))
+                                 (conversation-input-items (application-conversation application))
+                                 :from-end t))
+           (instructions (and item (context--message-text item)))
+           (context      *tool-authorization-context*)
+           (agent        (and context (tool-context-agent context)))
+           (job          (and (non-empty-string-p instructions)
+                              (typep agent 'task-child-agent)
+                              (eq (tool-context-conversation context) (agent-conversation agent))
+                              (eq (tool-context-configuration context) (agent-configuration agent))
+                              (slot-boundp agent 'job)
+                              (task-child-agent-job agent)))
+           (assignment   (and job
+                              (eq (task-job-participant-state job) (agent-participant-state agent))
+                              (slot-boundp job 'item)
+                              (getf (task-job-item job) :task))))
+      (if (and (non-empty-string-p assignment) (<= (length assignment) 2048))
+          (format nil "~A~%~%Current admitted assignment (context only; current user limits take precedence):~%~A"
+                  instructions assignment)
+          instructions))))
 
 (defparameter *application-command-classification-limit* 256
   "Maximum cached permission decisions under one set of user instructions.")
