@@ -1104,15 +1104,20 @@
       (terminal-ui-present-records
        active
        (loop for turn below 4
+             for answer = (format nil "● autolith~%answer ~D continues here" turn)
              append (list (list (list :user turn)
                                 (format nil "❯ you 12:0~D~%● autolith quoted header~%question ~D" turn turn)
                                 '(:entry-kind :message))
                           (list (list :tool turn)
-                                (format nil "▸ tool ~D~%│ output line~%│ more output" turn)
-                                '(:entry-kind :tool-call))
-                          (list (list :agent turn)
-                                (format nil "● autolith~%answer ~D continues here" turn)
-                                '(:entry-kind :message)))))
+                                 (list (terminal-span ':tool
+                                                      (format nil "● autolith tool ~D~%│ output line~%│ more output" turn)))
+                                 '(:kind :call :entry-kind :tool-call :state :running))
+                          (list (list :agent turn) answer
+                                (if (= turn 2)
+                                    (let ((text answer))
+                                      (list ':entry-kind ':side-status
+                                            ':entry-layout (lambda (width) (declare (ignore width)) text)))
+                                    '(:entry-kind :message))))))
       (terminal-ui-process-event active ':scroll-bottom)
       (labels ((window ()
                  (let* ((viewport (fullscreen-terminal-ui-viewport active))
@@ -1133,7 +1138,7 @@
                      "Ctrl-PgUp from the tail ends the previous message on the bottom row")
         (terminal-ui-process-event active ':previous-section)
         (test-assert (ends-p "● autolith" "answer 2")
-                     "a second Ctrl-PgUp steps from the message on the bottom row to the one before")
+                     "A second Ctrl-PgUp accepts side status and skips tool output with a message prefix.")
         (terminal-ui-process-event active ':next-section)
         (test-assert (ends-p "❯ you 12:03" "question 3")
                      "Ctrl-PgDn ends the following message on the bottom row")
@@ -1157,35 +1162,43 @@
 (defun fullscreen-test--prepend-history ()
   "Exercise chronological prepend, source anchors and eviction at the newer edge."
   (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 6))
-         (ui       (terminal-ui-create :terminal terminal :fullscreen-p t))
-         (page     (terminal-ui-create :terminal terminal :fullscreen-p t)))
-    (with-terminal-ui (active ui)
-      (terminal-ui-present-records
-       active (loop for sequence from 3 to 14
+         (records  (loop for sequence from 3 to 14
+                         collect (list (list ':conversation "prepend" sequence)
+                                       (format nil "resident message ~D" sequence) nil)))
+         (measured (terminal-ui-create :terminal terminal :fullscreen-p t)))
+    (terminal-ui-present-records measured records)
+    (let* ((*fullscreen-transcript-character-limit*
+             (clinedi:transcript-viewport-resident-characters
+              (fullscreen-terminal-ui-viewport measured)))
+           (ui   (terminal-ui-create :terminal terminal :fullscreen-p t))
+           (page (terminal-ui-create :terminal terminal :fullscreen-p t)))
+      (with-terminal-ui (active ui)
+        (terminal-ui-present-records active records)
+        (terminal-ui-present-records
+         page (loop for sequence from 1 to 2
                     collect (list (list ':conversation "prepend" sequence)
-                                  (format nil "resident message ~D" sequence) nil)))
-      (terminal-ui-present-records
-       page (loop for sequence from 1 to 2
-                  collect (list (list ':conversation "prepend" sequence)
-                                (format nil "older message ~D" sequence) nil)))
-      (terminal-ui-process-event active ':scroll-top)
-      (let* ((viewport (fullscreen-terminal-ui-viewport active))
-             (anchor   (clinedi:transcript-viewport-row-text viewport 0))
-             (*fullscreen-transcript-character-limit*
-               (clinedi:transcript-viewport-resident-characters viewport)))
-        (terminal-ui-fullscreen-prepend-history active page)
-        (let ((viewport (fullscreen-terminal-ui-viewport active)))
-          (test-assert (string= "older message 1" (clinedi:transcript-viewport-row-text viewport 0))
-                       "An older page precedes resident output chronologically.")
-          (test-assert (string= anchor (clinedi:transcript-viewport-row-text
-                                        viewport (clinedi:transcript-viewport-top viewport)))
-                       "Prepending retains the visible source row when the window fits.")
-          (test-assert (<= (clinedi:transcript-viewport-resident-characters viewport)
-                           *fullscreen-transcript-character-limit*)
-                       "Loading older output respects the resident character budget.")
-          (test-assert (and (not (terminal-ui--finalized-p active '(:conversation "prepend" 14)))
-                            (null (terminal-ui-take-evicted-sequence active "prepend")))
-                       "Newer-edge eviction releases identities without advancing the older disk cursor.")))))
+                                  (format nil "older message ~D" sequence) nil)))
+        (terminal-ui-process-event active ':scroll-top)
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (anchor   (clinedi:transcript-viewport-row-text viewport 0)))
+          (clinedi:transcript-viewport-selection-start viewport 1 1)
+          (terminal-ui-fullscreen-prepend-history active page)
+          (let ((viewport (fullscreen-terminal-ui-viewport active)))
+            (test-assert (string= "older message 1" (clinedi:transcript-viewport-row-text viewport 0))
+                         "An older page precedes resident output chronologically.")
+            (test-assert (string= anchor (clinedi:transcript-viewport-row-text
+                                          viewport (clinedi:transcript-viewport-top viewport)))
+                         "Prepending retains the visible source row when the window fits.")
+            (test-assert (string= "r" (clinedi:transcript-viewport-selection-text viewport))
+                         "Prepending retains the selection anchored in the visible record.")
+            (test-assert (<= (clinedi:transcript-viewport-resident-characters viewport)
+                             *fullscreen-transcript-character-limit*)
+                         "Loading older output respects the resident character budget.")
+            (test-assert (and (terminal-ui--finalized-p active '(:conversation "prepend" 1))
+                              (terminal-ui--finalized-p active '(:conversation "prepend" 3))
+                              (not (terminal-ui--finalized-p active '(:conversation "prepend" 14)))
+                              (null (terminal-ui-take-evicted-sequence active "prepend")))
+                         "Keep loaded and retained identities without advancing the older disk cursor."))))))
   nil)
 
 (-> test-terminal-fullscreen-exit-epilogue () null)
