@@ -100,19 +100,10 @@
             (if (and (= (length operations) 1)
                      (typep (first operations) 'workspace-content-operation))
                 (workspace-content-operation-content (first operations))
-                (handler-case
-                    (cl-hashline:edit-text
-                     (resource-observation-content base)
-                     (mapcar #'workspace-file--json-operation operations)
-                     :visible-lines
-                     (workspace-file-observation-state-visible-ranges state)
-                     :split-lines #'text--split-lines
-                     :anchor-maximum-offset
-                     *workspace-file-resource-anchor-maximum-offset*)
-                  (cl-hashline:hashline-error (condition)
-                    (error 'tool-error
-                           :tool-name "resource.edit"
-                           :message   (princ-to-string condition)))))))
+                (text-resource--edit-text
+                 (resource-observation-content base)
+                 (mapcar #'text-resource--json-operation operations)
+                 (workspace-file-observation-state-visible-ranges state)))))
       (when (and (null content)
                  (not (eq (workspace-file-observation-kind base) ':file)))
         (error 'resource-operation-unsupported

@@ -388,16 +388,6 @@ Directories and missing files keep their ordinary observation."
 
 ;;;; -- Bounded Observation Rendering --
 
-(-> workspace-file--format-ranges (structlisp:integer-interval-set) string)
-(defun workspace-file--format-ranges (ranges)
-  "Format file visibility using the shared text representation."
-  (text-resource--format-ranges ranges))
-
-(-> workspace-file--elisions ((integer 0) structlisp:integer-interval-set boolean) list)
-(defun workspace-file--elisions (total-lines ranges truncated-p)
-  "Return shared text elisions for a file observation."
-  (text-resource--elisions total-lines ranges truncated-p))
-
 (-> workspace-file--read-result
     (workspace-file-observation-state string
      &key (:total-lines (integer 0)) (:truncated-p boolean))
@@ -556,24 +546,6 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
       (cl-hashline:hashline-error (condition)
         (error 'tool-error :message   (princ-to-string condition)
                            :tool-name "resource.edit")))))
-
-(-> workspace-file--operation-window (list (integer 0)) (values (integer 1) (integer 1)))
-(defun workspace-file--operation-window (operations total-lines)
-  "Locate a file edit's refreshed window through the shared text pipeline."
-  (text-resource--operation-window operations total-lines))
-
-
-;;;; -- Structured Operation Adapter --
-
-(-> workspace-file--json-operation (json-object) list)
-(defun workspace-file--json-operation (operation)
-  "Adapt a file operation to the shared cl-hashline input convention."
-  (text-resource--json-operation operation))
-
-(-> workspace-file--carried-visible-ranges (structlisp:integer-interval-set string string) list)
-(defun workspace-file--carried-visible-ranges (ranges old-content new-content)
-  "Carry a file revision's unchanged visible ranges through the shared text pipeline."
-  (text-resource--carried-visible-ranges ranges old-content new-content))
 
 (defmethod resource-apply-operations
     ((resource workspace-file-resource) (context tool-context) &key base-revision operations)

@@ -234,20 +234,15 @@ An edit may produce an overlong line; its successful publication is still report
       (let* ((state (text-resource-edit-state resource conversation base-revision))
              (base  (resource-observation-state-observation state)))
         (text-resource-check-edit-base resource context base)
-        (handler-case
-            (multiple-value-bind (content normalized)
-                (cl-hashline:edit-text
-                 (resource-observation-content base)
-                 (if (listp operations) (mapcar #'text-resource--json-operation operations) operations)
-                 :visible-lines         (text-resource-observation-state-visible-ranges state)
-                 :split-lines           #'text--split-lines
-                 :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
-              (values (text-resource-commit resource context :base base :content content) normalized
-                      (text-resource--carried-visible-ranges
-                       (text-resource-observation-state-visible-ranges state)
-                       (resource-observation-content base) content)))
-          (cl-hashline:hashline-error (condition)
-            (error 'tool-error :message (princ-to-string condition) :tool-name "resource.edit")))))))
+        (multiple-value-bind (content normalized)
+            (text-resource--edit-text
+             (resource-observation-content base)
+             (if (listp operations) (mapcar #'text-resource--json-operation operations) operations)
+             (text-resource-observation-state-visible-ranges state))
+          (values (text-resource-commit resource context :base base :content content) normalized
+                  (text-resource--carried-visible-ranges
+                   (text-resource-observation-state-visible-ranges state)
+                   (resource-observation-content base) content)))))))
 
 (defmethod resource-tool-read
     ((resource text-resource) (tool resource-read-tool) (context tool-context) (arguments hash-table))
@@ -368,6 +363,17 @@ An edit may produce an overlong line; its successful publication is still report
          (setf result (list* (rest field) value result))))
      operation)
     result))
+
+(-> text-resource--edit-text (string t structlisp:integer-interval-set) (values string list &optional))
+(defun text-resource--edit-text (content operations visible-ranges)
+  "Return the edited content and normalized operations, translating hashline refusals."
+  (handler-case
+      (cl-hashline:edit-text content operations
+                            :visible-lines         visible-ranges
+                            :split-lines           #'text--split-lines
+                            :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
+    (cl-hashline:hashline-error (condition)
+      (error 'tool-error :message (princ-to-string condition) :tool-name "resource.edit"))))
 
 (-> text-resource--carried-visible-ranges (structlisp:integer-interval-set string string) list)
 (defun text-resource--carried-visible-ranges (ranges old-content new-content)
