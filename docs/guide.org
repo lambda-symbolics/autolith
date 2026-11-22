@@ -859,1066 +859,483 @@ runtime in use lives inside them.
 
 ** Prose, Lisp, and commands
 
-Ordinary text is sent to the current channel. It is equivalent to:
+Type a request in plain text to send it to the current channel. For example,
+ask Autolith to review a change and name the file or test you want it to check.
+Type =@= to complete a workspace path or a participant handle. A token that
+contains a slash is treated as a path.
 
-#+BEGIN_SRC lisp
-(channel.send :text "Review this change")
-#+END_SRC
-
-The current channel is the default. Use =:channel= with a named participant
-channel or explicit channel identifier:
-
-#+BEGIN_SRC lisp
-(channel.send :channel "@test-review"
-              :text "Run focused tests and report failures.")
-#+END_SRC
-
-=channel.send= accepts computed text and optional image pathnames:
+Start input with =(= to evaluate Common Lisp in the active image. Autolith
+passes the form and its result to the model. The form has its normal effects
+in that image. To send text from a file, or to attach an image, use
+=channel.send=:
 
 #+BEGIN_SRC lisp
 (channel.send :text (read-file "request.org"))
-(channel.send :text "Review this diagram"
-              :images #("/tmp/diagram.png"))
+(channel.send :channel "@test-review" :text "Run the focused tests.")
+(channel.send :text "Review this diagram" :images #("/tmp/diagram.png"))
 #+END_SRC
 
-If you message a child agent, it can respond to you in the main conversation
-thread if it wants to.
+- Run =(help)= for an overview or =(help :commands)= for the command list.
+- Use a keyword for a topic, as in =(help :conversations)=. Use a quoted command
+  or a tool name for its arguments, as in =(help 'open)= or =(help "lisp.eval")=.
+  Browse a namespace with =(help :lisp)= or use =(help :all)= for the full
+  reference.
+- Press Tab after =(help = to complete a topic or operation. For command
+  options, press Tab after a command name and a space. For example, complete
+  =(ste t)= to request Simple Technical English and =(ste nil)= to turn it off.
 
-Start a message with =(= to evaluate it as Common Lisp in the active image:
-
-#+BEGIN_SRC lisp
-(help)
-(resource.read :uri "workspace:.")
-(eval-now (setf *print-pretty* nil))
-#+END_SRC
-
-Use =(help)= for a short overview. Choose a topic or look up one command:
-
-#+BEGIN_SRC lisp
-(help :conversations)
-(help :workspace)
-(help 'switch)
-(help "lisp.eval")
-#+END_SRC
-
-Keyword topics open sections. Quoted symbols and strings open command or tool
-help, including usage and parameter descriptions. Browse tools by namespace with
-=(help :lisp)=, list all commands with =(help :commands)=, or request the full
-reference with =(help :all)=. Help uses the terminal Markdown renderer and Lisp
-syntax highlighting.
-
-Press =Tab= after =(help = to browse topics and registered operations. Command
-options also appear after a command name and a space, for example =(ste =.
-
-Type =@= in prose or inside a Lisp string to fuzzy-search workspace files
-through fff. Accepting a match inserts the path and drops the =@=.
-Directories keep a trailing slash so you can keep completing. A completed
-file stays in the draft.
-
-The clanker receives your Lisp source and its evaluated result. The form also
-has its usual effects in the active image.
-
-Local Lisp results use syntax highlighting and width-aware pretty printing.
-Small values fit on one line; longer property lists use aligned keyword/value
-rows. Each returned value has its own =⇒= marker. Captured output appears in a
-separate section. Large or circular values use bounded previews.
-
-Direct tool results use report text without string-literal wrapping. Native
-S-expression reports from task, job, and mission tools use the Lisp formatter,
-with parentheses, tagged roots, and fields intact. Ordinary strings use Lisp
-string notation. Tool calls return their usual values, so
-=(list (child.roles))= produces a list containing the report string. Copied or
-modified report strings also use string notation. Synchronous and asynchronous
-evaluation retain the same display text for replay.
-
-Provider tool calls show parenthesized names, such as =(shell.run)=, with Lisp
-keyword labels, such as =:directory= and =:timeout-seconds=. Short argument tables
-fit inside the parentheses on one line; wider calls use aligned rows below the
-name. Shell commands and Lisp source appear in highlighted rails directly below
-the arguments, without a blank row between them.
-Consecutive single-line tool success messages share a block without blank rows.
-Consecutive single-line calls to the same tool also share a block without blank rows.
-Unified diffs in captured output use the ordinary output rail, with their
-original change prefixes and indentation.
-
-Start input with =?= followed by whitespace to evaluate one form asynchronously
-in the active image. Use this for a blocking operation or a bare variable:
+Use =?= followed by whitespace to evaluate one Lisp form in the background.
+This also works for a bare variable. Input such as =?text= or =??= is plain text.
 
 #+BEGIN_SRC lisp
 ? *package*
 ? (progn (sleep 10) (values :finished 42))
 #+END_SRC
 
-The editor displays =?= in place of the normal prompt. Submit with Enter, then
-continue using the session while the form runs. =??= and =?text= are chat;
-spaces, tabs, and line breaks after =?= select asynchronous Lisp. Continue an
-incomplete form on another line as with ordinary Lisp input.
+Use the printed =exec:N= ID to inspect, wait for, or cancel that job:
+=(job.get :id "exec:1")=, =(job.wait :id "exec:1")=, or
+=(job.cancel :id "exec:1")=. Replace =exec:1= with the ID you received. In
+fullscreen, click the printed cancellation form to insert it in the composer.
+The result and captured output go to the original conversation even if you
+switch channels. Background Lisp uses EOF for input and reports errors without
+an interactive restart picker. Submitting a form this way does not start a model
+turn.
 
-The submission line names the =exec:N= job and shows its =job.cancel= call. In
-fullscreen, click the call to insert it into the composer. A tool you call
-yourself that goes to the background, such as
-=(shell.run :command "make" :async t)=, shows the same line as a background
-tool call of the model.
+When local Lisp or a command fails and the restart picker opens, choose
+*Ask Autolith why this failed* to diagnose it while the operation is suspended.
+Review the proposed recovery before choosing a restart or retry. A retry does
+not undo effects that happened before the error. Escape during diagnosis
+returns to the picker; Escape at the picker aborts the failed operation.
 
-Inspect the job with =job.get= or =job.wait=. The bare number works too, as in
-=(job.cancel :id 1)=, if exactly one visible job ends in =:1=; otherwise the
-error lists the candidates.
-Standard output, error output, and Lisp diagnostic streams are
-captured with bounded retention and rate-limited, sanitized terminal display.
-On completion, receive all returned values or the error, together with captured
-output. Asynchronous evaluation uses noninteractive error handling and EOF input
-rather than a restart picker.
-
-The submitted form and its eventual result are retained in the originating
-session, including across a session switch. The model receives these messages
-at a safe request boundary; submitting a form does not start a model turn.
-
-When local Lisp or an interactive command signals a serious condition, the
-restart debugger keeps the signaling stack and its live restarts available. Use
-=Ask Autolith why this failed= to run an independent diagnosis while the failed
-operation remains suspended. Diagnosis can offer up to three explicitly selected
-recoveries that invoke a live restart, run repair source first, retry the whole
-operation, return replacement values when supported, or abort the operation.
-Retry does not roll back effects completed before the failure.
-
-The debugger shows the condition type and report, followed by available details
-such as the offending value, expected type, operation, filename, and reader
-location. These fields come from the condition itself and are also included in
-model diagnosis.
-
-Escape during diagnosis cancels only the diagnosis and returns to the live
-restarts. Escape at the ordinary restart picker aborts the failed operation.
-During an active provider turn, Escape cancels the turn and continues queued
-steering in submission order, oldest first. Ctrl-C cancels and pauses queued
-work until you submit input; a second interrupt within the force-exit window
-exits the application.
-During an attached terminal connection, Ctrl-Z invokes =(detach)=, in REPL and
-fullscreen views. Only the current client disconnects; ongoing work continues.
-Use =(stop-server)= to stop the current world server and work in all its channels,
-closing its attached clients.
-
-During an active response, submit =(cwd PATH)= to change workspace at its position
-among steering inputs. The model receives a durable notice before its next
-request, and connected clients receive the committed workspace state. Relative
-paths resolve at that steering position. Use =(cwd)= to read the current path
-immediately.
+During a model turn, Escape cancels that turn and lets queued steering proceed.
+Ctrl-C cancels the turn and pauses queued work until your next submission. A
+second Ctrl-C within the force-exit window exits the application. Use =(cwd)= to
+see the current workspace. If you submit =(cwd "../other-project")= during a
+turn, the relative path is resolved when that input reaches its place in the
+steering queue.
 
 ** Parking and editing queued input
 
-Run =(vault-store)= to move queued work and unconsumed steering into the recovery
-input vault immediately, including during an active turn. Active work continues.
-Use =(vault-contents)= to read the parked entries in restoration order and =setf=
-to replace the whole list or one zero-based entry:
+1. Run =(vault-store)= to park queued work and unconsumed steering. Work already
+   in progress continues.
+2. Run =(vault-contents)= to inspect the parked entries in restoration order.
+   Entries are zero-indexed. Use =setf= to publish a change.
+3. Run =(vault-restore)= to put the edited entries at the front of the live queue.
 
 #+BEGIN_SRC lisp
 (vault-store)
 (vault-contents)
-(setf (vault-contents 0) '(:message "Revised task"))
-(setf (vault-contents) '((:message "First task") (:lisp "(+ 1 2)")))
+(setf (vault-contents 0) '(:message "Run the unit tests first."))
 (vault-restore)
 #+END_SRC
 
-Entries are =(:message INPUT)=, =(:command TEXT)=, =(:lisp SOURCE)=, or
-=(:native-lisp SOURCE)= for noninteractive scheduled wakeups.
-Pending snapshots store scheduled wakeups in a separate section ignored by
-releases before 0.67.9; after a downgrade, only those wakeups are omitted.
-Direct vault reads and top-level =setf= forms containing only =vault-contents=
-places execute during an active turn. Returned lists are detached snapshots;
-publish edits with =setf=. Use =(setf (vault-contents) nil)= to clear parked input.
-Run =(vault)= for a summary or =(vault-restore)= to prepend parked work to the
-live queue.
+Use =(vault)= for a summary. To replace the entire list, set =(vault-contents)=
+without an index. Its entries may be =(:message INPUT)=, =(:command TEXT)=,
+=(:lisp SOURCE)= or, for scheduled wakeups, =(:native-lisp SOURCE)=. Set the list
+to =nil= to clear it.
 
 ** Managed resources
 
-=resource.read= observes durable state and returns an opaque revision.
-=resource.edit= applies a resource-specific operation only against that exact
-observation.
+Use =resource.read= to read a file or another resource. For an edit, pass the
+revision from that read as =:base-revision= to =resource.edit=. If the resource
+changed, read it again before editing. For a multi-file =cl-resources= change,
+Autolith checks every staged revision before publishing. If publication fails
+partway through, Autolith restores the earlier files unless an external change
+requires manual recovery.
 
-For multi-file semantic changes, Autolith prepares a =cl-resources= change set
-against retained file revisions and validates every member before publication.
-Each file is published atomically. On a later failure, Autolith restores earlier
-members; conflicting external updates require explicit recovery rather than
-replacement. File moves preserve source permissions captured during staging.
+#+BEGIN_SRC lisp
+(resource.read :uri "workspace:README.md")
+(resource.read :uri "channel:current" :query "unit tests" :max-results 5)
+(resource.read :uri "channel:current" :start-sequence 120 :record-count 10)
+#+END_SRC
 
-Papercuts report concrete defects or repeated friction in the running Autolith
-harness or its tools. Record project source bugs and test, build, or CI failures
-in the task plan or agenda, even when developing Autolith itself; use a project
-tracker only when authorized. A project failure alone is not evidence of a
-harness defect. Papercuts are not progress reports or records of ordinary
-uncertainty.
+| Resource | Use |
+|----------+-----|
+| =channel:current= | Read recent history, including records from before compaction. |
+| =channel:id/ID= | Read the history of one other channel. |
+| =channel:list= | Find channels and their participants. Reading does not subscribe you. |
+| =papercut:current= | List active reports about the running Autolith harness or its tools. |
+| =papercut:id/ID= | Read one papercut. Percent-encode the stable ID if necessary. |
 
-Papercuts use current-workspace resource URIs:
-
-- =papercut:current= lists active reports.
-- =papercut:id/<percent-encoded-stable-id>= reads one active report and accepts
-  =papercut-assess= or =papercut-close=.
-
-The existing =papercut.report= tool and =(papercuts)=, =(papercut "ID")=, and
-=(papercut-close "ID")= commands remain convenient direct interfaces.
-
-Each model papercut report is acknowledged durably in the conversation. Repeated
-reports return the existing workspace papercut instead of creating another one.
-Reports match by an identical title, or by substantial overlap in the title and
-body with a report from the last day. A conversation re-filing its own report
-within an hour uses a looser match to catch rewritten repeats.
-
-Channel history uses read-only resource URIs:
-
-- =channel:current= describes the current channel and reads its durable history,
-  including records compaction removed from the model context.
-  A plain read returns the newest records; =start-sequence= and
-  =record-count= (default 20, maximum 200) page by durable record sequence.
-  A window holds at most 7,000 characters and shortens long records, so read
-  a record alone to see all of it.
-- With =query=, the read lists the newest records containing every
-  whitespace-separated term, each with its sequence and an excerpt. ASCII
-  letters match in either case and other characters match exactly.
-  =max-results= defaults to 20 and is capped at 50. Messages, assistant
-  replies, reasoning summaries, tool call arguments and outputs, web searches,
-  and compaction checkpoints are searched.
-- =channel:id/<id>= describes and reads another channel. Searches never span
-  several channels.
-- =channel:list= surveys every channel with its residents and subscribers.
-  Reading a channel never subscribes the reader.
+History searches are limited to one channel and match all the search terms.
+Page by sequence number or read a long record on its own. Use =(papercuts)= to
+list reports, =(papercut "ID")= to inspect one, or =(papercut-close "ID")= to
+close it. Agents can report a harness defect with =papercut.report= or assess
+and close a report through its resource where authorized. Put project bugs
+and test failures in the plan or agenda rather than the harness reports.
 
 ** Memories
 
-Each agent has personal memories tied to its durable participant identity,
-including after it changes channels or reloads. Agents read and write their own
-personal memories through =memory:personal=. Related recall includes those
-memories alongside shared workspace and global memories.
-
-Children of another agent may read shared memories and structured knowledge.
-Top-level agents may also modify them. Personal ownership cannot change through
-replacement. A memory can record where it came from:
-
-- a quoted passage of a file, or the whole file;
-- your own words in the conversation;
-- a web page;
-- other memories it was derived from, its premises.
-
-If a cited file no longer contains its quoted passage, or a premise changes or is
-forgotten, the memory becomes /stale/. Every memory derived from it becomes stale
-too. Restoring the passage makes them current again. Quotes are compared while
-ignoring whitespace, so reformatting a file does not stale its memories.
-
-Your words and web pages are provenance: they are never refetched. Once a memory
-cites files, those files decide whether it is current. A memory whose only cited
-files cannot be read is /unverified/. Status is worked out from the current files
-when the memory is listed or recalled. Checking makes no model requests.
+Use a *note* for a preference or convention and a *fact* for a value you want to
+reuse with its evidence. An agent can edit its own notes through
+=memory:personal=. That scope follows the agent across channels and restarts.
+Top-level agents can also write shared workspace and global memories. Their
+children can read those shared memories.
 
 #+BEGIN_SRC lisp
-(memories)            ; relevant memories, stale ones first
-(memories "deploy")   ; only those matching a query
-(memory "3afbfa1a")   ; one memory, its evidence, and what relies on it
-(forget "3afbfa1a")   ; stop recalling it
+(memories)
+(memories "deploy")
+(memory "3afbfa1a")
+(forget "3afbfa1a")
 #+END_SRC
-In fullscreen, open the memory manager with =(memories)=. Browse notes and facts
-beside their evidence. On a narrow terminal, press Enter to read the selected
-item. Use =/= to search titles, bodies, tags, IDs, and evidence. Use Tab to choose
-All/Notes/Facts, and Shift-Tab to choose a scope. Scroll an open explanation with
-the arrow keys or Page Up/Down. Press Esc to return to the list, then Esc again
-to close.
 
-Press =n= to create a note, =e= to edit one, =d= to forget a note or retract an
-asserted fact, and =r= to reload. Confirm deletion with =y=. In the note form, use
-Tab to move between title, tags, scope, and content. Use Space to choose a scope,
-Shift-Enter for a content newline, and Enter to save. A changed or deleted note
-must be reloaded before editing. Editing prose preserves its evidence and premise
-versions. Inspect derived facts to find their premises and rules.
-=(memory "ID")= opens the corresponding explanation directly.
+In fullscreen, =(memories)= opens the memory manager. Press =/= to search, Tab to
+choose between All, Notes, and Facts, and Shift-Tab to choose a scope. Press
+Enter to read the selected item on a narrow terminal. Use =n= to create a note,
+=e= to edit it, =d= to forget it or retract an asserted fact, and =r= to reload.
+In the note form, use Tab to move between fields, Space to choose a scope,
+Shift-Enter for a newline, and Enter to save. Outside fullscreen, the listing
+and explanation commands print text. Use a full ID or a unique ID prefix.
 
-In inline or noninteractive sessions, these commands print textual listings and
-explanations.
+A note can cite a file, a web page, your words, or another memory as a
+/premise/. A note is /stale/ if a cited passage disappears from a file or a
+premise changes. Any notes derived from it become stale too. A note whose only
+cited files cannot be read is /unverified/. Inspect the evidence with
+=(memory "ID")=. Update the source or premise when you update what the note
+claims. Retagging a note does not refresh its evidence.
 
-Any unique prefix of a memory ID selects it. =(forget)= names the memories
-that relied on the forgotten one, which are now stale. Recall flags stale
-memories for the model to recheck, replace or forget before use. The recall
-notice counts them: =@ 3 relevant memories exist · 1 stale=.
-
-The model records evidence through the =memory:= resources. =memory-remember=
-and =memory-replace= accept =sources=, objects naming one =file=, =url=, or
-=user= with an optional =quote=, and =premises=, memory IDs. A file quote must
-occur in the file and a =user= quote in your messages in this conversation
-when the memory is written. Replacing a memory without =sources= or =premises=
-keeps the recorded versions, so restating or retagging a stale memory leaves it
-stale; supplying them again rebinds it to the evidence as it is now. Workspace
-memories record files inside the workspace relatively, so they survive moving
-or importing the workspace, and a workspace export includes the global memories
-its memories rely on.
+For agent-written notes, the =memory-remember= and =memory-replace= operations
+accept =sources= and =premises=. Use =memory:id/ID= to inspect one note. Workspace
+file references inside that workspace are relative and can move with an export.
 
 *** Facts and rules
 
-Besides prose memories, Autolith keeps structured facts: predicates applied to
-typed values, such as =event.start review 2026-10-22T13:00:00Z=. Each fact cites
-its evidence and says why it is believed: an /observation/ of a file, page, tool,
-or mission; a /user assertion/; an /assumption/; or the model's own /proposal/.
-The source decides the basis, not the model's label. A file Autolith read is an
-observation. Your words are a user assertion. A web page becomes an observation
-when =web_extra.gist= retrieves it with the quoted text.
+A fact records a typed value and what supports it. For instance, the assertion
+=event.start review 2026-10-22T13:00:00Z= can come from your message or a calendar
+file. The two sources are kept separately. A derived fact keeps the basis of
+its premises: a calculation based on an assumption is still an assumption.
 
-The retrieval receipt identifies the retrieved content, bounded tool preview, and
-observation time. Quotations can cite the complete retained overflow object. If
-that storage is unavailable, only text in the retrieved prefix counts. The
-omission notice is presentation, not source evidence. A fact stated by two
-sources has two supports and holds while either does. Web pages expire after a
-week and tool output after a day. Fetch the source again to renew its evidence.
-Your statements and recorded runs do not expire.
+For an example, ask the agent to use the =appointments= recipe:
 
-A structured fact's file evidence applies only to the exact observed content,
-even when its quotation survives an edit elsewhere in the file. Review the new
-revision and observe it again before using it as current evidence. The original
-quotation and digest are kept for historical inspection.
-
-Rules derive facts from facts, with dates, durations, numbers, and quantities
-in units:
+1. Give it the start time of the review, 30 minutes of travel, and a 10-minute
+   buffer.
+2. Admit the proposed departure rule. Run =(rules)= to get its name or ID.
+3. Change the start from 13:00 to 13:15. The derived departure changes from
+   12:20 to 12:35 without another model request to run the rule. Run
+   =(what-changed)= to see the change and its cause.
 
 #+BEGIN_SRC lisp
-;; departure = start - (travel + buffer)
-(:premises (("event.start" "?event" "?start")
-            ("event.travel" "?event" "?travel")
-            ("event.buffer" "?event" "?buffer"))
- :bindings (("?leave" ("-" "?start" ("+" "?travel" "?buffer"))))
- :conclusion ("event.departure" "?event" "?leave"))
-#+END_SRC
-When a premise changes, Autolith recomputes the conclusion locally, without a
-model request. Move the meeting and the departure moves with it. A derived fact
-keeps the basis of its premises, so a conclusion derived from an assumption is
-never an observation.
-
-A negated premise matches only a fact explicitly stated not to hold. A missing
-fact does not satisfy it. Two facts that disagree about one keyed value, or a fact
-and its negation, are /conflicted/. Both are kept and shown; nothing picks a
-winner. Rules cannot depend on their own conclusions. An evaluation that reaches
-its work limit reports the remaining conclusions as unknown, not false.
-
-A rule the model proposes derives nothing until it is admitted. Admission
-uses the ordinary command approval: with full access it is admitted at once,
-otherwise you are asked to allow =rule.admit -- departure v1: ...=.
-
-#+BEGIN_SRC lisp
-(memories)            ; memories, then facts: conflicted and no longer holding first
-(why "c4dfffae")      ; why a fact holds: its sources, rule, and premises
-(what-changed)        ; facts that changed since you last asked, with the cause
-(rules)               ; rules, their versions, and whether they are admitted
+(rules)
 (admit-rule "departure")
+(what-changed)
+(why "c4dfffae")
 (retire-rule "departure")
-(forget "c4dfffae")   ; retract a fact; derived facts that relied on it go too
 #+END_SRC
 
-=(why "ID")= is an alias for =(memory "ID")= and accepts a memory or a fact.
-Recall includes complete current facts related to your message, so the model
-can use them without rereading. The notice counts them:
-=@ 2 relevant memories exist · 3 facts=. When a fact given to the model earlier
-in the conversation changes, the next turn includes an explanation once, and
-=@ 1 fact given earlier changed= appears. A memory can name a fact as a premise
-and goes stale when the fact stops holding; a fact can cite a memory as evidence.
+Use =(why "ID")= to inspect the sources, rule and premises of a fact, or the
+evidence for a note. Use =(forget "ID")= to retract an asserted fact. If two
+facts disagree, both are shown as /conflicted/. A negated premise requires an
+explicit negative fact; missing information is unknown. Recheck evidence when
+a cited file changes. Web evidence expires after a week and tool output after
+a day; observe it again to renew it.
 
-Autolith keeps every current fact, its sources, and the 1,024 most recently
-retracted sources in memory. For older retractions, =(why "ID")= reads the
-fact's history from the knowledge log.
+Agents can inspect =memory:facts=, =memory:claim/ID=, =memory:predicates=,
+=memory:rules= and =memory:changes=. The =memory:recipes= resource lists
+=appointments= and =service-dependencies=. Use =recipe-use= on =memory:facts=
+to define the predicates and propose the rules. The same resource accepts
+=predicate-define=, =fact-assert=, =fact-retract=, and =rule-propose=.
 
-The model reads =memory:facts=, =memory:claim/ID=, =memory:predicates=,
-=memory:rules=, =memory:procedures=, and =memory:changes=, and edits =memory:facts= with
-=predicate-define=, =fact-assert=, =fact-retract=, and =rule-propose=, up to 16
-per edit. Mission status and gate results are recorded as =autolith.mission.*=
-facts.
-
-Starter recipes give common work a ready vocabulary. =memory:recipes= lists
-them: =appointments= derives when to leave from an event's start, travel, and
-buffer, and =service-dependencies= marks a service at risk while something it
-depends on is down. A =recipe-use= operation on =memory:facts= defines a
-recipe's predicates and proposes its rules, which are admitted like any other.
-
-The =knowledge-mode= setting is =active= by default. =passive= keeps recording
-observations such as mission results but offers nothing to the model, and =off=
-records nothing; in both, model requests are exactly as without structured
-knowledge. Change it in =(settings)= or with =AUTOLITH_KNOWLEDGE=.
-
-Knowledge is evaluated locally when it is listed or recalled, and evaluated
-again only after a cited file, the knowledge, or a validity period changes.
-Each request where knowledge took part records its share, so its cost can be
-measured:
+Set =knowledge-mode= in =(settings)= or through =AUTOLITH_KNOWLEDGE=. Use
+=active= to record and recall knowledge, =passive= to record without giving
+facts to the model, or =off= to stop recording. The default is =active=. To
+inspect how much of the current conversation was spent on structured knowledge,
+use:
 
 #+BEGIN_SRC lisp
 (knowledge-usage-report (application-conversation *active-application*))
 #+END_SRC
 
-Facts, rules, and predicates travel with memories in data exports; a relocated
-workspace keeps its facts.
-
 *** Plans, methods, gates, and contracts
 
-A plan step can name the facts it requires. Its text takes their values, so
-=Leave at {?leave}= requiring =event.departure review ?leave= reads =Leave at
-12:20= and follows the departure when the meeting moves, without replanning.
-A step with unsatisfied requirements is shown /blocked/ with the missing pattern.
-Marking a step done records the facts used to complete it. If those facts later
-stop holding, the plan flags the change without repeating the step. Changes
-between turns are reported to the model once at its next turn, and
-=@ 1 plan step changed with its facts= appears.
+Use facts when a plan or action depends on something you can check. For the
+review example, a plan step can say =Leave at {?leave}= and require
+=event.departure review ?leave=. Before the departure is known, the step is
+/blocked/. When the time changes, the displayed step follows it. A completed
+step is flagged if its recorded facts later stop holding.
 
-A /method/ describes how to do a task when its conditions hold, with subtasks
-and plain steps in order. =plan.expand= turns a task such as =prepare review=
-into a plan locally, trying methods in order and expanding subtasks within a
-depth of 8 and 1,000 tasks. If no method describes a task, no method's conditions
-hold, or the search runs out of budget, it reports the reason and leaves the
-plan unchanged. Reports of unsatisfied conditions name the methods involved.
+- A /method/ describes how to do a task under stated conditions. Ask the agent
+  to run =plan.expand= to expand a task into ordered steps. Inspect definitions
+  in =memory:methods=.
+- A /fact gate/ checks a mission against accepted evidence. By default it
+  requires an undisputed observation or a statement from you. For example:
 
-A mission gate of kind =:fact= passes when a fact matching its pattern holds
-on accepted evidence. By default, it accepts observations and your statements:
+  #+BEGIN_SRC lisp
+  (:id "departure-known" :kind :fact :pattern ("event.departure" "review" "?t"))
+  #+END_SRC
 
-#+BEGIN_SRC lisp
-(:id "departure-known" :kind :fact :pattern ("event.departure" "review" "?t"))
-#+END_SRC
+- A tool /contract/ can require facts before a call and record facts from its
+  result. For example, require a verified destination before publishing a
+  report. If the prerequisite fails, the tool is not called. A predicted
+  effect only counts if the contract explicitly accepts it.
 
-A model's predictions never satisfy it, nor does a fact that another accepted
-fact disputes, and a derived fact counts only if everything it rests on,
-negated premises included, is accepted. A negated pattern such as
-=(:not ("item.blocked" "a"))= passes on an accepted explicit negation. A gate
-passed on facts that stop holding before acceptance is checked again.
-
-An action /contract/ describes a tool call: the argument values it applies to,
-facts it requires, expected effects, and facts to read from its arguments and
-JSON result, such as =$arg.to= and =$result.id=.
-
-A call whose requirements do not hold is refused before execution, with the
-reason. As with a gate, requirements need undisputed observations or your
-statements unless =accepts= also names =model-proposal=. In that case, predicted
-effects from an earlier call can satisfy them. A successful call records its
-expected effects as predictions and its observed values as observations. This
-also works with MCP results.
-
-Name tools in contracts and diagnostic probes by display name, such as
-=service.ping=, or canonical dispatch name. Canonical names take precedence;
-a display alias must identify one registered tool.
-
-The model defines methods with =method-define= and proposes contracts with
-=contract-define= on =memory:facts=. For each new contract version, approve the
-=contract.admit= request containing its complete definition, including
-observation mappings and =accepts=. Declining leaves that version inactive and
-any previously admitted version active. Any edit requires fresh admission;
-proposing the same admitted content again does not. Read proposed and active
-versions from =memory:contracts=, and methods from =memory:methods=.
-
-Contract admissions are persisted for the exact definition and version. Older
-contract records without admission provenance are inactive. Exports retain
-admission metadata for provenance; imported contracts require local admission.
-Trusted Lisp callers of =knowledge-define-contract= admit their definitions by
-default; pass =:admit nil= to propose one for separate authorization.
-
-Ask the agent to call =contracts.reset= to abandon all tool contracts and
-saved diagnosis probes across the knowledge store. Use
-this recovery operation even when damaged contract records prevent ordinary
-tool calls. The agent invokes it without contract preconditions or replay.
-Autolith archives the original log privately and atomically removes contract
-and diagnosis records, including those inside mixed transactions. Facts,
-evidence, rules, methods, procedures and prose memories are preserved. Define
-new contracts normally afterward.
-
-Requirements may bind variables used by effects and observations. A call needs
-one distinct binding environment; ambiguous bindings or an incomplete search
-refuse it before execution. Evidence records retain the supporting claim IDs.
-If a successful call's observation mapping fails, its plain result reports
-=externalSuccess: true=, a bounded =externalResult= excerpt, and structured
-=contractErrors= with =contractRecording: "failed"=. Rich results include a
-bounded diagnostic after their ordered content. Durable details retain the
-recording diagnostic and subtype metadata; clipped MCP sections include their
-original metadata as provenance.
+Agents propose methods and contracts with =method-define= and
+=contract-define= on =memory:facts=. Inspect contracts in =memory:contracts=.
+Review the complete =contract.admit= request before enabling a new version.
+Imported contracts also need local approval. A tool result marked
+=externalSuccess: true= and =contractRecording: "failed"= means the action
+succeeded and only the evidence recording failed. Check the result before
+retrying. If damaged contracts block ordinary calls, ask the agent to call
+=contracts.reset=. This archives the original log and clears all contracts and
+saved diagnoses without clearing facts or notes.
 
 *** Learned procedures
 
-When three turns in a workspace make the same tool calls in the same order,
-Autolith learns a /procedure/ after the turn, locally and without a model request.
-Arguments that never change stay as they were. A value taken from an earlier
-call's JSON result is taken from it again. Values that vary become parameters,
-matched with the words that varied in your requests.
-
-A procedure is kept only if each turn is reproduced by the procedure learned
-from the other two. If another recent request with the same wording did something
-else, the wording is not enough to show when the procedure applies. The procedure
-is not offered, though it can still be run. A new procedure shows
-=@ learned procedure make-sales-report from 3 turns · (procedures)=.
-When a later request fits, such as =Make the sales report for q5.=, the model is
-offered one =procedure.run= call. It makes the same calls with =q5=, and
-=@ learned procedure make-sales-report fits this request= appears. The first run
-asks to admit the procedure (=procedure.admit -- make-sales-report v1:
-sales.load, sales.report, notify.send=). Full access admits it at once.
-
-Automatic execution requires completed, successful model turns that ran the exact
-admitted procedure version and content. Complete usage measurements must show
-fewer model requests and fewer tokens than the learning baseline. A request that
-matches the wording exactly, apart from its parameters, then runs the procedure
-before the model's first request. The =procedure.run= call is shown, and the
-model answers from its results in one request.
-
-If a learned wording pattern has a variable word such as =Please= or =Kindly=,
-any word matches in that position. Such a match is only offered to the model,
-which may decline it. Different wording, such as =Make the sales forecast for
-q9.=, may match no pattern. If it shares at least two words with a procedure,
-Autolith lists up to three possible fits with their parameters to fill in and
-shows =@ learned procedure make-sales-report may fit this request=. The model
-decides whether to use one; none runs automatically on that match.
-
-Procedures are learned only from turns the model finished: every call succeeded,
-the model answered, and the turn was not cancelled.
-
-Every call still asks its own approval and passes its contracts. A run whose
-contract requirements do not hold for the request's values is refused before
-any call and is not offered; a call needing something an earlier call builds
-is checked when it is made. If a call fails, the run stops and the model
-continues the work with ordinary calls; two failed runs in a row suspend the
-procedure until you admit it again.
+When three successful turns in a workspace repeat a sequence of tool calls,
+Autolith can learn a /procedure/ locally. For example, after repeated requests
+such as =Make the sales report for q5.=, a notice may name =make-sales-report=
+and offer it for later requests with another file. Use =(procedures)= to see
+its calls, parameters, status and measured savings in model requests and tokens.
 
 #+BEGIN_SRC lisp
-(procedures)          ; procedures, their calls, status, and what they saved
-(run-procedure "make-sales-report" :file "q5")   ; without the model
-(admit-procedure "make-sales-report")             ; allow it, or lift a suspension
-(retire-procedure "make-sales-report")            ; never run or learn it again
+(procedures)
+(admit-procedure "make-sales-report")
+(run-procedure "make-sales-report" :file "q5")
+(retire-procedure "make-sales-report")
 #+END_SRC
 
-=(procedures)= compares the turns a procedure was learned from with recent
-turns that ran it, in model requests and tokens. The model reads
-=memory:procedures=. Procedures are kept in the knowledge log, with every run,
-and are learned and offered only while =knowledge-mode= is =active=.
+Replace the name and parameters with those listed for your procedure. The first
+run normally asks you to admit the procedure, and its calls still follow tool
+approvals and contracts. An exact request pattern can run automatically once
+the admitted version has demonstrated savings on completed turns. An
+approximate match is only offered to the model. Two consecutive failed runs
+suspend the procedure; use =(admit-procedure "NAME")= after you check it. Use
+=(retire-procedure "NAME")= to prevent further runs and relearning. Agents
+inspect procedures at =memory:procedures= and invoke them with =procedure.run=.
+Learning and recall require active structured knowledge.
 
 *** Diagnosis
 
-Diagnostic probes are enabled by default. Turn them off in =(settings)= or with
-=AUTOLITH_DIAGNOSIS=0=. With probes enabled and structured knowledge active, the
-model can use =diagnosis.run= to distinguish possible causes before trying a
-repair.
+Ask Autolith to diagnose a failure when more than one cause fits. With
+structured knowledge active, the agent can use =diagnosis.run= to compare up to
+four hypotheses with existing facts and up to three tool probes. Each probe
+needs a contract that records what the result establishes. An observation can
+rule out a cause; missing evidence leaves the case open.
 
-Supply up to four hypotheses, each with predicted facts, and probes: tool calls
-whose contracts observe facts from their results. Autolith checks known facts
-first, then ranks probes by prediction differences per unit cost. For each
-hypothesis pair, the ranking weight is 1 for two different predictions and 1/4
-for a prediction from only one hypothesis. It runs at most three probes without
-a model request between them.
-
-A hypothesis is ruled out only by an undisputed observation or statement that
-contradicts one of its predictions. Cases the probes cannot settle are reported
-as open. Save a diagnosis by name to run it again with new values.
-
-#+BEGIN_SRC text
-Diagnosis remote-service: stale-endpoint. Repair: Update its endpoint.
-probe 1: service.ping {"service":"billing"} ok → service.reachable(billing, true)
-probe 2: service.config {"service":"billing"} ok → endpoint.current(billing, false)
-ruled out unavailable: service.reachable(billing, true)
-ruled out credentials: endpoint.current(billing, false)
-#+END_SRC
-
-=(diagnoses)= lists saved diagnoses and recent cases: the cause found, its
-repair, and the facts that ruled out the others.
+For example, if a report fails to reach a service, check whether the service is
+reachable and whether the configured endpoint is current. A successful reachability
+probe rules out an outage; a stale endpoint gives you a specific setting to fix.
+Use =(diagnoses)= to review the evidence and saved diagnoses. Disable probes in
+=(settings)= or with =AUTOLITH_DIAGNOSIS=0=.
 
 ** Exporting and importing data
 
-Use the same portable archive from the command line or an active session:
+Export a workspace from the OS shell, then import it at its new path:
 
 #+BEGIN_SRC sh
-autolith data export all.sexp --all
 autolith data export project.sexp --workspace /home/al/code/project
 autolith data import project.sexp --workspace /home/al/src/project
 #+END_SRC
 
+Use the same archive format at the Autolith prompt:
+
 #+BEGIN_SRC lisp
-(data.export #P"all.sexp" :all t)
 (data.export "project.sexp" :workspace "/home/al/code/project")
 (data.import "project.sexp" :workspace "/home/al/src/project")
 #+END_SRC
-Export defaults to all workspaces and global data. A workspace export contains
-its conversations, memories, agendas, plans, papercuts, and related session
-assets. The archive contains Autolith data, not repository files. Clone or copy
-the repository separately. Credentials, configuration, executable image state,
-and caches are excluded.
 
-Import preserves stable identifiers and merges into local data. Identical data is
-skipped. A conflicting identity aborts the import before publication. For a
-single-workspace archive, =--workspace DIRECTORY= or =:workspace "DIRECTORY"=
-sets its new home directory. Without that option, workspace locations are
-preserved. Relative paths are resolved against the current working directory.
+Export includes conversations, notes, facts, rules, agendas, plans, papercuts
+and related assets. Copy the repository separately. Credentials, configuration,
+images and caches are excluded. Omit =--workspace= to export all workspaces and
+global data, or pass =--all= explicitly (=:all t= in Lisp).
 
-Export creates a new private archive and refuses to overwrite an existing file.
-The CLI exits without starting a session: success is 0, invalid arguments are 64,
-and transfer failures are 1. Both command groups provide =--help=.
+Pick a new filename for export. Import merges data by stable ID, skips identical
+records and stops before publication on an ID conflict. Use =--workspace= on
+import to relocate a single-workspace archive. Without it, the original paths
+are preserved. Run =autolith data export --help= or =autolith data import --help=
+for options. CLI exit codes are 0 for success, 64 for invalid arguments and 1
+for a transfer failure.
 
 ** Session titles and resume
 
-A session gets an immediate local title from its first prompt or image. Its agent
-starts with a readable two-word name, such as =hygienic-macro=. After the third
-actual user turn, Autolith may ask the active model for a concise title. The
-same inference gives the agent a name that describes its work, once the agent
-has worked for three user turns or 25 tool calls, whichever comes first. Both
-are saved durably. Automatic naming replaces only the starting name, and only
-once. Use =(rename "NAME")= to assign a name yourself; a name you assigned is
-never replaced. =(channel-id)= shows the ID of the channel the terminal is in,
-and returns it when called from Lisp.
+A channel gets a local title from your first prompt or image. Autolith can ask
+the model to refine the title after the third user turn and name the agent after
+three user turns or 25 tool calls. Use =(rename "NAME")= to name the current
+agent yourself. That name takes precedence over automatic naming. Inspect or
+change the setting with =(settings :session-title-generation-p)= or
+=(settings :session-title-generation-p nil)=.
 
-Provider-generated titles and names are enabled by default. Inspect the setting
-with =(settings :session-title-generation-p)=, or pass a second argument of =t=
-or =nil= to change it.
+- Run =(channel-id)= to find the stable ID of the current channel.
+- Run =(open)= to pick a channel or =(open "ID")= to open it directly.
+- Run =(delete)= to remove the displayed channel, or =(delete "ID")= to choose
+  another. Confirm only if you intend to remove its history and child channels.
+  The subtree must be idle and free of other attached clients.
 
-=(open)= picks a channel: the inbox, then each workspace's channels by their
-agents' names, children under their parents. Type to search; the Delete key
-removes the highlighted channel, after a confirmation, with its history and
-the channels nested in it. An explicit =(open "ID")= accepts the stable
-conversation identifier, a part that identifies one channel, or =@NAME= for
-the channel where that agent resides. The terminal status bar and local session
-status show the title when one is available; otherwise they show the conversation
-ID.
-
-Use =(delete)= to remove the channel shown in the invoking client, or
-=(delete "ID")= to select a channel by a unique ID prefix. Confirm removal in
-the dialog; the channel's history and nested channels are removed together.
-When deleting the displayed channel or one of its ancestors, the invoking
-terminal switches to the inbox first. Deletion requires the subtree to be
-idle and free of other attached clients. Cancelling the dialog leaves the
-client on its channel.
-
-If no process serves the conversation, it resumes in a fresh one. Background
-jobs, asynchronous shell runs, and Lisp worker state from before the restart no
-longer exist. The first user turn after such a resume carries a request-local
-notice telling the model about the restart. Only durable child task results stay
-readable through =job.get=.
-
-If a world server still serves the conversation as a channel, resume attaches to
-that live channel with its jobs intact. See Local sessions.
+Reopening a live channel gives you its jobs and history. If Autolith needs to
+serve the conversation in a new process, the history is available, but old
+background jobs and Lisp worker state are gone. Durable child task results can
+still be read with =job.get=.
 
 ** Usage
 
-Inspect stored data, logical disk usage, and process memory from the OS shell:
+Run =(status)= or its alias =(usage)= *at the Autolith prompt* for model usage:
 
-#+BEGIN_SRC sh
-autolith usage
-#+END_SRC
+- *Token usage* sums recorded input and output for this conversation. The
+  prompt-cache row shows cache usage when reported by the provider.
+- *Context* is the current space used in the model window, not the sum of
+  tokens sent over the conversation.
+- *Cost* covers recorded requests in this process. Review any unpriced request
+  count before treating the total as a bill. Subscription rate limits are shown
+  when available.
 
-The report covers all stored workspaces: primary and task conversations, active
-prose memories, agenda items, unretracted fact assertions, knowledge definitions,
-and retained checkpoints. Rule and contract counts include stored proposals.
-Fact assertions may be expired or future-dated; the report counts their stored
-support records. Conversation counts use nonempty log files without reading their
-contents.
-
-Disk figures are logical regular-file bytes under the configured data, state,
-cache, and config roots. Symbolic links are skipped. Root sizes can overlap;
-the combined total counts each file identity once, including hard links.
-Inaccessible or disappearing entries appear as partial observations.
-
-RAM figures cover reachable channel owners, the world server, and their
-descendants. Each live channel counts separately, even when channels share one
-process. Process IDs count once, including a world server with no open channels.
-The sum is resident set size (RSS), so shared pages can count once per process.
-The reporting process appears separately. Unavailable discovery or measurements
-are marked explicitly. These are best-effort observations while channels and
-files may change.
-
-The report uses compact metric columns and a disk-root table, with a stacked
-layout on narrow terminals. Bars compare each root with the largest root, not
-filesystem capacity; overlapping roots are not additive. Full root paths appear
-below the table. The layout is capped at 104 columns on wide terminals.
-
-Use a terminal for colored output; redirected output is plain text. Set
-=NO_COLOR= to suppress colors.
+From the OS shell, run =autolith usage= for stored conversation and knowledge
+counts, logical disk usage, and resident memory (RSS) of reachable processes.
+The disk total counts overlapping roots and hard links only once. RSS can count
+shared pages once per process. Run =autolith status= instead to inspect running
+channels and the server. Set =NO_COLOR= for plain output in a terminal.
 
 ** Local sessions
 
 *** Starting and switching channels
 
-One background server hosts your channels. An interactive =autolith= launch
-starts it if needed and preloads your inbox there. The terminal shows the
-Autolith banner until you select a channel in the sidebar.
-=autolith open= opens the top-level channel in the current workspace whose
-conversation file changed last, or creates one if the workspace has none.
-Use =autolith open TARGET= to open a specific channel. If another terminal
-controls that channel, use =--read-only= to observe it.
-
-If the server cannot be started or does not answer, the start ends with the
-reason. No session runs in the terminal's own process instead.
-
-Closing the terminal, detaching, or losing the connection leaves the channel
-running. Use =(exit)= to end it. Use =(open "ID")= to attach to another channel;
-the server opens it if needed and leaves the previous one running.
-In a pristine or recovery session, which runs apart from the server, use the
-same command to resume that conversation in place.
-
-Input piped from another program runs as a script in a new channel of the
-server, or in =ID='s with =autolith open ID=. Each line is one submission,
-and a Lisp form spanning lines is read whole. Each submission runs to its end
-before the next, and the transcript goes to standard output as plain text.
-The channel closes once the input ends. A script answers no approvals, so
-the channel decides them as it does with no terminal attached.
-
-The server runs until you stop it, even with no open channel or attached
-terminal:
+An interactive =autolith= launch starts the background server if needed and
+serves the inbox. Use the following shell commands to work on a channel:
 
 #+BEGIN_SRC sh
-autolith status
-autolith stop
+autolith open
+autolith open researcher --read-only
+autolith open /researcher/reviewer
+autolith new /home/al/code/project
+autolith new /home/al/code/project --detached
 #+END_SRC
 
-Use =status= to inspect the server process and its hosted channels, and
-=stop= to end all channels and the server. Updating or rolling back from any
-channel also stops the server because the image is shared.
+Without a target, =autolith open= opens the last changed top-level channel in
+the current workspace or creates one if there is none. Use =autolith new= for
+a fresh channel; add =-d= or =--detached= to create it without attaching. To
+open it later, use the printed =autolith open ID= command. Only one terminal
+can control a channel. Use =--read-only= to observe from another terminal.
 
-A channel nobody uses leaves memory: once no terminal shows it and nothing
-runs or waits in it for =(config :channel-idle-minutes)=, 30 by default, the
-server unloads it with its history. Opening it serves it again, and so does
-a message to its agent, which then reads the message without a terminal.
+Inside Autolith, use =(open "ID")= to switch channels. Use =(detach)= or Ctrl-Z
+to disconnect the terminal and leave work running. Use =(exit)= to end the
+channel. To stop *all* channels and their server, use =autolith stop= from the
+OS shell or =(stop-server)= from Autolith. Updating or rolling back also stops
+the shared server.
+
+An idle channel can unload after =(config :channel-idle-minutes)= minutes (30
+by default) if nothing is running or queued and no terminal shows it. Open it
+again or send its agent a message to serve it again. If you pipe a script into
+=autolith= or =autolith open ID=, submissions run in order and the transcript
+goes to standard output. A script cannot answer interactive approvals. The
+channel closes when input ends.
 
 *** Checkpoints and launch options
 
-A checkpoint saves the whole process and records the requesting channel as
-the rollback target. It first waits, however long it takes, until no channel
-runs a turn and no job is running. Work already under way finishes, with the
-jobs it starts; no channel starts a new turn meanwhile. Then the server
-pauses all channels, and each terminal reconnects automatically. Every
-channel receives the outcome; the requesting channel also receives the
-generation ID. The turns held during the wait then start. A terminal started
-during the pause waits for the server instead of starting another one.
+Run =(checkpoint)= to save the shared process. Work already in progress finishes
+first, across all channels. New turns wait until after the save. Terminals
+reconnect automatically, and the requesting channel receives the generation
+ID. On Windows, the launcher restarts the server from the saved heap.
 
-On Windows, which cannot fork, the world server saves its exact heap and
-exits. The launcher publishes the saved heap as the generation and starts it,
-and the server serves every channel again. Terminals reconnect as after any
-checkpoint, and a terminal started during the restart waits for the server.
+If you lose a connection unexpectedly, press =r= or Enter to retry the same
+channel, enter an ID to switch, or press =q= to detach. Retrying does not
+resubmit your work.
 
-After an unexpected attachment loss, the terminal reports the failure and
-accepts =r= or an empty Enter to reattach, a channel ID followed by Enter to
-switch, or =q= to detach. Each retry has a bounded connection deadline.
-Reattachment does not open a new channel or resubmit work. Attachment refusals
-and failures after acceptance are reported separately from an application exit.
-
-For a new channel, specify =--model=, =--permissions= or =--immutable=
-at startup. Supply =--provider= only together with =--model=.
-An existing channel accepts an explicit
-=--permissions= override only when no terminal controls it. Other launch
-options are rejected, with the option named in the error. When opening a
-workspace, those other options create a new channel instead of reusing a
-running one.
+Use =--model=, =--permissions= or =--immutable= when creating a channel. Pair
+=--provider= with =--model=. When opening an existing channel, the only launch
+override you can pass is =--permissions=, and only when no terminal controls it.
+To choose a permission mode in the channel, run =(permissions)=.
 
 *** Channel sidebar
 
-In fullscreen mode, an attached terminal can show the world's channels in a
-sidebar on the left. Your inbox appears as =home=, the root of the tree, with
-the number of messages waiting there unread; that count is kept on disk, so
-every terminal shows the same one. The other channels nest below it, grouped by
-repository or workspace, with the current group first. Within a group, the channel whose conversation
-changed last comes first, and child channels are nested under their parents.
-A channel shows its agent's name on one row and its title on the next. Channel
-IDs stay out of the list: the heading shows the current channel's, and a filter
-shows the ID of each match.
+In fullscreen, unfold *home* to find channels grouped by repository or
+workspace. Linked worktrees share a group when Autolith can identify their
+originating checkout. Independent clones have separate groups. Child channels
+are nested under their parent. Home shows the inbox and its unread count.
 
-In the sidebar and =(open)= picker, workspaces from a checkout and its linked
-worktrees share a group under the verified originating checkout. Independent local
-clones form separate groups. The repository identity and originating folder are
-recorded at creation or first verified lookup. Channels with removed worktrees
-use the saved checkout group. Older removed task worktrees can be attributed
-from exact persisted checkout/source records. Without verified or saved
-ownership, each workspace forms its own group.
+- Press Ctrl-S to toggle the sidebar. On a narrow terminal it opens as a drawer.
+- Click the sidebar or press Ctrl-Space (Ctrl-Tab where supported) to focus it.
+  Use the arrows to select or expand an entry, Enter to open it, or Delete to
+  remove it after confirmation.
+- Type to filter by agent name, ID, title or workspace. Press Escape to clear
+  the filter or return focus to the transcript.
 
-Home, the groups and the channels form a tree. Home and the current group start
-open, and so does each channel the current one nests in; the rest start closed.
-A group's row ends with the number of its channels. A closed channel or a closed
-home says how many channels nest below it, and a closed node adds their unread
-counts to its own. Click a node's =▸= or =▾= marker, or a group's row, to open
-or close it; the sidebar keeps that choice. Click a channel or home to switch
-to it.
-
-| Marker    | Meaning                                           |
-|-----------+---------------------------------------------------|
-| =▌=       | At the left edge: this terminal's current channel |
-| =▸= / =▾= | A closed or open node                             |
-| Green =●= | The agent is working                              |
-| =○=       | Hosted but not working                            |
-| =·=       | No running session                                |
-| =?=       | Runtime state is unknown                          |
+| Marker | Meaning |
+|--------+---------|
+| =▌= | Current channel in this terminal |
+| =▸= / =▾= | Closed or open group |
+| =●= / =○= | Agent working or hosted but idle |
+| =·= / =?= | No running session or unknown status |
 
 A yellow number counts messages received since this terminal last viewed the
-channel; =@= counts mentions of you. Each terminal tracks its own unread counts.
-A channel first seen by that terminal starts at zero. =N pending= counts
-deliveries waiting for a channel that no process serves.
-
-If a gather fails, the sidebar retains the last channel rows and marks their
-runtime state unknown until a successful refresh. Failed or closing hosts are
-unavailable for attachment while their owners finish cleanup and release their
-conversation leases.
-
-The sidebar takes about a fifth of a wide terminal's width. =Ctrl-S= hides
-or shows it; that preference is kept across channel switches and reconnects.
-The keyboard is either in the channel or in the sidebar. Press =Ctrl-Space=, or
-=Ctrl-Tab= where the terminal reports it, or click the sidebar, to move there:
-its heading and the rule beside it light up, and the selected channel is
-highlighted. The same key, =Esc= or a click in the channel moves back, and it
-shows a hidden sidebar first.
-
-In a focused sidebar, =↑= and =↓= select, =Enter= opens a channel, =←= and =→=
-close and open a tree node, and =PageUp=, =PageDown=, =Home=, =End= and the mouse
-wheel move through the tree. =Del= deletes the selected channel after a
-confirmation. Typing filters: the list becomes the channels whose agent name,
-ID, title or workspace path match, best first, from open and closed groups
-alike. Each word must match; the letters of a word need not be adjacent.
-=Backspace= edits the filter and =Esc= clears it. The =(new)= and =(delete)=
-buttons below the tree run the command in this terminal's current channel.
-
-When docking the sidebar would leave fewer than 90 transcript columns after
-subtracting the sidebar and its divider, the channel is visible by default and
-=Ctrl-S= opens the sidebar as a full-screen drawer, which has the keyboard while
-it is open. Opening a channel closes the drawer.
+channel. =@= counts mentions, and =N pending= counts deliveries waiting for a
+channel that is not loaded.
 
 *** Session endpoints
 
-Every channel the server hosts, like every directly running session,
-publishes a private authenticated local endpoint. Its session ID is the
-active conversation ID, shared with =autolith open= and stable across detach,
-restart and checkpoint quiescence. Selecting another conversation with
-=new= or =fork= moves the endpoint to that conversation ID while
-attached terminals continue using the same connection. Inspect endpoints
-with:
+Run =autolith status= to list live sessions or =autolith status --sexp= for use
+in Lisp scripts. The controlling terminal has its own PID, distinct from the
+server PID. In the S-expression, use =:terminal-client-pid= for the controller,
+=:observer-client-pids= for read-only clients and =:pid= for the host.
 
 #+BEGIN_SRC sh
-autolith status
-autolith status --sexp
+autolith start
+autolith tell researcher 'Review the failing unit test.'
+autolith tell /researcher/reviewer '(channel-id)'
+autolith pause researcher
+autolith detach researcher
 #+END_SRC
 
-The =PID= column identifies the controlling terminal client, or =-= when no
-client PID is available. Read-only observers do not occupy that column; multiple
-terminals may observe a channel, but only one may control it. In =--sexp= output,
-=:terminal-client-pid= identifies the controller and =:observer-client-pids= lists
-the distinct observer PIDs. The endpoint's =:pid= identifies its hosting process.
+Use =start= to launch the server in the background, =tell= to submit input,
+=pause= to cancel active work and hold queued work, or =detach= to disconnect
+the client. You may omit the target from =pause= and =detach= when exactly one
+endpoint is reachable. Use =tell= for an unloaded channel too. Its agent is
+started without a terminal.
 
-=idle= means that the process is at input with no active work of any kind.
+A message beginning with =(= is evaluated as Lisp in the target. Supply all
+arguments and read the result or error in the target transcript. The shell
+command acknowledges routing and does not wait for the result. Interactive
+pickers and confirmations are unavailable through =autolith tell=.
 
-Open a channel by agent name, path or ID:
+For local backups or diagnostics, these are the default roots. An absolute
+value for the corresponding XDG variable overrides each default.
 
-#+BEGIN_SRC sh
-autolith open b-6
-autolith open researcher --read-only
-autolith open /researcher/reviewer
-autolith open
-#+END_SRC
+| Purpose | XDG variable | POSIX default | Windows default |
+|---------+--------------+---------------+-----------------|
+| Configuration | =XDG_CONFIG_HOME= | =~/.config/autolith/= | =%APPDATA%\autolith\= |
+| Durable data | =XDG_DATA_HOME= | =~/.local/share/autolith/= | =%LOCALAPPDATA%\autolith\data\= |
+| Process state | =XDG_STATE_HOME= | =~/.local/state/autolith/= | =%LOCALAPPDATA%\autolith\state\= |
+| Cache | =XDG_CACHE_HOME= | =~/.cache/autolith/= | =%LOCALAPPDATA%\autolith\cache\= |
 
-Open an existing channel in this terminal with =autolith open TARGET=, using its agent's name
-with or without =@=, an exact channel path, or its ID. Omit the target to open
-the latest top-level channel in the current workspace. Use =--read-only= to
-observe without taking control, including after switching channels. Exact channel IDs take precedence over bare
-agent names. Unique ID fragments and legacy saved or live IDs also work.
-Ambiguous targets report candidate paths, with IDs and metadata for legacy
-conversations that have no durable channel. Names and paths work for unloaded
-agents too; opening their channel loads it.
-
-Each channel has its own unsent input draft within one terminal client. Return
-to a channel to continue editing its draft. Drafts are held in that client's
-memory until it closes.
-
-Use the same addresses with =(open "researcher")=, =(open "/researcher/reviewer")=,
-=(tell "/researcher/reviewer" "Review this change")= and =channel.send=. Read
-=channel:list= or open the channel and agent pickers to find current paths. Agent
-operations such as =(rename "/researcher/reviewer" "critic")= also accept a path
-when exactly one agent resides in that channel.
-
-A path starts at =/= and follows channel ancestry. Each component is the sole
-resident agent's name. The person's inbox is =/inbox=; its children start directly
-at =/NAME=, as do independent root channels. For a channel with no agent, several
-agents, or a conflicting sibling name, use the displayed channel
-identifier component shown in its path. Legacy name characters such as =/=
-and =%= are percent-encoded within a component. Copy a path exactly, including
-case and escapes; partial paths, extra slashes and filesystem-style =..= do not
-select channels.
-
-Renaming an agent can change its path and its descendants' paths. The agent,
-channel and conversation use the same stable ID. Use that ID or an exact
-channel path to disambiguate legacy names.
-
-Launch-only overrides such as =--model= are rejected when resuming a
-running conversation. For hosted channels, =--permissions= may be used when
-no terminal is attached, as described under Checkpoints and launch options.
-Otherwise, change the permission mode inside the conversation with
-=(permissions ...)=.
-
-Control a channel with the following commands:
-
-#+BEGIN_SRC sh
-autolith new    [DIRECTORY] [-d|--detached]
-autolith tell   TARGET "message"
-autolith pause  [TARGET]
-autolith detach [TARGET]
-#+END_SRC
-
-Use =autolith new= to create and open a fresh channel. Pass a =DIRECTORY= to use
-it instead of the current directory. With =-d= or =--detached=, create the
-channel without attaching, then use the printed =autolith open ID= command to
-attach later.
-
-Use a channel ID, a unique part of one, an agent's name with or without =@=,
-a participant ID, or =inbox= as =TARGET=.
-Names and ID fragments are matched without regard to case. Full channel IDs
-take priority over bare names; use =@NAME= to select a participant's residence
-explicitly. For example, =autolith tell researcher "review this"= sends a
-message to researcher wherever that agent resides. Ambiguous IDs report their
-matches and select nothing.
-
-Send a Lisp form as the quoted message to evaluate it in the target channel:
-
-#+BEGIN_SRC sh
-autolith tell TARGET '(format t "hello from autolith tell")'
-#+END_SRC
-
-The same input admission rules apply as in the channel. Evaluation is
-noninteractive: supply command arguments explicitly; an action requiring
-confirmation, such as =(delete)=, reports an error instead of opening a picker.
-Read evaluation output and errors in the target channel's transcript. The CLI
-prints only the routing acknowledgment, without waiting for queued work to finish.
-
-When exactly one endpoint is reachable, omit =TARGET= from =pause= or =detach=
-to select it. These commands require a hosted channel;
-=tell= also accepts cold channels. A message sent there, including a mention
-from another channel, starts its resident agent without attaching a terminal.
-Run =autolith start= to start the world server in the background before using
-=tell=.
-=pause= cancels active work and holds queued primary work.
-
-On POSIX hosts, detaching hands a session to a supervised process group that
-outlives the terminal. On Windows, the supervisor uses a Job Object for the
-session process tree. Both support unattended starts and later attachment.
-
-Autolith stores configuration, durable data, process state, and replaceable
-caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
-=${XDG_DATA_HOME:-~/.local/share}/autolith/=,
-=${XDG_STATE_HOME:-~/.local/state}/autolith/=, and
-=${XDG_CACHE_HOME:-~/.cache}/autolith/=. XDG base-directory values must be
-nonempty absolute paths; invalid values use these defaults. Newly created
-Autolith roots have mode =0700=.
-
-POSIX XDG directory values are native filesystem names, including literal
-brackets, asterisks, and backslashes.
-
-Provider discovery metadata uses =CACHE/provider-models.sexp=.
-
-Generated conversation picker, search, and input-history indexes use
-=CACHE/conversation-picker/<source-directory-hash>/=. Missing indexes rebuild from
-authoritative conversation records, including retired segments. Context anchors,
-source locks, and source-invalidation revisions use their original data-directory
-paths. Nix ASDF output uses =CACHE/nix/asdf-cache/<identity>/=; durable images
-use the data directory. After upgrading, you may remove old
-=DATA/nix/asdf-cache/= compilation output.
-
-On Windows the same four roots are, unless an absolute XDG variable overrides
-one, =%APPDATA%\autolith\=, =%LOCALAPPDATA%\autolith\data\=,
-=%LOCALAPPDATA%\autolith\state\=, and =%LOCALAPPDATA%\autolith\cache\=.
-Private files and directories carry an access control list granting only the
-owner and SYSTEM, which is what mode =0600= and =0700= mean there; a file
-Autolith publishes read-only withholds write access through that list and
-keeps the read-only attribute clear, so it can still be replaced and deleted.
+Endpoint records, leases and recovery state are under the state root. The
+management REPL socket defaults to =management/repl.sock= there on platforms
+with filesystem sockets. Channel clients use private authenticated loopback
+connections.
 
 ** Channels
 
-Autolith is moving from one session per process to one shared world of
-channels and participants. A channel is an addressable conversation and
-execution location with its own working directory and history. A participant
-is a person or an agent with private state; each resides in at most one channel and
-may subscribe to others. You reside in your inbox, a channel of your own
-named =inbox= where no agent ever lives; viewing or controlling another
-channel moves nobody. Every durable conversation is kept in step with a
-channel of the same identifier, initially with an agent participant residing there,
-owned by the one human participant. Read its history at =channel:id/X=.
-A conversation newer than its channel is migrated
-again onto the same identities, and a deleted conversation retires its channel
-and agent. The world lives in =world/= below the data root. One world server
-process hosts the open channels, each with its own endpoint for terminals;
-see Local sessions.
+A channel has its own history and workspace. Each agent resides in one channel
+and can subscribe to others. You reside in =/inbox=, also shown as *home* in the
+sidebar. Viewing or controlling another channel does not move you there.
+Typing ordinary text in the inbox starts no agent turn.
 
-The startup banner and update notice identify the world server's version.
-A client/server version mismatch is reported as an informational note in the
-initially opened channel's transcript, with both versions.
+#+BEGIN_SRC lisp
+(open "inbox")
+(tell "@researcher" "Check the release notes.")
+(open "/researcher/reviewer")
+(rename "/researcher/reviewer" "critic")
+#+END_SRC
 
-A failed channel endpoint enters that channel's fatal recovery path, including
-pending-input persistence. If the world-control accept thread dies, the server
-tries one transport repair under the same identity, preserving accepted
-connections. A timer failure, failed repair or second accept-thread failure
-initiates normal world shutdown. The world lease is released after the channels
-and process services end.
+Address a channel by agent handle, exact path, full ID or unique ID fragment.
+For =autolith open=, a bare agent name works too. Use a full ID in a bookmark
+or script if the names may change. A path follows channel ancestry and can
+change when an agent is renamed. Copy the displayed path, including case and
+percent escapes. Find paths with =(open)= or =channel:list=. Use =(tell)= to
+pick a recipient and prepare a message. Use =(rename "WHO" "NAME")= to rename
+a participant. Handles accept letters, digits, hyphens and underscores and
+are matched without regard to case.
 
-Use the sidebar or =(open)= picker to select a channel. Each agent belongs
-to one channel and can create child agents. A child's channel is
-nested under its parent's channel and belongs to its parent agent, so
-=channel:id/<execution id>= reads a child's transcript and a message to that
-channel steers it. How deep the tree grows is capped:
-=AUTOLITH_TASK_MAX_DEPTH=, default 3, counts the levels of child agents below
-a top-level agent, and the limits on running and queued jobs cap how many
-run at once.
+Use a mention such as =@researcher please check this= to send a copy to a
+participant from your current conversation. A mention starts a word, so the
+=@= inside a mail address does not count. To send directly, use =(tell "ID"
+"text")=. Agents use =channel.send= and can follow other channels through
+=channel.subscribe= and =channel.unsubscribe=. Subscribers receive copies of messages and replies.
+An agent can use =@parent= to
+reach its nearest active ancestor or, if there is none, you.
 
-Every participant has a unique name, its handle, so =@name= reaches exactly
-one of them. A session's agent initially uses its short channel ID. With automatic
-titles enabled, the model also infers a descriptive agent name. A child agent uses
-the name its parent supplied, as in
-=(channel.send :channel "@test-review" :text ...)=; an unnamed child starts with its
-short channel ID. You are =user=.
-Names are letters, digits, hyphens and underscores, matched without regard to
-case. =(rename "NAME")= renames this channel's agent and
-=(rename "WHO" "NAME")= renames the participant =WHO= names by handle,
-identifier or a part of it, yourself included. =(rename)= picks the agent,
-then leaves =(rename "WHO" "")= in the input for the new name. A name another participant
-has is refused, and so is =parent=, which always means the sender's parent.
-
-The agent uses its own channel history, model settings and goal. Switch
-channels with =(open)=, or use =(new)= for a fresh conversation. The inbox
-is for you and does not run agent turns.
-
-Typing =@= in the composer completes participant handles the way it completes
-workspace paths; a token with a slash stays a path. A message you type that
-mentions a participant residing in another channel is delivered to that
-channel as a mention from you when you submit it, before your own agent
-takes the message, so =@frob have a look= reaches frob wherever you are. A
-mention starts a word: an =@= inside an address or a path, as in
-=alice@frob.example=, mentions nobody. A plain message you type, and your
-agent's reply to it, reach every subscriber of your channel residing
-elsewhere the same way, as copies labeled by the subscription; a replayed
-turn after a restart sends no second copy. The transcript highlights
-mentions: your own name in the user color, other participants' names in the
-accent color.
-
-Messages travel between channels through the same path for people and agents.
-=(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
-may be any part of the identifier that names one channel, or =@NAME=, as in
-=channel:id/ID= and =(open "ID")=. =(tell)= picks the channel and leaves
-=(tell "ID" "")= in the input for the message. The agent
-tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
-for an agent, a child agent included: it is the resident of its nested
-channel and messages as that participant under its role's ordinary tool
-policy. A message reaches the channel's residents, every subscriber of
-the channel and every participant it mentions as =@name= or =@id=, wherever
-they reside. An absolute path addresses a channel, not a participant mention.
-An agent can use =@parent= as the channel in =channel.send= or
-as a mention. It reaches the closest active ancestor, or you if there is
-none. In a message to the sender's own child, =@parent= in the text
-reaches nobody else: the child reads it as the sender, as in "report to
-=@parent= when done". An idle agent wakes with the message; a working one
-receives it as a steer labeled with the sender and the channel. The transcript
-shows the sender's name and the channel. A message for you, one that mentions
-you or reaches you through =@parent=, is a notice: it goes to your inbox and no
-agent takes it as a turn. Once a terminal shows the inbox, the notice is
-recorded in the inbox's history and shown in full; until then it waits,
-unread. The sidebar counts it, and so does the modeline of every channel,
-as in =✉ 2 unread=. Each notice ends with the form that goes where it was said,
-such as =(open "b-6uouHJ")=; click it to run it as if you had typed it.
-=(open "inbox")= opens the inbox, which
-the =(open)= picker lists first. Typing in the inbox
-reaches no agent; =(tell "ID" "text")= writes to a channel from there.
-Messages you write elsewhere name the channel you wrote them in as their
-source. Messages wait in the channel's inbox under
-=world/inbox/= until a process serves the channel, and a crash between
-delivery and the durable record repeats nothing. A send is recorded under
-=world/outbox/= before its copies go out, so a copy an inbox refuses because
-it is full, or one a crash skipped, is delivered later under the same
-identifier, once, and the sender hears which channels still wait.
-
-Conversation leases, channel endpoint records, and recovery state live under
-=${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
-They must survive logout so supervised world servers, startup tickets, and
-crash recovery can continue across login sessions. Autolith uses authenticated
-loopback TCP for inference and channel clients, and removes stale endpoint
-records during discovery.
-The management REPL socket also defaults to the state directory, at
-=management/repl.sock=.
+An idle agent starts work when it receives a message. A working agent receives
+it as steering. Messages for you go to the inbox. Open it with =(open "inbox")=
+and use the =open= form at the end of a notice to jump to its source. Read a
+child agent transcript at =channel:id/ID=, where =ID= is its execution ID. Child
+channels nest under the parent; =AUTOLITH_TASK_MAX_DEPTH= defaults to three levels
+below a top-level agent.
 
 * Configure Autolith
 
