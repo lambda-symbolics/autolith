@@ -3602,37 +3602,6 @@ may fill the remainder."
                       (return))))))
        nil))))
 
-(-> application--render-unread-records (application) null)
-(defun application--render-unread-records (application)
-  "Stream and present only records after APPLICATION's durable render cursor."
-  (let ((conversation (application-conversation application)))
-    (loop
-      (application--render-position-reset-if-needed application)
-      (let ((generation (application-render-generation application))
-            (records    nil))
-        (multiple-value-bind (position incomplete-tail-p record-count)
-            (conversation--map-records
-             (conversation-log-pathname conversation)
-             (lambda (record)
-               (let ((sequence (application--record-sequence record)))
-                 (when (and sequence
-                            (> sequence
-                               (application-rendered-sequence application)))
-                   (push record records))))
-             :start-position (application-render-position application))
-          (declare (ignore incomplete-tail-p record-count))
-          (if (/= generation (conversation-log-generation conversation))
-              (application--render-position-invalidate application)
-              (progn
-                (dolist (record (nreverse records))
-                  (application--present-conversation-record application record)
-                  (setf (application-rendered-sequence application)
-                        (application--record-sequence record)))
-                (when (application--finish-render-scan
-                       application position generation)
-                  (return))))))))
-  nil)
-
 (-> application--finish-stream (application) null)
 (defun application--finish-stream (application)
   "Release, flush and reconcile APPLICATION's stream atomically, including on turn unwind."
@@ -3647,7 +3616,7 @@ may fill the remainder."
     null)
 (defun application--render-streamed-records
     (application streamed-assistant-text streamed-reasoning-text &key assistant-publication reasoning-publication)
-  "Reconcile and present APPLICATION's unread records after streamed output."
+  "Present APPLICATION's unread records, reconciling any streamed output."
   (let ((conversation (application-conversation application)))
     (loop
       (application--render-position-reset-if-needed application)
@@ -3668,18 +3637,15 @@ may fill the remainder."
               (application--render-position-invalidate application)
               (let* ((records (nreverse records))
                      (assistant-texts
-                       (loop for record in records
-                             for text =
-                               (application--assistant-message-record-text
-                                record)
-                             when text
-                               collect text))
+                       (when streamed-assistant-text
+                         (loop for record in records
+                               for text = (application--assistant-message-record-text record)
+                               when text collect text)))
                      (reasoning-texts
-                       (loop for record in records
-                             for text =
-                               (application--reasoning-record-text record)
-                             when text
-                               collect text))
+                       (when streamed-reasoning-text
+                         (loop for record in records
+                               for text = (application--reasoning-record-text record)
+                               when text collect text)))
                      (assistant-stream-match-p
                        (and streamed-assistant-text
                             assistant-texts
@@ -3745,12 +3711,10 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                 (1- (conversation-next-sequence
                      (application-conversation application)))))
        nil)
-      ((or streamed-assistant-text streamed-reasoning-text)
-       (application--render-streamed-records
-         application streamed-assistant-text streamed-reasoning-text
-         :assistant-publication assistant-publication :reasoning-publication reasoning-publication))
       (t
-       (application--render-unread-records application))))
+       (application--render-streamed-records
+        application streamed-assistant-text streamed-reasoning-text
+        :assistant-publication assistant-publication :reasoning-publication reasoning-publication))))
   (application-publish-recovery-session application)
   nil)
 
