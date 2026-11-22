@@ -206,31 +206,32 @@
 (-> acp-launcher-tests--initialize-with-caller-environment (string) hash-table)
 (defun acp-launcher-tests--initialize-with-caller-environment (program)
   "Create an ACP session and observe restored ASDF values from executable user init."
-  (with-test-configuration (configuration root)
-    (declare (ignore configuration))
-    (acp-launcher-tests--call-with-roots
-     root
-     (lambda ()
-       (let* ((configuration (configuration-create :defer-provider-validation-p t))
-              (observation   (merge-pathnames "caller-environment.sexp" root))
-              (registry      (namestring (merge-pathnames "caller//:" root))))
-         (ensure-directories-exist (merge-pathnames "caller/" root))
-         (with-open-file (stream (ensure-directories-exist
-                                  (configuration-user-init-path configuration))
-                                 :direction :output :if-exists :supersede)
-           (write `(with-open-file (output ,(namestring observation)
-                                          :direction :output :if-exists :supersede)
-                     (write (list (uiop:getenv "CL_SOURCE_REGISTRY")
-                                  (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS")
-                                  (uiop:getenv "AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE")
-                                  (uiop:getenv "AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE"))
-                            :stream output))
-                  :stream stream))
-         (with-test-environment (("CL_SOURCE_REGISTRY" registry)
-                                 ("ASDF_OUTPUT_TRANSLATIONS" "")
-                                 ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
-                                 ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
-                                 ("AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+  ;; Use the short, owned fixture root so the default management socket fits on Darwin.
+  (test-call-with-temporary-root
+   (lambda (root)
+     (acp-launcher-tests--call-with-roots
+      root
+      (lambda ()
+        (let* ((configuration (configuration-create :defer-provider-validation-p t))
+               (observation   (merge-pathnames "caller-environment.sexp" root))
+               (registry      (namestring (merge-pathnames "caller//:" root))))
+          (ensure-directories-exist (merge-pathnames "caller/" root))
+          (with-open-file (stream (ensure-directories-exist
+                                   (configuration-user-init-path configuration))
+                                  :direction :output :if-exists :supersede)
+            (write `(with-open-file (output ,(namestring observation)
+                                           :direction :output :if-exists :supersede)
+                      (write (list (uiop:getenv "CL_SOURCE_REGISTRY")
+                                   (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS")
+                                   (uiop:getenv "AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE")
+                                   (uiop:getenv "AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE"))
+                             :stream output))
+                   :stream stream))
+          (with-test-environment (("CL_SOURCE_REGISTRY" registry)
+                                  ("ASDF_OUTPUT_TRANSLATIONS" "")
+                                  ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
+                                  ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
+                                  ("AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
             (unwind-protect
                  (let ((result
                          (handler-bind
@@ -248,7 +249,7 @@
                    result)
               (let ((entry (world-client-entry configuration)))
                 (when entry
-                  (world-client--stop-server entry (make-broadcast-stream)))))))))))
+                  (world-client--stop-server entry (make-broadcast-stream))))))))))))
 
 (-> test-acp-launcher-caller-environment () null)
 (defun test-acp-launcher-caller-environment ()
