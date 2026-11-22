@@ -1933,99 +1933,78 @@ The management REPL socket also defaults to the state directory, at
 
 * Configure Autolith
 
-Autolith loads the optional user file
-=${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= after tracked code, a
-selected private image commit, and any site or trusted directory
-configuration. This order also applies to =autolith models= and =autolith auth=.
-Use =--pristine= to skip private replay and executable initialization.
-The user file reloads on retained generation reconnect.
+Put personal configuration in
+=${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=. This file runs as
+Common Lisp in the =AUTOLITH= package with your privileges. Use
+=--pristine= to skip private replay and executable initialization.
 
-The file is ordinary Common Lisp in package =AUTOLITH=, with your full
-privileges. It is not copied into private replay or the pristine recovery
-image.
+After the tracked code and selected private image have loaded, Autolith
+loads these files in order:
 
-Packagers may supply one separate, read-only configuration tree with
-=--site-config-root DIRECTORY= or =AUTOLITH_SITE_CONFIG_ROOT=. The directory
-must already exist and be absolute. It may contain =init.lisp=, =mcp.sexp=,
-=skills/=, and =agents/=. Site configuration loads before user configuration,
-so it provides defaults without replacing the user's normal XDG tree. A site
-=init.lisp= has the same full privileges as user initialization and is not a
-security boundary.
-Site lookup uses this explicit root rather than =XDG_CONFIG_DIRS=.
+1. The site =init.lisp=, if a site root is configured.
+2. Trusted =.autolith/init.lisp= files, from the outermost directory to the
+   nearest one.
+3. Your personal =init.lisp=.
 
-Executable initialization loads in this order:
+This order also applies to =autolith models= and =autolith auth=. Your
+personal file reloads if you reconnect to a retained generation. Startup or
+reload reports the pathname if a configuration file cannot be read or evaluated.
 
-1. site =init.lisp=
-2. trusted directory =.autolith/init.lisp= files, outermost to nearest
-3. the user XDG =init.lisp=
-
-Missing files are skipped. A file that exists but cannot be read or evaluated
-fails startup or reload, with its exact pathname in the error. The
-=directory-scopes.sexp= file is user-owned.
+Packagers can set a read-only site root with =--site-config-root DIRECTORY=
+or =AUTOLITH_SITE_CONFIG_ROOT=. Use an existing absolute directory. It can
+contain =init.lisp=, =mcp.sexp=, =skills/= and =agents/=. A site
+=init.lisp= runs with the same privileges as personal configuration. Use an
+explicit site root in place of =XDG_CONFIG_DIRS=.
 
 ** Settings
 
-Every knob Autolith exposes is a named setting with a type, a description, a
-default, and, where the choices are finite, its options. =(settings)= opens the
-settings page: a picker listing each setting with its current value and where
-that value came from. Choosing an adjustable setting opens its options;
-choosing a read-only one explains why it cannot change in a running session.
-The page returns to the list after every change until you cancel.
+Use =(settings)= to open the settings picker. Select a setting to see the
+current value, where it came from, and the available choices. In a script,
+=(settings)= prints the settings by area.
 
-The same operations work without the page. =(settings :boot-screen-seconds)=
-describes one setting, and =(settings :boot-screen-seconds 2)= changes it.
-Use native values: =t= and =nil= for switches, integers for counts, and strings
-or pathnames for paths. Omit the value to inspect a setting; an explicit =nil=
-sets its value. A change to a durable setting is saved at once for future
-sessions. In a script, =(settings)= prints every setting grouped by area.
+You can use the same command without the picker:
 
-Settings have four scopes.
+- =(settings :boot-screen-seconds)= describes the setting.
+- =(settings :boot-screen-seconds 2)= sets the value.
+- Use =t= or =nil= for switches. Omit the value if you only want to inspect
+  the setting. An explicit =nil= counts as a value.
 
-Durable settings persist in =preferences.sexp= under the config directory.
-These include the model, reasoning effort, Fast mode, reasoning traces, compact
-view, timestamps, transcript style, activity line, cache miss notices, Simple
-Technical English, generated titles, fullscreen, and saved permission mode.
+Settings have four scopes:
 
-Session settings, such as hurry-up mode, last until exit.
+- *Durable.* Your model, reasoning effort, reasoning traces, timestamps and
+  saved permission mode belong to this scope. Changes are saved immediately
+  in =preferences.sexp= under the configuration directory.
+- *Session.* Settings such as hurry-up mode last until exit.
+- *Process.* Startup sets the configuration roots and management endpoint.
+- *Derived.* The provider endpoint and context window depend on the model.
+  For the context window, Autolith tries the declared value first, then the
+  catalog value, then the default.
 
-Process settings, such as the immutable flag, management endpoint, and roots,
-come from the command line, environment, or startup defaults and are fixed for
-the process.
+For durable settings, the first available source wins:
 
-Derived settings, such as the context window and provider endpoint, follow the
-model. For the context window, Autolith first uses a declared model value. If
-none is available, it uses the catalog value, or the default if neither value
-is available.
+1. An explicit command-line option.
+2. The environment variable for the setting.
+3. The saved value in =preferences.sexp=.
 
-The config directory holds =preferences.sexp=. Session records and pending
-inputs use the state directory.
+If a saved provider or model is unavailable, Autolith uses a registered choice
+and shows a notice. Register the provider again to recover the saved choice at
+next startup. Invalid command-line or environment choices produce an error.
+Use =--model= or =AUTOLITH_MODEL= to select a model served by the provider.
 
-A durable value is chosen at startup from the first source that supplies it:
-an explicit command-line choice, the setting's environment variable, then the
-saved file. A saved model or effort that no registered provider serves is
-dropped rather than applied. An unavailable saved provider or incompatible saved
-model/provider pair falls back to a registered selection after user initialization.
-Startup displays a recovery notice once per session. Recovery does not rewrite
-saved preferences; re-registering the provider restores the saved selection at the
-next startup. Invalid explicit command-line and environment choices report an
-error, including a provider that cannot serve the fallback model. Choose a model
-registered for that provider with =--model= or =AUTOLITH_MODEL=.
+In Lisp, read settings with =(config :model)= or pass an explicit configuration
+with =(config :model configuration)=. Change the current value with
+=(setf (config :reasoning-traces-p) t)=. Use =configuration-copy= to make a
+separate configuration.
 
-From Lisp, user initialization and replay scripts read a setting with
-=(config :model)=, which uses the current configuration, or
-=(config :model configuration)= for an explicit one, and change it with
-=(setf (config :reasoning-traces-p) t)=. Unknown setting names signal a
-configuration error. Create an independent configuration with
-=configuration-copy=.
-
-The preferences file uses version 8: one flat record of setting names and
-values that keeps unknown keys. Before upgrading a preferences file from
-versions 1 through 7 to 0.54 or later, run a 0.53 release once to write version 8.
+*Upgrading from preferences versions 1 through 7:* Run Autolith 0.53 once
+to write version 8 before you upgrade to 0.54 or later.
 
 ** Language servers
 
-Install your language server, then configure it in =lsp.sexp= under Autolith's
-user configuration directory, alongside =init.lisp=. For example:
+1. Install a language server that you trust. It runs with your privileges and
+   inherits your environment.
+2. Create =lsp.sexp= in your user configuration directory, beside =init.lisp=.
+   Here is a configuration for =clangd=:
 
 #+BEGIN_SRC lisp
 (:version 1
@@ -2038,22 +2017,18 @@ user configuration directory, alongside =init.lisp=. For example:
             :timeout-seconds 30)))
 #+END_SRC
 
-Configuration is declarative. Supply a unique =:name=, executable =:command=,
-nonempty =:extensions= list, and =:language-id= for each entry. Arguments are
-literal strings. Optional =:initialization-options= and =:settings= are JSON
-object strings; =:disabled-p t= disables an entry. The request timeout is an
-integer from 1 through 120 seconds, defaulting to 30.
+For each server, provide a unique =:name=, a =:command= on =PATH=, a nonempty
+=:extensions= list and a =:language-id=. Use literal strings for arguments.
 
-  Only configure commands you trust: language servers run with your privileges
-  and inherited environment, outside the shell approval sandbox. Keep credentials
-  out of this file. Executables must already be installed; commands are resolved
-  on =PATH=. Repository-local LSP configuration is not loaded.
+- Use JSON object strings for =:initialization-options= and =:settings=.
+- Set =:disabled-p t= to disable an entry.
+- The request timeout defaults to 30 seconds. You can set it to an integer from
+  1 through 120.
 
-  Autolith exposes the =lsp= tools only when =lsp.sexp= defines at least one
-  enabled server; without it the registry omits them. A malformed =lsp.sexp=
-  keeps the tools registered so the configuration error surfaces when a tool
-  runs. When at least one server is enabled, each provider request includes a
-  context note naming those servers.
+Autolith reads LSP configuration from your user configuration directory.
+
+Configure at least one enabled server to use the =lsp= tools. If the file is
+malformed, run =lsp.status= to inspect the configuration error.
 
 Ask Autolith to use these tools:
 
@@ -2083,62 +2058,38 @@ Use =lsp.semantic= for revisioned transformations:
   Confirm each synthetic =lsp.semantic-confirmation= request through the ordinary
   command-permission prompt. Without a permission callback, confirmation is denied.
 
-Proposals preserve the order of text, create, move and delete effects. Every
-affected file passes the ordinary resource authority checks before observation
-and again before application. Resource revisions cover file kind and content;
-synchronized document versions must also match. Request a fresh proposal after
-a conflicting edit or server restart.
+Use local =file:///= URIs for regular files. Before you apply a proposal,
+Autolith checks permissions, file revisions and synchronized versions. Request
+a new proposal after a conflicting edit or server restart. Server commands
+are returned as data for separate approval and execution.
 
-Moves preserve the source permissions captured during staging, including
-edited multi-hop moves. Publication is atomic per file, with rollback of the
-change set on failure.
+Autolith starts servers on demand. It uses the nearest configured root marker
+inside the workspace, or the workspace itself if no marker matches. All enabled
+servers that match the file suffix receive the request. Open files are refreshed
+from disk first.
 
-Proposals and action choices are conversation-local and retain their exact
-snapshots. The limits are 32 choices, 240,000 encoded characters per choice,
-128 resources per choice, and 512 resources or 16 MiB of UTF-8 snapshots per
-conversation. Older choices expire when those budgets fill.
+*Diagnostics.* Ranges are zero-based and measured in UTF-16 code units. The
+=sources= field gives the freshness of push and pull results. The diagnostic
+state means:
 
-Server commands are presented as data for separate explicit execution.
-Use local =file:///= URIs; directories, service resources and URI authorities
-are unsupported.
+- =received=: The report is versioned.
+- =unversioned=: The snapshot of the file could not be confirmed.
+- =pending=: No report arrived.
 
-Servers start lazily on file requests, including diagnostic requests after a
-successful =resource.edit= workspace edit. All enabled entries with matching
-filename suffixes are queried. The project root is the nearest ancestor with a
-configured root marker, bounded by the workspace; otherwise it is the workspace.
-Open files are refreshed from disk before queries, including shell edits.
-
-Results contain native file URIs and zero-based UTF-16 ranges. Push and pull
-reports are retained independently and combined, removing duplicate items.
-Diagnostic state =received= identifies versioned reports, =unversioned= means a
-report's snapshot cannot be confirmed, and =pending= means no report arrived.
-The =sources= field gives push and pull freshness separately.
-
-For explicit diagnostics, Autolith allows two seconds for push reports and
-uses the configured request timeout for pull requests.
-
-Edit follow-ups share a single one-second blocking deadline across lock
-acquisition, startup, synchronization, and all matching servers. This includes
-at most half a second for push settling. If startup fails, Autolith reaps the
-server process. If automatic diagnostics time out, use =lsp.diagnostics= for
-the full server timeout.
-
-Reports retain at most 200 diagnostics per file and mark truncation. Files are
-limited to 2 MiB, with 64 open documents per server and 16 live project/server
-pairs per registry. Use =lsp.restart= to release them. Server shutdown occurs
-when the tool runtime is retired.
+The automatic check after =resource.edit= shares a one-second deadline across
+all matching servers. If it times out, use =lsp.diagnostics= to allow two seconds
+for push reports and the configured timeout for pull requests. Use =lsp.restart=
+to release the servers.
 
 ** Active-image management endpoint
 
-The management REPL is an always-enabled endpoint for trusted programs to evaluate
-Common Lisp in the running =AUTOLITH= image. It uses image-daemon's evaluation
-protocol, with =eval-connect= and =eval-call= as a complete Lisp client.
+The management REPL is an always-enabled endpoint for evaluating Common Lisp
+in the running =AUTOLITH= image. Use =eval-connect= and =eval-call= from
+=image-daemon= to connect from Lisp.
 
-Every connection authenticates with a fresh random nonce and HMAC-SHA-256. The
-client never sends the reusable token. Put a nonempty token in a regular file
-owned by the current uid with mode =0600=. Autolith opens that file without
-following symbolic links only while checking a proof, wipes the token octets,
-and retains only the token-file pathname.
+Put a nonempty token in a regular file owned by your user with mode =0600=.
+Connections use HMAC-SHA-256 and a fresh nonce. The token itself is read from
+the file during authentication and is not sent over the connection.
 
 The following environment variables configure newly created applications:
 
@@ -2153,19 +2104,11 @@ The following environment variables configure newly created applications:
 Evaluation and authentication deadlines are 10 seconds. Frames are bounded to
 1 MiB, source and output to 256 KiB, and queued evaluations and clients to 64.
 
-TCP accepts IPv4 loopback addresses only. This endpoint does not provide server
-TLS, and arbitrary Lisp results may contain secrets. Challenge-response prevents
-bearer-token replay, but an unauthenticated local process can relay a challenge
-and proof between trusted local clients. Treat loopback TCP clients as locally
-trusted.
+*Trust boundary.* TCP is restricted to IPv4 loopback and uses no TLS. Use
+trusted local clients. Evaluation results can contain secrets.
 
-With Unix transport, Autolith creates a mode-0700 private directory and a
-mode-0600 socket. At startup, Autolith refuses an active socket and any alien or
-non-socket path. It removes a socket only after proving that it is a stale
-current-user endpoint.
-
-Windows has no filesystem sockets. Autolith refuses =unix= there with a message
-and uses =tcp= by default.
+On Unix, Autolith uses a mode-0700 directory and a mode-0600 socket. Startup
+can replace a stale socket owned by the current user. On Windows, use TCP.
 
 *** Wire protocol
 
@@ -2199,11 +2142,8 @@ After authentication, send one request at a time:
 (:evaluate :source "(values (+ 20 22) *package*)")
 #+END_SRC
 
-The source string must contain exactly one form. A dedicated serial evaluator
-thread reads it in package =AUTOLITH=, applies the 10-second deadline, prevents
-interactive debugger entry, and captures standard, error, trace, query, debug,
-and terminal output in a bounded Gray stream. Successful responses have this
-shape:
+Send one form per request. Autolith evaluates it in the =AUTOLITH= package
+and captures output. A successful response looks like this:
 
 #+BEGIN_SRC lisp
 (:evaluation-result
@@ -2214,23 +2154,14 @@ shape:
  :output-truncated-p nil)
 #+END_SRC
 
-=:values= contains one bounded readable string for every multiple value.
-Conditions return =:status :condition=, a bounded =:condition-type= and
-=:report=, captured output, and truncation flags. Deadline expiry returns
-=:status :timeout=. The client may submit further requests on the authenticated
-connection.
+The =:values= list contains one string per return value. A condition response
+includes =:condition-type= and =:report=. A deadline returns =:status :timeout=.
+The connection can accept another request. The deadline is best effort because
+trusted forms can suppress interrupts.
 
-Evaluation deadlines use in-process interrupts and are best effort for trusted
-forms. A form that suppresses interrupts may outlive its deadline.
-
-Before saving the image during checkpointing, Autolith stops the listener,
-clients, evaluator, and queue. It restarts the endpoint after saving. If an
-evaluator cannot quiesce within the documented two-second shutdown bound,
-checkpointing aborts with a =management-repl-error= whose operation is
-=:quiesce= rather than saving live management threads.
-
-Normal shutdown is idempotent and removes only the exact Unix socket created by
-that runtime.
+Autolith stops the endpoint before a checkpoint and restarts it afterward.
+If the evaluator cannot stop within two seconds, the checkpoint fails with
+=management-repl-error= and operation =:quiesce=.
 
 ** Context
 
@@ -2317,113 +2248,54 @@ and tool schemas. After compaction it estimates the replacement context until
 next provider report. Compaction request usage is recorded separately as work
 spent on the checkpoint.
 
-When you switch Responses models, the new model receives the conversation and
-its tool exchanges without the previous model's encrypted reasoning. Switching
-back lets the original model use its own retained reasoning again.
+If you switch Responses models, the new model receives the conversation and
+tool exchanges. Encrypted reasoning is available again if you return to the
+model that produced it.
 
-At narrow widths, the meter keeps the used and window counts and drops the bar.
+*** Compaction
 
-Use =(compact)= to compact the current conversation immediately,
-regardless of the meter. Immediate and automatic compaction use the same
-path: a typed checkpoint that every provider can read. During an active turn,
-compaction waits in the idle queue. An empty conversation needs no provider
-request. Compaction adds a durable checkpoint without adding a user message
-or starting a model turn.
+Use =(compact)= to make a checkpoint now. If a turn is active, compaction
+waits in the idle queue. Automatic compaction uses the same typed checkpoint
+format. Models from different providers can read the checkpoint. Earlier
+provider-native windows can still be read by the providers that made them.
 
-The checkpoint normally takes one provider request. Each completed request is
-recorded with its usage before its output is checked, including rejected
-submissions. A conversation that holds a provider-native window from an
-earlier version still loads, and its provider keeps reading that window.
+A checkpoint records the current goal, decisions, constraints, completed and
+open work, uncertainties, and the next step. Recent turns are kept verbatim,
+normally up to two user turns and 32,768 characters. The latest user message
+and required tool or reasoning groups can exceed that bound. Live job state,
+mission policy and the current plan are read separately from their stores.
 
-The model writes the checkpoint by calling =compaction.submit=. A compaction
-request repeats the instructions, tools and history of the ordinary requests
-around it, so the provider reads them from its prompt cache. Only the
-compaction instructions at the end are new. The request forces that one call
-where supported. Anthropic uses automatic tool choice to preserve thinking
-and the ordinary message-prefix cache key; Autolith accepts only a valid
-submission and retries other responses. Every request that offers tools
-therefore declares =compaction.submit=, with the note never to call it
-unasked. Inference frames never compact and leave it out. A provider that
-keys its cache on the required call, as GLM does through OpenRouter, still
-charges the history in full. The call gives an intent, up to 16 notes and a
-next step. A note is a decision, a constraint, completed work, open work or an
-uncertainty. Autolith checks the arguments against a strict schema and size
-bounds, and stores the checkpoint in typed form beside its text.
+*Evidence.* Checkpoint notes can cite messages, tool results, plan steps,
+mission gates, symbolic facts and unfinished jobs. A completed note without
+a citation is marked =(unsubstantiated)=. Use the =channel:id/<id>= address and
+record sequence to find a message or result. Use =memory:claim/<id>= to inspect
+a fact. After compaction, the next turn reports changes to cited steps, gates
+and facts. For example, a gate can become stale after an input changes.
 
-Before the request, Autolith lists what the checkpoint may cite: the captured
-user messages and tool results, plan steps, mission gates, facts the
-conversation was given or read from =memory:facts= and =memory:claim/<id>=, and
-unfinished jobs, at most 64 in all. Messages and results that an earlier
-checkpoint kept verbatim are among them. So are those of the recent tail, which
-the request does not show: their catalog lines let the notes and the next step
-agree with what stays after the checkpoint. Each has a short handle. A note
-cites the handles that support it and the checkpoint keeps the cited
-references. A completed note that cites nothing reads =(unsubstantiated)=.
+If the model submits an invalid checkpoint, Autolith asks for a correction.
+After four unsuccessful attempts, it keeps the earlier checkpoint notes and
+recent turns. It records the range of history that was not summarized. If the
+provider is unreachable or refuses, or a permission check fails, the
+conversation is left unchanged.
 
-A record reference gives its =channel:id/<id>= address and sequence, and
-a fact reference its =memory:claim/<id>= address, so the evidence can be read
-again, also from a conversation that adopted the checkpoint. When a cited plan
-step, mission gate or fact changes after the checkpoint, the next turn says
-once which one changed and what its state is now. That covers a passed gate
-whose declared inputs changed since it was checked, or cannot be read without
-asking for permission. It also covers a fact whose support or premises were
-withdrawn, and one that still holds but rests on a disputed premise. Facts are
-offered and checked only while structured knowledge is active.
+A failed checkpoint writes a private report under =compaction-reports/= in
+the state directory. It contains the error and last completed response, with
+active credentials redacted. In the terminal, use =(copy bug report to clipboard)=
+to copy the report.
 
-If a submission is rejected, Autolith tells the model what to correct and asks
-again, for at most four generations in all. If none of them is usable,
-compaction still publishes a checkpoint. It keeps the previous checkpoint's
-notes and the recent tail, and it names the range of records the request showed
-and nobody summarized. A refusal, a permission failure or an unreachable
-provider ends compaction with an error and leaves the conversation unchanged.
+*** Output limits and admission
 
-A failed checkpoint produces a private UTF-8 bug report under =compaction-reports/=
-in the configured state directory (=XDG_STATE_HOME/autolith/= on Linux). The
-report contains the error and the last completed provider response, with active
-credentials redacted. Terminal, plain and ACP clients display its absolute path.
-In an interactive terminal, select =(copy bug report to clipboard)= to copy it.
+- =(settings :max-output-tokens 4096)= caps ordinary model replies. You can
+  also set =AUTOLITH_MAX_OUTPUT_TOKENS=. Use =nil=, or the text =none=, =off=
+  or =unset=, to use the provider limit.
+- =(settings :context-output-reserve 8192)= reserves at least 8,192 tokens for
+  the reply. You can also set =AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger
+  explicit generation cap takes precedence.
 
-Before either request, Autolith captures a fixed history cutoff. The checkpoint
-includes unresolved calls with correlated actual or interrupted/unknown outputs,
-plus results and steering received during compaction. Running jobs and
-undelivered outcomes are recorded separately from the model-written checkpoint.
-Ordinary requests include bounded authoritative job references and an omitted
-count; inspect =job.continuity=, =job.*= and their resources for full details.
-Every provider family reads the checkpoint. Only the family that made a native
-window reads that window.
-
-Portable compaction checkpoints older history and retains a verbatim recent tail,
-normally at most two user turns and 32,768 characters. The latest actual user
-request and protocol-required tool/reasoning groups can exceed that bound. The
-compaction request quotes the latest user message, so the checkpoint's next
-step agrees with it. Current mission policy and the authoritative active plan
-are rebuilt from their stores for each ordinary request, independently of the
-checkpoint.
-
-Set =(settings :max-output-tokens 4096)= to cap ordinary model replies, or set
-=AUTOLITH_MAX_OUTPUT_TOKENS=. The positive-integer setting persists across
-restarts; =nil=, or the text =none=, =off= or =unset=, leaves the provider limit
-unspecified. Compaction projection uses this cap and request admission reserves
-its full size when it exceeds the configured output headroom.
-
-Automatic compaction compares freshly projected input with the soft threshold.
-Before transport, admission checks the encoded request, including current tools
-and temporary context, with output headroom. Set
-=(settings :context-output-reserve 8192)= to reserve at least 8,192 tokens, or use
-=AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger explicit generation cap takes precedence.
-When provider policy and covered history match a measured response, shared
-accounting uses its input and output occupancy, then adds new input. Cached input
-counts at its full token count. Prompt and tool-schema edits cost one token per
-inserted or replacement UTF-8 byte, with no deletion credits. The text comparison
-preserves unchanged regions; if its work bound is exceeded, the unmatched middle
-is counted as a replacement. Header text is stored with the first measurement,
-a header change, or a reset, then inherited by later samples during replay.
-Older samples without text use full current component bytes until remeasured.
-Request-local context is already included; admission replaces its previous
-contribution when encoding the next request. Verified anchors survive resume and
-unmeasured responses. Other changed projections use a local text estimate with
-separate image allowances. Candidate checkpoints are admitted with arrivals before
-publication; a rejected candidate leaves the previous projection intact.
+Before sending a request, Autolith checks that the encoded prompt, tools and
+reply reserve fit within the model window. Cached input counts in full. The
+most recent compatible provider measurement is used if available. Otherwise
+Autolith estimates the input size locally.
 
 Set =ANALYTICS_EVENTS_FILE= to export completed streaming calls as UTF-8 JSONL
 usage events. =ANALYTICS_ACTOR= overrides the operating-system username. Each
@@ -2534,40 +2406,79 @@ provider and are not guaranteed.
 
 ** Providers
 
-Register an OpenAI-compatible provider:
+*** Run a local model
 
-#+BEGIN_SRC lisp
-(register-openai-compatible-provider
- :name                         "my-provider"
- :description                  "My OpenAI-compatible provider"
- :endpoint                     "https://api.example.com/v1/chat/completions"
- :models-endpoint              "https://api.example.com/v1/models"
- :api-key-environment-variable "MY_PROVIDER_API_KEY")
-#+END_SRC
+Register local inference servers through the *OpenAI-compatible Chat
+Completions* API. The server must support streaming and the model must support
+tool calls to use Autolith tools. For an Ollama server on the same machine:
 
-The optional =:api-key-environment-variable= names the environment variable to
-read for authentication. Its nonempty value takes precedence over the private
-API-key store; an unset or empty value falls back to the stored key. Model
-discovery and requests use the same source. Provider configuration retains the
-variable name, not its secret value.
+1. If Ollama is not already running, start it with =ollama serve=. In another
+   terminal, download a model that supports tools:
 
-List every model ID known to Autolith without authenticating or starting a session:
+   #+begin_src sh
+   ollama pull qwen3:8b
+   #+end_src
 
-#+BEGIN_SRC sh
-autolith models | grep gpt
-#+END_SRC
+2. Add this form to
+   =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=:
 
-The command prints one sorted, deduplicated model ID per line from built-in and
-locally configured catalogs.
+   #+begin_src lisp
+   (register-openai-compatible-provider
+    :name                         "local-ollama"
+    :endpoint                     "http://127.0.0.1:11434/v1/chat/completions"
+    :models                       '("qwen3:8b")
+    :api-key-environment-variable "AUTOLITH_OLLAMA_KEY"
+    :stream-usage-p               nil)
+   #+end_src
 
-Inside a session, use =(auth)= to pick a provider interactively or
-=(auth "my-provider")= to select one explicitly. From the command line, use
-=autolith auth my-provider=.
+3. Set a nonempty key value and start Autolith. Autolith sends it as a bearer
+   key. Local Ollama ignores it, so =ollama= is a placeholder, not a secret.
 
-After a key is saved, static metadata or the last good cache keeps models
-available. =(models)= triggers discovery. You can also pass non-secret
-=:headers= and static =:models= for descriptions, windows, efforts, or
-providers that have no model-list endpoint.
+   #+begin_src sh
+   export AUTOLITH_OLLAMA_KEY=ollama
+   autolith models | grep -Fx 'qwen3:8b'
+   autolith --provider local-ollama --model qwen3:8b
+   #+end_src
+
+4. Send a short prompt to check that replies stream. Ask Autolith to list
+   the files in the current directory to check tool calls.
+
+If Ollama runs on another host, =127.0.0.1= still refers to the machine that
+runs Autolith. To keep the remote server private, forward the port over SSH:
+=ssh -N -L 11434:127.0.0.1:11434 HOST=. Use a different local port if 11434 is
+already in use and change =:endpoint= to match.
+
+*Troubleshooting.* If the model is unknown, check the exact ID with
+=ollama list=. If the server rejects =stream_options=, use =:stream-usage-p nil=
+as shown above. If the server runs out of context, increase the context limit
+on the server first. Then set =:models= to a list of model property lists, for
+example ='((:name "qwen3:8b" :context-window 32768))= for a server configured
+with a 32,768-token window. The registration does not change the server limit.
+See the [[https://docs.ollama.com/api/openai-compatibility][Ollama API reference]] for supported endpoints.
+
+*** Add another OpenAI-compatible provider
+
+Use the same registration form for a local or hosted service. Change these
+fields in =init.lisp= and restart Autolith:
+
+- *Provider name:* Set =:name= to a unique name for Autolith.
+- *Endpoint:* Set =:endpoint= to the full streaming Chat Completions URL,
+  typically ending in =/v1/chat/completions=.
+- *Models:* Set =:models= to the IDs you want to use, =:models-endpoint= to the
+  full model-list URL, or both. Use static IDs if you want to select a model on
+  the first launch. Inside Autolith, use =(models :provider "my-provider")=
+  to refresh the model list from the service.
+- *Credentials:* Set =:api-key-environment-variable= to the name of a variable
+  that contains the service key, or run =autolith auth my-provider= to store
+  the key privately. A nonempty environment value takes precedence. Replace
+  =my-provider= with your registration name.
+
+Optional =:headers= adds non-secret HTTP headers. If the server supports the
+streaming usage chunk, you can omit =:stream-usage-p= to request it.
+
+For a different wire protocol, use the Lisp extension point =register-provider=
+with a factory that returns a =model-provider=. The Chat Completions helper
+always uses Chat Completions.
 
 Select a model with =(model "glm-5.3-flash" :provider "neuralwatt")= or
 =(model "neuralwatt/glm-5.3-flash")=. Use =(models :provider "neuralwatt")=
@@ -2601,23 +2512,14 @@ and the local provider catalog before validating the requested model, so provide
 registered in =init.lisp= are available. Startup does not fetch a remote catalog;
 use =autolith models= to list locally known IDs and =(models)= to refresh them.
 
-The built-in model picker uses =https://models.dev/api.json= for ChatGPT,
-Gemini, Grok, Anthropic, Fireworks, OpenCode, OpenRouter, and Mistral metadata.
-When you explicitly refresh with =(models)=, Autolith downloads the public
-catalog once without provider credentials, selects tool-capable text models,
-and updates descriptions, context windows, and reasoning efforts.
+*** Model catalogs and sign-in
 
-Startup reads the last-good local cache without a network request. Failed
-refreshes retain cached models, and built-in seed metadata supports a first
-offline start. Custom provider registrations and overridden discovery endpoints
-retain their own discovery.
-
-Copilot retains its account-specific catalog because that catalog also supplies
-authorized protocol routes. Nous retains its account catalog because models.dev
-has no corresponding source. ChatGPT, Gemini, and Grok subscription adapters
-update metadata only for the model IDs their transports support. Public API
-availability alone does not establish subscription access.
-Catalog refresh for the picker works independently of telemetry being enabled.
+Startup uses built-in model metadata and the last successful local catalog.
+It makes no catalog request. Use =(models)= to refresh the picker. For several
+built-in providers, Autolith reads public metadata from [[https://models.dev/][models.dev]]. Custom
+registrations use the discovery URL that you configure. Copilot and Nous use
+account-specific catalogs. Subscription clients list models that the transport
+supports, which can differ from the public API catalog.
 
 Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
 on =localhost:1455= or =localhost:1457= by default. Use
@@ -2626,8 +2528,8 @@ on =localhost:1455= or =localhost:1457= by default. Use
 browser authorization URL is always printed for manual use. Grok and Nous
 Research use browser device flows. Gemini uses Google installed-application
 OAuth with a local loopback callback.
-Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, OpenAI API, and
-user-registered OpenAI-compatible providers use API keys.
+Use an API key for Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, OpenAI
+API and custom OpenAI-compatible providers.
 
 The direct Anthropic catalog includes =claude-fable-5-2=, =claude-opus-5-5=,
 =claude-sonnet-5-5= and =claude-haiku-5-5= with one-million-token context windows.
