@@ -217,7 +217,7 @@
          :documentation "Protects all mutable queue and delivery state.")
    (condition :initform (make-condition-variable) :reader run-job-event-emitter-condition
               :documentation "Wakes the single delivery writer.")
-   (queue :initform nil :accessor run-job-event-emitter-queue
+   (queue :initform (structlisp:make-deque) :reader run-job-event-emitter-queue
           :documentation "Bounded FIFO of validated copied kind/data pairs.")
    (terminal :initform nil :accessor run-job-event-emitter-terminal
              :documentation "Reserved final event, outside the normal queue.")
@@ -258,10 +258,10 @@ one in-flight bounded form and the disabled emitter survive until process exit."
   "Disable EMITTER under its lock and clear all pending payloads."
   (pushnew code (run-job-event-emitter-warning-codes emitter))
   (setf (run-job-event-emitter-disabled-p emitter) t
-        (run-job-event-emitter-queue emitter) nil
         (run-job-event-emitter-terminal emitter) nil
         (run-job-event-emitter-omitted emitter) 0
         (run-job-event-emitter-overflow-p emitter) nil)
+  (structlisp:deque-clear (run-job-event-emitter-queue emitter))
   (condition-notify (run-job-event-emitter-condition emitter))
   nil)
 
@@ -287,8 +287,8 @@ one in-flight bounded form and the disabled emitter survive until process exit."
   (with-lock-held ((run-job-event-emitter-lock emitter))
     (loop
       (when (run-job-event-emitter-disabled-p emitter) (return nil))
-      (when (run-job-event-emitter-queue emitter)
-        (return (pop (run-job-event-emitter-queue emitter))))
+      (let ((payload (structlisp:deque-pop-front (run-job-event-emitter-queue emitter))))
+        (when payload (return payload)))
       (when (run-job-event-emitter-overflow-p emitter)
         (setf (run-job-event-emitter-overflow-p emitter) nil)
         (return (list :warning (list :code ':queue-full))))
@@ -395,23 +395,20 @@ canonical tool names and resource references, never caller/provider raw data."
           (when (or (run-job-event-emitter-disabled-p emitter)
                     (run-job-event-emitter-finishing-p emitter))
             (return-from run-job-event-emit nil))
-          (when (>= (length (run-job-event-emitter-queue emitter))
-                    (run-job-event-emitter-capacity emitter))
-            (when (eq kind :progress)
-              (run-job-event--omit-progress emitter)
-              (return-from run-job-event-emit nil))
-            (let ((progress (find :progress (run-job-event-emitter-queue emitter) :key #'first)))
-              (if progress
-                  (progn
-                    (setf (run-job-event-emitter-queue emitter)
-                         (cl:delete progress (run-job-event-emitter-queue emitter) :test #'eq :count 1))
-                    (run-job-event--omit-progress emitter))
-                  (progn
-                    (pushnew ':queue-full (run-job-event-emitter-warning-codes emitter))
-                    (setf (run-job-event-emitter-overflow-p emitter) t)
-                    (return-from run-job-event-emit nil)))))
-          (setf (run-job-event-emitter-queue emitter)
-                (nconc (run-job-event-emitter-queue emitter) (list payload)))
+          (let ((queue (run-job-event-emitter-queue emitter)))
+            (when (>= (structlisp:deque-count queue) (run-job-event-emitter-capacity emitter))
+              (when (eq kind :progress)
+                (run-job-event--omit-progress emitter)
+                (return-from run-job-event-emit nil))
+              (let ((progress (structlisp:deque-position-if (lambda (kind) (eq kind :progress))
+                                                            queue :key #'first)))
+                (unless progress
+                  (pushnew ':queue-full (run-job-event-emitter-warning-codes emitter))
+                  (setf (run-job-event-emitter-overflow-p emitter) t)
+                  (return-from run-job-event-emit nil))
+                (structlisp:deque-remove-at queue progress)
+                (run-job-event--omit-progress emitter)))
+            (structlisp:deque-push-back queue payload))
           (condition-notify (run-job-event-emitter-condition emitter))
           t))
     (error ()
