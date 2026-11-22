@@ -275,13 +275,10 @@
   "Claim pending occurrences before admission; never repeat an uncertain admission."
   (mission-schedule--require-active service)
   (let ((scheduler (mission-schedule-scheduler service)) (results nil))
-    ;; Re-read pending work: cancellation can settle siblings from an earlier snapshot.
-    (loop for pending = (find ':pending (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
-                             :key (lambda (entry) (getf entry :state)))
-          while pending
-          do (let* ((wakeup      (cl-jobpond:scheduler-claim scheduler :id (getf pending :id)
-                                                          :version         (getf pending :version)))
-                    (disposition (mission-schedule--disposition service (getf wakeup :payload))))
+    ;; Claim one at a time so cancellation can settle pending siblings.
+    (loop for wakeup = (cl-jobpond:scheduler-claim-next scheduler)
+          while wakeup
+          do (let ((disposition (mission-schedule--disposition service (getf wakeup :payload))))
                (cond
                  ((not (eq disposition ':runnable))
                   (push (mission-schedule--withhold service wakeup disposition) results))
@@ -341,8 +338,7 @@
 (defun application-mission-schedules-next-time (application)
   "Return the next absolute deadline for the existing host event loop."
   (let ((scheduler (mission-schedule-scheduler (application-mission-schedules application))))
-    (if (find ':pending (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
-              :key (lambda (entry) (getf entry :state)))
+    (if (cl-jobpond:scheduler-pending-p scheduler)
         (get-universal-time)
         (cl-jobpond:scheduler-next-time scheduler))))
 

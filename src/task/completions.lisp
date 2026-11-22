@@ -485,20 +485,6 @@ index, and only once delivered or gone; jobs noted since then stay."
                    (task-completion-service-deferred-p service)))
              t)))))
 
-(-> task-completion--collect (task-completion-service &key (:identifiers list)) list)
-(defun task-completion--collect (service &key (identifiers nil identifiers-p))
-  "Claim a bounded batch, optionally restricted to exact maintenance ticket identities."
-  (let ((mailbox (cl-jobpond:completion-subscription-mailbox
-                  (task-completion-service-subscription service))))
-    (if identifiers-p
-        (loop for identifier in identifiers
-              repeat *task-completion-batch-limit*
-              when (cl-jobpond:mailbox-receive mailbox :receiver "completion" :id identifier)
-                collect it)
-        (loop repeat *task-completion-batch-limit*
-              collect (or (cl-jobpond:mailbox-receive mailbox :receiver "completion")
-                          (loop-finish))))))
-
 (-> task-completion-deliver
     (agent &key (:identifiers list) (:call-with-delivery function)) list)
 (defun task-completion-deliver
@@ -536,11 +522,12 @@ appended notices after it returns. Publication and wake callbacks run outside it
                          (setf (task-completion-service-cancellation-notices service)
                                (remove notice (task-completion-service-cancellation-notices service))))))
                    ;; Drain even when pending producers exceed mailbox capacity.
-                   (dolist (message (if identifiers-p
-                                        (task-completion--collect
-                                          service :identifiers
-                                          (remove-if (lambda (id) (uiop:string-prefix-p "cancellation/" id)) identifiers))
-                                        (task-completion--collect service)))
+                   (dolist (message
+                            (apply #'cl-jobpond:completion-subscription-claim
+                                   subscription :limit *task-completion-batch-limit*
+                                   (when identifiers-p
+                                     (list :ids (remove-if (lambda (id) (uiop:string-prefix-p "cancellation/" id))
+                                                           identifiers)))))
                      (let ((notice (task-completion--notice message)))
                        (unless (task-completion--delivered-p conversation (getf notice :id))
                          (conversation-append-user-message
