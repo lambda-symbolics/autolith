@@ -608,9 +608,8 @@ A model this launch selected explicitly stays, as it does for any conversation."
           (and (slot-boundp application 'tool-registry)
                (application-tool-registry application))))
     (when (typep registry 'tool-registry)
-      (let ((tool (tool-registry-find registry "child" "spawn")))
-        (and (typep tool 'task-run-tool)
-             (task-run-tool-orchestrator tool))))))
+      (let ((runtime (tool-registry-runtime-binding registry 'task-orchestrator)))
+        (when (typep runtime 'task-orchestrator) runtime)))))
 
 (-> application--job-program-status-report (session-job) (values list boolean))
 (defun application--job-program-status-report (job)
@@ -679,6 +678,16 @@ A model this launch selected explicitly stays, as it does for any conversation."
                            (application-world-child-activities application)))))
   nil)
 
+(-> application--live-job-activities (application task-orchestrator) list)
+(defun application--live-job-activities (application orchestrator)
+  "Return live rows visible in APPLICATION's current conversation."
+  (let ((conversation (and (slot-boundp application 'conversation)
+                           (application-conversation application)))
+        (agent        (and (slot-boundp application 'agent) (application-agent application))))
+    (task-orchestrator-live-activities
+     orchestrator :viewer agent
+                  :owner  (when conversation (conversation-identifier conversation)))))
+
 (-> application-set-world-child-activities (application list) null)
 (defun application-set-world-child-activities (application activities)
   "Update the child-channel rows without changing this application's job ownership."
@@ -690,7 +699,7 @@ A model this launch selected explicitly stays, as it does for any conversation."
         (let ((runtime (application-task-presentation-orchestrator application)))
           (application--present-child-activities
            application (application-ui application)
-           (when runtime (task-orchestrator-live-activities runtime))))))
+           (when runtime (application--live-job-activities application runtime))))))
     (when changed-p
       (application--wake-input-controller application)))
   nil)
@@ -705,7 +714,7 @@ A model this launch selected explicitly stays, as it does for any conversation."
     (let ((ui (and (slot-boundp application 'ui)
                    (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (let ((activities (task-orchestrator-live-activities orchestrator)))
+        (let ((activities (application--live-job-activities application orchestrator)))
           (application--present-child-activities application ui activities)
           (terminal-ui-set-command-activities
            ui (remove-if-not (lambda (activity)
@@ -789,20 +798,22 @@ A model this launch selected explicitly stays, as it does for any conversation."
   "Atomically replace APPLICATION's task listener and active UI projection."
   (with-lock-held ((application-task-presentation-lock application))
     (application--disconnect-task-presentation-locked application)
-    (let ((agent (and (slot-boundp application 'agent)
-                      (application-agent application))))
-      (when (typep agent 'agent)
-        (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
+    ;; A pooled assignment observes a borrowed scheduler without changing its policy.
+    (unless (application-assignment-job application)
+      (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
+        (when (typep agent 'agent)
+          (setf (agent-hurry-up-p agent) (application-hurry-up-p application)))))
     (let ((orchestrator (application--task-orchestrator application)))
       (when orchestrator
-        (task-orchestrator-set-hurry-up
-         orchestrator (application-hurry-up-p application))
-        (let ((listener nil))
+        (unless (application-assignment-job application)
+          (task-orchestrator-set-hurry-up orchestrator (application-hurry-up-p application)))
+        (let ((listener     nil)
+              (assignment-p (not (null (application-assignment-job application)))))
           (setf listener
                 (lambda (channel payload)
                   (case channel
                     (:task-subagent-lifecycle
-                     (application-world-sync-child application payload)
+                     (unless assignment-p (application-world-sync-child application payload))
                      (application--refresh-task-presentation
                       application orchestrator))
                     ((:task-subagent-progress
@@ -810,9 +821,11 @@ A model this launch selected explicitly stays, as it does for any conversation."
                      (application--refresh-task-presentation
                       application orchestrator))
                     (:task-subagent-verbal-response
-                     (application--present-task-response
-                      application orchestrator :listener listener
-                                               :payload  payload)))))
+                     ;; The borrowed observer must not replay the primary's transcript events.
+                     (unless assignment-p
+                       (application--present-task-response
+                        application orchestrator :listener listener
+                                                 :payload  payload))))))
           (setf (application-task-presentation-orchestrator application)
                 orchestrator
                 (application-task-presentation-listener application)

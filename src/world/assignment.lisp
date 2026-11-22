@@ -68,11 +68,13 @@ Return true when a pooled assignment owns execution, including during settlement
 
 (-> application-assignment-begin (application-input-controller) null)
 (defun application-assignment-begin (controller)
-  "Mark the pooled assignment busy before admitting any client to its endpoint."
-  (when (application-assignment-job (application-input-controller-application controller))
-    (with-lock-held ((application-input-controller-lock controller))
-      (setf (application-input-controller-active-p controller) t
-            (application-input-controller-active-work-kind controller) ':job-completion)))
+  "Connect the busy pooled assignment before admitting any client to its endpoint."
+  (let ((application (application-input-controller-application controller)))
+    (when (application-assignment-job application)
+      (with-lock-held ((application-input-controller-lock controller))
+        (setf (application-input-controller-active-p controller) t
+              (application-input-controller-active-work-kind controller) ':job-completion))
+      (application-connect-task-presentation application)))
   nil)
 
 (-> application-assignment-finish (application &key (:stop-p boolean)) null)

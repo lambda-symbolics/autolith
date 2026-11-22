@@ -932,14 +932,16 @@ values from either side of a terminal transition."
         :key  #'session-job-identifier
         :test #'string=))
 
-(defgeneric session-job-live-activity (job)
+(defgeneric session-job-live-activity (job &key viewer owner)
   (:documentation
-   "Return JOB's lightweight live presentation, or NIL when it has none."))
+   "Return JOB's lightweight live row, optionally scoped to VIEWER or OWNER."))
 
-(defmethod session-job-live-activity ((job task-job))
-  "Return task JOB's bounded queued or running activity trace."
+(defmethod session-job-live-activity ((job task-job) &key viewer owner)
+  "Return task JOB's bounded activity trace when visible to VIEWER."
+  (declare (ignore owner))
   (let ((state (job-state job)))
-    (when (member state '(:queued :running) :test #'eq)
+    (when (and (member state '(:queued :running) :test #'eq)
+               (or (null viewer) (session-job-visible-to-agent-p job viewer)))
       (let ((progress (task-job-progress job)))
         (with-lock-held ((task-progress-lock progress))
           (nconc (task-progress--snapshot-locked progress (get-internal-real-time))
@@ -976,11 +978,13 @@ values from either side of a terminal transition."
              runtime ':tool-execution-progress
              (list :id (session-job-identifier job)))))))))
 
-(defmethod session-job-live-activity ((job tool-execution-job))
-  "Return a primary-owned tool JOB's bounded live command or inference phase."
+(defmethod session-job-live-activity ((job tool-execution-job) &key viewer (owner nil owner-supplied-p))
+  "Return tool JOB's bounded live phase when it belongs to the specified OWNER."
+  (declare (ignore viewer))
   (let ((state (job-state job)))
-    (when (and (null (job-owner-identifiers job))
-               (member state '(:queued :running) :test #'eq))
+    (when (and (member state '(:queued :running) :test #'eq)
+               (or (not owner-supplied-p)
+                   (and owner (equal owner (session-job-completion-owner-conversation job)))))
       (let ((now (get-internal-real-time)))
         (multiple-value-bind (activity activity-at)
             (with-lock-held ((cl-jobpond::job--lock job))
@@ -1012,14 +1016,6 @@ values from either side of a terminal transition."
   "Return task JOB's lightweight live presentation snapshot."
   (session-job-live-activity job))
 
-(-> task-orchestrator-live-activities (task-orchestrator) list)
-(defun task-orchestrator-live-activities (orchestrator)
-  "Return stable lightweight snapshots for every presented live job."
-  (loop for job in (task-orchestrator-list-jobs orchestrator)
-        for activity = (session-job-live-activity job)
-        when activity
-          collect activity))
-
 (-> session-job-visible-to-agent-p (session-job agent) boolean)
 (defun session-job-visible-to-agent-p (job viewer)
   "Return true when VIEWER owns JOB through conversation or task ancestry."
@@ -1032,6 +1028,16 @@ values from either side of a terminal transition."
         (string=
          (session-job-root-conversation-identifier job)
          (conversation-identifier (agent-conversation viewer)))))))
+
+(-> task-orchestrator-live-activities
+    (task-orchestrator &key (:viewer (option agent)) (:owner (option string))) list)
+(defun task-orchestrator-live-activities (orchestrator &key viewer owner)
+  "Return live task rows by VIEWER ancestry and command rows for exact OWNER.
+With no OWNER, omit commands; with no VIEWER, do not filter task ancestry."
+  (loop for job in (task-orchestrator-list-jobs orchestrator)
+        for activity = (session-job-live-activity job :viewer viewer :owner owner)
+        when activity
+          collect activity))
 
 (-> task-orchestrator-list-visible-jobs
     (task-orchestrator agent)
