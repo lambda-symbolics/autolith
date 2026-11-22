@@ -57,6 +57,7 @@
   test-compaction-summary-mission-ownership
   test-compaction-summary-mission-failures
   test-compaction-final-projection-gap
+  test-compaction-prepared-soft-threshold
   test-compaction-final-admission-trigger
   test-compaction-mission-admission-trigger
   test-compaction-admission-recovery-bounds

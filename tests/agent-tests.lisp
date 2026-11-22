@@ -2589,7 +2589,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                   :usage          '(("total_tokens" 999999))))
            (test-call-with-function-replacements
             (list (list 'agent-should-compact-p
-                        (lambda (agent)
+                        (lambda (agent &key &allow-other-keys)
                           (declare (ignore agent))
                           (null (scripted-provider-compaction-flags provider)))))
             (lambda ()

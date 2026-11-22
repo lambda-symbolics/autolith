@@ -419,7 +419,7 @@ With no activity CALLBACK, return a no-op provider callback."
   ()
   (:documentation "An ephemeral inference frame agent."))
 
-(defmethod agent-should-compact-p ((agent rlm-frame-agent))
+(defmethod agent-should-compact-p ((agent rlm-frame-agent) &key &allow-other-keys)
   "Never compact a frame: its conversation is a bounded private trace.
 
 Compaction would also call the provider outside the frame budget's
