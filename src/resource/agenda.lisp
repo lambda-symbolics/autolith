@@ -25,7 +25,7 @@
 (defvar *agenda-resource-digest-key* (random-data 16)
   "The process-local key identifying exact current-workspace agenda snapshots.")
 
-(defclass agenda-resource (resource)
+(defclass agenda-resource (single-operation-resource)
   ((directory
     :initarg       :directory
     :reader        agenda-resource-directory
@@ -459,36 +459,13 @@ When truncating, report how many characters were kept."
                observation)))
       (tool-success (resource-item-read-result state)))))
 
-(defmethod resource-tool-edit
-    ((resource agenda-resource) (tool resource-edit-tool)
-     (context tool-context) (arguments hash-table))
-  "Apply one revision-gated agenda operation and return a fresh complete observation."
-  (declare (ignore tool))
-  (let* ((uri             (tool-argument arguments "uri" :required t))
-         (base-revision   (tool-argument arguments "base-revision" :required t))
-         (operation-array (tool-argument arguments "operations" :required t)))
-    (unless (non-empty-string-p base-revision)
-      (error 'tool-error
-             :message   "Resource edit base-revision must be a non-empty string."
-             :tool-name "resource.edit"))
-    (unless (and (vectorp operation-array) (= (length operation-array) 1))
-      (error 'tool-error
-             :message   "agenda:current requires exactly one operation per resource.edit call."
-             :tool-name "resource.edit"))
-    (handler-case
-        (multiple-value-bind (observation summary)
-            (resource-apply-operations resource context
-                                       :base-revision base-revision
-                                       :operations    (coerce operation-array 'list))
-          (let ((state
-                   (resource-observation-state-ensure
-                    (tool-context-conversation context)
-                    observation)))
-            (tool-success
-             (format nil "~A~%~A" summary (resource-item-read-result state))
-             :details (list :resource-edit (list :summary (resource-tool--detail-text summary))))))
-      (resource-revision-stale ()
-        (tool-failure
-         (format nil "Resource revision ~A is stale, expired, from another workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri)
-         :details (resource-tool--stale-edit-details base-revision))))))
+(defmethod single-operation-resource-scheme ((resource agenda-resource))
+  "Return the agenda URI scheme for edit diagnostics."
+  "agenda")
+
+(defmethod single-operation-resource-stale-message
+    ((resource agenda-resource) (condition resource-revision-stale)
+     &key uri base-revision)
+  "Describe a stale agenda revision, including its workspace confinement."
+  (format nil "Resource revision ~A is stale, expired, from another workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
+          base-revision uri))
