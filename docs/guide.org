@@ -1,645 +1,6 @@
 #+TITLE: New User Guide
 #+STARTUP: content
 
-* Intro
-
-1. *Install Autolith.* Choose a command in [[https://lambda-symbolics.com/autolith/docs/install-update-and-uninstall][Install, update, and uninstall]].
-2. *Sign in to a model provider.* For example, run =autolith auth chatgpt=
-   and follow the prompts. If you use =nix run=, run
-   =nix run github:lambda-symbolics/autolith -- auth chatgpt= instead.
-3. *Open a channel.* Run =autolith= or =nix run github:lambda-symbolics/autolith=
-   in the directory where you want to work. In fullscreen mode, select =inbox=
-   or another channel in the sidebar. Use =autolith open= for the most recently
-   used top-level channel in the workspace, or =autolith open ID= for a
-   specific channel.
-4. *Send your first request.* Try /List the files in this workspace and tell
-   me where to start./ To see commands, enter =(help)= in the same prompt.
-
-Write requests in plain text and enter Lisp commands as parenthesized forms.
-For example, you can inspect the workspace directly:
-
-#+BEGIN_SRC lisp
-(resource.read :uri "workspace:.")
-#+END_SRC
-
-- Type an opening parenthesis, bracket, or brace to insert a pair. Type the
-  closing delimiter to move past it, or press Backspace inside an empty pair
-  to delete both delimiters.
-- Press Tab to complete a command, option, path, or =@= mention. If you complete
-  a mention, press Tab again to cycle through candidates. Use Shift-Tab to
-  cycle backward.
-- If there is nothing to complete, Tab submits the prompt or queues it during
-  a turn. Finish an open Lisp form before submitting it.
-
-* Terminal diagrams
-
-Ask for a fenced =mermaid= block to see a diagram in the terminal.
-[[https://github.com/lambda-symbolics/clermaid][Clermaid]] documents the supported syntax for:
-
-- Flowcharts
-- Sequence diagrams
-- Flat state diagrams
-- Class diagrams
-- Entity relationship diagrams
-
-#+BEGIN_SRC markdown
-```mermaid
-flowchart LR
-  A[Read] --> B[Evaluate]
-  B --> C[Print]
-```
-#+END_SRC
-
-While the response streams, read the Mermaid source in the live tail. Use the
-*copy* action on the finished diagram to copy the source. If the syntax is
-unsupported or the diagram is too wide, read the source block instead.
-
-* Command arguments
-
-Pass Lisp values directly to commands:
-
-- Use keywords for actions, such as =:refresh= in =(mcp :refresh)=.
-- Use =t= to enable a setting and =nil= to disable it. Omit the value to
-  inspect the setting.
-- Use numbers for quantities and strings for text or identifiers. Pass
-  pathnames and quoted Lisp data directly rather than spelling them out in
-  strings.
-
-#+BEGIN_SRC lisp
-(settings :boot-screen-seconds 2)
-(settings :reasoning-traces-p t)
-(settings :reasoning-traces-p nil)
-#+END_SRC
-
-** Automatic permissions
-
-Choose a permission mode for the channel:
-
-- =(permissions :ask)= prompts for approval. Choose =once= for one operation
-  or =always= to approve the exact operation for future calls.
-- =(permissions :auto)= classifies operations without an approval prompt.
-  Read =judging= in the status bar during a fresh classification. Read the
-  decision beside the tool call in fullscreen mode, or beside the command and
-  working directory in linear mode.
-- Use =(permissions :sandbox)= for sandboxed execution on supported platforms.
-- Use =(permissions :full)= to run with your full user privileges.
-
-The mode is stored locally and restored when you reopen a saved channel. This
-includes *full* access, even after a restart.
-
-* Onboarding
-
-1. Open a channel. At the boot screen, press Space or Enter to start the tour.
-   To go straight to the prompt, press Esc or start typing. Typed and pasted
-   text is kept in the prompt.
-2. Try the exercises on the prompt, =(help)=, background Lisp, and
-   =(settings)=. Edit the exercise input and press Enter to submit it.
-
-- Use Page Up and Page Down to scroll.
-- Press Shift-Tab to go back or Tab to skip one slide, including an exercise.
-- Press Esc to skip the tour. Press Ctrl-C to interrupt it without marking
-  unfinished lessons as skipped.
-
-On later launches, you see only new or revised lessons. Enter =(onboard)= to
-replay the full tour. To disable the automatic tour, enter
-=(settings :onboarding-p nil)= or set =AUTOLITH_ONBOARDING= to =off=. If you
-disable the boot screen, you skip the opening animation.
-
-* Goals and verified missions
-
-Use a *goal* for work that can continue between messages. Use a *mission* if you
-want to define acceptance criteria, checks, and a budget before work begins.
-
-- Set a goal with =(goal "OBJECTIVE")=. A string such as ="pause"= is an objective,
-  not an action.
-- Inspect it with =(goal)= or =(goal :status)=. Change the objective with
-  =(goal :update "NEW-OBJECTIVE")=.
-- Pause, resume, or clear it with =(goal :pause)=, =(goal :resume)=, or
-  =(goal :clear)=. An unknown action signals =application-goal-error= without
-  changing the goal.
-
-By default, a lightweight goal pauses after eight automatic continuation turns
-between user messages. Change the saved limit with
-=(settings :goal-continuation-limit 16)= or remove it with
-=(settings :goal-continuation-limit :unlimited)=.
-
-Queued commands and Lisp forms run between goal turns. The goal only continues
-if it yielded to the queued input. If you interrupt goal work, send a message to
-continue. A job can still wake the session after a goal finishes without
-restarting that goal.
-
-To set up and run a mission:
-
-1. Install the objective, limits, and acceptance criteria with
-   =(mission :start specification)=. This example requires both a passing build
-   and your review:
-
-   #+BEGIN_SRC lisp
-   (mission :start
-    '(:objective "Deliver the accepted build"
-      :turn-limit 40 :token-limit 100000 :wall-seconds 3600
-      :criteria ((:id "build" :description "The build passes" :gates ("build"))
-                 (:id "review" :description "The user accepts the result"))
-      :gates ((:id "build" :kind :command :command "make check"
-               :inputs ("Makefile" "src/main.lisp") :deterministic-p t
-               :attempt-limit 3 :timeout-seconds 300))))
-   #+END_SRC
-
-2. Run =(mission :run)= and inspect the saved state with =(mission :status)=.
-3. Give explicit evidence for each criterion without a gate. If the mission is
-   blocked on your review, accept the result and resume:
-
-   #+BEGIN_SRC lisp
-   (mission :accept "review" "I inspected the artifact and accept the result")
-   (mission :resume)
-   #+END_SRC
-
-4. Request verification with =(mission :verify)=. The model can also request it
-   with its completion marker. A mission is verified only if every gate passes
-   and every criterion is satisfied.
-
-Give each criterion a unique =:id= and a =:description=. Use =:gates= to list the
-checks that count as evidence for that criterion. The model cannot weaken the
-criteria or accept results on your behalf. Only the primary agent can use the
-=mission.status=, =mission.verify=, =mission.stop=, and =mission.invalidate= tools.
-
-*Mission budgets* cover parallel work as well as the primary agent:
-
-- *Turns.* Each provider call uses a turn, including calls from children,
-  compaction, recursive inference, and independent review. Admissions and
-  settlements are serialized within a mission. Provider calls can run in
-  parallel.
-- *Tokens.* Each admitted call reserves tokens from the unspent and unreserved
-  budget. The default allocation divides them among the remaining turns. An
-  explicit provider output cap replaces that allocation. On settlement,
-  Autolith releases the reservation and charges reported input and output usage.
-  Provider normalization excludes known prompt-cache reads. Measured usage can
-  exhaust the budget.
-- *Wall time.* The deadline includes gates, tools, pauses, and time away.
-
-If a child call reports no usage, Autolith charges the full finite reservation
-once if it can identify the exact child and reservation. It records the
-failure and the unknown usage. The charge is already included in =:tokens-used=.
-Use =:reservation-charged-tokens= for the total and
-=:reservation-charges-by-child= for the breakdown. The child result lists
-=:unknown-usage=, =:reservation-charged-tokens=, and
-=:reservation-charge-requests=. The =:usage= field contains only measured usage.
-
-A reservation charge is an accounting rule, not a provider billing or output
-limit. Input and repeated generations can cost more. At the current library
-pin, Codex does not enforce an output ceiling on the wire. A successful retry
-charges the final reported usage without reconciling unreported attempts.
-
-The default =:block= policy blocks new inference if missing usage cannot be
-settled, including missing primary usage or uncertain child ownership. Already
-reserved requests and continuations that spend no tokens can finish. Restoring
-the session cannot recover per-request bounds from aggregate reservations or
-reclassify unresolved usage.
-
-To proceed despite missing usage, select =:unknown-usage-policy :record= when you
-start the mission:
-
-#+BEGIN_SRC lisp
-(mission :start
- '(:objective "Run the periodic checks"
-   :turn-limit 10000 :token-limit 10000000 :wall-seconds 86400
-   :unknown-usage-policy :record
-   :criteria ((:id "checks" :description "The user accepts the checks"))))
-#+END_SRC
-
-Under =:record=, Autolith records failed or interrupted calls whose usage cannot
-be settled and can continue without that measurement. It still charges exact
-child reservations if possible. Turn and wall-clock limits apply, and independent
-reviewers still need reported usage. To change the policy for existing work,
-start a new mission with the criteria and budgets and add the policy key.
-Large integer limits are finite.
-
-- Pause with =(goal :pause)= and resume with =(mission :resume)=. These
-  commands do not reset the budget.
-- Cancel with =(mission :cancel "REASON")=.
-- Inspect a blocked mission with =(mission :status)=. Resolve the blocker
-  before resuming. The terminal states are =verified=, =exhausted=,
-  =cancelled=, and =failed=.
-
-Autolith saves gate attempts, fingerprints, and evidence with the conversation
-so you can inspect them after a restore or compaction.
-
-Gates run in order and stop at the first failure:
-
-- *Command gates* use the normal shell authorization and sandbox boundary.
-- *Artifact gates* require =:path=. Set =:sha256= to check an expected hash.
-- *Lisp gates* require a =:predicate= string. The assertion runs in the existing
-  isolated Lisp worker.
-
-Every gate supports =:timeout-seconds= and a separate =:attempt-limit=. The
-defaults are 60 seconds and three executions. Each gate keeps bounded evidence.
-
-For deterministic gates, declare all relevant file paths in =:inputs= and set
-=:deterministic-p t=. File contents and missing-file states form the fingerprint;
-directory paths are rejected. Unchanged passing gates supply current proof, and
-unchanged failed gates are withheld while the model works on their relevant
-inputs. For remote state, omit deterministic policy or invalidate a particular
-gate explicitly:
-
-#+BEGIN_SRC lisp
-(mission :invalidate "build" "The remote build configuration changed")
-#+END_SRC
-
-Invalidation permits another execution without replenishing its attempt budget.
-Before acceptance, every gate fingerprint is checked again under the workspace
-mutation lock. Changes from a later gate invalidate earlier passing evidence.
-Collect terminal results and outstanding inference usage before verifying.
-
-** Independent review checkpoints
-
-Attach a reviewer to an active mission with =mission-review.configure=, or evaluate:
-
-#+BEGIN_SRC lisp
-(application-mission-review-configure
- *active-application*
- '(:id "release-review" :phase :final-acceptance
-   :inputs ("src/main.lisp" "tests/main-tests.lisp")
-   :context "Review the changed behavior and test coverage. Report concrete findings."
-   :turn-limit 4 :token-limit 16000 :run-limit 3))
-#+END_SRC
-
-Declare all relevant files. The reviewer receives an independent snapshot and
-background and returns findings in the required form. The reviewer has no tools
-or spawning permission. Reviewer calls and tokens count against both the
-cumulative reviewer allowances and the mission allowances, including reviews of
-changed snapshots. =:run-limit= bounds the number of distinct snapshots reviewed.
-
-Use =mission-review.trigger= with =id= to review a checkpoint and
-=mission-review.inspect= to read its durable findings, decisions and usage.
-Unchanged snapshots reuse completed, failed or interrupted runs. Resolve or reject
-each finding through =mission-review.decide= with =id=, =finding=, =decision=
-(=resolve= or =reject=) and an evidence-bearing =reason=. Only the primary agent
-or local user may configure, trigger and adjudicate reviews.
-
-Final verification runs configured =final-acceptance= checkpoints. Pending
-findings and failed or interrupted reviews block acceptance. For
-=before-integration= and =after-edit-set= checkpoints, trigger the named review
-explicitly at the chosen boundary. Reviewer findings are advisory; mission gates
-and user acceptance supply harness evidence.
-
-** Scheduled mission continuations
-
-Attach explicit wakeups to the current mission with =mission-schedule.add=.
-Supply an immutable =id=, continuation =content=, and one time policy. =at= is an
-absolute Common Lisp universal time. =interval= is a positive number of seconds.
-=event= names an external event instead. For example:
-
-#+BEGIN_SRC lisp
-(application-mission-schedule-add
- *active-application* :id "build-followup"
- :content "Check the pending build and continue the mission."
- :at (+ (get-universal-time) 300) :missed-policy :latest)
-#+END_SRC
-
-For recurring wakeups, choose =missed-policy= =latest= (the default), =all=, or
-=skip=. These select the newest missed occurrence, every missed occurrence, or
-only an occurrence due at exactly the current time. Use =mission-schedule.event=
-with an event name and stable external event =id=; repeated delivery of that ID
-is deduplicated. The local daemon listener hosts time wakeups. Due work is
-persisted in the ordinary primary command queue as =(mission-wakeup ticket)=,
-where =ticket= is structured data. The command runs as a mission continuation
-under the existing turn, token, and wall-clock budgets.
-
-While a hosted time wakeup of the current mission version is due later or
-already admitted, automatic goal continuations stop and the mission stays
-active. The model is not prompted again between occurrences. Within an
-occurrence, work continues through the turn's own tool calls and through job
-completions. Event schedules, cancelled schedules, and a finished one-shot
-wakeup leave ordinary continuations in place. A user message or =(goal :resume)=
-still runs its own turn.
-
-Only the primary agent may use the =mission-schedule= tools. Each wakeup keeps
-its exact mission identity and version. Both are checked at admission and
-execution.
-
-While the mission is paused or blocked, the missed policy skips due occurrences
-without running them. The interval advances. After a resume, the next due
-occurrence arrives without recreating the schedule. Skipped occurrences are not
-replayed, including one-shot wakeups and deduplicated events. With the default
-=:block= policy, unknown usage prevents mission resume. =:record= does not prevent
-an independent pause or blocker from resuming.
-
-The schedule is cancelled when the mission is replaced, its version changes,
-or it reaches a terminal state (verified, exhausted, cancelled, failed or legacy
-complete). Skips and automatic cancellations produce persisted user notices. Use
-=mission-schedule.inspect= to read schedules, occurrence IDs, claim tokens and
-outcomes: skipped occurrences have =state= =cancelled= with
-=result= =(:skipped <mission-status>)=; obsolete mission work has
-=result= =:stale-mission= and a cancelled schedule. Use =mission-schedule.cancel=
-with the schedule =id= to cancel future and pending work.
-
-Interrupted admissions and executions restore as uncertain outcomes. Inspect the
-external effects before calling =mission-schedule.resolve= with the readable
-=occurrence= ID, current =token= and =action= =completed=, =failed= or =retry=.
-Retry is an explicit decision and is refused while the occurrence is executing.
-Cancellation retains claim and duplicate history.
-
-* Editor sessions over ACP
-
-To open an ACP editor session:
-
-1. Authenticate the selected provider with =autolith auth=.
-2. Configure your ACP-compatible editor to launch:
-
-   #+BEGIN_SRC sh
-   autolith acp
-   #+END_SRC
-
-3. Open a session in the editor. ACP uses UTF-8 JSON-RPC on stdin and stdout.
-   Diagnostics go to stderr.
-
-Autolith starts the world server if needed. A new session opens a channel in the
-absolute working directory supplied by the editor. The session ID is the
-conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
-and results, then follow the channel. You can view the same channel in a
-terminal. ACP accepts text prompts, resource links, and embedded text resources.
-File and process operations use the native Autolith tools.
-
-The world server does not run in pristine mode. For a pristine rescue session,
-use =autolith resume --pristine= in a terminal.
-
-- *Approvals.* In =ask= mode, the editor receives the channel's choices. The
-  first answer from the editor or terminal counts. Select =auto=, =sandboxed=,
-  or =full-access= in the editor, or use =--permissions auto|sandbox|full= at
-  launch. Changing the mode in the editor changes it for the channel.
-- *MCP.* You can supply stdio and HTTP MCP servers when the server starts a
-  channel for the session. An existing channel refuses new servers and returns
-  the reason. Literal environment values and headers are kept temporarily and
-  redacted from server output.
-- *Closing.* Cancel a prompt to stop the current turn. A prompt returns after
-  the turn ends. Closing the session stops following the channel. Autolith
-  closes a channel it started for that session if nothing else follows it.
-  =Ctrl-C= leaves all channels and exits the ACP process with status 130.
-
-** Remote clients
-
-- Use =autolith acp --http= for Streamable HTTP (HTTP/1.1 or cleartext HTTP/2)
-  and WebSocket at =/acp=.
-- Use =autolith acp --websocket= for WebSocket alone.
-
-Both listen on =127.0.0.1:8737= by default. Supply a port or a host and port to
-change the listener:
-
-#+BEGIN_SRC sh
-autolith acp --websocket 9000
-autolith acp --http 0.0.0.0:8737 --token "$ACP_TOKEN"
-autolith acp --http [::1]:8737
-#+END_SRC
-
-Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
-gets its own sessions, each a channel of the world server.
-
-*For remote access*, put a TLS reverse proxy in front of the listener and require
-a token. ACP does not encrypt the traffic itself. A non-loopback bind can make
-the agent reachable from other machines. Other local users can read a token
-passed on the command line.
-
-With =--token=, send =Authorization: Bearer TOKEN= or add =?token=TOKEN= to
-the URL. Autolith rejects requests that carry an =Origin= header.
-
-** Typed client extensions
-
-Request =_autolith/capabilities= to discover installed methods and schema version.
-Include =sessionId= in every other extension request. Responses contain =outcome=
-(=ok=, =condition=, =busy=, =unsupported=, or =cancelled=), with =value= on success
-and a bounded =report= on failure. Unknown measurements are JSON null.
-
-| Method suffix | Value or action |
-|---------------+-----------------|
-| =state= | Session, turn, model, permission, usage, plan and health snapshot |
-| =settings=, =models=, =operations= | Typed catalog =items= |
-| =set-setting= | Set =name= to =value=; return the updated setting row |
-| =invoke= | Invoke =operation= with JSON =arguments=; return presented =text= |
-| =steer=, =queue= | Durably admit primary =text=; return =accepted= and =delivery= |
-| =conversations= | Page durable conversations using =limit= and =cursor=; optionally filter =cwd= |
-| =jobs=, =job= | Page owned jobs or inspect one =jobId= |
-| =job-transcript= | Read =jobId= with =offset=, =limit= and =output= (=text= or =structured=) |
-| =job-send=, =job-cancel= | Send =text= to or cancel an owned =jobId= |
-| =resource= | Read bounded =workspace:= lines or =shell-log:= bytes from =uri= |
-
-Prefix these suffixes with =_autolith/=. Catalog operations expose admission and
-availability; tools use their native decoders and ACP approval callbacks.
-Terminal-only operations return an explicit unsupported outcome. Workspace resource
-windows use =startLine= and =lineCount= and include the observed revision. Shell-log
-windows use =byteOffset= and =byteCount= with the exact retained reference.
-
-For a command, send =arguments= as a JSON array in Lisp argument order. For
-example, =(settings :turn-timestamps-p t)= takes
-=[{"keyword":"turn-timestamps-p"}, true]=. A keyword is an object with exactly one
-=keyword= member whose value is a nonempty string. For a tool, send =arguments=
-as an object keyed by parameter name. Operations with =terminalWithoutArguments=
-require an argument to avoid a terminal picker. During an active turn,
-boundary-applied commands return =delivery: "scheduled"= and present their
-results as ACP updates.
-
-=steer= delivers text at the next safe boundary, including submissions made while
-an approval is pending. Late steering is promoted ahead of ordinary queued
-follow-ups. =queue= appends a follow-up for the next available primary turn.
-Both accept up to 262144 characters and return =delivery: "steering"= or ="queued"=.
-Display accepted input separately until its durable =user_message_chunk= arrives.
-Cancellation pauses pending input; a new submission resumes it. Accepted input
-survives session close and reload. ACP has no per-item withdrawal operation.
-
-For structured child transcripts, =value.updates= contains ordinary ACP
-SessionUpdate bodies, with messages, reasoning, tool calls and result content.
-Offsets count updates from zero; the default limit is 100 and the maximum is 200.
-The typed response envelope is bounded to 262144 UTF-8 bytes. A single update over
-that bound returns a condition instead of advancing the cursor. =nextOffset= is
-JSON null when =complete= is true, meaning the current snapshot is exhausted.
-For a running child, poll again from =total= to read later updates. Text output
-uses character offsets and retains its existing numeric end cursor.
-
-Treat =_autolith/event= state and catalog notifications as invalidation hints.
-Refetch the affected snapshot after a sequence gap. Events with kind =turn= are
-ordered lifecycle boundaries: =data= contains =state= (=running= or =idle=), an
-integer =epoch=, =source= (=prompt=, =queue=, =completion=, or =invoke=), and a terminal
-=outcome= (=end-turn=, =cancelled=, or =condition=; null while running). Match the
-epoch when handling approvals, cancellation and transcript boundaries.
-
-Automatic job continuations stream through ordinary ACP updates. Cancellation or
-an inference failure pauses continuation; submit an explicit prompt to resume.
-
-* Emacs and sly
-
-Use =emacs/autolith.el= from the source tree to edit code, work in a sly REPL,
-and talk to Autolith in one Emacs frame. The REPL connects to the same Lisp
-image as Autolith. The REPL spans the bottom quarter of the frame. Above it,
-code is on the left and the agent-shell conversation is in the right third.
-
-1. Install sly and agent-shell.
-2. Load the integration file:
-
-   #+BEGIN_SRC emacs-lisp
-   (load "/path/to/autolith/emacs/autolith.el")
-   #+END_SRC
-
-3. In the buffer you want to edit, run =M-x autolith-ide=. The command starts
-   the Emacs server if needed, launches the agent, and connects sly.
-
-Optional Sly contribs need their Lisp dependencies in Autolith's image. For
-=sly-stepper=, install =agnostic-lizard= in a persistent ASDF source registry
-visible to the Autolith process before Slynk starts.
-
-=autolith-ide= starts the Emacs server if needed and launches =autolith acp=
-through agent-shell with three environment variables:
-
-- =AUTOLITH_SLYNK_DIRECTORY= is your sly's own =slynk/= directory, so the server
-  speaks exactly your client's protocol. Autolith loads that =slynk.asd= by path
-  and compiles it into the ASDF cache on first use.
-- =AUTOLITH_SLYNK_PORT_FILE= receives the loopback port once Slynk listens, or
-  =error: REASON= when it cannot start. =autolith-ide= waits for it, up to
-  =autolith-slynk-timeout= seconds, and connects sly.
-- =AUTOLITH_EMACS_SERVER= is this Emacs's server socket and enables the
-  =emacs:= resources and =emacs.*= tools.
-
-=M-x autolith-agent-shell= starts only the conversation, with Emacs access and
-without Slynk. The same variables, or the =:slynk-directory=,
-=:slynk-port-file= and =:emacs-server-socket= settings, work outside Emacs. In
-the terminal, =(slynk)= starts Slynk and shows the port for =M-x sly-connect=,
-and =(slynk :stop)= closes it.
-
-The agent reaches your definitions with =lisp.describe=, =lisp.source= and
-=lisp.apropos= using target =self=, or with =self.eval=. While Slynk serves, a
-context note tells it so. Your Emacs appears to the agent only while the
-configured server socket exists:
-
-- =emacs:current=, read with =resource.read=, lists authorized visible windows
-  with point, the active region and open file buffers, each by its
-  =emacs:buffer/NAME= URI. Outside-root files and non-file buffers require
-  full-access approval; denied buffers are omitted from this snapshot.
-- =emacs:buffer/NAME= is a live buffer's text, unsaved edits included, with the
-  buffer name percent-encoded. =resource.edit= applies line operations to the
-  buffer itself: the change stays unsaved and undoable, and is refused as stale
-  if you have edited the buffer since the agent read it. A buffer visiting a file
-  outside the workspace and source roots asks the same permission as that path.
-- =emacs.visit= shows a file position in a file window of the selected frame.
-- =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
-  =emacs.eval -- FORM= and runs only with full access.
-
-Slynk listens on =127.0.0.1= only. Like ordinary sly, it has no authentication
-beyond the optional =~/.sly-secret=. Anyone who can reach loopback on this machine
-can evaluate in the image. Your code shares the agent's heap: a fatal error or
-=(sb-ext:exit)= ends the session, which recovers like any crash.
-
-Slynk's debugger and output hooks stay off for Autolith's own threads, so your
-REPL sees only your evaluations. A checkpoint stops Slynk and closes sly
-connections, then restarts Slynk on the same port. Reconnect with
-=M-x autolith-ide-reconnect=. A checkpoint waits for in-flight sly evaluations
-and fails if they exceed the shutdown timeout.
-
-* Fullscreen terminal
-
-The fullscreen transcript scrolls above the composer, modeline, and activity
-rows. The modeline shows =LIVE= if you are following the newest output.
-Otherwise, it shows which rows are visible.
-
-- Use =PageUp= and =PageDown= to scroll one page, or use the mouse wheel to
-  scroll a few rows.
-- Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and assistant
-  messages. The jump puts the end of the message above the composer, or puts
-  the header at the top if the message is taller than the viewport.
-- Use =Ctrl-Home= and =Ctrl-End= to jump to the oldest and newest retained
-  transcript positions.
-- In a hosted channel, press =Ctrl-S= to toggle the sidebar. Press =Ctrl-Space=
-  to focus it. See Local sessions.
-- Drag across the transcript to copy selected text on release. Use =Shift=
-  and drag to select whole screen rows in the terminal emulator instead.
-
-Fullscreen history is separate from the terminal emulator's scrollback. The
-viewport keeps about four million characters of recent output in memory. At the
-oldest retained row, the modeline shows =(history) loads earlier=. Run
-=(history)= to load a page of older output.
-
-When saved memories match your input, a dim =@ N relevant memories exist= line
-appears below your message. It shows how many memories were offered to the model
-for that request, followed by how many of them are stale or unverified (see the
-Memories section). Each input gets one notice across tool calls and provider retries.
-
-Input recall includes every user message, command, and Lisp submission in the
-conversation. Automatic messages and assistant output are excluded. On first use,
-the complete input-only sidecar is built from the conversation records; later
-submissions are appended to it. Resuming reads this sidecar instead of replaying
-archived transcript chunks. If cache storage is unavailable, recall streams the
-conversation records directly. The editor keeps the newest 500 inputs, up to a
-million characters, in memory. Moving past the oldest of them loads the
-next older page, and leaving history recall releases it again.
-
-Clicking a web address in the fullscreen transcript opens it in the default
-browser, and every fenced code block ends with a =⧉ copy= label that copies the
-block's source. Copies go to the host clipboard through wl-clipboard, xclip or
-xsel, pbcopy, or the Windows clipboard, and the terminal also receives an OSC 52
-request, so a terminal reached over SSH copies on your own machine. Web
-addresses in every mode are emitted as OSC 8 hyperlinks, which terminals open
-with their usual modifier-click.
-
-Clicking a tool call's header in the fullscreen transcript inserts its Lisp
-invocation, such as =(resource.read :uri "file:///tmp/notes.org")=, into the
-composer at the cursor. Submitting it alone repeats the call with the same
-arguments; editing it first runs a similar call; writing around it asks the
-model about that exact call. Arrays are spelled as =(vector ...)= and objects
-as =(dict ...)=, and argument names with uppercase letters keep their case as
-=:|filePath|= or a string key.
-
-Click a =lisp.eval= input block in fullscreen to expand the complete Lisp source
-with syntax highlighting. Click it again to collapse it. The selected view
-persists through resizing and tool completion.
-
-Lisp evaluation inputs, returned source, and values use rainbow parentheses:
-matching parentheses share a color, and nesting depths cycle through six colors.
-Strings, character literals, escaped symbols, and comments do not affect depth.
-
-Tool argument names emitted with underscores are matched to declared hyphenated
-names, including nested objects and array items. If both spellings are present,
-the declared spelling takes precedence.
-
-In fullscreen mode, a pending tool call starts with =▸=. When it finishes, the
-same header shows a green =✓= for success or a red =!= for failure. Errors
-appear beneath the original invocation and arguments. Background handoffs keep
-=▸= until completion. Thanks to @rgbcube for suggesting these outcome markers.
-
-Autolith reports the session status over the interactive terminal using the
-[[https://www.superlogical.com/rex/docs/build/program-status][OSC 7501 Program Status Protocol]] and =app=autolith=:
-
-| Status | When reported |
-|--------+---------------|
-| =idle= | At startup or after cancellation |
-| =working= | During foreground input and resumed model turns |
-| =done= or =error= | After success or failure, until the next input or model turn |
-| =blocked= | For an input selector (=kind=question=), an approval (=kind=permission=), or authentication (=kind=auth=) |
-
-Reports include the conversation title. Progress from children and background
-jobs appears in the transcript. Reports omit prompt text, assignments,
-results, credentials, and progress estimates.
-
-At startup, the boot screen shows a tip and the progress of opening the saved
-channel. Press =Space= or =Enter= to open the listener, or press =Ctrl-C= to quit.
-While you wait, the tip changes every ten seconds.
-
-- To skip /the wait/, use =(setf (config :boot-screen-linger-p) nil)= or set
-  =AUTOLITH_BOOT_LINGER= to =off= for one launch.
-- To change the direct-session animation from 3.5 seconds, set
-  =:boot-screen-seconds= or =AUTOLITH_BOOT_DURATION=. A hosted channel shows
-  actual progress and does not replay the animation.
-- To skip /the boot screen/, use =(setf (config :boot-screen-p) nil)= or set
-  =AUTOLITH_BOOT_SCREEN= to =off=. See =(settings)= for these options.
-
-** Almighty theme
-
-Select the Almighty Lisp theme with =(settings :terminal-theme :almighty)=.
-It uses the palette from [[https://almightylisp.com/][almightylisp.com]]:
-near-white text on the site's blue, yellow for emphasis, cyan for code and strings, and an
-ALMIGHTY LITH boot mark. Terminals that advertise true color through
-=COLORTERM= get the exact colors; others get the nearest indexed or basic
-ones. The theme sets the terminal's default colors only while the viewport is
-active and restores them on exit. Save it for future launches with
-=(setf (config :terminal-theme) :almighty)=; =:autolith= restores the default
-presentation.
-
 * Install, update, and uninstall
 
 ** Nix
@@ -752,6 +113,63 @@ The installation, managed runtimes, built images, and caches are removed.
 Your conversations, memories, image commits, configuration, and credentials
 are kept.
 
+* First session
+
+1. *Connect a model provider.* To use ChatGPT, run =autolith auth chatgpt=
+   and follow the prompts. If you use =nix run=, run
+   =nix run github:lambda-symbolics/autolith -- auth chatgpt= instead.
+   To use a local model, see [[https://lambda-symbolics.com/autolith/docs/configure-autolith#run-a-local-model][Set up local inference]].
+2. *Open a channel.* Run =autolith= or =nix run github:lambda-symbolics/autolith=
+   in the directory where you want to work. Select =inbox= or another channel
+   in the sidebar. Use =autolith open= to reopen the most recent top-level
+   channel in the workspace, or =autolith open ID= to open a specific channel.
+3. *Send your first request.* Try /List the files in this workspace and tell
+   me where to start./ To see commands, enter =(help)= in the same prompt.
+
+Write requests in plain text and enter Lisp commands as parenthesized forms.
+For example, you can inspect the workspace directly:
+
+#+BEGIN_SRC lisp
+(resource.read :uri "workspace:.")
+#+END_SRC
+
+- Type an opening parenthesis, bracket, or brace to insert a pair. Type the
+  closing delimiter to move past it, or press Backspace inside an empty pair
+  to delete both delimiters.
+- Press Tab to complete a command, option, path, or =@= mention. If you complete
+  a mention, press Tab again to cycle through candidates. Use Shift-Tab to
+  cycle backward.
+- If there is nothing to complete, Tab submits the prompt or queues it during
+  a turn. Finish an open Lisp form before submitting it.
+
+** Onboarding
+
+1. Open a channel. At the boot screen, press Space or Enter to start the tour.
+   To go straight to the prompt, press Esc or start typing. Typed and pasted
+   text is kept in the prompt.
+2. Try the exercises on the prompt, =(help)=, background Lisp, and
+   =(settings)=. Edit the exercise input and press Enter to submit it.
+
+- Use Page Up and Page Down to scroll.
+- Press Shift-Tab to go back or Tab to skip one slide, including an exercise.
+- Press Esc to skip the tour. Press Ctrl-C to interrupt it without marking
+  unfinished lessons as skipped.
+
+On later launches, you see only new or revised lessons. Enter =(onboard)= to
+replay the full tour. To disable the automatic tour, enter
+=(settings :onboarding-p nil)= or set =AUTOLITH_ONBOARDING= to =off=. If you
+disable the boot screen, you skip the opening animation.
+
+** Boot screen
+
+- To skip /the wait/, use =(setf (config :boot-screen-linger-p) nil)= or set
+  =AUTOLITH_BOOT_LINGER= to =off= for one launch.
+- To change the direct-session animation from 3.5 seconds, set
+  =:boot-screen-seconds= or =AUTOLITH_BOOT_DURATION=. A hosted channel shows
+  actual progress and does not replay the animation.
+- To skip /the boot screen/, use =(setf (config :boot-screen-p) nil)= or set
+  =AUTOLITH_BOOT_SCREEN= to =off=. See =(settings)= for these options.
+
 * Talk to Autolith
 
 ** Prose, Lisp, and commands
@@ -791,8 +209,8 @@ This also works for a bare variable. Input such as =?text= or =??= is plain text
 
 Use the printed =exec:N= ID to inspect, wait for, or cancel that job:
 =(job.get :id "exec:1")=, =(job.wait :id "exec:1")=, or
-=(job.cancel :id "exec:1")=. Replace =exec:1= with the ID you received. In
-fullscreen, click the printed cancellation form to insert it in the composer.
+=(job.cancel :id "exec:1")=. Replace =exec:1= with the ID you received. Click
+the printed cancellation form to insert it at the prompt.
 The result and captured output go to the original conversation even if you
 switch channels. Background Lisp uses EOF for input and reports errors without
 an interactive restart picker. Submitting a form this way does not start a model
@@ -810,6 +228,138 @@ second Ctrl-C within the force-exit window exits the application. Use =(cwd)= to
 see the current workspace. If you submit =(cwd "../other-project")= during a
 turn, the relative path is resolved when that input reaches its place in the
 steering queue.
+
+** Command arguments
+
+Pass Lisp values directly to commands:
+
+- Use keywords for actions, such as =:refresh= in =(mcp :refresh)=.
+- Use =t= to enable a setting and =nil= to disable it. Omit the value to
+  inspect the setting.
+- Use numbers for quantities and strings for text or identifiers. Pass
+  pathnames and quoted Lisp data directly rather than spelling them out in
+  strings.
+
+#+BEGIN_SRC lisp
+(settings :boot-screen-seconds 2)
+(settings :reasoning-traces-p t)
+(settings :reasoning-traces-p nil)
+#+END_SRC
+
+*** Automatic permissions
+
+Choose a permission mode for the channel:
+
+- =(permissions :ask)= prompts for approval. Choose =once= for one operation
+  or =always= to approve the exact operation for future calls.
+- =(permissions :auto)= classifies operations without an approval prompt.
+  While Autolith classifies the call, look for =judging= in the status bar.
+  Read the decision beside the tool call.
+- Use =(permissions :sandbox)= for sandboxed execution on supported platforms.
+- Use =(permissions :full)= to run with your full user privileges.
+
+The mode is stored locally and restored when you reopen a saved channel. This
+includes *full* access, even after a restart.
+
+** Read the transcript
+
+The transcript is above the prompt. Look for =LIVE= in the modeline when
+following new output. Otherwise, read the range of rows that are visible.
+
+- Use =PageUp= and =PageDown= to scroll one page, or use the mouse wheel to
+  scroll a few rows.
+- Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and assistant
+  messages. The jump puts the end of the message above the composer, or puts
+  the header at the top if the message is taller than the viewport.
+- Use =Ctrl-Home= and =Ctrl-End= to jump to the oldest and newest retained
+  transcript positions.
+- In a hosted channel, press =Ctrl-S= to toggle the sidebar. Press =Ctrl-Space=
+  to focus it. See [[#local-sessions][Local sessions]].
+- Drag across the transcript to copy selected text on release. Use =Shift=
+  and drag to select whole screen rows in the terminal emulator instead.
+
+Transcript history is separate from the scrollback of the terminal emulator. The
+viewport keeps about four million characters of recent output in memory. At the
+oldest retained row, the modeline shows =(history) loads earlier=. Run
+=(history)= to load a page of older output.
+
+When saved memories match your input, a dim =@ N relevant memories exist= line
+appears below your message. It shows how many memories were offered to the model
+for that request, followed by how many of them are stale or unverified (see the
+Memories section). Each input gets one notice across tool calls and provider retries.
+
+Input recall includes every user message, command, and Lisp submission in the
+conversation. Automatic messages and assistant output are excluded. On first use,
+the complete input-only sidecar is built from the conversation records; later
+submissions are appended to it. Resuming reads this sidecar instead of replaying
+archived transcript chunks. If cache storage is unavailable, recall streams the
+conversation records directly. The editor keeps the newest 500 inputs, up to a
+million characters, in memory. Moving past the oldest of them loads the
+next older page, and leaving history recall releases it again.
+
+Click a web address in the transcript to open it in your browser. Use
+=⧉ copy= below a code block to copy the source. If you connect over SSH,
+transcript copies can reach your local clipboard through OSC 52.
+
+Click a tool call header to insert its Lisp form at the cursor. Submit the
+form to repeat the call, edit the arguments to change the call, or add a
+question to ask the model about it. Arrays are spelled as =(vector ...)= and objects
+as =(dict ...)=, and argument names with uppercase letters keep their case as
+=:|filePath|= or a string key.
+
+Click a =lisp.eval= input block to expand the complete Lisp source
+with syntax highlighting. Click it again to collapse it. The selected view
+persists through resizing and tool completion.
+
+Lisp evaluation inputs, returned source, and values use rainbow parentheses:
+matching parentheses share a color, and nesting depths cycle through six colors.
+Strings, character literals, escaped symbols, and comments do not affect depth.
+
+Tool argument names emitted with underscores are matched to declared hyphenated
+names, including nested objects and array items. If both spellings are present,
+the declared spelling takes precedence.
+
+A pending tool call starts with =▸=. When it finishes, the
+same header shows a green =✓= for success or a red =!= for failure. Errors
+appear beneath the original invocation and arguments. Background handoffs keep
+=▸= until completion. Thanks to @rgbcube for suggesting these outcome markers.
+
+Autolith reports the session status over the interactive terminal using the
+[[https://www.superlogical.com/rex/docs/build/program-status][OSC 7501 Program Status Protocol]] and =app=autolith=:
+
+| Status | When reported |
+|--------+---------------|
+| =idle= | At startup or after cancellation |
+| =working= | During foreground input and resumed model turns |
+| =done= or =error= | After success or failure, until the next input or model turn |
+| =blocked= | For an input selector (=kind=question=), an approval (=kind=permission=), or authentication (=kind=auth=) |
+
+Reports include the conversation title. Progress from children and background
+jobs appears in the transcript. Reports omit prompt text, assignments,
+results, credentials, and progress estimates.
+
+*** Terminal diagrams
+
+Ask for a fenced =mermaid= block to see a diagram in the terminal.
+[[https://github.com/lambda-symbolics/clermaid][Clermaid]] documents the supported syntax for:
+
+- Flowcharts
+- Sequence diagrams
+- Flat state diagrams
+- Class diagrams
+- Entity relationship diagrams
+
+#+BEGIN_SRC markdown
+```mermaid
+flowchart LR
+  A[Read] --> B[Evaluate]
+  B --> C[Print]
+```
+#+END_SRC
+
+While the response streams, read the Mermaid source in the live tail. Use the
+*copy* action on the finished diagram to copy the source. If the syntax is
+unsupported or the diagram is too wide, read the source block instead.
 
 ** Parking and editing queued input
 
@@ -876,13 +426,13 @@ children can read those shared memories.
 (forget "3afbfa1a")
 #+END_SRC
 
-In fullscreen, =(memories)= opens the memory manager. Press =/= to search, Tab to
+Open the memory manager with =(memories)=. Press =/= to search, Tab to
 choose between All, Notes, and Facts, and Shift-Tab to choose a scope. Press
 Enter to read the selected item on a narrow terminal. Use =n= to create a note,
 =e= to edit it, =d= to forget it or retract an asserted fact, and =r= to reload.
 In the note form, use Tab to move between fields, Space to choose a scope,
-Shift-Enter for a newline, and Enter to save. Outside fullscreen, the listing
-and explanation commands print text. Use a full ID or a unique ID prefix.
+Shift-Enter for a newline, and Enter to save. Use a full ID or a unique ID
+prefix when you pass an ID to a command.
 
 A note can cite a file, a web page, your words, or another memory as a
 /premise/. A note is /stale/ if a cited passage disappears from a file or a
@@ -1132,7 +682,7 @@ To choose a permission mode in the channel, run =(permissions)=.
 
 *** Channel sidebar
 
-In fullscreen, unfold *home* to find channels grouped by repository or
+Unfold *home* to find channels grouped by repository or
 workspace. Linked worktrees share a group when Autolith can identify their
 originating checkout. Independent clones have separate groups. Child channels
 are nested under their parent. Home shows the inbox and its unread count.
@@ -2452,6 +2002,433 @@ pruning protection.
 Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=
 and =*shell-log-retention-age*= in trusted configuration. Session export
 collects task metadata independently of local log storage.
+
+* Goals and verified missions
+
+Use a *goal* for work that can continue between messages. Use a *mission* if you
+want to define acceptance criteria, checks, and a budget before work begins.
+
+- Set a goal with =(goal "OBJECTIVE")=. A string such as ="pause"= is an objective,
+  not an action.
+- Inspect it with =(goal)= or =(goal :status)=. Change the objective with
+  =(goal :update "NEW-OBJECTIVE")=.
+- Pause, resume, or clear it with =(goal :pause)=, =(goal :resume)=, or
+  =(goal :clear)=. An unknown action signals =application-goal-error= without
+  changing the goal.
+
+By default, a lightweight goal pauses after eight automatic continuation turns
+between user messages. Change the saved limit with
+=(settings :goal-continuation-limit 16)= or remove it with
+=(settings :goal-continuation-limit :unlimited)=.
+
+Queued commands and Lisp forms run between goal turns. The goal only continues
+if it yielded to the queued input. If you interrupt goal work, send a message to
+continue. A job can still wake the session after a goal finishes without
+restarting that goal.
+
+To set up and run a mission:
+
+1. Install the objective, limits, and acceptance criteria with
+   =(mission :start specification)=. This example requires both a passing build
+   and your review:
+
+   #+BEGIN_SRC lisp
+   (mission :start
+    '(:objective "Deliver the accepted build"
+      :turn-limit 40 :token-limit 100000 :wall-seconds 3600
+      :criteria ((:id "build" :description "The build passes" :gates ("build"))
+                 (:id "review" :description "The user accepts the result"))
+      :gates ((:id "build" :kind :command :command "make check"
+               :inputs ("Makefile" "src/main.lisp") :deterministic-p t
+               :attempt-limit 3 :timeout-seconds 300))))
+   #+END_SRC
+
+2. Run =(mission :run)= and inspect the saved state with =(mission :status)=.
+3. Give explicit evidence for each criterion without a gate. If the mission is
+   blocked on your review, accept the result and resume:
+
+   #+BEGIN_SRC lisp
+   (mission :accept "review" "I inspected the artifact and accept the result")
+   (mission :resume)
+   #+END_SRC
+
+4. Request verification with =(mission :verify)=. The model can also request it
+   with its completion marker. A mission is verified only if every gate passes
+   and every criterion is satisfied.
+
+Give each criterion a unique =:id= and a =:description=. Use =:gates= to list the
+checks that count as evidence for that criterion. The model cannot weaken the
+criteria or accept results on your behalf. Only the primary agent can use the
+=mission.status=, =mission.verify=, =mission.stop=, and =mission.invalidate= tools.
+
+*Mission budgets* cover parallel work as well as the primary agent:
+
+- *Turns.* Each provider call uses a turn, including calls from children,
+  compaction, recursive inference, and independent review. Admissions and
+  settlements are serialized within a mission. Provider calls can run in
+  parallel.
+- *Tokens.* Each admitted call reserves tokens from the unspent and unreserved
+  budget. The default allocation divides them among the remaining turns. An
+  explicit provider output cap replaces that allocation. On settlement,
+  Autolith releases the reservation and charges reported input and output usage.
+  Provider normalization excludes known prompt-cache reads. Measured usage can
+  exhaust the budget.
+- *Wall time.* The deadline includes gates, tools, pauses, and time away.
+
+If a child call reports no usage, Autolith charges the full finite reservation
+once if it can identify the exact child and reservation. It records the
+failure and the unknown usage. The charge is already included in =:tokens-used=.
+Use =:reservation-charged-tokens= for the total and
+=:reservation-charges-by-child= for the breakdown. The child result lists
+=:unknown-usage=, =:reservation-charged-tokens=, and
+=:reservation-charge-requests=. The =:usage= field contains only measured usage.
+
+A reservation charge is an accounting rule, not a provider billing or output
+limit. Input and repeated generations can cost more. At the current library
+pin, Codex does not enforce an output ceiling on the wire. A successful retry
+charges the final reported usage without reconciling unreported attempts.
+
+The default =:block= policy blocks new inference if missing usage cannot be
+settled, including missing primary usage or uncertain child ownership. Already
+reserved requests and continuations that spend no tokens can finish. Restoring
+the session cannot recover per-request bounds from aggregate reservations or
+reclassify unresolved usage.
+
+To proceed despite missing usage, select =:unknown-usage-policy :record= when you
+start the mission:
+
+#+BEGIN_SRC lisp
+(mission :start
+ '(:objective "Run the periodic checks"
+   :turn-limit 10000 :token-limit 10000000 :wall-seconds 86400
+   :unknown-usage-policy :record
+   :criteria ((:id "checks" :description "The user accepts the checks"))))
+#+END_SRC
+
+Under =:record=, Autolith records failed or interrupted calls whose usage cannot
+be settled and can continue without that measurement. It still charges exact
+child reservations if possible. Turn and wall-clock limits apply, and independent
+reviewers still need reported usage. To change the policy for existing work,
+start a new mission with the criteria and budgets and add the policy key.
+Large integer limits are finite.
+
+- Pause with =(goal :pause)= and resume with =(mission :resume)=. These
+  commands do not reset the budget.
+- Cancel with =(mission :cancel "REASON")=.
+- Inspect a blocked mission with =(mission :status)=. Resolve the blocker
+  before resuming. The terminal states are =verified=, =exhausted=,
+  =cancelled=, and =failed=.
+
+Autolith saves gate attempts, fingerprints, and evidence with the conversation
+so you can inspect them after a restore or compaction.
+
+Gates run in order and stop at the first failure:
+
+- *Command gates* use the normal shell authorization and sandbox boundary.
+- *Artifact gates* require =:path=. Set =:sha256= to check an expected hash.
+- *Lisp gates* require a =:predicate= string. The assertion runs in the existing
+  isolated Lisp worker.
+
+Every gate supports =:timeout-seconds= and a separate =:attempt-limit=. The
+defaults are 60 seconds and three executions. Each gate keeps bounded evidence.
+
+For deterministic gates, declare all relevant file paths in =:inputs= and set
+=:deterministic-p t=. File contents and missing-file states form the fingerprint;
+directory paths are rejected. Unchanged passing gates supply current proof, and
+unchanged failed gates are withheld while the model works on their relevant
+inputs. For remote state, omit deterministic policy or invalidate a particular
+gate explicitly:
+
+#+BEGIN_SRC lisp
+(mission :invalidate "build" "The remote build configuration changed")
+#+END_SRC
+
+Invalidation permits another execution without replenishing its attempt budget.
+Before acceptance, every gate fingerprint is checked again under the workspace
+mutation lock. Changes from a later gate invalidate earlier passing evidence.
+Collect terminal results and outstanding inference usage before verifying.
+
+** Independent review checkpoints
+
+Attach a reviewer to an active mission with =mission-review.configure=, or evaluate:
+
+#+BEGIN_SRC lisp
+(application-mission-review-configure
+ *active-application*
+ '(:id "release-review" :phase :final-acceptance
+   :inputs ("src/main.lisp" "tests/main-tests.lisp")
+   :context "Review the changed behavior and test coverage. Report concrete findings."
+   :turn-limit 4 :token-limit 16000 :run-limit 3))
+#+END_SRC
+
+Declare all relevant files. The reviewer receives an independent snapshot and
+background and returns findings in the required form. The reviewer has no tools
+or spawning permission. Reviewer calls and tokens count against both the
+cumulative reviewer allowances and the mission allowances, including reviews of
+changed snapshots. =:run-limit= bounds the number of distinct snapshots reviewed.
+
+Use =mission-review.trigger= with =id= to review a checkpoint and
+=mission-review.inspect= to read its durable findings, decisions and usage.
+Unchanged snapshots reuse completed, failed or interrupted runs. Resolve or reject
+each finding through =mission-review.decide= with =id=, =finding=, =decision=
+(=resolve= or =reject=) and an evidence-bearing =reason=. Only the primary agent
+or local user may configure, trigger and adjudicate reviews.
+
+Final verification runs configured =final-acceptance= checkpoints. Pending
+findings and failed or interrupted reviews block acceptance. For
+=before-integration= and =after-edit-set= checkpoints, trigger the named review
+explicitly at the chosen boundary. Reviewer findings are advisory; mission gates
+and user acceptance supply harness evidence.
+
+** Scheduled mission continuations
+
+Attach explicit wakeups to the current mission with =mission-schedule.add=.
+Supply an immutable =id=, continuation =content=, and one time policy. =at= is an
+absolute Common Lisp universal time. =interval= is a positive number of seconds.
+=event= names an external event instead. For example:
+
+#+BEGIN_SRC lisp
+(application-mission-schedule-add
+ *active-application* :id "build-followup"
+ :content "Check the pending build and continue the mission."
+ :at (+ (get-universal-time) 300) :missed-policy :latest)
+#+END_SRC
+
+For recurring wakeups, choose =missed-policy= =latest= (the default), =all=, or
+=skip=. These select the newest missed occurrence, every missed occurrence, or
+only an occurrence due at exactly the current time. Use =mission-schedule.event=
+with an event name and stable external event =id=; repeated delivery of that ID
+is deduplicated. The local daemon listener hosts time wakeups. Due work is
+persisted in the ordinary primary command queue as =(mission-wakeup ticket)=,
+where =ticket= is structured data. The command runs as a mission continuation
+under the existing turn, token, and wall-clock budgets.
+
+While a hosted time wakeup of the current mission version is due later or
+already admitted, automatic goal continuations stop and the mission stays
+active. The model is not prompted again between occurrences. Within an
+occurrence, work continues through the turn's own tool calls and through job
+completions. Event schedules, cancelled schedules, and a finished one-shot
+wakeup leave ordinary continuations in place. A user message or =(goal :resume)=
+still runs its own turn.
+
+Only the primary agent may use the =mission-schedule= tools. Each wakeup keeps
+its exact mission identity and version. Both are checked at admission and
+execution.
+
+While the mission is paused or blocked, the missed policy skips due occurrences
+without running them. The interval advances. After a resume, the next due
+occurrence arrives without recreating the schedule. Skipped occurrences are not
+replayed, including one-shot wakeups and deduplicated events. With the default
+=:block= policy, unknown usage prevents mission resume. =:record= does not prevent
+an independent pause or blocker from resuming.
+
+The schedule is cancelled when the mission is replaced, its version changes,
+or it reaches a terminal state (verified, exhausted, cancelled, failed or legacy
+complete). Skips and automatic cancellations produce persisted user notices. Use
+=mission-schedule.inspect= to read schedules, occurrence IDs, claim tokens and
+outcomes: skipped occurrences have =state= =cancelled= with
+=result= =(:skipped <mission-status>)=; obsolete mission work has
+=result= =:stale-mission= and a cancelled schedule. Use =mission-schedule.cancel=
+with the schedule =id= to cancel future and pending work.
+
+Interrupted admissions and executions restore as uncertain outcomes. Inspect the
+external effects before calling =mission-schedule.resolve= with the readable
+=occurrence= ID, current =token= and =action= =completed=, =failed= or =retry=.
+Retry is an explicit decision and is refused while the occurrence is executing.
+Cancellation retains claim and duplicate history.
+
+* Editor sessions over ACP
+
+To open an ACP editor session:
+
+1. Authenticate the selected provider with =autolith auth=.
+2. Configure your ACP-compatible editor to launch:
+
+   #+BEGIN_SRC sh
+   autolith acp
+   #+END_SRC
+
+3. Open a session in the editor. ACP uses UTF-8 JSON-RPC on stdin and stdout.
+   Diagnostics go to stderr.
+
+Autolith starts the world server if needed. A new session opens a channel in the
+absolute working directory supplied by the editor. The session ID is the
+conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
+and results, then follow the channel. You can view the same channel in a
+terminal. ACP accepts text prompts, resource links, and embedded text resources.
+File and process operations use the native Autolith tools.
+
+The world server does not run in pristine mode. For a pristine rescue session,
+use =autolith resume --pristine= in a terminal.
+
+- *Approvals.* In =ask= mode, the editor receives the channel's choices. The
+  first answer from the editor or terminal counts. Select =auto=, =sandboxed=,
+  or =full-access= in the editor, or use =--permissions auto|sandbox|full= at
+  launch. Changing the mode in the editor changes it for the channel.
+- *MCP.* You can supply stdio and HTTP MCP servers when the server starts a
+  channel for the session. An existing channel refuses new servers and returns
+  the reason. Literal environment values and headers are kept temporarily and
+  redacted from server output.
+- *Closing.* Cancel a prompt to stop the current turn. A prompt returns after
+  the turn ends. Closing the session stops following the channel. Autolith
+  closes a channel it started for that session if nothing else follows it.
+  =Ctrl-C= leaves all channels and exits the ACP process with status 130.
+
+** Remote clients
+
+- Use =autolith acp --http= for Streamable HTTP (HTTP/1.1 or cleartext HTTP/2)
+  and WebSocket at =/acp=.
+- Use =autolith acp --websocket= for WebSocket alone.
+
+Both listen on =127.0.0.1:8737= by default. Supply a port or a host and port to
+change the listener:
+
+#+BEGIN_SRC sh
+autolith acp --websocket 9000
+autolith acp --http 0.0.0.0:8737 --token "$ACP_TOKEN"
+autolith acp --http [::1]:8737
+#+END_SRC
+
+Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
+gets its own sessions, each a channel of the world server.
+
+*For remote access*, put a TLS reverse proxy in front of the listener and require
+a token. ACP does not encrypt the traffic itself. A non-loopback bind can make
+the agent reachable from other machines. Other local users can read a token
+passed on the command line.
+
+With =--token=, send =Authorization: Bearer TOKEN= or add =?token=TOKEN= to
+the URL. Autolith rejects requests that carry an =Origin= header.
+
+** Typed client extensions
+
+Request =_autolith/capabilities= to discover installed methods and schema version.
+Include =sessionId= in every other extension request. Responses contain =outcome=
+(=ok=, =condition=, =busy=, =unsupported=, or =cancelled=), with =value= on success
+and a bounded =report= on failure. Unknown measurements are JSON null.
+
+| Method suffix | Value or action |
+|---------------+-----------------|
+| =state= | Session, turn, model, permission, usage, plan and health snapshot |
+| =settings=, =models=, =operations= | Typed catalog =items= |
+| =set-setting= | Set =name= to =value=; return the updated setting row |
+| =invoke= | Invoke =operation= with JSON =arguments=; return presented =text= |
+| =steer=, =queue= | Durably admit primary =text=; return =accepted= and =delivery= |
+| =conversations= | Page durable conversations using =limit= and =cursor=; optionally filter =cwd= |
+| =jobs=, =job= | Page owned jobs or inspect one =jobId= |
+| =job-transcript= | Read =jobId= with =offset=, =limit= and =output= (=text= or =structured=) |
+| =job-send=, =job-cancel= | Send =text= to or cancel an owned =jobId= |
+| =resource= | Read bounded =workspace:= lines or =shell-log:= bytes from =uri= |
+
+Prefix these suffixes with =_autolith/=. Catalog operations expose admission and
+availability; tools use their native decoders and ACP approval callbacks.
+Terminal-only operations return an explicit unsupported outcome. Workspace resource
+windows use =startLine= and =lineCount= and include the observed revision. Shell-log
+windows use =byteOffset= and =byteCount= with the exact retained reference.
+
+For a command, send =arguments= as a JSON array in Lisp argument order. For
+example, =(settings :turn-timestamps-p t)= takes
+=[{"keyword":"turn-timestamps-p"}, true]=. A keyword is an object with exactly one
+=keyword= member whose value is a nonempty string. For a tool, send =arguments=
+as an object keyed by parameter name. Operations with =terminalWithoutArguments=
+require an argument to avoid a terminal picker. During an active turn,
+boundary-applied commands return =delivery: "scheduled"= and present their
+results as ACP updates.
+
+=steer= delivers text at the next safe boundary, including submissions made while
+an approval is pending. Late steering is promoted ahead of ordinary queued
+follow-ups. =queue= appends a follow-up for the next available primary turn.
+Both accept up to 262144 characters and return =delivery: "steering"= or ="queued"=.
+Display accepted input separately until its durable =user_message_chunk= arrives.
+Cancellation pauses pending input; a new submission resumes it. Accepted input
+survives session close and reload. ACP has no per-item withdrawal operation.
+
+For structured child transcripts, =value.updates= contains ordinary ACP
+SessionUpdate bodies, with messages, reasoning, tool calls and result content.
+Offsets count updates from zero; the default limit is 100 and the maximum is 200.
+The typed response envelope is bounded to 262144 UTF-8 bytes. A single update over
+that bound returns a condition instead of advancing the cursor. =nextOffset= is
+JSON null when =complete= is true, meaning the current snapshot is exhausted.
+For a running child, poll again from =total= to read later updates. Text output
+uses character offsets and retains its existing numeric end cursor.
+
+Treat =_autolith/event= state and catalog notifications as invalidation hints.
+Refetch the affected snapshot after a sequence gap. Events with kind =turn= are
+ordered lifecycle boundaries: =data= contains =state= (=running= or =idle=), an
+integer =epoch=, =source= (=prompt=, =queue=, =completion=, or =invoke=), and a terminal
+=outcome= (=end-turn=, =cancelled=, or =condition=; null while running). Match the
+epoch when handling approvals, cancellation and transcript boundaries.
+
+Automatic job continuations stream through ordinary ACP updates. Cancellation or
+an inference failure pauses continuation; submit an explicit prompt to resume.
+
+* Emacs and sly
+
+Use =emacs/autolith.el= from the source tree to edit code, work in a sly REPL,
+and talk to Autolith in one Emacs frame. The REPL connects to the same Lisp
+image as Autolith. The REPL spans the bottom quarter of the frame. Above it,
+code is on the left and the agent-shell conversation is in the right third.
+
+1. Install sly and agent-shell.
+2. Load the integration file:
+
+   #+BEGIN_SRC emacs-lisp
+   (load "/path/to/autolith/emacs/autolith.el")
+   #+END_SRC
+
+3. In the buffer you want to edit, run =M-x autolith-ide=. The command starts
+   the Emacs server if needed, launches the agent, and connects sly.
+
+Optional Sly contribs need their Lisp dependencies in Autolith's image. For
+=sly-stepper=, install =agnostic-lizard= in a persistent ASDF source registry
+visible to the Autolith process before Slynk starts.
+
+=autolith-ide= starts the Emacs server if needed and launches =autolith acp=
+through agent-shell with three environment variables:
+
+- =AUTOLITH_SLYNK_DIRECTORY= is your sly's own =slynk/= directory, so the server
+  speaks exactly your client's protocol. Autolith loads that =slynk.asd= by path
+  and compiles it into the ASDF cache on first use.
+- =AUTOLITH_SLYNK_PORT_FILE= receives the loopback port once Slynk listens, or
+  =error: REASON= when it cannot start. =autolith-ide= waits for it, up to
+  =autolith-slynk-timeout= seconds, and connects sly.
+- =AUTOLITH_EMACS_SERVER= is this Emacs's server socket and enables the
+  =emacs:= resources and =emacs.*= tools.
+
+=M-x autolith-agent-shell= starts only the conversation, with Emacs access and
+without Slynk. The same variables, or the =:slynk-directory=,
+=:slynk-port-file= and =:emacs-server-socket= settings, work outside Emacs. In
+the terminal, =(slynk)= starts Slynk and shows the port for =M-x sly-connect=,
+and =(slynk :stop)= closes it.
+
+The agent reaches your definitions with =lisp.describe=, =lisp.source= and
+=lisp.apropos= using target =self=, or with =self.eval=. While Slynk serves, a
+context note tells it so. Your Emacs appears to the agent only while the
+configured server socket exists:
+
+- =emacs:current=, read with =resource.read=, lists authorized visible windows
+  with point, the active region and open file buffers, each by its
+  =emacs:buffer/NAME= URI. Outside-root files and non-file buffers require
+  full-access approval; denied buffers are omitted from this snapshot.
+- =emacs:buffer/NAME= is a live buffer's text, unsaved edits included, with the
+  buffer name percent-encoded. =resource.edit= applies line operations to the
+  buffer itself: the change stays unsaved and undoable, and is refused as stale
+  if you have edited the buffer since the agent read it. A buffer visiting a file
+  outside the workspace and source roots asks the same permission as that path.
+- =emacs.visit= shows a file position in a file window of the selected frame.
+- =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
+  =emacs.eval -- FORM= and runs only with full access.
+
+Slynk listens on =127.0.0.1= only. Like ordinary sly, it has no authentication
+beyond the optional =~/.sly-secret=. Anyone who can reach loopback on this machine
+can evaluate in the image. Your code shares the agent's heap: a fatal error or
+=(sb-ext:exit)= ends the session, which recovers like any crash.
+
+Slynk's debugger and output hooks stay off for Autolith's own threads, so your
+REPL sees only your evaluations. A checkpoint stops Slynk and closes sly
+connections, then restarts Slynk on the same port. Reconnect with
+=M-x autolith-ide-reconnect=. A checkpoint waits for in-flight sly evaluations
+and fails if they exceed the shutdown timeout.
 
 * Non-interactive jobs
 
