@@ -1739,7 +1739,7 @@ tool calls to use Autolith tools. For an Ollama server on the same machine:
 
    #+begin_src sh
    export AUTOLITH_OLLAMA_KEY=ollama
-   autolith models | grep -Fx 'qwen3:8b'
+   autolith models | grep -Fx 'local-ollama/qwen3:8b'
    autolith --provider local-ollama --model qwen3:8b
    #+end_src
 
