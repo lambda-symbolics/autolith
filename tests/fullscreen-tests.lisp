@@ -1106,9 +1106,9 @@
                                 (format nil "❯ you 12:0~D~%● autolith quoted header~%question ~D" turn turn)
                                 '(:entry-kind :message))
                           (list (list :tool turn)
-                                 (list (terminal-span ':tool
-                                                      (format nil "● autolith tool ~D~%│ output line~%│ more output" turn)))
-                                 '(:kind :call :entry-kind :tool-call :state :running))
+                                (list (terminal-span ':tool
+                                                     (format nil "● autolith tool ~D~%│ output line~%│ more output" turn)))
+                                '(:kind :call :entry-kind :tool-call :state :running))
                           (list (list :agent turn) answer
                                 (if (= turn 2)
                                     (let ((text answer))

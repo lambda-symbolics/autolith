@@ -123,14 +123,14 @@
            (lambda () (acp-extension-value
                        (apply #'application-client-resource (acp-session-test--application session)
                               (acp-extension--arguments :resource arguments)))) 'application-client-unavailable))
-          (let* ((recipient (agentcomms:client-new-session client (namestring root)))
-                 (other     (acp-service--session service recipient))
-                 (result    (acp-extension-value
-                             (apply #'application-client-resource (acp-session-test--application other)
-                                    (acp-extension--arguments :resource
-                                     (agentcomms:json-object "uri" uri "byteOffset" 2 "byteCount" 3))))))
-            (test-assert (equal "cde" (gethash "content" result))
-                         "A second session reads bounded bytes by the exact shared reference"))
+         (let* ((recipient (agentcomms:client-new-session client (namestring root)))
+                (other     (acp-service--session service recipient))
+                (result    (acp-extension-value
+                            (apply #'application-client-resource (acp-session-test--application other)
+                                   (acp-extension--arguments :resource
+                                    (agentcomms:json-object "uri" uri "byteOffset" 2 "byteCount" 3))))))
+           (test-assert (equal "cde" (gethash "content" result))
+                        "A second session reads bounded bytes by the exact shared reference"))
          (acp-extension-resource-test--reject
           (lambda () (acp-extension-value
                       (apply #'application-client-resource (acp-session-test--application session)

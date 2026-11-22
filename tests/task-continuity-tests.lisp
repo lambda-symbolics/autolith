@@ -448,7 +448,7 @@
                               "Concurrent real tool emissions each produce a context reference")
                  (when start
                    (test-assert (readable-p producer (subseq content start (+ start 72)))
-                                 "Both concurrently emitted contexts can be read")))))
+                                "Both concurrently emitted contexts can be read")))))
            (test-assert (tool-result-success-p
                          (child-overflow-tests--call primary "resource" "read"
                                                      :arguments (json-object "uri" "context:index")))

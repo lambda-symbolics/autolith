@@ -132,11 +132,11 @@
                                             :name "reader" :description "Read retained output."
                                             :instructions "Read the capture." :tools '("resource.read")))
            (job                            (task-tests--make-job orchestrator :identifier "current-child"
-                                                                  :definition definition
-                                                                   :root-identifier "shell-receiver"))
+                                                                  :definition             definition
+                                                                   :root-identifier       "shell-receiver"))
            (producer-job                   (task-tests--make-job orchestrator :identifier "producer-child"
-                                                                   :definition definition
-                                                                   :root-identifier "shell-producer"))
+                                                                   :definition            definition
+                                                                   :root-identifier       "shell-producer"))
            (registry                       (task-child-tool-registry
                                             (make-default-tool-registry :configuration configuration)
                                             definition :orchestrator orchestrator :depth 1))
@@ -144,7 +144,7 @@
            (producer                       (task-tests--child-viewer configuration producer-job :registry registry))
            (context                        (make-instance 'tool-context :configuration configuration
                                                           :agent         producer :worker nil
-                                                          :conversation  (agent-conversation producer)))
+                                                          :conversation                (agent-conversation producer)))
            (artifact                       (shell-log-allocate context))
            (approval-requests              0))
       (flet ((refuse-approval (operation arguments)
