@@ -527,9 +527,6 @@
   test-job-completion-terminal-mixed-replay
   test-job-completion-terminal-admission-race
   test-job-completion-terminal-coalescing
-  test-job-completion-lightweight-goal-authority
-  test-job-completion-completed-lightweight-wake
-  test-job-completion-lightweight-limit-accounting
   test-job-completion-controller-coalescing
   test-job-completion-controller-continuation-notice
   test-job-completion-controller-ticket-delivery
@@ -541,7 +538,6 @@
   test-job-completion-controller-real-runtime
   test-job-completion-controller-after-terminal-mission
   test-job-completion-terminal-mission-authority
-  test-job-completion-controller-goal-awaits-jobs
   test-job-completion-controller-mixed-overflow)
 
 (define-test-suite hyperlinks
@@ -828,7 +824,6 @@
   test-client-protocol-channel
   test-client-operation-admission
   test-client-operation-catalog-authority
-  test-client-state-goal
   test-client-subscription-exact-completion
   test-client-subscription-early-completion
   test-client-subscription-presentation-boundary
@@ -984,7 +979,6 @@
   test-delete-channel-standalone-refusals)
 
 (define-test-suite application-command
-  test-application-goal-continuation-setting
   test-application-grouped-settings
   test-application-command-defining-form
   test-application-command-semantic-calls
@@ -1731,7 +1725,6 @@
 
 (define-test-suite application
   test-provider-exhaustion-presentation
-  test-application-goal-continuation-limits
   test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
@@ -1796,11 +1789,7 @@
   test-streaming-presentation
   test-provider-retry-presentation
   test-turn-cursor-visibility
-  test-goal-interrupted-input-does-not-resume
-  test-goal-deferred-input-ownership
-  test-goal-explicit-resume-yields-to-input
   test-responsive-model-input
-  test-responsive-goal-inspection
   test-responsive-command-scheduling
   test-recovery-diagnosis-tool-surface
   test-input-reader-quiescence
@@ -1825,12 +1814,6 @@
   test-application-task-presentation
   test-working-directory-command
   test-effort-switch
-  test-public-goal-actions
-  test-session-goal
-  test-goal-queued-input-boundary
-  test-goal-queued-unlimited-clear
-  test-goal-queued-input-fifo-budget
-  test-goal-queued-form-resumes
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
 
@@ -1884,7 +1867,6 @@
   test-mission-terminal-notice-replacement-timeout
   test-mission-terminal-notice-cancellation-ordering
   test-mission-terminal-notice-aba-ordering
-  test-mission-terminal-notice-goal-replacement-ordering
   test-mission-tool-result-presentation
   test-mission-tool-refusal-reporting
   test-mission-accounting

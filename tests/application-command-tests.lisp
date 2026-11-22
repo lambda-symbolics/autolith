@@ -537,32 +537,6 @@
        (equal (application-command-invocation-arguments invocation)
               (list objective))
        "native command arguments preserve complete strings")))
-  (let ((application (make-instance 'application))
-        (objective   "fix argument mismatches without crashing the application"))
-    (test-call-with-function-replacements
-     (list
-      (list 'application-present
-            (lambda (candidate entry)
-              (declare (ignore candidate entry))
-              t))
-      (list 'application--record-goal
-            (lambda (candidate)
-              (declare (ignore candidate))
-              nil))
-      (list 'application--start-goal-work
-            (lambda (candidate)
-              (declare (ignore candidate))
-              nil)))
-     (lambda ()
-       (test-assert
-         (eq (application-lisp-evaluation-status
-              (application-lisp-evaluate
-               (format nil "(goal ~S)" objective) :application application))
-             ':ok)
-         "a multiword goal executes as one native string argument")
-       (test-assert
-        (string= (getf (application-goal application) :objective) objective)
-        "the complete multiword goal becomes the session objective"))))
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (application   (make-instance 'application :configuration configuration)))
@@ -1930,57 +1904,6 @@
          (test-assert (and (find ':success (first entries) :key #'terminal-span-style)
                            (command-view-tests--role-p (first entries) ':code "ask"))
                       "ordinary permission changes distinguish mode and success severity")))))
-  nil)
-
-(-> test-application-goal-continuation-setting () null)
-(defun test-application-goal-continuation-setting ()
-  "Persist and coerce bounded or unlimited lightweight goal continuation limits."
-  (test-call-with-typed-control-application
-   (lambda (application root observations)
-     (declare (ignore root observations))
-     (let ((configuration (application-configuration application)))
-       (test-assert (= 8 (config :goal-continuation-limit configuration))
-                    "the default permits eight automatic turns")
-       (dolist (value '(2 16 :unlimited))
-         (application-operation-call application 'settings ':goal-continuation-limit value)
-         (test-assert (eql value (config :goal-continuation-limit configuration))
-                      "native settings accepts a positive integer or unlimited")
-         (test-assert
-          (eql value (config :goal-continuation-limit
-                             (preferences-tests--create configuration)))
-          "a fresh configuration reads the saved continuation limit"))
-       (let ((evaluation (application-lisp-evaluate
-                          "(settings :goal-continuation-limit :unlimited)"
-                          :application application)))
-         (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
-                      "the local Lisp command accepts unlimited"))
-       (test-assert
-        (string= "unlimited"
-                 (setting-render-value
-                  (configuration-setting configuration :goal-continuation-limit) ':unlimited))
-        "the keyword has a readable settings value")
-       (dolist (case '((":unlimited" :unlimited) (":UNLIMITED" :unlimited) ("12" 12)))
-         (destructuring-bind (literal expected) case
-           (test-assert
-            (and (eq (application-lisp-evaluation-status
-                      (application-lisp-evaluate
-                       (format nil "(settings :goal-continuation-limit ~A)" literal)
-                       :application application))
-                     ':ok)
-                 (eql expected (config :goal-continuation-limit configuration)))
-            "native continuation literals follow the setting schema")))
-       (let ((saved (uiop:read-file-string (configuration-preferences-path configuration))))
-         (dolist (value '(0 -1 2.5 nil :forever "abc"))
-           (test-assert
-            (handler-case
-                (progn (application-operation-call application 'settings
-                                                   ':goal-continuation-limit value)
-                       nil)
-              (setting-invalid () t))
-            "invalid native values are rejected"))
-         (test-assert
-          (string= saved (uiop:read-file-string (configuration-preferences-path configuration)))
-          "rejection leaves the durable preferences untouched")))))
   nil)
 
 (-> test-channel-command-admission-safety () null)

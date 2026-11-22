@@ -60,6 +60,22 @@
   "Return true when GOAL has explicit mission acceptance policy."
   (and (listp goal) (eq (getf goal :kind) ':mission)))
 
+(-> mission--deadline-expired-p (list) boolean)
+(defun mission--deadline-expired-p (goal)
+  "Return true when GOAL has a wall-clock deadline that has passed."
+  (let ((deadline (getf goal :deadline)))
+    (and deadline (<= deadline (get-universal-time)))))
+
+(-> mission--budget-exhausted-p (list &key (:include-reservations-p boolean)) boolean)
+(defun mission--budget-exhausted-p (goal &key include-reservations-p)
+  "Return true when a configured turn or token limit leaves no work allowance."
+  (let ((turns  (getf goal :turn-limit))
+        (tokens (getf goal :token-limit)))
+    (or (and turns (>= (getf goal :turns-used) turns))
+        (and tokens (>= (+ (getf goal :tokens-used)
+                          (if include-reservations-p (getf goal :tokens-reserved 0) 0))
+                       tokens)))))
+
 (-> mission--bounded-text (t) string)
 (defun mission--bounded-text (value)
   "Render VALUE without retaining unbounded evidence."
@@ -216,11 +232,12 @@
           (mission--present-terminal-notice context status evidence)))))
   nil)
 
-(-> mission--remaining-milliseconds (mission-context) integer)
+(-> mission--remaining-milliseconds (mission-context) (option integer))
 (defun mission--remaining-milliseconds (context)
-  "Return the remaining durable wall-clock budget, including time away."
-  (* 1000 (- (getf (mission-context-goal context) :deadline)
-             (get-universal-time))))
+  "Return remaining wall-clock time, or NIL when no mission deadline is set."
+  (let ((deadline (getf (mission-context-goal context) :deadline)))
+    (when deadline
+      (* 1000 (- deadline (get-universal-time))))))
 
 (-> mission--operation-draining-p (mission-context t) boolean)
 (defun mission--operation-draining-p (context job)
@@ -254,12 +271,10 @@ NEW-WORK-P requires an active mission. Hard budgets apply to both paths."
                (or inference-p new-work-p))
       (mission--reject ':mission-usage-quarantine
                        "Mission usage is unknown; inference and new work require explicit spending authority."))
-    (unless (plusp (mission--remaining-milliseconds context))
+    (when (mission--deadline-expired-p goal)
       (mission--transition context ':exhausted "Mission-wide wall-clock budget exhausted.")
       (mission--reject ':exhausted "Mission-wide wall-clock budget exhausted."))
-    (when (and inference-p
-               (or (>= (getf goal :turns-used) (getf goal :turn-limit))
-                   (>= (getf goal :tokens-used) (getf goal :token-limit))))
+    (when (and inference-p (mission--budget-exhausted-p goal))
       ;; Requests already admitted retain their allowance to finish and settle.
       (unless (plusp (getf goal :requests-outstanding))
         (mission--transition context ':exhausted "Mission-wide work budget exhausted."))
@@ -274,8 +289,14 @@ preserving the calling thread's provider bindings and authorization callbacks."
          (milliseconds       (mission--remaining-milliseconds context))
          (pool               (make-job-pool :name name :maximum-concurrency 1
                                             :maximum-batch-size 1 :maximum-live-jobs 1
-                                            :maximum-runtime-milliseconds
-                                            (max 1 (if timeout (min milliseconds timeout) milliseconds))
+                                             :maximum-runtime-milliseconds
+                                             (cond
+                                               ((and timeout milliseconds)
+                                                (max 1 (min timeout milliseconds)))
+                                               ((or timeout milliseconds)
+                                                (max 1 (or timeout milliseconds)))
+                                               (t
+                                                0))
                                             :terminal-retention-limit 1 :start-threads-p nil))
          (job                (first (job-pool-submit-batch
                                      pool (list (list :name name :inline-only-p t
@@ -302,7 +323,7 @@ preserving the calling thread's provider bindings and authorization callbacks."
               ((eq (getf snapshot :state) ':completed)
                (getf snapshot :result))
               ((eq (getf snapshot :cancellation-reason) ':timeout)
-               (if (and timeout (< timeout milliseconds))
+               (if (and timeout (or (not milliseconds) (< timeout milliseconds)))
                    (mission--reject ':gate-timeout "Gate execution reached its deadline.")
                    (progn
                      (mission--transition context ':exhausted "Mission operation reached its wall-clock deadline.")
@@ -346,14 +367,16 @@ preserving the calling thread's provider bindings and authorization callbacks."
   (and (plusp (getf goal :unknown-usage 0))
        (not (eq (getf goal :unknown-usage-policy) ':record))))
 
-(-> mission--validate-specification (list) list)
-(defun mission--validate-specification (specification)
-  "Validate user acceptance policy and return a new durable goal."
-  (unless (and (non-empty-string-p (getf specification :objective))
-               (consp (getf specification :criteria))
-               (every (lambda (key) (typep (getf specification key) '(integer 1)))
-                      '(:turn-limit :token-limit :wall-seconds)))
-    (mission--reject ':invalid "A mission requires an objective, criteria, and positive values for turn-limit, token-limit and wall-seconds."))
+(-> mission--validate-specification (list &key (:final-marker-p boolean)) list)
+(defun mission--validate-specification (specification &key final-marker-p)
+  "Validate acceptance policy and construct a durable mission."
+  (unless (non-empty-string-p (getf specification :objective))
+    (mission--reject ':invalid "A mission requires a nonempty objective."))
+  (unless (or final-marker-p
+              (and (consp (getf specification :criteria))
+                   (every (lambda (key) (typep (getf specification key) '(integer 1)))
+                          '(:turn-limit :token-limit :wall-seconds))))
+    (mission--reject ':invalid "A mission requires criteria and positive values for turn-limit, token-limit and wall-seconds."))
   (unless (member (getf specification :unknown-usage-policy ':block) '(:block :record))
     (mission--reject ':invalid "Unknown usage policy must be :block or :record."))
   (let* ((gates                 (mapcar #'mission-gate-normalize (getf specification :gates)))
@@ -375,20 +398,23 @@ preserving the calling thread's provider bindings and authorization callbacks."
       (push (getf criterion :id) criterion-identifiers))
     (unless (= (length gate-identifiers) (length (remove-duplicates gate-identifiers :test #'equal)))
       (mission--reject ':invalid "Gate IDs must be unique."))
-    (list :kind ':mission :version 1 :objective (getf specification :objective)
+    (list :kind ':mission :version 1 :objective (copy-seq (getf specification :objective))
           :status ':active :continuations 0 :created-at (get-universal-time)
-          :deadline             (+ (get-universal-time) (getf specification :wall-seconds))
-          :turn-limit           (getf specification :turn-limit)
-          :token-limit          (getf specification :token-limit)
-          :unknown-usage-policy (getf specification :unknown-usage-policy ':block)
+          :deadline             (unless final-marker-p
+                                  (+ (get-universal-time) (getf specification :wall-seconds)))
+          :turn-limit           (unless final-marker-p (getf specification :turn-limit))
+          :token-limit          (unless final-marker-p (getf specification :token-limit))
+          :unknown-usage-policy (if final-marker-p ':record (getf specification :unknown-usage-policy ':block))
           :turns-used 0 :tokens-used 0 :tokens-reserved 0 :unknown-usage 0 :requests-outstanding 0
           :unknown-usage-by-child nil :reservation-charged-tokens 0 :reservation-charges-by-child nil
-          :model-complete-p nil :criteria criteria :gates gates :evidence nil)))
+          :model-complete-p nil :criteria criteria :gates gates :evidence nil
+          :acceptance-policy (if final-marker-p ':final-marker ':explicit))))
 
-(-> application-mission-start (application list) null)
-(defun application-mission-start (application specification)
-  "Replace the goal with an explicitly budgeted mission, without starting a turn."
-  (let ((goal (mission--validate-specification specification)))
+(-> application-mission-start (application list &key (:final-marker-p boolean)) null)
+(defun application-mission-start (application specification &key final-marker-p)
+  "Replace the current mission without starting a turn.
+FINAL-MARKER-P selects the unbudgeted completion policy used by (goal)."
+  (let ((goal (mission--validate-specification specification :final-marker-p final-marker-p)))
     (when (and (mission-goal-p (application-goal application))
                (member (getf (application-goal application) :status) '(:active :paused :blocked)))
       (application-mission-stop application ':cancelled "Replaced by a new mission."))
@@ -396,7 +422,7 @@ preserving the calling thread's provider bindings and authorization callbacks."
       (flet ((install ()
                (setf (application-goal application) goal)
                (let ((context (mission--attach application)))
-                 (mission--evidence context ':started "Explicit mission acceptance policy installed.")
+                 (mission--evidence context ':started "Mission acceptance policy installed.")
                  (mission--record context)
                  (mission-knowledge-record-status context ':active))))
         ;; Order replacement after any terminal notice for the previous mission.
@@ -444,10 +470,13 @@ preserving the calling thread's provider bindings and authorization callbacks."
 (-> application-mission-context (application) (option string))
 (defun application-mission-context (application)
   "Render durable mission policy and bounded evidence for each model request."
-  (let ((goal (application-goal application)))
-    (when (mission-goal-p goal)
-      (format nil "<mission_context>~%~S~%Model completion is a verification request, not proof. Use mission.verify after work is done. Use mission.stop to report a blocker. Acceptance criteria without gates require explicit user acceptance. Do not claim verified before the harness verifies.~%</mission_context>"
-              goal))))
+  (let* ((goal     (application-goal application))
+         (marker-p (eq (getf goal :acceptance-policy) ':final-marker)))
+    (when (and (mission-goal-p goal) (or (not marker-p) (eq (getf goal :status) ':active)))
+      (format nil "<mission_context>~%~S~%~A~%</mission_context>" goal
+              (if marker-p
+                  (format nil "Work toward the objective. When it is genuinely complete, include ~A in your final message. Use mission.stop to report a blocker." *application-goal-complete-marker*)
+                  "Model completion is a verification request, not proof. Use mission.verify after work is done. Use mission.stop to report a blocker. Acceptance criteria without gates require explicit user acceptance. Do not claim verified before the harness verifies.")))))
 
 (-> mission-restore (application) null)
 (defun mission-restore (application)
@@ -481,7 +510,7 @@ preserving the calling thread's provider bindings and authorization callbacks."
              (mission--transition context ':blocked
                                   "Interrupted inference has unknown token usage; resume requires a new budget."))
             ((and (member (getf goal :status) '(:active :paused :blocked))
-                  (not (plusp (mission--remaining-milliseconds context))))
+                  (mission--deadline-expired-p goal))
              (mission--transition context ':exhausted "The durable wall-clock deadline elapsed while away."))
             (t
              (mission--record context)))))))
@@ -610,13 +639,38 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
 
 (-> mission-detach (application) null)
 (defun mission-detach (application)
-  "Cancel and detach a mission before replacing it with a lightweight goal."
+  "Cancel a live mission and detach its current application identities."
   (when (mission-goal-p (application-goal application))
     (when (member (getf (application-goal application) :status) '(:active :paused :blocked))
       (application-mission-stop application ':cancelled "User cleared or replaced the mission goal."))
     (with-lock-held (*mission-contexts-lock*)
       (remhash (application-configuration application) *mission-contexts*)
       (remhash (application-conversation application) *mission-contexts*)))
+  nil)
+
+(-> application-mission-clear (application) null)
+(defun application-mission-clear (application)
+  "Detach the current mission and durably clear it after its final notices."
+  (let ((context (mission-context-find (application-conversation application))))
+    (mission-detach application)
+    (flet ((clear ()
+             (setf (application-goal application) nil)
+             (application--record-goal application)))
+      (if context
+          (with-recursive-lock-held ((mission-context-lock context))
+            (clear))
+          (clear))))
+  nil)
+
+(-> application-mission-pause (application) null)
+(defun application-mission-pause (application)
+  "Pause the active mission without resetting its policy or usage."
+  (let ((context (mission-context-find (application-conversation application))))
+    (unless context
+      (mission--reject ':missing "No mission is set."))
+    (with-recursive-lock-held ((mission-context-lock context))
+      (mission--admit context :inference-p nil :new-work-p t)
+      (mission--transition context ':paused "User paused the mission.")))
   nil)
 
 (-> mission-context-bind ((option mission-context) t) null)

@@ -2007,28 +2007,20 @@ collects task metadata independently of local log storage.
 
 * Goals and verified missions
 
-Use a *goal* for work that can continue between messages. Use a *mission* if you
-want to define acceptance criteria, checks, and a budget before work begins.
+Use a *goal* for work that can continue between messages without a turn, token,
+or wall-clock budget. A goal runs as a mission and verifies when the assistant
+includes =[GOAL-COMPLETE]= in its final message and no mission work is outstanding.
 
 - Set a goal with =(goal "OBJECTIVE")=. A string such as ="pause"= is an objective,
   not an action.
 - Inspect it with =(goal)= or =(goal :status)=. Change the objective with
   =(goal :update "NEW-OBJECTIVE")=.
 - Pause, resume, or clear it with =(goal :pause)=, =(goal :resume)=, or
-  =(goal :clear)=. An unknown action signals =application-goal-error= without
-  changing the goal.
+  =(goal :clear)=. To resume a standalone goal from an older channel, run
+  =(goal :resume)= explicitly.
 
-By default, a lightweight goal pauses after eight automatic continuation turns
-between user messages. Change the saved limit with
-=(settings :goal-continuation-limit 16)= or remove it with
-=(settings :goal-continuation-limit :unlimited)=.
-
-Queued commands and Lisp forms run between goal turns. The goal only continues
-if it yielded to the queued input. If you interrupt goal work, send a message to
-continue. A job can still wake the session after a goal finishes without
-restarting that goal.
-
-To set up and run a mission:
+To set acceptance criteria, checks, or budgets before starting work, set up
+and run a mission:
 
 1. Install the objective, limits, and acceptance criteria with
    =(mission :start specification)=. This example requires both a passing build
@@ -2114,7 +2106,7 @@ reviewers still need reported usage. To change the policy for existing work,
 start a new mission with the criteria and budgets and add the policy key.
 Large integer limits are finite.
 
-- Pause with =(goal :pause)= and resume with =(mission :resume)=. These
+- Pause with =(mission :pause)= and resume with =(mission :resume)=. These
   commands do not reset the budget.
 - Cancel with =(mission :cancel "REASON")=.
 - Inspect a blocked mission with =(mission :status)=. Resolve the blocker

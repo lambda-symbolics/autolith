@@ -27,22 +27,10 @@ A completion for a different owner is recorded without starting a turn."
                    (equal mission-id (getf goal :completion-id))
                    (eq (getf goal :status) ':active)
                    (not (mission--unknown-usage-blocks-p goal))
-                   (< (getf goal :turns-used) (getf goal :turn-limit))
-                   (< (getf goal :tokens-used) (getf goal :token-limit))
-                   (or ignore-reservations-p
-                       (< (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
-                          (getf goal :token-limit)))
-                   (> (getf goal :deadline) (get-universal-time))))
-             ((mission-goal-p goal)
-              (not (eq (getf goal :status) ':active)))
-             (goal
-              (case (getf goal :status)
-                (:active
-                 (not (application--goal-continuations-exhausted-p application goal)))
-                (:complete
-                 t)
-                (t
-                 nil)))
+                    (not (mission--budget-exhausted-p goal :include-reservations-p (not ignore-reservations-p)))
+                    (not (mission--deadline-expired-p goal))))
+              ((mission-goal-p goal)
+               (not (eq (getf goal :status) ':active)))
              (t
               t)))))))
 
@@ -185,13 +173,14 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (values "the result is not part of the active mission" review))
           ((and (mission-goal-p goal) (mission--unknown-usage-blocks-p goal))
            (values (format nil "the mission is ~A with unknown token usage" status) new-budget))
-          ((and (mission-goal-p goal) (<= (getf goal :deadline) (get-universal-time)))
+          ((and (mission-goal-p goal) (mission--deadline-expired-p goal))
            (values (format nil "the mission is ~A and its deadline has passed" status) new-budget))
-          ((and (mission-goal-p goal) (>= (getf goal :turns-used) (getf goal :turn-limit)))
+          ((and (mission-goal-p goal) (getf goal :turn-limit)
+                (>= (getf goal :turns-used) (getf goal :turn-limit)))
            (values (format nil "the mission is ~A and used ~D of ~D turns"
                            status (getf goal :turns-used) (getf goal :turn-limit))
                    new-budget))
-          ((and (mission-goal-p goal)
+          ((and (mission-goal-p goal) (getf goal :token-limit)
                 (>= (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
                     (getf goal :token-limit)))
            (values (format nil "the mission is ~A and used or reserved ~D of ~D tokens"
@@ -207,19 +196,6 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (values (format nil "the mission is ~A" status) new-budget))
           ((mission-goal-p goal)
            (values (format nil "the mission is ~A" status) review))
-          ((eq status ':complete)
-           (values "the session goal is complete" "Set new work with (goal \"OBJECTIVE\")."))
-          ((eq status ':paused)
-           (values "the session goal is paused" "Use (goal :resume) to continue the goal."))
-          ((and goal (not (eq status ':active)))
-           (values (format nil "the session goal is ~A" status) review))
-          ((and goal (application--goal-continuations-exhausted-p application goal))
-           (let ((limit (application-goal-continuation-limit application)))
-             (values (format nil "the session goal used ~D of ~D automatic continuations (effective limit ~D)"
-                             (getf goal :continuations 0) limit limit)
-                     (format nil "Send a message to reset the count, or raise the limit with ~
-                                  (settings :goal-continuation-limit ~D)."
-                             (* 2 limit)))))
           (t
            (values "the result is not eligible for automatic continuation" review)))
       (format nil "no automatic continuation: ~A. ~A" reason action))))
@@ -428,9 +404,7 @@ as ordinary controller admission, without recursively locking the session."
                       (task-completion-deliver
                        agent :identifiers (mapcar (lambda (notice) (getf notice :id)) notices))))
         (let ((goal (application-goal application)))
-          (when (and goal (if (mission-goal-p goal)
-                             mission-authorized-p
-                             (eq (getf goal :status) ':active)))
+          (when mission-authorized-p
             (incf (getf goal :continuations 0))
             (application--record-goal application)))
         (application-input-controller-call-with-primary-steering

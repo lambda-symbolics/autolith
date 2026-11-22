@@ -37,14 +37,6 @@
   (:default-initargs :type '(option pathname))
   (:documentation "An optional absolute file pathname; empty text means none."))
 
-(defclass continuation-limit-setting (integer-or-alias-setting)
-  ()
-  (:default-initargs
-   :type    '(or (integer 1) (eql :unlimited))
-   :minimum 1
-   :aliases '(("unlimited" . :unlimited)))
-  (:documentation "A positive automatic continuation count or the unlimited keyword."))
-
 (defclass optional-positive-integer-setting (integer-or-alias-setting)
   ()
   (:default-initargs
@@ -459,13 +451,6 @@ exist yet, and is only put in directory form."
   :scope                    :durable
   :minimum                  0
   :default                  0)
-
-(define-setting :goal-continuation-limit (continuation-limit-setting)
-  :label                                 "Goal continuation limit"
-  :group                                 :behavior
-  :documentation                         "Automatic lightweight goal continuation turns allowed between user messages; unlimited removes the cap."
-  :scope                                 :durable
-  :default                               8)
 
 (define-setting :prompt-cache-ttl (choice-setting)
   :label                          "Cache lifetime"

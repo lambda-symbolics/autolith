@@ -333,58 +333,6 @@
         (job-pool-close pool))))
   nil)
 
-(-> test-mission-terminal-notice-goal-replacement-ordering () null)
-(defun test-mission-terminal-notice-goal-replacement-ordering ()
-  "Order lightweight goal replacement after an in-flight terminal publication."
-  (dolist (request '(:clear "Lightweight replacement"))
-    (with-test-configuration (configuration)
-      (let* ((application  (mission-test--application configuration))
-             (conversation (application-conversation application))
-             (detached     (bordeaux-threads:make-semaphore))
-             (present      (symbol-function 'application-side-status-present))
-             (detach       (symbol-function 'mission-detach))
-             (thread       nil)
-             (failure      nil))
-        (application-mission-start application (mission-test--specification))
-        (let ((context (mission-context-find conversation))
-              (goal    (application-goal application)))
-          (test-call-with-function-replacements
-           (list (list 'mission-detach
-                       (lambda (current)
-                         (funcall detach current)
-                         (bordeaux-threads:signal-semaphore detached)))
-                 (list 'application--start-goal-work
-                       (lambda (current) (declare (ignore current)) nil))
-                 (list 'application-side-status-present
-                       (lambda (current source spans)
-                         (setf thread
-                               (make-thread
-                                (lambda ()
-                                  (handler-case
-                                      (application-goal-request current request nil)
-                                    (error (condition) (setf failure condition))))))
-                         (test-assert (bordeaux-threads:wait-on-semaphore detached :timeout 10)
-                                      "replacement reached its installation boundary")
-                         (test-assert (eq goal (application-goal current))
-                                      "replacement waits for the in-flight publication")
-                         (funcall present current source spans))))
-           (lambda ()
-             (unwind-protect
-                  (mission--transition context ':failed "Old mission failed.")
-               (when thread (join-thread thread)))))
-          (test-assert (null failure) "concurrent goal replacement completes without an error")
-          (test-assert (if (eq request ':clear)
-                           (null (application-goal application))
-                           (equal request (getf (application-goal application) :objective)))
-                       "the requested lightweight goal is installed")
-          (let ((notice (first (side-status-tests--records conversation)))
-                (latest (find ':goal (conversation-records-newest conversation 100)
-                              :key #'first :from-end t)))
-            (test-assert (and notice latest
-                              (< (getf (rest notice) :seq) (getf (rest latest) :seq)))
-                         "the durable replacement follows the terminal notice"))))))
-  nil)
-
 (-> test-mission-tool-refusal-reporting () null)
 (defun test-mission-tool-refusal-reporting ()
   "Distinguish safe stopped-context reports without dispatch or accounting changes."

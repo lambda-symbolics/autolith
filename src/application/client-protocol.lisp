@@ -122,13 +122,12 @@
 (defun application-client--goal (application)
   "Project the channel's current goal as native values."
   (let ((goal (application-goal application)))
-    (if goal
-        (list :objective     (getf goal :objective)
-              :status        (getf goal :status)
-              :kind          (if (mission-goal-p goal) :mission :goal)
-              :created-at    (getf goal :created-at)
-              :continuations (getf goal :continuations 0))
-        nil)))
+    (when (mission-goal-p goal)
+      (list :objective     (getf goal :objective)
+            :status        (getf goal :status)
+            :kind          ':mission
+            :created-at    (getf goal :created-at)
+            :continuations (getf goal :continuations 0)))))
 
 (-> application-client-state (application) list)
 (defun application-client-state (application)

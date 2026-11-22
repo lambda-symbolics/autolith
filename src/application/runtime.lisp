@@ -3845,17 +3845,6 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 
 ;;;; -- Session Goal --
 
-(-> application-goal-continuation-limit (application) (or (integer 1) (eql :unlimited)))
-(defun application-goal-continuation-limit (application)
-  "Return APPLICATION's durable lightweight goal continuation limit."
-  (config :goal-continuation-limit (application-configuration application)))
-
-(-> application--goal-continuations-exhausted-p (application list) boolean)
-(defun application--goal-continuations-exhausted-p (application goal)
-  "Return true when GOAL has reached APPLICATION's numeric continuation cap."
-  (let ((limit (application-goal-continuation-limit application)))
-    (and (integerp limit) (>= (getf goal :continuations 0) limit))))
-
 (defparameter *application-goal-continuation-prompt*
   "Continue working toward the session goal."
   "The synthetic user message driving one goal continuation turn.")
@@ -3921,26 +3910,31 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 
 (-> goal-record->goal ((option list)) (option list))
 (defun goal-record->goal (record)
-  "Return the goal described by durable RECORD, or NIL if absent or cleared."
-  (let ((objective (and record (getf (rest record) :objective)))
-        (status    (and record (getf (rest record) :status))))
-    (and (non-empty-string-p objective)
-         (member status '(:active :paused :complete :verified :blocked
-                          :exhausted :cancelled :failed))
-         (if (eq (getf (rest record) :kind) ':mission)
-             (let ((goal (copy-tree (rest record))))
-               (loop while (remf goal :seq))
-               (loop while (remf goal :time))
-               (loop while (remf goal :adoption-transition))
-               goal)
-             (list :objective objective
-                   :status    status
-                   :continuations
-                   (let ((count (getf (rest record) :continuations)))
-                     (if (integerp count) count 0))
-                   :created-at
-                   (let ((time (getf (rest record) :created-at)))
-                     (if (integerp time) time (getf (rest record) :time))))))))
+  "Decode a mission record or upgrade a pre-mission goal when its conversation is opened."
+  (let ((objective (getf (rest record) :objective))
+        (status    (getf (rest record) :status)))
+    (when (and (non-empty-string-p objective)
+               (member status '(:active :paused :complete :verified :blocked
+                                :exhausted :cancelled :failed)))
+      (if (mission-goal-p (rest record))
+          (let ((goal (copy-tree (rest record))))
+            (loop while (remf goal :seq))
+            (loop while (remf goal :time))
+            (loop while (remf goal :adoption-transition))
+            goal)
+          (let ((mission (mission--validate-specification (list :objective objective) :final-marker-p t)))
+            ;; Legacy active work had a continuation cap. Require a fresh resume before
+            ;; allowing it to continue under the unbudgeted mission policy.
+            (setf (getf mission :status)           (case status
+                                                    (:complete ':verified)
+                                                    (:active ':paused)
+                                                    (otherwise status))
+                  (getf mission :model-complete-p) (eq status ':complete)
+                  (getf mission :continuations)    (getf (rest record) :continuations 0)
+                  (getf mission :created-at)       (or (getf (rest record) :created-at)
+                                                       (getf (rest record) :time)
+                                                       (getf mission :created-at)))
+            mission)))))
 
 (-> application--load-goal (application) null)
 (defun application--load-goal (application)
@@ -3954,19 +3948,8 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 
 (-> application-goal-context (application) (option string))
 (defun application-goal-context (application)
-  "Return the transient goal instructions for the next provider request."
-  (let ((goal (application-goal application)))
-    (if (mission-goal-p goal)
-        (application-mission-context application)
-        (when (and goal (eq (getf goal :status) ':active))
-          (format nil
-                  "<goal_context>~%The session goal: ~A~%Work autonomously ~
-                   toward this goal every turn. When the goal is genuinely ~
-                   complete, include the literal marker ~A in your final ~
-                   message. If you cannot continue without the user, state ~
-                   plainly what you need and stop.~%</goal_context>"
-                  (getf goal :objective)
-                  *application-goal-complete-marker*)))))
+  "Return the transient mission instructions for the next provider request."
+  (application-mission-context application))
 
 (-> application--goal-continuation-message-p (string) boolean)
 (defun application--goal-continuation-message-p (content)
@@ -4875,24 +4858,14 @@ replaces only that name, once, and a process stops asking after
 
 (-> application--note-goal-turn (application provider-result) null)
 (defun application--note-goal-turn (application result)
-  "Mark the goal complete when RESULT's final message carries the marker."
+  "Use the final assistant marker to request verification of the active mission."
   (let ((goal (application-goal application))
         (text (application--turn-final-text result)))
-    (when (and goal
+    (when (and (mission-goal-p goal)
                (eq (getf goal :status) ':active)
                text
                (search *application-goal-complete-marker* text))
-      (if (mission-goal-p goal)
-          (application-mission-verify application)
-          (progn
-            (setf (getf (application-goal application) :status) ':complete)
-            (application--record-goal application)
-            (application-present
-             application
-             (list (terminal-span ':success "✓ goal complete")
-                   (terminal-span ':plain (string #\Newline))
-                   (terminal-span ':dim
-                                  (format nil "  ~A" (getf goal :objective)))))))))
+      (application-mission-verify application :final-text text)))
   nil)
 
 (-> application-present-context-refusal (application provider-context-budget-error) null)
@@ -5002,15 +4975,14 @@ refusal, as a secondary value."
 (defun application--run-goal-continuations
     (application &key steering-function steering-persisted-function
                       pending-operations-function)
-  "Run bounded automatic continuation turns while the session goal is active.
+  "Run continuation turns while the mission is active.
 
-The goal stays active, but continuation turns stop while a job that will wake
-the model is queued or running, or its completion notice awaits delivery, or
-while a hosted time wakeup will resume the current mission."
+Wait for queued input, pending job results that will wake the model, or a
+scheduled wakeup before continuing."
   (setf (application-deferred-goal-continuation application) nil)
   (loop
     (let ((goal (application-goal application)))
-      (unless (and goal (eq (getf goal :status) ':active))
+      (unless (and (mission-goal-p goal) (eq (getf goal :status) ':active))
         (return))
 
       ;; Return to the controller before pausing or starting another turn.
@@ -5030,17 +5002,6 @@ while a hosted time wakeup will resume the current mission."
                           (first (deque->list
                                   (application-input-controller-work-items controller)))))))
           (return)))
-      (when (and (not (mission-goal-p goal))
-                 (application--goal-continuations-exhausted-p application goal))
-        (setf (getf (application-goal application) :status) ':paused)
-        (application--record-goal application)
-        (application-present
-         application
-         (format nil
-                 "The goal paused after ~D automatic continuations. ~
-                  Use (goal :resume) or send a message to keep going."
-                 (application-goal-continuation-limit application)))
-        (return))
       ;; A running job's completion wakes the model and resumes the goal.
       (when (application-job-completions-awaited-p application)
         (return))

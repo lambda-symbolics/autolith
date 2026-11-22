@@ -112,9 +112,9 @@
 (-> application-mission-command (application &optional t &rest t) null)
 (defun application-mission-command (application &optional (action ':status) &rest arguments)
   "Apply a native mission action, preserving specifications and literal evidence."
-  (unless (and (member action '(:status :start :run :verify :resume :cancel :accept :invalidate))
+  (unless (and (member action '(:status :start :run :verify :pause :resume :cancel :clear :accept :invalidate))
                (case action
-                 ((:status :run :verify :resume)
+                 ((:status :run :verify :pause :resume :clear)
                   (null arguments))
                  (:start
                   (and (= (length arguments) 1)
@@ -139,6 +139,10 @@
        (application--start-goal-work application)))
     (:verify
      (application-mission-verify application))
+    (:pause
+     (application-mission-pause application))
+    (:clear
+     (application-mission-clear application))
     (:resume
      (application-mission-resume application))
     (:cancel

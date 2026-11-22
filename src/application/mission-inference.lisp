@@ -19,7 +19,7 @@
                            (- (getf allowance :turn-limit)
                               (getf allowance :turns-used))))))))
 
-(-> mission--reserve-inference (mission-context &key (:allowance (option list))) (integer 1))
+(-> mission--reserve-inference (mission-context &key (:allowance (option list))) (option (integer 1)))
 (defun mission--reserve-inference (context &key allowance)
   "Reserve one turn and its output allocation atomically before provider execution."
   (with-recursive-lock-held ((mission-context-request-lock context))
@@ -27,31 +27,32 @@
       (mission--ensure-reservations (mission-context-goal context))
       (when allowance (mission--ensure-reservations allowance))
       (mission--admit context)
-      (let* ((goal   (mission-context-goal context))
-             (limits (remove nil (list goal allowance))))
+      (let* ((goal    (mission-context-goal context))
+             (ledgers (remove nil (list goal allowance)))
+             (limits  (remove-if-not (lambda (ledger) (getf ledger :token-limit)) ledgers)))
         (when (and allowance
                    (or (>= (getf allowance :turns-used) (getf allowance :turn-limit))
                        (>= (getf allowance :tokens-used) (getf allowance :token-limit))))
           (mission--reject ':review-budget "Independent reviewer allowance exhausted."))
         (unless (every (lambda (limit) (plusp (mission--available-tokens limit))) limits)
           (mission--reject ':budget-reserved "Outstanding requests hold the remaining output allowance."))
-        (let ((reservation (reduce #'min limits :key #'mission--output-reservation)))
-          (dolist (limit limits)
-            (incf (getf limit :turns-used))
-            (incf (getf limit :requests-outstanding 0))
-            (incf (getf limit :tokens-reserved 0) reservation))
+        (let ((reservation (when limits (reduce #'min limits :key #'mission--output-reservation))))
+          (dolist (ledger ledgers)
+            (incf (getf ledger :turns-used))
+            (incf (getf ledger :requests-outstanding 0))
+            (incf (getf ledger :tokens-reserved 0) (or reservation 0)))
           (handler-case
               (progn (mission--record context) reservation)
             (error (condition)
               ;; No provider request was dispatched if admission cannot persist.
-              (dolist (limit limits)
-                (decf (getf limit :turns-used))
-                (decf (getf limit :requests-outstanding))
-                (decf (getf limit :tokens-reserved) reservation))
+              (dolist (ledger ledgers)
+                (decf (getf ledger :turns-used))
+                (decf (getf ledger :requests-outstanding))
+                (decf (getf ledger :tokens-reserved) (or reservation 0)))
               (error condition))))))))
 
 (-> mission--settle-inference
-    (mission-context integer (option integer) &key (:allowance (option list)) (:failure t)
+    (mission-context (option (integer 1)) (option integer) &key (:allowance (option list)) (:failure t)
      (:originating-child (option task-job))) null)
 (defun mission--settle-inference (context reservation tokens &key allowance failure originating-child)
   "Release RESERVATION once, charging measured usage or an exact child's allowance."
@@ -65,7 +66,7 @@
                              (typep reservation '(integer 1)))))
         (dolist (limit (remove nil (list goal allowance)))
           (decf (getf limit :requests-outstanding))
-          (decf (getf limit :tokens-reserved) reservation)
+          (decf (getf limit :tokens-reserved) (or reservation 0))
           (cond
             ((integerp tokens)
              (incf (getf limit :tokens-used) tokens))
@@ -91,6 +92,7 @@
              (mission--evidence context ':unknown-usage
                                 "An inference request settled without reported usage; recorded by mission policy."))))
         (when (and (member (getf goal :status) '(:active :blocked))
+                   (getf goal :token-limit)
                    (> (getf goal :tokens-used) (getf goal :token-limit)))
           (mission--transition context ':exhausted "Mission token budget exhausted."))
         (mission--record context))))
@@ -120,6 +122,7 @@ child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
                (eq (task-job-mission-context *mission-admitted-operation*) context)
                *mission-admitted-operation*))
         (reservation     nil)
+        (reserved-p      nil)
         (dispatched-p    nil)
         (admission-state (list :pending))
         (local-refusal-p nil)
@@ -128,7 +131,8 @@ child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
     (unwind-protect
          (progn
            (sb-sys:without-interrupts
-             (setf reservation (mission--reserve-inference context :allowance allowance)))
+             (setf reservation (mission--reserve-inference context :allowance allowance)
+                   reserved-p  t))
            (handler-case
                (let* ((*provider-mission-output-allowance* reservation)
                       (results                             (mission--supervise
@@ -165,7 +169,7 @@ child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
                                  (eq (mission-error-reason condition) :failed))
                             refusal
                             condition))))))
-      (when (and reservation (not settled-p))
+      (when (and reserved-p (not settled-p))
         (sb-sys:without-interrupts
           (setf settled-p t)
           (mission--settle-inference

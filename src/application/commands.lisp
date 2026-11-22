@@ -1057,58 +1057,6 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
 
 ;;;; -- Session Goal Command --
 
-(-> application--goal-description (application) string)
-(defun application--goal-description (application)
-  "Return a one-line description of APPLICATION's session goal."
-  (let ((goal (application-goal application)))
-    (if goal
-        (format nil "Goal ~(~A~)~@[ since ~A~]: ~A"
-                (getf goal :status)
-                (let ((created (getf goal :created-at)))
-                  (and (integerp created)
-                       (application--calendar-description created)))
-                (getf goal :objective))
-        "No session goal is set. Use (goal \"OBJECTIVE\") to set one.")))
-
-(-> application--goal-update (application string) boolean)
-(defun application--goal-update (application objective)
-  "Rewrite the current session goal's objective to OBJECTIVE in place.
-
-An active or paused goal keeps its status and creation time while its
-continuation budget restarts. A completed goal becomes active again.
-Return true only when the objective was rewritten."
-  (let ((goal (application-goal application)))
-    (cond
-      ((null goal)
-       (application-present
-        application
-        (application-failure-line "no session goal to update; (goal \"OBJECTIVE\") sets one"))
-       nil)
-      ((mission-goal-p goal)
-       (application-present
-        application
-        (application-failure-line
-         "a mission takes (mission :start SPECIFICATION) with an updated objective and acceptance policy"))
-       nil)
-      ((zerop (length objective))
-       (application-present application (application-failure-line "usage: (goal :update \"NEW-OBJECTIVE\")"))
-       nil)
-      (t
-       (when (eq (getf goal :status) ':complete)
-         (setf (getf (application-goal application) :status) ':active))
-       (setf (getf (application-goal application) :objective)
-             (copy-seq objective)
-             (getf (application-goal application) :continuations) 0)
-       (application--record-goal application)
-       (application-present
-        application
-        (format nil
-                "Goal updated: ~A~:[~;~%Use (goal :resume) to resume work.~]"
-                objective
-                (eq (getf (application-goal application) :status)
-                    ':paused)))
-       t))))
-
 (-> application--start-goal-work (application) null)
 (defun application--start-goal-work (application)
   "Begin working toward APPLICATION's active session goal immediately.
@@ -1150,21 +1098,6 @@ work must steer the running turn, not queue as follow-up work."
     :documentation "The objective or action supplied by the caller."))
   (:documentation "A public goal request has an invalid action or arguments."))
 
-(-> application--replace-lightweight-goal (application (option list)) null)
-(defun application--replace-lightweight-goal (application goal)
-  "Cancel the mission and install GOAL after the mission's final notices."
-  (let ((previous (and (mission-goal-p (application-goal application))
-                       (mission-context-find (application-conversation application)))))
-    (mission-detach application)
-    (flet ((install ()
-             (setf (application-goal application) goal)
-             (application--record-goal application)))
-      (if previous
-          (with-recursive-lock-held ((mission-context-lock previous))
-            (install))
-          (install))))
-  nil)
-
 (-> application-goal-request (application t list) null)
 (defun application-goal-request (application request arguments)
   "Set a literal string objective or apply a keyword action to APPLICATION.
@@ -1187,52 +1120,26 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
     (error 'application-goal-error
            :reason ':invalid-objective :request request
            :message "A goal objective must be a nonempty string."))
-  (let ((goal (application-goal application)))
-    (cond
-      ((member request '(nil :status))
-       (application-present application
-                            (application--goal-description application)))
-      ((eq request ':clear)
-       (application--replace-lightweight-goal application nil)
-       (application-present application "The session goal was cleared."))
-      ((eq request ':pause)
-       (if (and goal (eq (getf goal :status) ':active))
-           (progn
-             (setf (getf (application-goal application) :status) ':paused)
-             (application--record-goal application)
-             (application-present application "The session goal is paused."))
-           (application-present application (application-failure-line "no active goal to pause"))))
-      ((eq request ':resume)
-       (if (and goal (eq (getf goal :status) ':paused))
-           (progn
-             (if (mission-goal-p goal)
-                 (application-mission-resume application)
-                 (progn
-                   (setf (getf (application-goal application) :status) ':active
-                         (getf (application-goal application) :continuations) 0)
-                   (application--record-goal application)))
-             (application-present application
-                                  "The session goal is active again.")
-             (application--start-goal-work application))
-           (application-present application (application-failure-line "no paused goal to resume"))))
-      ((eq request ':update)
-       (when (and (application--goal-update application (first arguments))
-                  (application-goal application)
-                  (eq (getf (application-goal application) :status) ':active))
-         (application--start-goal-work application)))
-      (t
-       (application--replace-lightweight-goal
-        application (list :objective     (copy-seq request)
-                          :status        ':active
-                          :continuations 0
-                          :created-at    (get-universal-time)))
-       (application-present
-        application
-        (format nil
-                "Goal set: ~A~%Autolith is starting work on it now. Use (goal) ~
-                 to inspect it and (goal :clear) to stop."
-                request))
-       (application--start-goal-work application))))
+  (let ((mission (application-goal application)))
+    (case request
+      ((nil :status)
+       (application-mission-command application ':status))
+      (:clear
+       (application-mission-command application ':clear))
+      (:pause
+       (application-mission-command application ':pause))
+      (:resume
+       (application-mission-command application ':resume)
+       (application-mission-command application ':run))
+      (:update
+       (unless (eq (getf mission :acceptance-policy) ':final-marker)
+         (mission--reject ':invalid "Only a mission started with (goal) supports (goal :update)."))
+       (let ((paused-p (eq (getf mission :status) ':paused)))
+         (application-mission-start application (list :objective (first arguments)) :final-marker-p t)
+         (application-mission-command application (if paused-p ':pause ':run))))
+      (otherwise
+       (application-mission-start application (list :objective request) :final-marker-p t)
+       (application-mission-command application ':run))))
   nil)
 
 (-> application--generation-items (application) list)
@@ -3089,7 +2996,7 @@ show."
      :help-topic        :conversations
      :help-order        2
      :argument          "[OBJECTIVE]"
-     :description       "set or view the session goal"
+     :description       "start or inspect a mission without mission-specific budgets"
      :tip               "Set a string objective; use `(goal :pause)`, `(goal :resume)`, or `(goal :clear)` for control."
      :busy-behavior     :inspect
      :terminal-behavior :shared

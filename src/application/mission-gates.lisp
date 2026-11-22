@@ -284,11 +284,13 @@ satisfied by an accepted explicit negation."
       (mission--record context))
     (null stale)))
 
-(-> application-mission-verify (application) null)
-(defun application-mission-verify (application)
-  "Run ordered gates and prove every configured criterion, separately from completion."
-  (let* ((context (mission-context-find (application-conversation application)))
-         (goal    (application-goal application)))
+(-> application-mission-verify (application &key (:final-text (option string))) null)
+(defun application-mission-verify (application &key final-text)
+  "Verify the mission against its configured acceptance policy.
+Only a final assistant message can supply the completion marker."
+  (let* ((context  (mission-context-find (application-conversation application)))
+         (goal     (application-goal application))
+         (marker-p (eq (getf goal :acceptance-policy) ':final-marker)))
     (unless (and context (mission-goal-p goal))
       (mission--reject ':missing "No mission is set."))
     ;; A reviewer uses a delegated worker; do not await it under the request lock.
@@ -301,9 +303,17 @@ satisfied by an accepted explicit negation."
           (mission--evidence context ':pending-work "Inference is outstanding; collect its usage before verification.")
           (mission--record context)
           (return-from application-mission-verify nil))
-        (setf (getf goal :model-complete-p) t)
-        (mission--evidence context ':model-complete "Harness verification requested.")
-        (mission--record context))
+        (cond
+          ((not marker-p)
+           (setf (getf goal :model-complete-p) t)
+           (mission--evidence context ':model-complete "Harness verification requested.")
+           (mission--record context))
+          ((and final-text (search *application-goal-complete-marker* final-text))
+           (setf (getf goal :model-complete-p) t)
+           (mission--evidence context ':model-complete *application-goal-complete-marker*)
+           (mission--record context))
+          ((not (getf goal :model-complete-p))
+           (return-from application-mission-verify nil))))
       (let* ((tool-context (application-tool-context application))
              (runtime      (tool-context-execution-runtime tool-context))
              (live-jobs    (and (typep runtime 'task-orchestrator)
@@ -336,7 +346,11 @@ satisfied by an accepted explicit negation."
               (mission--record context)
               (return-from application-mission-verify nil))
             (mission--admit context :inference-p nil)
-            (if (mission--criteria-proven-p goal)
-                (mission--transition context ':verified "Every explicit acceptance criterion has configured evidence.")
-                (mission--transition context ':blocked "Gates passed; acceptance criteria still require user evidence.")))))
+            (cond
+              (marker-p
+               (mission--transition context ':verified "The final assistant message included [GOAL-COMPLETE]."))
+              ((mission--criteria-proven-p goal)
+               (mission--transition context ':verified "Every explicit acceptance criterion has configured evidence."))
+              (t
+               (mission--transition context ':blocked "Gates passed; acceptance criteria still require user evidence."))))))
      nil)))

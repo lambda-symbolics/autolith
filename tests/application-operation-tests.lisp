@@ -669,19 +669,6 @@
                    (null (tool-context-agent context)))
               "local operation execution receives the primary application context"))
            (application-operation-install-bindings application)
-           (setf (application-goal application)
-                 (list :objective     "existing"
-                       :status        ':paused
-                       :continuations 0
-                       :created-at    (get-universal-time)))
-           (let ((evaluation
-                   (application-lisp-evaluate
-                    "(goal :clear)"
-                    :application application)))
-             (test-assert
-              (and (eq (application-lisp-evaluation-status evaluation) ':ok)
-                   (null (application-goal application)))
-              "keyword goal actions execute through the local Lisp binding"))
            (recording-terminal-reset terminal)
            (let* ((evaluation
                     (application-lisp-evaluate
