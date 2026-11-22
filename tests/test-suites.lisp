@@ -417,6 +417,7 @@
   test-terminal-client-compaction-reflow
   test-terminal-fullscreen-memory-lookups
   test-terminal-fullscreen-markdown-reflow
+  test-terminal-fullscreen-message-bodies
   test-terminal-fullscreen-markdown-stream-reflow
   test-terminal-fullscreen-markdown-rollback-residency
   test-terminal-fullscreen-source-tool-reflow

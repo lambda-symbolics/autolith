@@ -752,9 +752,10 @@ A model this launch selected explicitly stays, as it does for any conversation."
                    (application-task-presentation-orchestrator application))
                (eq listener
                    (application-task-presentation-listener application)))
-      (let ((entry (application--child-response-entry application payload)))
+      (multiple-value-bind (entry markdown)
+          (application--child-response-entry application payload)
         (when entry
-          (application-present application entry)))))
+          (application-present application entry :metadata (list :markdown markdown))))))
   nil)
 
 (-> application--disconnect-task-presentation-locked (application) null)
@@ -2437,11 +2438,6 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                       (sanitize-text text))
                      (application--transcript-width application))))
 
-(-> application--markdown-renderer (application) termdown:markdown-renderer)
-(defun application--markdown-renderer (application)
-  "Return a markdown renderer sized to APPLICATION's current terminal width."
-  (terminal-markdown-renderer (max 1 (1- (application--transcript-columns application)))))
-
 (-> application--markdown-body (application string) list)
 (defun application--markdown-body (application text)
   "Return sanitized TEXT rendered as Markdown at the current effective pane width."
@@ -2450,28 +2446,26 @@ roleless inbox handoff. That handoff retires the former child role with its runt
               (list :source text :finished-p t)
               (application--transcript-columns application))))
 
-(-> application--markdown-presentation
-    (application string (option timestamp) &key (:finished-p boolean) (:stream-p boolean)) list)
-(defun application--markdown-presentation
-    (application text timestamp &key (finished-p t) stream-p)
-  "Retain TEXT and immutable message decorations without retaining APPLICATION."
-  (list :source text
-        :finished-p finished-p :stream-p stream-p
-        :header (application--message-entry application :role ':assistant
-                                            :timestamp timestamp :body nil)))
+(-> application--render-message (application string list &key (:footer list)) (values list list))
+(defun application--render-message (application text header &key footer)
+  "Return a full message's styled entry and its portable reflow source."
+  (let ((markdown (list :source text :header header :footer footer :finished-p t
+                        :mentions (application--message-mentions text (application--mention-resolver application)))))
+    (values (terminal-ui--markdown-render markdown (application--transcript-columns application))
+            markdown)))
 
 (-> application--stream-markdown-update
     (application t &key (:source string) (:timestamp (option timestamp)) (:finished-p boolean))
     terminal-ui)
 (defun application--stream-markdown-update
     (application identifier &key source timestamp finished-p)
-  "Publish the current source of one streamed block with immutable decorations."
-  (let ((publication (application--markdown-presentation
-                      application source timestamp :finished-p finished-p :stream-p t)))
-    (terminal-ui-stream-markdown
-     (application-ui application) identifier
-     :source (getf publication :source) :header (getf publication :header)
-     :finished-p finished-p)))
+  "Publish the current source of one streamed block with portable decorations."
+  (terminal-ui-stream-markdown
+   (application-ui application) identifier
+   :source     source
+   :header     (application--message-header application :role ':assistant :timestamp timestamp)
+   :mentions   (application--message-mentions source (application--mention-resolver application))
+   :finished-p finished-p))
 
 (-> application--timestamp-text
     ((option timestamp))
@@ -2493,12 +2487,10 @@ roleless inbox handoff. That handoff retires the former child role with its runt
   (and (application-turn-timestamps-p application)
        (application--timestamp-text timestamp)))
 
-(-> application--message-entry
-    (application &key (:role (member :user :assistant)) (:timestamp (option timestamp))
-                      (:body list))
-    list)
-(defun application--message-entry (application &key role timestamp body)
-  "Return ROLE's labeled header and TIMESTAMP above its indented BODY spans."
+(-> application--message-header
+    (application &key (:role (member :user :assistant)) (:timestamp (option timestamp))) list)
+(defun application--message-header (application &key role timestamp)
+  "Return ROLE's labeled header and TIMESTAMP separately from its body."
   (append (application--transcript-entry
            application
            :style     (if (eq role ':user) ':user ':brand)
@@ -2506,21 +2498,15 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                           "❯ you"
                           (format nil "● ~A" (application-agent-name application)))
            :timestamp timestamp)
-          (list (terminal-span ':plain (string #\Newline)))
-          body))
+          (list (terminal-span ':plain (string #\Newline)))))
 
-(-> application--user-message-entry (application string (option timestamp)) list)
+(-> application--user-message-entry (application string (option timestamp)) (values list list))
 (defun application--user-message-entry (application text timestamp)
-  "Return the transcript entry presenting user message TEXT sent at TIMESTAMP."
-  (application--message-entry
-   application
-   :role      ':user
-   :timestamp timestamp
-   :body      (application-world-mention-spans
-               application
-               (list (terminal-span ':plain (application--indented-body application text))))))
+  "Return the styled entry and portable source for the user's message."
+  (application--render-message
+   application text (application--message-header application :role ':user :timestamp timestamp)))
 
-(-> application--child-response-entry (application list) (option list))
+(-> application--child-response-entry (application list) (values (option list) (option list)))
 (defun application--child-response-entry (application payload)
   "Return one canonical primary-window entry for a portable child response."
   (let* ((child-name     (getf payload :child-name))
@@ -2536,13 +2522,13 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                 (length
                  (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
                timestamp-text)
-      (append
+      (application--render-message
+       application text
        (list (terminal-span ':brand "● autolith [")
              (terminal-span ':child-name safe-child-name)
              (terminal-span ':brand "] ")
              (terminal-span ':dim timestamp-text)
-             (terminal-span ':plain (string #\Newline)))
-       (application--markdown-body application text)))))
+             (terminal-span ':plain (string #\Newline)))))))
 
 (-> application--transcript-header
     (string (option string) (integer 1) &key (:style terminal-style)) list)
@@ -2803,7 +2789,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
 (-> response-item-entry
     (application json-object &key (:timestamp (option timestamp))
                                  (:tool-label (option string)))
-    (option list))
+    (values (option list) (option list)))
 (defun response-item-entry (application item &key timestamp tool-label)
   "Return a styled transcript entry for completed provider ITEM."
   (let ((type (json-get item "type")))
@@ -2812,10 +2798,9 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
             (eq (item-role item) ':assistant))
        (let ((text (application--visible-assistant-text item)))
          (when text
-           (application--message-entry application
-                                       :role      ':assistant
-                                       :timestamp timestamp
-                                       :body      (application--markdown-body application text)))))
+           (application--render-message
+            application text
+            (application--message-header application :role ':assistant :timestamp timestamp)))))
       ((string= (or type "") "reasoning")
        (when (application-reasoning-traces-p application)
          (let ((summary (response-item-reasoning-summary item)))
@@ -2863,7 +2848,7 @@ has no faithful invocation."
                   (uiop:string-prefix-p "completion:" receipt)))
          t)))
 
-(-> application--operation-request-entry (application list t) list)
+(-> application--operation-request-entry (application list t) (values list (option list)))
 (defun application--operation-request-entry (application request timestamp)
   "Show the operation that generated a model request instead of its text.
 
@@ -2924,9 +2909,9 @@ A channel message shows its sender and channel instead of an operation."
   "Decode SOURCE once per resident publication, or directly outside publication."
   (application--transcript-source-value (list ':json source) (lambda () (json-decode source))))
 
-(-> conversation-record-entry (application list) (option list))
+(-> conversation-record-entry (application list) (values (option list) (option list)))
 (defun conversation-record-entry (application record)
-  "Return the styled transcript entry represented by durable RECORD."
+  "Return RECORD's styled transcript entry and any portable Markdown publication."
   (case (first record)
     (:side-status
      (copy-tree (getf (rest record) :spans)))
@@ -3033,12 +3018,18 @@ the entry's text as a :PRESENT event."
                    (or identifier
                        (list :presentation (incf (application-presentation-counter application)))))
                  (emitted-p
-                  (if metadata
-                      (plusp (terminal-ui-present-records
-                              ui (list (list identifier presented-entry
-                                             (append metadata (list :group group))))))
-                      (terminal-ui-append-finalized
-                       ui identifier presented-entry :group (unless invocation group)))))
+                   (if metadata
+                       (let ((markdown (getf metadata :markdown)))
+                         (when (and invocation markdown)
+                           (setf markdown (copy-list markdown)
+                                 (getf markdown :header)
+                                 (application--command-presentation-entry invocation (getf markdown :header))
+                                 metadata (list* :markdown markdown metadata)))
+                         (plusp (terminal-ui-present-records
+                                 ui (list (list identifier presented-entry
+                                                (append metadata (list :group (unless invocation group))))))))
+                       (terminal-ui-append-finalized
+                        ui identifier presented-entry :group (unless invocation group)))))
             (when (and invocation emitted-p)
               (setf *application-command-presentation-pending-p* nil))
             emitted-p)))))
@@ -3248,64 +3239,59 @@ the entry's text as a :PRESENT event."
     (option list))
 (defun application--record-presentation (application record &key outcomes source-cache)
   "Return RECORD's identity, styled entry and explicit presentation semantics."
-  (let* ((*application-transcript-source-cache*
-           (or source-cache
-               (when (terminal-ui-fullscreen-p (application-ui application))
-                 (make-hash-table :test #'equal))))
-         (*application-tool-entry-description* nil)
-         (entry                                (conversation-record-entry application record))
-         (tool-entry-description               *application-tool-entry-description*)
-         (metadata                             (append
-                                                (application--record-entry-semantics record entry)
-                                                (when (terminal-ui-fullscreen-p (application-ui application))
-                                                   (append
-                                                    (application--record-tool-outcome application record entry)
-                                                    (let ((text (application--assistant-message-record-text record)))
-                                                      (when text
-                                                        (list :markdown
-                                                              (application--markdown-presentation
-                                                               application text (getf (rest record) :time)))))))))
-         (resolved                             (and outcomes (getf metadata :call-key)
-                                                    (gethash (getf metadata :call-key) outcomes))))
-    (when (and entry (eq (getf metadata :kind) ':call)
-               (terminal-ui-fullscreen-p (application-ui application))
-               tool-entry-description (not (getf metadata :source-input)))
-      (setf (getf metadata :tool-entry) tool-entry-description))
-    (when (and entry (terminal-ui-fullscreen-p (application-ui application))
-               (not (getf metadata :markdown)))
-      (setf (getf metadata :entry-layout) (application--record-layout application record)
-            (getf metadata :source-characters) (application--record-source-weight record))
-      (when (getf metadata :expandable-input-p)
-        (setf (getf metadata :expanded-entry-layout)
-              (application--record-layout application record :expanded-input-p t))))
-    (when (and entry (terminal-ui-fullscreen-p (application-ui application))
-               (eq (getf metadata :entry-kind) ':tool-schemas))
-      (let* ((item   (application--transcript-json (getf (rest record) :wire-json)))
-             (names  (application--tool-search-display-names application item))
-             (layout (lambda (names columns)
-                       (let ((*application-transcript-layout-columns* columns))
-                         (application--tool-schema-entry application names)))))
-        (setf (getf metadata :schema-names) names
-              (getf metadata :schema-layout) layout
-              (getf metadata :entry-layout) (lambda (columns) (funcall layout names columns))
-              (getf metadata :source-characters)
-              (loop for name in names sum (length name)))))
-    (when resolved
-      (let ((resolved (application--history-outcome-presentation application resolved)))
-        (dolist (key '(:state :job-key :retain-output-p :handoff :body :body-layout
-                       :body-source-characters))
-          (setf (getf metadata key) (getf resolved key)))))
-    (when (and (null entry) (member (getf metadata :kind) '(:result :completion)))
-      (setf entry
-            (list (terminal-span
-                   ':tool
-                   (format nil "· ~A: ~A"
-                           (or (third (getf metadata :call-key))
-                               (third (getf metadata :job-key)))
-                           (getf metadata :state))))))
-    (when (or entry (getf metadata :kind))
-      (list (application--record-presentation-identifier application record)
-            entry metadata))))
+  (let ((*application-transcript-source-cache*
+          (or source-cache
+              (when (terminal-ui-fullscreen-p (application-ui application))
+                (make-hash-table :test #'equal))))
+        (*application-tool-entry-description* nil))
+    (multiple-value-bind (entry markdown)
+        (conversation-record-entry application record)
+      (let* ((tool-entry-description *application-tool-entry-description*)
+             (metadata               (append (application--record-entry-semantics record entry)
+                                             (when (terminal-ui-fullscreen-p (application-ui application))
+                                               (append (application--record-tool-outcome application record entry)
+                                                       (when markdown (list :markdown markdown))))))
+             (resolved               (and outcomes (getf metadata :call-key)
+                                          (gethash (getf metadata :call-key) outcomes))))
+        (when (and entry (eq (getf metadata :kind) ':call)
+                   (terminal-ui-fullscreen-p (application-ui application))
+                   tool-entry-description (not (getf metadata :source-input)))
+          (setf (getf metadata :tool-entry) tool-entry-description))
+        (when (and entry (terminal-ui-fullscreen-p (application-ui application))
+                   (not (getf metadata :markdown)))
+          (setf (getf metadata :entry-layout) (application--record-layout application record)
+                (getf metadata :source-characters) (application--record-source-weight record))
+          (when (getf metadata :expandable-input-p)
+            (setf (getf metadata :expanded-entry-layout)
+                  (application--record-layout application record :expanded-input-p t))))
+        (when (and entry (terminal-ui-fullscreen-p (application-ui application))
+                   (eq (getf metadata :entry-kind) ':tool-schemas))
+          (let* ((item   (application--transcript-json (getf (rest record) :wire-json)))
+                 (names  (application--tool-search-display-names application item))
+                 (layout (lambda (names columns)
+                           (let ((*application-transcript-layout-columns* columns))
+                             (application--tool-schema-entry application names)))))
+            (setf (getf metadata :schema-names) names
+                  (getf metadata :schema-layout) layout
+                  (getf metadata :entry-layout) (lambda (columns) (funcall layout names columns))
+                  (getf metadata :source-characters)
+                  (loop for name in names sum (length name)))))
+        (when resolved
+          (let ((resolved (application--history-outcome-presentation application resolved)))
+            (dolist (key '(:state :job-key :retain-output-p :handoff :body :body-layout
+                           :body-source-characters))
+              (setf (getf metadata key) (getf resolved key)))))
+        (when (and (null entry) (member (getf metadata :kind) '(:result :completion)))
+          (setf entry
+                (list (terminal-span
+                       ':tool
+                       (format nil "· ~A: ~A"
+                               (or (third (getf metadata :call-key))
+                                   (third (getf metadata :job-key)))
+                               (getf metadata :state))))))
+        (when (or entry (getf metadata :kind))
+          (list (application--record-presentation-identifier application record)
+                entry metadata))))))
 
 (-> application--present-conversation-record
     (application list &key (:suppress-assistant-p boolean)
@@ -4416,8 +4402,9 @@ clients as :TEXT, :REASONING and :STATUS events."
                      (reasoning-flush)
                      (setf stream-open-p t
                            stream-started-at (get-universal-time)
-                           stream-renderer (application--markdown-renderer
-                                            application))
+                           stream-renderer (terminal-ui--markdown-renderer
+                                            (application--transcript-columns application)
+                                            :resolve (application--mention-resolver application)))
                      (application-set-activity application "receiving response")
                      (push
                       (application--transcript-entry
@@ -4507,28 +4494,13 @@ clients as :TEXT, :REASONING and :STATUS events."
                          :sequence sequence))
                 (with-recursive-lock-held
                     ((application-render-lock application))
-                  (let* ((identifier
-                           (list :conversation
-                                 (conversation-identifier (application-conversation application))
-                                 sequence))
-                         (text  (user-message-input-text user-message-input))
-                         (layout
-                           (lambda (columns)
-                             (let ((*application-transcript-layout-columns* columns))
-                               (cond
-                                 (continuation-p
-                                  (application--continuation-entry text))
-                                 (operation-request
-                                  (application--operation-request-entry
-                                   application operation-request timestamp))
-                                 (t
-                                  (application--user-message-entry application text timestamp))))))
-                         (entry (funcall layout (application--transcript-columns application))))
-                    (if (terminal-ui-fullscreen-p ui)
-                        (terminal-ui-present-records
-                         ui (list (list identifier entry
-                                        (list :entry-layout layout :source-characters (length text)))))
-                        (terminal-ui-append-finalized ui identifier entry)))
+                  (let* ((text   (user-message-input-text user-message-input))
+                         (record (list :message :seq sequence :role ':user
+                                       :content           text
+                                       :time              timestamp
+                                       :automatic-p       continuation-p
+                                       :operation-request (unless continuation-p operation-request))))
+                    (application--present-conversation-record application record))
                   (setf (application-rendered-sequence application) sequence)))
               (application-publish-recovery-session application))
              (:related-memories

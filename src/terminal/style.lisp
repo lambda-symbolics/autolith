@@ -479,11 +479,12 @@ A theme that does not define STYLE renders it plainly instead of failing the row
 
 ;;;; -- Markdown Presentation --
 
-(-> terminal-markdown-renderer (integer) termdown:markdown-renderer)
-(defun terminal-markdown-renderer (width)
+(-> terminal-markdown-renderer (integer &key (:inline-decorator (option function))) termdown:markdown-renderer)
+(defun terminal-markdown-renderer (width &key inline-decorator)
   "Create a renderer using the terminal's heading roles and fenced-source actions."
   (termdown:markdown-renderer-create
    :width                 width
+   :inline-decorator      inline-decorator
    :heading-role-function (lambda (role)
                             (case role
                               ((:plain :strong)

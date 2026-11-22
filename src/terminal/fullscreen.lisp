@@ -277,12 +277,12 @@ screen after leaving the alternate buffer."
   nil)
 
 (defmethod terminal-ui-stream-markdown
-    ((ui fullscreen-terminal-ui) identifier &key source header finished-p)
+    ((ui fullscreen-terminal-ui) identifier &key source header mentions finished-p)
   "Replace one streamed publication from source without changing its transcript order."
   (with-terminal-ui-locked (ui)
     (terminal-ui-fullscreen--submit
      ui (list ':markdown identifier
-              (list :source source :header header
+              (list :source source :header header :mentions mentions
                     :finished-p finished-p :stream-p t))))
   ui)
 

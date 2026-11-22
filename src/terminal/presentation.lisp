@@ -354,13 +354,25 @@ The layouts a resident record needs are rebuilt from its data."
           (append (termdown:fit-spans row (max 0 (1- maximum-width)))
                   (list (terminal-span ':dim "…")))))))
 
+(-> presentation--markdown-mentions (t) list)
+(defun presentation--markdown-mentions (value)
+  "Read the portable mention-to-style bindings carried by a Markdown publication."
+  (when (proper-list-p value)
+    (remove-if-not (lambda (binding)
+                     (and (consp binding) (consp (rest binding)) (null (rest (rest binding)))
+                          (stringp (first binding))
+                          (member (second binding) '(:user :legend-accent))))
+                   value)))
+
 (-> presentation--markdown->wire (list) list)
 (defun presentation--markdown->wire (markdown)
-  "Return a Markdown publication's plist with its header as a wire entry."
+  "Return a portable Markdown publication, encoding its header and footer items."
   (list :source     (getf markdown :source)
         :finished-p (getf markdown :finished-p)
         :stream-p   (getf markdown :stream-p)
-        :header     (presentation-entry->wire (getf markdown :header))))
+        :mentions   (getf markdown :mentions)
+        :header     (presentation-entry->wire (getf markdown :header))
+        :footer     (presentation-entry->wire (getf markdown :footer))))
 
 (-> presentation--wire->markdown (t) list)
 (defun presentation--wire->markdown (wire)
@@ -369,7 +381,9 @@ The layouts a resident record needs are rebuilt from its data."
     (list :source     (if (stringp (getf fields :source)) (getf fields :source) "")
           :finished-p (not (null (getf fields :finished-p)))
           :stream-p   (not (null (getf fields :stream-p)))
-          :header     (presentation-wire->entry (getf fields :header)))))
+          :mentions   (presentation--markdown-mentions (getf fields :mentions))
+          :header     (presentation-wire->entry (getf fields :header))
+          :footer     (presentation-wire->entry (getf fields :footer)))))
 
 
 ;;;; -- The Server's Model --
@@ -1329,7 +1343,7 @@ Clients that already saw the stream keep it, with the durable record marks."
   nil)
 
 (defmethod terminal-ui-stream-markdown
-    ((ui channel-presentation) identifier &key source header finished-p)
+    ((ui channel-presentation) identifier &key source header mentions finished-p)
   "Send one streamed Markdown block's new source to the clients, which render it.
 
 Only what was added since the last update travels; a source that changed
@@ -1344,6 +1358,7 @@ otherwise is sent whole."
            (delta-p  (and previous (string-prefix-p previous source)))
            (shared   (list :identifier (first stream)
                            :header     (presentation-entry->wire header)
+                           :mentions   mentions
                            :finished-p finished-p))
            (whole    (list* :ui :operation ':markdown :source source shared))
            (cell     (third stream)))
@@ -1714,7 +1729,7 @@ method does not name."))
 
 (defmethod presentation-apply
     ((ui fullscreen-terminal-ui) (operation (eql :markdown))
-     &key identifier source delta header finished-p &allow-other-keys)
+     &key identifier source delta header mentions finished-p &allow-other-keys)
   "Render one streamed Markdown block again from its whole source.
 
 A DELTA extends the source this UI already holds for the block."
@@ -1731,6 +1746,7 @@ A DELTA extends the source this UI already holds for the block."
       (terminal-ui-stream-markdown ui identifier
                                    :source     source
                                    :header     (presentation-wire->entry header)
+                                   :mentions   (presentation--markdown-mentions mentions)
                                    :finished-p (not (null finished-p)))
       (terminal-ui-note-status-progress ui)))
   nil)

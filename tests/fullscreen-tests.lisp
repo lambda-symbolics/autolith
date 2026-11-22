@@ -1320,6 +1320,159 @@
    (list :provider-item :seq sequence
          :wire-json     (json-encode (agent-test-message source)))))
 
+(-> fullscreen-test--message-body (fullscreen-terminal-ui integer) list)
+(defun fullscreen-test--message-body (ui index)
+  "Read the plain and styled body bytes from resident chunk INDEX, excluding its envelope."
+  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+         (chunk    (aref (clinedi::transcript-viewport--chunks viewport) index)))
+    (loop for text in (list (clinedi:transcript-viewport-chunk-text viewport index)
+                           (clinedi::viewport-chunk-display chunk))
+          collect (string-right-trim '(#\Newline)
+                                     (subseq text (1+ (position #\Newline text)))))))
+
+(-> test-terminal-fullscreen-message-bodies () null)
+(defun test-terminal-fullscreen-message-bodies ()
+  "Render persisted input, channel messages, streamed answers and child responses at the viewport."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (ui           (application-terminal-ui-create
+                          :client-pane '(:rows 30 :columns 38) :configuration configuration))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation conversation :ui ui))
+           (prefix       "**Both:** @activity-")
+           (code         (format nil "(list \"@activity-sol\"  ~%      \"@surgeon-fresh-sol\")"))
+           (suffix       (format nil "sol and @surgeon-fresh-sol~%~%Code: `@activity-sol`~%[link](https://example.org/@activity-sol)~%~%| Name | Value |~%| ---- | ----- |~%| X | @activity-sol-longer-unknown-handle |~%~%```lisp~%~A~%```" code))
+           (source       (concatenate 'string prefix suffix))
+           (inbox        (world-ensure-inbox configuration))
+           (request      (list :summary source :message
+                               '(:sender-name "sidebar-inbox" :target "m6Etqfu" :kind :direct)))
+           (observer     (application-agent-observer application :user-message-input source))
+           (status       (callback-agent-observer-status-callback observer))
+           (delta        (callback-agent-observer-text-callback observer))
+           (client       nil)
+           (orchestrator (task-orchestrator-create))
+           (listener     (lambda (&rest args) (declare (ignore args)))))
+      (dolist (name '("activity-sol" "surgeon-fresh-sol"))
+        (world-channel-register configuration (make-identifier)
+                                :workspace (channel-workspace inbox) :name name))
+      (setf (application-task-presentation-orchestrator application) orchestrator
+            (application-task-presentation-listener application) listener)
+      (labels ((present (event)
+                 "Apply a typed event to the client without consulting the world there."
+                 (let ((event (application-client-value event)))
+                   (apply #'presentation-apply client (getf (rest event) :operation) (rest event))))
+
+               (attach (&key (page-size *application-history-page-size*))
+                 "Start a fresh client and apply the actual bounded attachment seed."
+                 (setf client (fullscreen-test--ui
+                               (make-instance 'recording-terminal :columns 38 :rows 30 :styled-p t)))
+                 (terminal-ui-start client)
+                 (let ((*application-history-page-size* page-size))
+                   (mapc #'present (application-client-history-replay application ui))))
+
+               (assert-body (index body)
+                 "Compare the viewport bytes for one origin against BODY."
+                 (test-assert (equal body (fullscreen-test--message-body client index))
+                              "message origins have identical plain and styled Markdown bodies")))
+        (setf (channel-presentation-publish-function ui)
+              (lambda (event) (when client (present event))))
+        (let ((cl-colorist:*color-level* ':indexed))
+          (unwind-protect
+               (progn
+                 (terminal-ui-start ui)
+                 (attach)
+                 (let ((record (nth-value 1 (conversation-append-user-message conversation source))))
+                   (funcall status ':user-message-persisted
+                            (list :sequence (getf (rest record) :seq) :time (getf (rest record) :time))))
+                 (conversation-append-user-message conversation source :operation-request request)
+                 (application-render-records application)
+                 (let* ((body  (fullscreen-test--message-body client 0))
+                        (plain (first body))
+                        (style (second body)))
+                   (assert-body 1 body)
+                   (test-assert (and (search "Both:" plain) (not (search "**Both:**" plain))
+                                     (search "@activity-sol" style)
+                                     (search "@surgeon-fresh-sol" style)
+                                     (= 1 (terminal-tests--substring-count
+                                           (concatenate 'string (terminal-style-sequence ':legend-accent t)
+                                                        "@activity-sol") style))
+                                     (= 1 (terminal-tests--substring-count
+                                           (concatenate 'string (terminal-style-sequence ':legend-accent t)
+                                                        "@surgeon-fresh-sol") style))
+                                     (not (search "@activity-sol-longer-unknown-handle" plain)))
+                                "only the two known prose handles are accented, including against a wrapped table prefix")
+                   (funcall status ':provider-request-started nil)
+                   (funcall delta prefix)
+                   (test-assert (search "@activity-" (terminal--spans-text
+                                                      (apply #'append (terminal-ui-stream-tail client))))
+                                "the initial incomplete handle previews as text")
+                   (terminal-ui-stop (shiftf client nil))
+                   (let ((line-end (1+ (position #\Newline suffix))))
+                     (funcall delta (subseq suffix 0 line-end))
+                     (attach)
+                     (terminal-ui-resize client 76 :rows 30)
+                     (test-assert
+                      (search (concatenate 'string (terminal-style-sequence ':legend-accent t) "@activity-sol")
+                              (second (fullscreen-test--message-body client 2)))
+                      "a detached delta completes the handle and the attachment reflows its committed style")
+                     (funcall delta (subseq suffix line-end)))
+                   (terminal-ui-resize client 38 :rows 30)
+                   (conversation-append-provider-item conversation (agent-test-message source))
+                   (funcall status ':provider-request-completed nil)
+                   (test-assert (and (= 3 (fullscreen-test--chunk-count client))
+                                     (null (terminal-ui-stream-tail client)))
+                                "completion after attach and resize replaces one live answer")
+                   (assert-body 2 body)
+                   (application--present-task-response
+                    application orchestrator :listener listener
+                                             :payload  (list :child-name "child-test" :time (get-universal-time) :text source))
+                   (assert-body 3 body)
+                   (terminal-ui-stop (shiftf client nil))
+                   (attach)
+                   (loop for index below 4 do (assert-body index body))
+                   (conversation-append-user-message
+                    conversation source
+                    :operation-request (list :summary source :message
+                                             '(:sender-name "sidebar-inbox" :source "m6Etqfu" :kind :notice)))
+                   (application-render-records application)
+                   (terminal-ui-stop (shiftf client nil))
+                   (attach :page-size 1)
+                   (test-assert (= 1 (fullscreen-test--chunk-count client))
+                                "a limited attachment omits the earlier full messages")
+                   (let* ((identifier (conversation-identifier conversation))
+                          (view       (make-instance 'channel-view))
+                          (page       (application-client-value
+                                       (application-client-history-load
+                                        application :conversation    identifier
+                                                    :before-sequence (application-rendered-sequence application)))))
+                     (setf (channel-view-ui view) client
+                           (channel-view-transcript-history-conversation view) identifier)
+                     (channel-view--apply-history-page view page)
+                     (loop for index below 4 do (assert-body index body)))
+                   (let ((notice (first (fullscreen-test--message-body client 4))))
+                     (test-assert (and (search (first body) notice :end2 (length (first body)))
+                                       (search "(open " notice))
+                                  "a person notice replays the same Markdown body and its navigation footer"))
+                   (let ((viewport (fullscreen-terminal-ui-viewport client)))
+                     (clinedi:transcript-viewport-layout viewport 10000)
+                     (test-assert
+                      (loop for row below (clinedi:transcript-viewport-row-count viewport)
+                            for column = (search "⧉ copy" (fullscreen-test--row-text client row))
+                            thereis (and column
+                                         (equal (list ':copy code)
+                                                (clinedi:transcript-viewport-hit viewport (1+ column) (1+ row)))))
+                      "attachment preserves the code widget with exact fenced text")
+                     (test-assert
+                      (loop for row below (clinedi:transcript-viewport-row-count viewport)
+                            for column = (search "(open " (fullscreen-test--row-text client row))
+                            thereis (and column
+                                         (eq ':submit (first (clinedi:transcript-viewport-hit
+                                                              viewport (1+ column) (1+ row))))))
+                      "the notice footer still opens its source after attachment"))))
+            (when client (terminal-ui-stop client))
+            (terminal-ui-stop ui))))))
+  nil)
+
 (-> fullscreen-test--assert-markdown-replay (fullscreen-terminal-ui integer) null)
 (defun fullscreen-test--assert-markdown-replay (ui width)
   "Check resident Markdown and its speculative tail against fresh WIDTH rendering."

@@ -149,8 +149,9 @@
        (let ((markdown (getf record :markdown)))
          (if markdown
              (+ (length (getf markdown :source))
-                (loop for span in (getf markdown :header)
-                      sum (length (terminal-span-text span))))
+               (loop for (name) in (getf markdown :mentions) sum (length name))
+               (loop for item in (append (getf markdown :header) (getf markdown :footer))
+                     sum (length (termdown:item-text item))))
              0)))))
 
 (-> terminal-ui-fullscreen--record-layout-function

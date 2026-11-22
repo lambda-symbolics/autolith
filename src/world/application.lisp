@@ -281,61 +281,52 @@ the name is autolith."
                  nil)))
         *world-agent-name*)))
 
-(-> application-world-mention-spans (application list) list)
-(defun application-world-mention-spans (application spans)
-  "Return SPANS with every @mention of a participant styled: the person's own in the user style, others accented.
+(-> application--mention-resolver (application) function)
+(defun application--mention-resolver (application)
+  "Resolve displayed participant designators against one lazily read world."
+  (let ((world nil))
+    (lambda (name)
+      (world-mention--role (or world (setf world (application-world application))) name))))
 
-The world is read only when some span holds an @, so plain text costs
-nothing."
-  (if (notany (lambda (span)
-                (and (consp span) (stringp (rest span)) (find #\@ (rest span))))
-              spans)
-      spans
-      (let ((world (application-world application)))
-        (if (null (world-participants world))
-            spans
-            (loop for span in spans
-                  append (if (and (consp span) (stringp (rest span)))
-                             (world-mention--split-span world span)
-                             (list span)))))))
+(-> world-mention--role (world string) (option keyword))
+(defun world-mention--role (world name)
+  "Return the transcript style of participant NAME in WORLD, if present."
+  (let ((participant (world-message-participant world name)))
+    (when participant
+      (if (eq (participant-kind participant) ':human) ':user ':legend-accent))))
 
 (-> world-mention--split-span (world cons) list)
 (defun world-mention--split-span (world span)
-  "Return SPAN cut around the @mentions its text resolves in WORLD, each styled.
+  "Return SPAN cut around the @mentions its text resolves in WORLD."
+  (let ((text (rest span)))
+    (terminal-ui--mention-item span text 0 :end    (length text)
+                                          :resolve (lambda (name) (world-mention--role world name)))))
 
-The pieces concatenate back to SPAN's text exactly: a token that names no
-participant is left in place, only the scan moves past it."
-  (let ((style   (first span))
-        (text    (rest span))
-        (pieces  nil)
-        (emitted 0)
-        (scan    0))
-    (loop
-      (let ((at (position #\@ text :start scan)))
-        (unless at
-          (return))
-        (let* ((end         (world-mention-end text at))
-               (designator  (subseq text (1+ at) end))
-               (participant (and (world-mention-boundary-p text at)
-                                 (plusp (length designator))
-                                 (world-message-participant world designator))))
-          (if participant
-              (progn
-                (when (> at emitted)
-                  (push (cons style (subseq text emitted at)) pieces))
-                (push (terminal-span (if (eq (participant-kind participant) ':human)
-                                         ':user
-                                         ':legend-accent)
-                                     (subseq text at end))
-                      pieces)
-                (setf emitted end
-                      scan    end))
-              (setf scan (max end (1+ at)))))))
-    (when (< emitted (length text))
-      (push (cons style (subseq text emitted)) pieces))
-    (if pieces
-        (nreverse pieces)
-        (list span))))
+(-> application--message-mentions (string function) list)
+(defun application--message-mentions (source resolve)
+  "Keep only resolved designators from SOURCE for world-independent reflow.
+
+Without escapes, raw tokens suffice as candidates; the decorator checks actual
+prose and word boundaries. With escapes, collect the parser's visible tokens
+as well, so a literal backslash cannot hide the end of an escaped designator."
+  (when (find #\@ source)
+    (let ((seen     (make-hash-table :test #'equal))
+          (mentions nil))
+      (flet ((remember (name)
+               "Remember NAME's portable style once without changing the rendered text."
+               (unless (gethash name seen)
+                 (setf (gethash name seen) t)
+                 (let ((role (funcall resolve name)))
+                   (when role (push (list name role) mentions))))
+               nil))
+        (loop for at = (position #\@ source) then (position #\@ source :start end)
+              while at
+              for end = (world-mention-end source at)
+              when (> end (1+ at)) do (remember (subseq source (1+ at) end)))
+        (when (find #\\ source)
+          (termdown:markdown-render-chunk
+           (terminal-ui--markdown-renderer 80 :resolve #'remember) source :finished-p t)))
+      (nreverse mentions))))
 
 (-> application-world-attached (application) null)
 (defun application-world-attached (application)
@@ -626,7 +617,7 @@ cannot be read counts as present: the world never blocks a session."
       (application-world-deliver application))
     result))
 
-(-> application--channel-message-entry (application list (option timestamp)) list)
+(-> application--channel-message-entry (application list (option timestamp)) (values list &optional list))
 (defun application--channel-message-entry (application request timestamp)
   "Return the transcript entry showing a channel message with its sender and channel.
 
@@ -650,20 +641,20 @@ inbox and the channel resource."
                                            (format nil "~{@~A~^, ~} mentioned" mentioned)
                                            "subscribed message")
                                        channel name timestamp-text))))
-        (append (list (terminal-span ':brand "● ")
-                      (terminal-span ':agent-name name)
-                      (terminal-span ':dim (if (eq kind ':notice)
-                                               (format nil " to you, from #~A~@[ ~A~]~%"
-                                                       (conversation-identifier-display
-                                                        (or (getf message :source) (getf message :target) "?"))
-                                                       timestamp-text)
-                                               (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text))))
-                (application-world-mention-spans
-                 application
-                 (application--markdown-body application (or (getf request :summary) "")))
-                (when (eq kind ':notice)
-                  (application--channel-link-spans
-                   (or (getf message :source) (getf message :target))))))))
+        (application--render-message
+         application (or (getf request :summary) "")
+         (list (terminal-span ':brand "● ")
+               (terminal-span ':agent-name name)
+               (terminal-span ':dim (if (eq kind ':notice)
+                                        (format nil " to you, from #~A~@[ ~A~]"
+                                                (conversation-identifier-display
+                                                 (or (getf message :source) (getf message :target) "?"))
+                                                timestamp-text)
+                                        (format nil " [channel ~A]~@[ ~A~]" channel timestamp-text)))
+               (terminal-span ':plain (string #\Newline)))
+         :footer (when (eq kind ':notice)
+                   (application--channel-link-spans
+                    (or (getf message :source) (getf message :target))))))))
 
 (-> application--channel-link-spans ((option string)) list)
 (defun application--channel-link-spans (channel)

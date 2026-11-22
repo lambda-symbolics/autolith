@@ -2266,6 +2266,59 @@ and the modeline last, so the response being received stays in view."
 
 ;;;; -- Semantic Markdown Publications --
 
+(-> terminal-ui--mention-decorator (function) function)
+(defun terminal-ui--mention-decorator (resolve)
+  "Return an inline decorator using RESOLVE to style complete prose mentions."
+  (lambda (items)
+    (let ((text   (apply #'concatenate 'string (mapcar #'termdown:item-text items)))
+          (offset 0))
+      (loop for item in items
+            for start = offset
+            for end = (incf offset (length (termdown:item-text item)))
+            append (if (and (not (termdown:widget-p item))
+                            (member (termdown:item-role item)
+                                    '(:plain :strong :emphasis :syntax-heading :heading-emphasis)))
+                       (terminal-ui--mention-item item text start :end end :resolve resolve)
+                       (list item))))))
+
+(-> terminal-ui--mention-item (cons string integer &key (:end integer) (:resolve function)) list)
+(defun terminal-ui--mention-item (item text start &key end resolve)
+  "Decorate ITEM at START in TEXT, checking boundaries across adjacent inline items."
+  (let ((pieces nil)
+        (cursor start))
+    (loop for at = (position #\@ text :start start :end end)
+            then (position #\@ text :start (min stop end) :end end)
+          while at
+          for stop = (world-mention-end text at)
+          for role = (and (<= stop end) (> stop (1+ at))
+                          (world-mention-boundary-p text at)
+                          (funcall resolve (subseq text (1+ at) stop)))
+          when role
+            do (when (< cursor at)
+                 (push (terminal-span (first item) (subseq text cursor at)) pieces))
+               (push (terminal-span role (subseq text at stop)) pieces)
+               (setf cursor stop))
+    (cond
+      ((null pieces)
+       (list item))
+      (t
+       (when (< cursor end)
+         (push (terminal-span (first item) (subseq text cursor end)) pieces))
+       (nreverse pieces)))))
+
+(-> terminal-ui--markdown-renderer (integer &key (:mentions list) (:resolve (option function)))
+    termdown:markdown-renderer)
+(defun terminal-ui--markdown-renderer (width &key mentions resolve)
+  "Create a message renderer at pane WIDTH using portable MENTIONS or a local resolver."
+  (terminal-markdown-renderer
+   (max 24 (1- width))
+   :inline-decorator (cond
+                       (resolve
+                        (terminal-ui--mention-decorator resolve))
+                       (mentions
+                        (terminal-ui--mention-decorator
+                          (lambda (name) (second (assoc name mentions :test #'string=))))))))
+
 (-> terminal-ui--markdown-render (list integer) (values list list))
 (defun terminal-ui--markdown-render (publication width)
   "Replay PUBLICATION's source at WIDTH, returning committed spans and speculative rows.
@@ -2275,20 +2328,21 @@ flushes the renderer; resizing an open stream does not complete its pending line
   (let* ((stream-p   (getf publication :stream-p))
          (finished-p (getf publication :finished-p))
          (source     (getf publication :source))
-         (text       (if stream-p source
-                         (string-right-trim '(#\Space #\Tab #\Newline #\Return) source)))
-         (renderer   (terminal-markdown-renderer (max 24 (1- width)))))
+         (text       (if finished-p
+                         (string-right-trim '(#\Space #\Tab #\Newline #\Return) source)
+                         source))
+         (renderer   (terminal-ui--markdown-renderer width :mentions (getf publication :mentions))))
     (multiple-value-bind (rows tail)
-        (termdown:markdown-render-chunk renderer text
-                                        :finished-p       finished-p
-                                        :trailing-empty-p (not stream-p))
+        (termdown:markdown-render-chunk renderer text :finished-p       finished-p
+                                                      :trailing-empty-p (not stream-p))
       (values
        (append (getf publication :header)
                (loop for row in (if (and stream-p finished-p) (append rows (list nil)) rows)
-                     append (append row (list (terminal-span ':plain (string #\Newline))))))
+                      append (append row (list (terminal-span ':plain (string #\Newline)))))
+               (getf publication :footer))
        tail))))
 
-(defgeneric terminal-ui-stream-markdown (ui identifier &key source header finished-p)
+(defgeneric terminal-ui-stream-markdown (ui identifier &key source header mentions finished-p)
   (:documentation "Publish a semantic Markdown stream under a stable IDENTIFIER at UI's pane width."))
 
 (-> terminal-ui--stream-output (terminal list) (values string string list))
