@@ -990,11 +990,21 @@
                     "A deliberate secondary-root consent write changes the owner.")
        (test-assert (null (config :telemetry-enabled-p secondary))
                     "A copied snapshot is not the consent authority.")
-       (test-assert (eq (getf (application-client--setting-item
-                                application secondary (find-setting :telemetry-enabled-p))
-                            :value)
-                        t)
-                   "ACP displays process-authoritative consent.")
+       (let* ((name    ':telemetry-enabled-p)
+              (setting (find-setting name))
+              (item    (application-client--setting-item application setting))
+              (picker  (find "telemetry-enabled-p" (application--setting-items application)
+                             :key  (lambda (row) (getf row :value))
+                             :test #'equal)))
+         (test-assert (and (eq (getf item :value) t)
+                           (eq (getf item :source) (configuration-setting-source configuration name))
+                           (equal (getf picker :detail) (setting-render-value setting t)))
+                      "ACP and the terminal picker display process-authoritative consent.")
+         (test-assert
+          (equalp (application--setting-value-entry application name)
+                  (application--setting-value-entry
+                   (make-instance 'application :configuration configuration) name))
+          "Terminal echoes the same effective value from either root."))
        (telemetry-call-with-run
         secondary
         (lambda ()

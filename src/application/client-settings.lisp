@@ -2,16 +2,16 @@
 
 ;;;; -- ACP Settings and Models Extensions --
 
-(-> application-client--setting-type (setting configuration) string)
-(defun application-client--setting-type (setting configuration)
-  "Project registered types and dynamic options into the setting editor's wire types."
+(-> application-client--setting-type (setting list) string)
+(defun application-client--setting-type (setting options)
+  "Project SETTING and its effective OPTIONS into the editor's native types."
   (let ((type (setting-type setting)))
     (cond
       ((eq (setting-scope setting) ':derived)
        "derived")
       ((eq type 'boolean)
        "boolean")
-      ((setting-options setting configuration)
+      (options
        "choice")
       ((subtypep type 'integer)
        "integer")
@@ -20,71 +20,19 @@
       (t
        "string"))))
 
-(-> application-client--setting-scope (t) string)
-(defun application-client--setting-scope (setting)
-  "Return SETTING's canonical ACP scope name."
-  (case (setting-scope setting)
-    (:process
-     "process")
-    (:durable
-     "durable")
-    (:session
-     "session")
-    (:derived
-     "derived")
-    (t
-     "process")))
-
-(-> application-client--setting-source (configuration setting) string)
-(defun application-client--setting-source (configuration setting)
-  "Return CONFIGURATION's source label for SETTING."
-  (case (configuration-setting-source configuration (setting-name setting))
-    (:environment
-     "environment")
-    (:override
-     "explicit")
-    (:durable
-     "saved")
-    (:session
-     "session")
-    (t
-     "default")))
-
-(-> application-client--setting-value (setting t) t)
-(defun application-client--setting-value (setting value)
-  "Return SETTING's value as a native Lisp value."
-  (declare (ignore setting))
-  value)
-
-(-> application-client--setting-options (setting configuration) list)
-(defun application-client--setting-options (setting configuration)
-  "Return SETTING's typed options as native values."
-  (mapcar (lambda (value) (application-client--setting-value setting value))
-          (setting-options setting configuration)))
-
-(-> application-client--setting-adjustable-p (application setting) boolean)
-(defun application-client--setting-adjustable-p (application setting)
-  "Use the application's ordinary runtime setting admission."
-  (declare (ignore application))
-  (application--setting-adjustable-p setting))
-
-(-> application-client--setting-item (application configuration setting) list)
-(defun application-client--setting-item (application configuration setting)
-  "Return the native plist describing SETTING in CONFIGURATION."
-  (let* ((configuration (if (member (setting-name setting)
-                                    '(:telemetry-enabled-p :telemetry-diagnostics-p))
-                            (telemetry-consent-configuration configuration)
-                            configuration))
-         (value         (configuration-setting-value configuration setting))
-         (adjustable-p  (application-client--setting-adjustable-p application setting)))
+(-> application-client--setting-item (application setting) list)
+(defun application-client--setting-item (application setting)
+  "Return SETTING's effective state and metadata as a native plist."
+  (multiple-value-bind (value source options adjustable-p)
+      (application--setting-state application setting)
     (list :name          (setting-name setting)
           :label         (setting-label setting)
           :documentation (setting-documentation setting)
           :group         (setting-group setting)
-          :type          (application-client--setting-type setting configuration)
-          :options       (application-client--setting-options setting configuration)
-          :value         (application-client--setting-value setting value)
-          :source        (configuration-setting-source configuration (setting-name setting))
+          :type          (application-client--setting-type setting options)
+          :options       options
+          :value         value
+          :source        source
           :scope         (setting-scope setting)
           :adjustable-p  adjustable-p
           :reason        (unless adjustable-p "The setting is fixed by process configuration."))))
@@ -96,7 +44,7 @@
     (list :items
           (loop for setting in (configuration-setting-list configuration)
                 when (setting-visible-p setting)
-                  collect (application-client--setting-item application configuration setting)))))
+                    collect (application-client--setting-item application setting)))))
 
 (-> application-client--model-item (application provider-registration provider-model &key (:stored-p boolean)) list)
 (defun application-client--model-item (application registration model &key stored-p)
@@ -133,8 +81,8 @@
                                           (string-downcase (symbol-name (setting-name item))))))))
     (unless setting
       (error 'application-client-unavailable :reason "The requested setting does not exist."))
-    (unless (application-client--setting-adjustable-p application setting)
+    (unless (application--setting-adjustable-p setting)
       (error 'application-client-unavailable :reason "The requested setting is not adjustable."))
     (application-apply-setting application (setting-name setting) value)
     (application-clients-publish-state application)
-    (application-client--setting-item application (application-configuration application) setting)))
+    (application-client--setting-item application setting)))

@@ -110,32 +110,13 @@ policy, including safe-boundary scheduling. A scheduled reply is acceptance only
 
 (-> application-client-permission-modes nil list)
 (defun application-client-permission-modes ()
-  "Return supported channel mode IDs in the permissions command's option order."
-  (loop for option in (application-command-static-options
-                       (application-command-find "permissions"))
-        for mode = (case option
-                     (:ask
-                      ':ask)
-                     (:auto
-                      ':auto)
-                     (:sandbox
-                      ':sandboxed)
-                     (:full
-                      ':full-access))
-        when mode
-        collect mode))
+  "Return the available channel permission mode IDs in catalogue order."
+  (mapcar #'first (application--permission-mode-catalogue)))
 
 (-> application-client-permission-input (keyword) list)
 (defun application-client-permission-input (mode)
-  "Return native command arguments for a supported channel permission MODE."
-  (unless (member mode (application-client-permission-modes))
-    (error 'application-client-operation-unavailable))
-  (list (ecase mode
-          (:ask
-           ':ask)
-          (:auto
-           ':auto)
-          (:sandboxed
-           ':sandbox)
-          (:full-access
-           ':full))))
+  "Return native command arguments for an available channel permission MODE."
+  (let ((row (assoc mode (application--permission-mode-catalogue))))
+    (unless row
+      (error 'application-client-operation-unavailable))
+    (list (second row))))

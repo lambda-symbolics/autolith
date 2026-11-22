@@ -204,6 +204,22 @@
                  (test-assert (equal '(:full-access :ask :auto) published)
                               "executed mode commands publish their resulting state")
                  (setf published nil)
+                 (dolist (available-p '(nil t))
+                   (test-call-with-function-replacements
+                    (list (list 'application--command-sandbox-available-p (constantly available-p)))
+                    (lambda ()
+                      (let* ((picker (application--permission-mode-items application))
+                             (modes  (gethash "modes" (acp-service--modes (make-instance 'acp-session))))
+                             (rows   (gethash "availableModes" modes))
+                             (item   (find "sandbox" picker
+                                           :test #'equal
+                                           :key  (lambda (row) (getf row :name))))
+                             (row    (find "sandboxed" rows
+                                           :test #'equal
+                                           :key  (lambda (row) (gethash "id" row)))))
+                        (test-assert (and (eq available-p (not (null item)))
+                                          (eq available-p (not (null row))))
+                                     "terminal choices and ACP advertised modes agree with host capability.")))))
                  (test-call-with-function-replacements
                   (list (list 'application--command-sandbox-available-p (constantly nil)))
                   (lambda ()

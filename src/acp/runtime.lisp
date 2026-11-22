@@ -14,7 +14,7 @@
 
 (-> acp-service--modes (acp-session) hash-table)
 (defun acp-service--modes (session)
-  "Project the registered permissions command's supported modes for SESSION."
+  "Advertise currently available permission modes for SESSION."
   (agentcomms:json-object
    "modes"
    (agentcomms:acp-session-mode-state

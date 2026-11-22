@@ -658,17 +658,18 @@ combination."
 (-> application--boolean-setting-command (application keyword t) null)
 (defun application--boolean-setting-command (application name argument)
   "Report NAME or apply ARGUMENT through the setting's runtime policy."
-  (let* ((mode          (application--boolean-control argument))
-         (configuration (application-configuration application))
-         (setting       (configuration-setting configuration name)))
+  (let* ((mode    (application--boolean-control argument))
+         (setting (configuration-setting (application-configuration application) name)))
     (unless (eq mode ':status)
       (application-apply-setting application name (eq mode ':on)))
-    (application-present
-     application
-     (format nil "~A: ~A (~A)."
-             (setting-label setting)
-             (setting-render-value setting (configuration-setting-value configuration setting))
-             (application--setting-source-text configuration setting))))
+    (multiple-value-bind (value source)
+        (application--setting-state application setting)
+      (application-present
+       application
+       (format nil "~A: ~A (~A)."
+               (setting-label setting)
+               (setting-render-value setting value)
+               (application--setting-source-text source setting)))))
   nil)
 
 (-> application-set-turn-timestamps (application boolean) null)
@@ -2113,36 +2114,27 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
     (:full-access
      "let commands run with full user privileges")))
 
+(-> application--permission-mode-catalogue () list)
+(defun application--permission-mode-catalogue ()
+  "Return available (MODE COMMAND-CHOICE TERMINAL-DESCRIPTION) rows in picker order."
+  (remove-if (lambda (row)
+               (and (eq (first row) ':sandboxed)
+                    (not (application--command-sandbox-available-p))))
+             '((:ask :ask "prompt unless this exact command was saved")
+               (:auto :auto "classify commands automatically without prompting")
+               (:sandboxed :sandbox "allow commands inside the workspace sandbox")
+               (:full-access :full "run commands with full user privileges"))))
+
 (-> application--permission-mode-items (application) list)
 (defun application--permission-mode-items (application)
   "Return available session command permission choices for APPLICATION."
-  (let ((current             (application-permission-mode application))
-        (sandbox-available-p (application--command-sandbox-available-p)))
-    (append
-     (list
-      (list :name        "ask"
-            :argument    nil
-            :description (if (eq current ':ask)
-                             "current; prompt unless this exact command was saved"
-                             "prompt unless this exact command was saved"))
-      (list :name        "auto"
-            :argument    nil
-            :description (if (eq current ':auto)
-                             "current; classify commands automatically without prompting"
-                             "classify commands automatically without prompting")))
-     (when sandbox-available-p
-       (list
-        (list :name        "sandbox"
-              :argument    nil
-              :description (if (eq current ':sandboxed)
-                               "current; allow commands inside the workspace sandbox"
-                               "allow commands inside the workspace sandbox"))))
-     (list
-      (list :name        "full"
-            :argument    nil
-            :description (if (eq current ':full-access)
-                             "current; run commands with full user privileges"
-                             "run commands with full user privileges"))))))
+  (let ((current (application-permission-mode application)))
+    (loop for (mode choice description) in (application--permission-mode-catalogue)
+          collect (list :name        (string-downcase (symbol-name choice))
+                        :argument    nil
+                        :description (if (eq mode current)
+                                         (concatenate 'string "current; " description)
+                                         description)))))
 
 (-> application-saved-permissions-entry (application) list)
 (defun application-saved-permissions-entry (application)
@@ -2174,43 +2166,34 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 (-> application-permissions-command (application t) null)
 (defun application-permissions-command (application argument)
   "Apply ARGUMENT to APPLICATION's channel command permissions."
-  (let ((choice (and argument
-                     (application--control-choice argument '(:ask :auto :sandbox :full :list :clear)))))
+  (let* ((choice    (and argument
+                        (application--control-choice argument '(:ask :auto :sandbox :full :list :clear))))
+         (catalogue (and choice (application--permission-mode-catalogue)))
+         (mode      (first (find choice catalogue :key #'second))))
+    (when (and (eq choice ':sandbox) (not mode))
+      (error 'configuration-error :message (application--command-sandbox-unavailable-message)))
     (cond
       ((null choice)
        nil)
-      ((eq choice ':ask)
-       (application-set-channel-permission-mode application ':ask)
+      (mode
+       (application-set-channel-permission-mode application mode)
        (application-present
         application
         (application--permission-mode-entry
-         ':ask "Commands will ask before running unless the exact command was saved.")))
-      ((eq choice ':auto)
-       (application-set-channel-permission-mode application ':auto)
-       (application-present
-        application
-        (application--permission-mode-entry
-         ':auto
-         (concatenate 'string
-                      (if (application--command-sandbox-available-p)
-                          "Commands will be classified automatically as sandboxed, full access, or denied."
-                          "Commands will be classified automatically as full access or denied.")
-                      " The status bar shows judging during classification; each decision is attached to its operation."))))
-      ((eq choice ':sandbox)
-       (unless (application--command-sandbox-available-p)
-         (error 'configuration-error
-                :message (application--command-sandbox-unavailable-message)))
-       (application-set-channel-permission-mode application ':sandboxed)
-       (application-present
-        application
-        (application--permission-mode-entry
-         ':sandboxed "Commands in this channel may run inside the workspace sandbox.")))
-      ((eq choice ':full)
-       (application-set-channel-permission-mode application ':full-access)
-       (application-present
-        application
-        (application--permission-mode-entry
-         ':full-access "Commands in this channel may run with your full user privileges, including after reopening.")))
+         mode
+         (ecase mode
+           (:ask
+            "Commands will ask before running unless the exact command was saved.")
+           (:auto
+            (concatenate 'string
+                         (if (assoc ':sandboxed catalogue)
+                             "Commands will be classified automatically as sandboxed, full access, or denied."
+                             "Commands will be classified automatically as full access or denied.")
+                         " The status bar shows judging during classification; each decision is attached to its operation."))
+           (:sandboxed
+            "Commands in this channel may run inside the workspace sandbox.")
+           (:full-access
+            "Commands in this channel may run with your full user privileges, including after reopening.")))))
       ((eq choice ':list)
        (application-present application (application-saved-permissions-entry application)))
       ((eq choice ':clear)
@@ -2221,7 +2204,7 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
       (t
        (error 'configuration-error
               :message "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear.")))
-    (when (member choice '(:ask :auto :sandbox :full) :test #'eq)
+    (when mode
       (application-clients-publish-state application)))
   nil)
 
@@ -2282,24 +2265,40 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
   "Return true when SETTING may change while the process runs."
   (and (member (setting-scope setting) '(:durable :session)) t))
 
-(-> application--setting-source-text (configuration setting) string)
-(defun application--setting-source-text (configuration setting)
-  "Return how SETTING's current value in CONFIGURATION was chosen."
-  (case (setting-scope setting)
-    (:derived
-     "derived")
-    (t
-     (case (configuration-setting-source configuration (setting-name setting))
-       (:environment
-        "environment")
-       (:override
-        "explicit")
-       (:durable
-        "saved")
-       (:session
-        "this session")
-       (t
-        "default")))))
+(-> application--setting-configuration (application keyword) configuration)
+(defun application--setting-configuration (application name)
+  "Return the configuration that owns the effective value of NAME."
+  (let ((configuration (application-configuration application)))
+    (if (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))
+        (telemetry-consent-configuration configuration)
+        configuration)))
+
+(-> application--setting-state (application setting) (values t (option keyword) list boolean))
+(defun application--setting-state (application setting)
+  "Return SETTING's effective value, source, options and adjustability."
+  (let* ((name          (setting-name setting))
+         (configuration (application--setting-configuration application name)))
+    (values (configuration-setting-value configuration setting)
+            (configuration-setting-source configuration name)
+            (setting-options setting configuration)
+            (application--setting-adjustable-p setting))))
+
+(-> application--setting-source-text ((option keyword) setting) string)
+(defun application--setting-source-text (source setting)
+  "Render the effective SOURCE of SETTING for the terminal."
+  (if (eq (setting-scope setting) ':derived)
+      "derived"
+      (case source
+        (:environment
+         "environment")
+        (:override
+         "explicit")
+        (:durable
+         "saved")
+        (:session
+         "this session")
+        (t
+         "default"))))
 
 (-> application-set-terminal-theme (application keyword) null)
 (defun application-set-terminal-theme (application name)
@@ -2317,9 +2316,7 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 
 Settings with runtime consequences, such as provider reasoning summaries,
 use the same setters in the settings page and commands."
-  (let* ((configuration (if (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))
-                            (telemetry-consent-configuration (application-configuration application))
-                            (application-configuration application)))
+  (let* ((configuration (application--setting-configuration application name))
          (setting       (configuration-setting configuration name)))
     (setting-validate setting value configuration)
     (unless (application--setting-adjustable-p setting)
@@ -2388,28 +2385,25 @@ order within a group, so every group heading appears once."
 The current value and its source sit in aligned columns of their own."
   (let ((configuration (application-configuration application)))
     (loop for setting in (application--grouped-settings configuration)
-          collect (list :name     (setting-label setting)
-                        :value    (string-downcase (symbol-name (setting-name setting)))
-                        :argument nil
-                        :group    (string-downcase (symbol-name (setting-group setting)))
-                        :detail   (setting-render-value
-                                   setting
-                                   (configuration-setting-value configuration setting))
-                        :description
-                        (format nil "~A~:[ · read-only~;~]"
-                                (application--setting-source-text configuration setting)
-                                (application--setting-adjustable-p setting))))))
+          collect (multiple-value-bind (value source options adjustable-p)
+                      (application--setting-state application setting)
+                    (declare (ignore options))
+                    (list :name        (setting-label setting)
+                          :value       (string-downcase (symbol-name (setting-name setting)))
+                          :argument    nil
+                          :group       (string-downcase (symbol-name (setting-group setting)))
+                          :detail      (setting-render-value setting value)
+                          :description (format nil "~A~:[ · read-only~;~]"
+                                               (application--setting-source-text source setting)
+                                               adjustable-p))))))
 
-(-> application--setting-option-items (application setting) list)
-(defun application--setting-option-items (application setting)
-  "Return picker items for SETTING's options, marking the current value."
-  (let* ((configuration (application-configuration application))
-         (current       (configuration-setting-value configuration setting)))
-    (loop for option in (setting-options setting configuration)
-          for text = (setting-render-value setting option)
-          collect (list :name        text
-                        :argument    nil
-                        :description (if (equal option current) "current" "")))))
+(-> application--setting-option-items (setting t list) list)
+(defun application--setting-option-items (setting current options)
+  "Render OPTIONS for SETTING, marking the CURRENT effective value."
+  (loop for option in options
+        collect (list :name        (setting-render-value setting option)
+                      :argument    nil
+                      :description (if (equal option current) "current" ""))))
 
 (-> application-settings-entry (application) list)
 (defun application-settings-entry (application)
@@ -2423,27 +2417,28 @@ The current value and its source sit in aligned columns of their own."
              append (progn
                       (setf group (setting-group setting))
                       (list (terminal-span ':notice (format nil "~2%  ~(~A~)" group))))
-           append (list
-                   (terminal-span ':code (format nil "~%    ~(~A~)" (setting-name setting)))
-                   (terminal-span ':dim " = ")
-                   (terminal-span ':plain
-                                  (setting-render-value
-                                   setting (configuration-setting-value configuration setting)))
-                   (terminal-span ':dim
-                                  (format nil " (~A)~%      ~A"
-                                          (application--setting-source-text configuration setting)
-                                          (setting-documentation setting))))))))
+            append (multiple-value-bind (value source)
+                       (application--setting-state application setting)
+                     (list
+                      (terminal-span ':code (format nil "~%    ~(~A~)" (setting-name setting)))
+                      (terminal-span ':dim " = ")
+                      (terminal-span ':plain (setting-render-value setting value))
+                      (terminal-span ':dim
+                                     (format nil " (~A)~%      ~A"
+                                             (application--setting-source-text source setting)
+                                             (setting-documentation setting)))))))))
 
 (-> application--setting-value-entry (application keyword) list)
 (defun application--setting-value-entry (application name)
-  "Return the real getter and current setting value as one highlighted Lisp row."
-  (append
-   (application-lisp--source-entry (format nil "(config :~(~A~))" name))
-   (list (terminal-span ':success " => "))
-   (application-lisp--value-spans
-    (application-lisp-render-value
-     (config name (application-configuration application))
-     :columns 16000))))
+  "Return the setting getter and its effective value as one highlighted Lisp row."
+  (let ((setting (configuration-setting (application-configuration application) name)))
+    (append
+     (application-lisp--source-entry (format nil "(config :~(~A~))" name))
+     (list (terminal-span ':success " => "))
+     (application-lisp--value-spans
+      (application-lisp-render-value
+       (application--setting-state application setting)
+       :columns 16000)))))
 
 (-> application--present-setting-value (application keyword) null)
 (defun application--present-setting-value (application name)
@@ -2469,40 +2464,35 @@ The current value and its source sit in aligned columns of their own."
         (return))
       (let* ((name    (application--setting-name chosen))
              (setting (configuration-setting (application-configuration application) name)))
-        (cond
-          ((not (application--setting-adjustable-p setting))
-           (application-present
-            application
-            (format nil "~A is ~A (~A). It is read-only in a running session."
-                    (setting-label setting)
-                    (setting-render-value
-                     setting (config name (application-configuration application)))
-                    (application--setting-source-text
-                     (application-configuration application) setting))))
-          ((setting-options setting (application-configuration application))
-           (let ((option (application--pick-identifier
-                          application
-                          :title        (format nil "~A" (setting-label setting))
-                          :items        (application--setting-option-items application setting)
-                          :initial-name (setting-render-value
-                                         setting
-                                         (config name (application-configuration application)))
-                          :search-p     t
-                          :usage        "Usage: (settings :NAME VALUE)"
-                          :empty-notice "This setting offers no choices.")))
-             (when option
-               (application-apply-setting
-                application name
-                (setting-parse setting option (application-configuration application)))
-               (application--present-setting-value application name))))
-          (t
-           (application-present
-            application
-            (format nil "~A is ~A. Change it with (settings :~(~A~) VALUE)."
-                    (setting-label setting)
-                    (setting-render-value
-                     setting (config name (application-configuration application)))
-                    name)))))))
+        (multiple-value-bind (value source options adjustable-p)
+            (application--setting-state application setting)
+          (let ((rendered (setting-render-value setting value)))
+            (cond
+              ((not adjustable-p)
+               (application-present
+                application
+                (format nil "~A is ~A (~A). It is read-only in a running session."
+                        (setting-label setting) rendered
+                        (application--setting-source-text source setting))))
+              (options
+               (let ((option (application--pick-identifier
+                              application
+                              :title        (setting-label setting)
+                              :items        (application--setting-option-items setting value options)
+                              :initial-name rendered
+                              :search-p     t
+                              :usage        "Usage: (settings :NAME VALUE)"
+                              :empty-notice "This setting offers no choices.")))
+                 (when option
+                   (application-apply-setting
+                    application name
+                    (setting-parse setting option (application--setting-configuration application name)))
+                   (application--present-setting-value application name))))
+              (t
+               (application-present
+                application
+                (format nil "~A is ~A. Change it with (settings :~(~A~) VALUE)."
+                        (setting-label setting) rendered name)))))))))
   nil)
 
 (-> application-settings-command (application &optional t t) null)
@@ -2516,16 +2506,17 @@ The current value and its source sit in aligned columns of their own."
     ((null name)
      (application-present application (application-settings-entry application)))
     ((not value-supplied-p)
-     (let* ((configuration (application-configuration application))
-            (key           (application--setting-name name))
-            (setting       (configuration-setting configuration key)))
-       (application-present
-        application
-        (format nil "~A is ~A (~A). ~A"
-                (setting-label setting)
-                (setting-render-value setting (config key configuration))
-                (application--setting-source-text configuration setting)
-                (setting-documentation setting)))))
+     (let* ((key     (application--setting-name name))
+            (setting (configuration-setting (application-configuration application) key)))
+       (multiple-value-bind (value source)
+           (application--setting-state application setting)
+         (application-present
+          application
+          (format nil "~A is ~A (~A). ~A"
+                  (setting-label setting)
+                  (setting-render-value setting value)
+                  (application--setting-source-text source setting)
+                  (setting-documentation setting))))))
     (t
      (let ((key (application--setting-name name)))
        (application-apply-setting application key value)
@@ -3088,7 +3079,8 @@ show."
     (application-permissions-command
      application
      (if (and (not choice-supplied-p) choice)
-         (first (application--parse-permissions-control choice))
+         (second (find choice (application--permission-mode-catalogue)
+                       :key #'second :test #'string-equal))
          choice)))
   ':continue)
 
