@@ -141,28 +141,15 @@
 (-> conversation-identifier-migration--legacy-files (configuration) list)
 (defun conversation-identifier-migration--legacy-files (configuration)
   "Return stable identities for resumable conversations with legacy IDs."
-  (let ((root       (configuration-conversation-root configuration))
-        (identities nil))
-    (when (uiop:directory-exists-p root)
-      (dolist (pathname (uiop:directory-files root "*.sexp"))
-        (pushnew pathname identities :test #'equal))
-      (dolist (directory (uiop:subdirectories root))
-        (let ((identifier (first (last (pathname-directory directory)))))
-          (when (stringp identifier)
-            (pushnew
-             (merge-pathnames
-              (make-pathname :name identifier :type "sexp")
-              root)
-             identities
-             :test #'equal)))))
-    (sort
-     (loop for pathname in identities
-           for header = (conversation-identifier-migration--header pathname)
-           for identifier = (and header (getf (rest header) :id))
-           when (conversation-identifier-migration--legacy-identifier-p identifier)
-             collect (list :pathname pathname :header header))
-     #'string<
-     :key (lambda (entry) (namestring (getf entry :pathname))))))
+  (sort
+   (loop for pathname in (conversation-storage-identities
+                         (configuration-conversation-root configuration))
+         for header = (conversation-identifier-migration--header pathname)
+         for identifier = (and header (getf (rest header) :id))
+         when (conversation-identifier-migration--legacy-identifier-p identifier)
+           collect (list :pathname pathname :header header))
+   #'string<
+   :key (lambda (entry) (namestring (getf entry :pathname)))))
 
 (-> conversation-identifier-migration--entry-for-old (string list) (option list))
 (defun conversation-identifier-migration--entry-for-old (identifier entries)
