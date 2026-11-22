@@ -516,7 +516,8 @@
                                  (lambda (&rest arguments)
                                    (declare (ignore arguments))
                                    (provider-tests--credentials configuration)))
-                           (list 'agent-should-compact-p (lambda (agent) (declare (ignore agent)) nil)))
+                           (list 'agent-should-compact-p
+                                 (lambda (agent &key &allow-other-keys) (declare (ignore agent)) nil)))
                      (lambda ()
                        (handler-case
                            (if reactive-p

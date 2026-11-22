@@ -791,6 +791,37 @@ the one-request contributions together: they change on every delivery."
                         *context-delivery-diagnostic-limit*))))))
   nil)
 
+(defstruct (context-prepared-delivery
+            (:constructor context-prepared-delivery-create ()))
+  "One provider loop step's slot for sharing an ordinary context delivery.
+
+A soft compaction check puts STATE in its capture state while it encodes the
+step's request, so that request's ordinary resolution stores its KEY and
+DELIVERY and marks them prepared. The next ordinary resolution with the same
+key takes the stored delivery instead of invoking contributors again. Every
+other resolution, and any taking, leaves the slot taken, so they resolve afresh
+as without the slot."
+  (state    nil :type (member nil :capture :prepared :taken))
+  (key      nil :type list)
+  (delivery nil :type (option context-delivery)))
+
+(defvar *context-prepared-delivery* nil
+  "The provider loop step's CONTEXT-PREPARED-DELIVERY, or NIL outside a provider loop.")
+
+(-> context--prepared-key-equal-p (list list) boolean)
+(defun context--prepared-key-equal-p (stored current)
+  "Return true when resolution keys STORED and CURRENT describe the same request context.
+
+The configuration is not compared: a routing adapter may encode with a copy
+that differs only in its model."
+  (destructuring-bind (conversation participant goal-context tool-namespaces) stored
+    (destructuring-bind (current-conversation current-participant current-goal current-tools)
+        current
+      (and (eq conversation current-conversation)
+           (eq participant current-participant)
+           (equal goal-context current-goal)
+           (equalp tool-namespaces current-tools)))))
+
 (-> context-resolve-request
     (configuration conversation vector
      &key (:goal-context (option string)) (:compaction-p boolean) (:participant t)) context-delivery)
@@ -800,12 +831,49 @@ the one-request contributions together: they change on every delivery."
   "Collect product context, resolve generic contributions, and render the request.
 
 A compaction request resolves context only to repeat what ordinary requests
-anchored in the history, so its delivery is not remembered for diagnostics."
+anchored in the history, so its delivery is not remembered for diagnostics.
+An ordinary request reuses the delivery a soft compaction check captured for
+the same context in *CONTEXT-PREPARED-DELIVERY*, so contributors run once per
+sent request."
+  (let ((prepared (and (not compaction-p) *context-prepared-delivery*))
+        (key      (list conversation participant goal-context tool-namespaces)))
+    (when (and prepared (eq (context-prepared-delivery-state prepared) ':prepared))
+      (let ((stored-key      (context-prepared-delivery-key prepared))
+            (stored-delivery (context-prepared-delivery-delivery prepared)))
+        (context--prepared-delivery-take prepared)
+        (when (context--prepared-key-equal-p stored-key key)
+          (return-from context-resolve-request stored-delivery))))
+    (let ((delivery (context--resolve-request configuration conversation tool-namespaces
+                                              :goal-context goal-context
+                                              :compaction-p compaction-p
+                                              :participant  participant)))
+      (when prepared
+        (if (eq (context-prepared-delivery-state prepared) ':capture)
+            (setf (context-prepared-delivery-key prepared)      key
+                  (context-prepared-delivery-delivery prepared) delivery
+                  (context-prepared-delivery-state prepared)    ':prepared)
+            (context--prepared-delivery-take prepared)))
+      delivery)))
+
+(-> context--prepared-delivery-take (context-prepared-delivery) null)
+(defun context--prepared-delivery-take (prepared)
+  "Mark PREPARED :TAKEN and drop any stored key and delivery."
+  (setf (context-prepared-delivery-state prepared)    ':taken
+        (context-prepared-delivery-key prepared)      nil
+        (context-prepared-delivery-delivery prepared) nil)
+  nil)
+
+(-> context--resolve-request
+    (configuration conversation vector
+     &key (:goal-context (option string)) (:compaction-p boolean) (:participant t)) context-delivery)
+(defun context--resolve-request
+    (configuration conversation tool-namespaces &key goal-context compaction-p participant)
+  "Invoke contributors and resolve one request's context delivery."
   (let ((request (make-instance 'request-context
-                               :configuration configuration :conversation conversation
-                               :tool-namespaces tool-namespaces
-                               :participant     participant
-                               :goal-context goal-context :compaction-p compaction-p)))
+                                :configuration configuration :conversation conversation
+                                :tool-namespaces tool-namespaces
+                                :participant     participant
+                                :goal-context goal-context :compaction-p compaction-p)))
     (multiple-value-bind (contributions failures)
         (context--invoke-contributors request (context-contributor-registrations))
       (unless (every (lambda (value) (typep value 'context-contribution))

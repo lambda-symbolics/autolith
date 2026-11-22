@@ -182,7 +182,7 @@ it submits a checkpoint."
            (*agent-restricted-maximum-tool-rounds* 0))
       (test-call-with-function-replacements
        (list (list 'agent-should-compact-p
-                   (lambda (agent) (declare (ignore agent))
+                   (lambda (agent &key &allow-other-keys) (declare (ignore agent))
                      (prog1 pending (setf pending nil)))))
        (lambda ()
          (loop for index from 1 to 3
@@ -323,12 +323,14 @@ it submits a checkpoint."
                 (list (list 'system-prompt (lambda (c) (declare (ignore c)) "small"))
                       (list 'request-context-session-state
                             (lambda (c &key hurry-up-p) (declare (ignore c hurry-up-p)) ""))
+                      ;; Isolate final admission: the prepared soft check would
+                      ;; otherwise compact this oversized request first.
                       (list 'agent-should-compact-p
-                            (let ((original (symbol-function 'agent-should-compact-p)))
-                              (lambda (candidate)
-                                (if proactive-p t (funcall original candidate))))))
+                            (lambda (candidate &key &allow-other-keys)
+                              (declare (ignore candidate))
+                              proactive-p)))
                 (lambda ()
-                  (test-assert (eq (not (null proactive-p)) (agent-should-compact-p agent))
+                  (test-assert (eq (not (null proactive-p)) (agent-should-compact-p agent :goal-context goal))
                                "the controlled soft trigger matches this scenario")
                   (let ((failure nil))
                     (handler-case (agent--run-provider-loop agent observer :goal-context goal :tools-p nil)
@@ -422,6 +424,191 @@ it submits a checkpoint."
              (test-assert (handler-case (progn (provider-check-request-context provider request) nil)
                             (provider-context-budget-error () t))
                           "the final encoded request nevertheless exceeds the hard window")))))))
+  nil)
+
+(defclass prepared-soft-test-provider (compaction-gap-test-provider)
+  ()
+  (:documentation "Answer compaction requests with a checkpoint and ordinary requests from the script."))
+
+(defmethod provider-stream-turn :around
+    ((provider prepared-soft-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Supply a valid checkpoint to each compaction request."
+  (declare (ignore tool-namespaces event-callback goal-context))
+  (when compaction-p
+    (push (agent-test-result "summary" (list (agent-test-checkpoint-call)))
+          (scripted-provider-results provider)))
+  (call-next-method))
+
+(defvar *prepared-soft-test-invocations* nil
+  "Ordinary contributor invocations counted by the prepared soft compaction fixture.")
+
+(-> prepared-soft-test--contribute (request-context) (option context-contribution))
+(defun prepared-soft-test--contribute (context)
+  "Count one ordinary invocation and deliver a marker naming it."
+  (unless (request-context-compaction-p context)
+    (make-context-contribution
+     :identifier  "prepared-soft-marker"
+     :instruction (format nil "Context marker ~D." (incf (first *prepared-soft-test-invocations*))))))
+
+(-> prepared-soft-test--run
+    (&key (:measured-tool-characters (integer 0)) (:goal-characters (integer 0)) (:tools-p boolean)
+          (:context-p boolean))
+    list)
+(defun prepared-soft-test--run
+    (&key (measured-tool-characters 0) (goal-characters 0) (tools-p t) context-p)
+  "Replay one measured Codex turn, then run one ordinary step and report its requests.
+
+The context window is 5000 tokens with a 256-token output reserve, so the hard
+limit is 4744, and the default soft compaction threshold is 80 percent, 4000 tokens.
+With CONTEXT-P, the step also runs a counting contributor and the product's
+task-notes contributor with one pending child note."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((provider                                  (make-instance 'prepared-soft-test-provider
+                                                                       :configuration configuration
+                                                                       :results       (list (agent-test-result "answer" (list (agent-test-message "OK"))))))
+             (registry                                  (make-instance 'tool-registry))
+             (conversation                              (conversation-create configuration))
+             (observer                                  (make-instance 'compaction-gap-test-observer))
+             (agent                                     (agent-create :configuration configuration :conversation conversation
+                                                                      :provider provider :tool-registry registry))
+             (*conversation-compaction-tail-characters* 1024)
+             (*context-contributors*                    nil)
+             (*context-resolver*                        (cl-llm-provider-api:make-context-resolver))
+             (*prepared-soft-test-invocations*          (list 0)))
+        (when (plusp measured-tool-characters)
+          (tool-registry-register
+           registry
+           (make-instance 'agent-test-echo-tool
+                          :namespace   "test"
+                          :name        "echo"
+                          :description (make-string measured-tool-characters :initial-element #\t)
+                          :parameters  (tool-object-schema
+                                        (json-object "value" (tool-string-property "The value to echo."))
+                                        '("value")))))
+        (test-call-with-function-replacements
+         (list (list 'system-prompt (lambda (c) (declare (ignore c)) "small policy"))
+               (list 'request-context-session-state
+                     (lambda (c &key hurry-up-p) (declare (ignore c hurry-up-p)) "")))
+         (lambda ()
+           (conversation-append-user-message conversation "Measured request.")
+           (context-admission-test--measure
+            agent
+            :tools           (tool-registry-provider-schemas registry)
+            :envelope-length 100
+            :usage           (if (plusp measured-tool-characters)
+                                 (json-object "input_tokens" 4100 "output_tokens" 100 "total_tokens" 4200)
+                                 (json-object "input_tokens" 50 "output_tokens" 10 "total_tokens" 60)))
+           (setf (context-admission-test-provider-network-calls provider) 0)
+           (conversation-append-user-message conversation "continue")
+           (let* ((limit    (configuration-compaction-token-limit configuration))
+                  (estimate (context-estimate-known-tokens
+                             configuration conversation :tool-registry registry
+                                                        :provider provider :family (provider-family provider)))
+                  (goal     (and (plusp goal-characters) (make-string goal-characters :initial-element #\g)))
+                  (tools    (agent--tool-namespaces agent :tools-p tools-p))
+                  (prepared (let ((*provider-context-request* nil))
+                              (provider-request-input-token-estimate
+                               provider
+                               (provider-request-object provider conversation tools :goal-context goal))))
+                  ;; The same request with the measured sample available, as admission sees it.
+                  (credited (let ((*provider-context-request*
+                                    (provider-context-request-create
+                                     provider conversation (tool-registry-provider-schemas registry))))
+                              (multiple-value-bind (tokens matched-p)
+                                  (provider-context--matched-input
+                                   provider
+                                   (provider-request-object provider conversation tools :goal-context goal))
+                                (list tokens matched-p))))
+                  (decision (agent-should-compact-p agent :tools-p tools-p :goal-context goal))
+                  (failure  nil))
+            (handler-case
+                (progn
+                  ;; Count and queue only for the step itself, after the witnesses above.
+                  (when context-p
+                    (register-context-contributor "prepared-soft-marker" 'prepared-soft-test--contribute)
+                    (register-context-contributor "task-notes" 'context--task-notes)
+                    (task-note-post (conversation-identifier conversation) "child" "pending child note"))
+                  (agent--run-provider-loop agent observer :goal-context goal :tools-p tools-p))
+              (error (condition) (setf failure condition)))
+            (let ((report (list :limit        limit
+                                :estimate     estimate
+                                :prepared     prepared
+                                :credited     credited
+                                :decision     decision
+                                :compactions  (compaction-gap-test-compactions observer)
+                                :transport    (context-admission-test-provider-network-calls provider)
+                                :requests     (reverse (scripted-provider-compaction-flags provider))
+                                 :failure     (and failure (princ-to-string failure))
+                                 :invocations (first *prepared-soft-test-invocations*)
+                                 :sent        (context-admission-test-provider-last-request provider))))
+               (let ((witness (copy-list report)))
+                 (remf witness :sent)
+                 (format t "~&PREPARED-SOFT-WITNESS ~S~%" witness))
+              report))))))))
+
+(-> test-compaction-prepared-soft-threshold () null)
+(defun test-compaction-prepared-soft-threshold ()
+  "Decide proactive compaction from the prepared request rather than an early estimate.
+
+A measured Codex turn carried a large tool schema. A tool-free continuation
+prepares a small request, so it must not compact. Conversely, newly injected
+goal context pushes a request with a small known estimate over the soft
+threshold while it still fits the hard window, so it must compact first."
+  (let ((restricted (prepared-soft-test--run :measured-tool-characters 12000 :tools-p nil)))
+    (test-assert (>= (getf restricted :estimate) (getf restricted :limit))
+                 "the early estimate of the restricted step is above the soft threshold")
+    (test-assert (< (getf restricted :prepared) (getf restricted :limit))
+                 "the prepared restricted request is below the soft threshold")
+    (test-assert (null (getf restricted :failure)) "the restricted step completes")
+    (test-assert (zerop (getf restricted :compactions))
+                 "a prepared request below the soft threshold does not compact")
+    (test-assert (= 1 (getf restricted :transport))
+                 "only the ordinary request reaches the inert transport")
+    (test-assert (not (getf restricted :decision))
+                 "the soft decision for the restricted step stays below the threshold"))
+  (let ((injected (prepared-soft-test--run :goal-characters 16400)))
+    (test-assert (< (getf injected :estimate) (getf injected :limit))
+                 "the early estimate of the injected step is below the soft threshold")
+    (test-assert (<= (getf injected :limit) (getf injected :prepared) (- 5000 256))
+                 "the prepared injected request is above the soft threshold and fits the hard window")
+    (test-assert (null (getf injected :failure)) "the injected step completes")
+    (test-assert (= 1 (getf injected :compactions))
+                 "a prepared request above the soft threshold compacts")
+    (test-assert (equal '(t nil) (getf injected :requests))
+                 "compaction precedes the ordinary request")
+    (test-assert (= 2 (getf injected :transport))
+                 "the compaction and ordinary requests both reach the inert transport")
+    (destructuring-bind (tokens matched-p) (getf injected :credited)
+      (test-assert matched-p "the injected request keeps measured credit from the earlier turn")
+      (test-assert (<= (getf injected :limit) tokens)
+                   "the measured estimate charges the injected context against the soft threshold"))
+    (test-assert (getf injected :decision)
+                 "the soft decision for the injected step crosses the threshold"))
+  ;; The counted runs add a marker and a child note, so the compacting one uses a
+  ;; shorter goal that still crosses the soft threshold and fits after compaction.
+  (let* ((quiet (prepared-soft-test--run :measured-tool-characters 12000 :tools-p nil :context-p t))
+         (sent  (json-encode (getf quiet :sent))))
+    (test-assert (zerop (getf quiet :compactions)) "the counted quiet step does not compact")
+    (test-assert (= 1 (getf quiet :invocations))
+                 "the soft check and the sent request share one contributor invocation")
+    (test-assert (search "Context marker 1." sent)
+                 "the sent request carries the delivery the soft check resolved")
+    (test-assert (search "pending child note" sent)
+                 "a one-shot child note drained by the soft check reaches the sent request"))
+  (let* ((compacted (prepared-soft-test--run :goal-characters 15600 :context-p t))
+         (count     (getf compacted :invocations))
+         (sent      (json-encode (getf compacted :sent))))
+    (test-assert (null (getf compacted :failure)) "the counted injected step completes")
+    (test-assert (= 1 (getf compacted :compactions)) "the counted injected step compacts")
+    (test-assert (equal '(t nil) (getf compacted :requests))
+                 "the counted step sends compaction, then one ordinary request")
+    (test-assert (search (format nil "Context marker ~D." count) sent)
+                 "the request after compaction carries the step's last resolution")
+    (test-assert (and (< 1 count) (not (search "Context marker 1." sent)))
+                 "the request after compaction resolves afresh instead of reusing the soft check's delivery"))
   nil)
 
 

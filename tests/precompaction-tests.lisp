@@ -253,7 +253,7 @@
                      "a served unknown-lifetime prefix stays unbounded before threshold compaction")
         (test-call-with-function-replacements
          (list (list 'agent-should-compact-p
-                     (lambda (agent)
+                    (lambda (agent &key &allow-other-keys)
                        (declare (ignore agent))
                        (null (scripted-provider-compaction-flags provider)))))
          (lambda () (agent-run-user-turn agent "next question")))

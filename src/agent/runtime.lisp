@@ -1625,9 +1625,15 @@ tool registry reaches the very next provider request."
        (list :message-count (length messages)))))
   nil)
 
-(defgeneric agent-should-compact-p (agent)
+(defgeneric agent-should-compact-p
+    (agent &key tools-p tool-restriction-p tool-allowlist tool-rounds goal-context
+                maximum-output-tokens)
   (:documentation
-   "Return true when AGENT's conversation should compact before continuing."))
+   "Return true when AGENT's conversation should compact before its next request.
+
+The keyword arguments describe that request's step: whether it offers tools,
+its tool restriction and allowlist, its tool round, its goal context and its
+output cap."))
 
 (defgeneric agent-compaction-tool-p (agent)
   (:documentation
@@ -1637,14 +1643,17 @@ tool registry reaches the very next provider request."
   "Declare it, so a compaction request repeats the tools of the requests around it."
   t)
 
-(defmethod agent-should-compact-p ((agent agent))
-  "Compare current matched input accounting with the soft compaction threshold."
-  (>= (context-estimate-known-tokens
-       (agent-configuration agent) (agent-conversation agent)
-       :tool-registry (agent-tool-registry agent)
-       :hurry-up-p    (agent-hurry-up-p agent)
-       :provider      (agent-provider agent)
-       :family        (provider-family (agent-provider agent)))
+(defmethod agent-should-compact-p
+    ((agent agent) &key (tools-p t) tool-restriction-p tool-allowlist (tool-rounds 0)
+                        goal-context maximum-output-tokens)
+  "Compare the step's prepared request with the soft compaction threshold."
+  (>= (agent--prepared-input-tokens agent
+                                    :tools-p               tools-p
+                                    :tool-restriction-p    tool-restriction-p
+                                    :tool-allowlist        tool-allowlist
+                                    :tool-rounds           tool-rounds
+                                    :goal-context          goal-context
+                                    :maximum-output-tokens maximum-output-tokens)
       (configuration-compaction-token-limit (agent-configuration agent))))
 
 (-> agent--note-compaction-request
@@ -1947,6 +1956,76 @@ again. A COMPACTION-P request declares compaction.submit in any case."
         (declare (ignore delivery))
         (provider-check-request-context provider request)))))
 
+(-> agent--prepared-input-tokens
+    (agent &key (:tools-p boolean) (:tool-restriction-p boolean) (:tool-allowlist (option list))
+                (:tool-rounds (integer 0)) (:goal-context (option string))
+                (:maximum-output-tokens (option integer)))
+    (integer 0))
+(defun agent--prepared-input-tokens
+    (agent &key tools-p tool-restriction-p tool-allowlist (tool-rounds 0) goal-context
+                maximum-output-tokens)
+  "Estimate the input tokens of AGENT's next ordinary request for one step.
+
+Encode the request the provider loop would send, with its tools and injected
+context, without sending it. A fresh context request lets a compatible usage
+sample keep its measured credit the way hard admission does, with this
+request's tool header and temporary context in place of the measured ones.
+The step's context delivery is captured in *CONTEXT-PREPARED-DELIVERY*, so the
+request the loop sends next reuses it instead of running contributors again.
+A provider without a request encoder gets the known-history estimate."
+  (let ((provider     (agent-provider agent))
+        (conversation (agent-conversation agent))
+        (tools        (agent--tool-namespaces agent
+                                              :tools-p            tools-p
+                                              :tool-restriction-p tool-restriction-p
+                                              :tool-allowlist     tool-allowlist)))
+    (unless (some (lambda (method) (null (method-qualifiers method)))
+                  (compute-applicable-methods #'provider-request-object
+                                              (list provider conversation tools)))
+      (return-from agent--prepared-input-tokens
+        (context-estimate-known-tokens
+         (agent-configuration agent) conversation
+         :tool-registry (agent-tool-registry agent)
+         :hurry-up-p    (agent-hurry-up-p agent)
+         :provider      provider
+         :family        (provider-family provider))))
+    (let* ((*provider-context-request*
+             (provider-context-request-create
+              provider conversation (tool-registry-provider-schemas (agent-tool-registry agent))))
+           (*request-context-participant*
+             (participant-state-identity (agent-participant-state agent)))
+           (*provider-hosted-tools-enabled-p* (not tool-restriction-p))
+           (*provider-tool-choice*
+             (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
+           (*provider-maximum-output-tokens*
+             (or maximum-output-tokens (agent--configured-max-output-tokens agent)))
+           (*provider-cache-request-prefix*   nil)
+           ;; Encode as the loop does, which observes cache prefixes.
+           (*provider-cache-prefix-function*  (lambda (prefix) (declare (ignore prefix))))
+           (*request-context-hurry-up-p*      (agent-hurry-up-p agent))
+           (*context-request-contributions*
+             (and tools-p (not tool-restriction-p)
+                  (mcp-tool-registry-context-contributions (agent-tool-registry agent))))
+           (request
+             (agent--with-captured-delivery
+               (lambda ()
+                 (provider-request-object provider conversation tools
+                                          :goal-context goal-context)))))
+      (values (provider-request-input-token-estimate provider request)))))
+
+(-> agent--with-captured-delivery (function) t)
+(defun agent--with-captured-delivery (function)
+  "Call FUNCTION, capturing its ordinary context delivery for the step's next request.
+
+Outside a provider loop's step, just call FUNCTION."
+  (let ((prepared *context-prepared-delivery*))
+    (unless prepared
+      (return-from agent--with-captured-delivery (funcall function)))
+    (setf (context-prepared-delivery-state prepared) ':capture)
+    (unwind-protect (funcall function)
+      (when (eq (context-prepared-delivery-state prepared) ':capture)
+        (context--prepared-delivery-take prepared)))))
+
 (-> agent-compact-conversation
     (agent agent-observer &key (:tool-allowlist (option list))
                                (:tool-restriction-p boolean)
@@ -2069,6 +2148,7 @@ Return issued request count and optional next-request details."
 REQUEST-NUMBER counts provider requests already issued in this turn, including
 compaction before the user message."
     (let ((*task-unfinished-work-agent* agent)
+          (*context-prepared-delivery*  nil)
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
           (tool-calls                   0)
@@ -2076,12 +2156,24 @@ compaction before the user message."
           (next-request-details         nil))
      (declare (special *task-unfinished-work-agent*))
      (loop for recovery-used-p = nil do
+        ;; A fresh slot per step: the soft check below captures the
+        ;; step's context delivery and the step's first request takes it.
+        (setf *context-prepared-delivery* (context-prepared-delivery-create))
         (when (and tools-p (not tool-restriction-p))
           (mcp-tool-registry-refresh
            (agent-tool-registry agent)
            :only-dirty-p t))
-        (when (agent-should-compact-p agent)
+        (when (agent-should-compact-p agent
+                                      :tools-p               tools-p
+                                      :tool-restriction-p    tool-restriction-p
+                                      :tool-allowlist        tool-allowlist
+                                      :tool-rounds           tool-rounds
+                                      :goal-context          goal-context
+                                      :maximum-output-tokens maximum-output-tokens)
           (setf recovery-used-p t)
+          ;; Compaction changes the history and checkpoint the captured
+          ;; context was resolved for, so the step's request resolves afresh.
+          (context--prepared-delivery-take *context-prepared-delivery*)
           (multiple-value-bind (compaction-requests details)
               (agent-compact-conversation
                agent observer
