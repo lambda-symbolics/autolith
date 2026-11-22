@@ -55,7 +55,7 @@
 
 (defmethod application-client-resource--read
     ((resource shell-log-resource) (context tool-context) params)
-  "Read raw owned capture bytes without parsing a rendered tool result."
+  "Read a bounded raw byte window from an exact shell-log reference."
   (when (or (getf params :start-line) (getf params :line-count))
     (error 'application-client-unavailable :reason "Shell logs require byte windows."))
   (let* ((offset   (application-client-resource--integer
@@ -65,8 +65,6 @@
          (metadata (shell-log-resource-metadata resource))
          (capture  (shell-log-resource--capture resource))
          (file     (getf capture :file)))
-    (unless (shell-log--authorized-p metadata context)
-      (error 'resource-access-denied :uri (resource-uri resource) :operation ':read))
     (when (or (member (getf metadata :state) '(:missing :pruned)) (null file))
       (error 'application-client-unavailable :reason "Shell log capture is unavailable."))
     (unless (shell-log--capture-file-p file)
@@ -88,7 +86,7 @@
     (application string &key (:start-line (option integer)) (:line-count (option integer))
                              (:byte-offset (option integer)) (:byte-count (option integer))) list)
 (defun application-client-resource (application uri &key start-line line-count byte-offset byte-count)
-  "Return bounded structured content after ordinary resource ownership checks."
+  "Return bounded structured content for the requested URI."
   (let ((context (application-tool-context application)))
     (unless (and (stringp uri) (plusp (length uri)))
       (error 'application-client-unavailable :reason "Resource URI must be a nonempty string."))
@@ -96,9 +94,11 @@
       (declare (ignore identifier))
       (unless (member scheme '("workspace" "shell-log") :test #'string=)
         (error 'application-client-unavailable :reason "Resource reads support workspace and shell-log URIs."))
-      (application-client-resource--read
-       (resource-registry-resolve
-        (tool-registry-resource-registry (tool-context-registry context)) uri context)
-       context
-       (list :start-line start-line :line-count line-count
-             :byte-offset byte-offset :byte-count byte-count)))))
+      (let ((registry (tool-registry-resource-registry (tool-context-registry context))))
+        (application-client-resource--read
+         (if (string= scheme "shell-log")
+             (cl-resources:resource-registry-resolve registry uri context)
+             (resource-registry-resolve registry uri context))
+         context
+         (list :start-line start-line :line-count line-count
+               :byte-offset byte-offset :byte-count byte-count))))))

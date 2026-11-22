@@ -979,9 +979,9 @@ Absolute native paths and scheme-less relative paths resolve as workspace:PATH."
              (t
                uri)))
          (registry (resource-tool-resource-registry tool)))
-    ;; Channel reads do not consult the scheme or child authority policy.
+    ;; Channel history and exact shell-log reads do not consult scheme or child authority policy.
     (if (and (typep tool 'resource-read-tool)
-             (string= (resource-uri-parse identity) "channel"))
+             (member (resource-uri-parse identity) '("channel" "shell-log") :test #'string=))
         (cl-resources:resource-registry-resolve registry identity context)
         (resource-registry-resolve registry identity context))))
 

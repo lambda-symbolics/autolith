@@ -567,9 +567,9 @@ validated value comes back as portable data.
 | =none=         | Pure inference over the supplied views. Default.                                                                     |
 | =read=         | Restricted agent turn with =resource.read=, =search.files=, =search.glob=, =search.content=, and nested =rlm.infer= / =rlm.map=. |
 
-=resource.read= inside a read frame accepts =workspace:= and =channel:=
-URIs. Nested =rlm.infer= and =rlm.map= calls accept only =workspace:= URIs
-in their views.
+=resource.read= inside a read frame accepts =workspace:=, =channel:=, and
+exact =shell-log:= references. Nested =rlm.infer= and =rlm.map= calls accept
+only =workspace:= URIs in their views.
 
 | Allowance | Meaning                                                                     |
 |-----------+-----------------------------------------------------------------------------|

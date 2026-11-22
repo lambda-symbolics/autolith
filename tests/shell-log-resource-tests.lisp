@@ -121,27 +121,31 @@
         (task-orchestrator-close orchestrator))))
   nil)
 
-(-> shell-log-tests--descendant-authority () null)
-(defun shell-log-tests--descendant-authority ()
-  "Dispatch bounded log reads as a child and distinguish ownership refusal from approval."
+(-> shell-log-tests--reference-handoff () null)
+(defun shell-log-tests--reference-handoff ()
+  "Share one exact retained reference across task and session boundaries."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
-           (context                        (shell-log-tests--context configuration "shell-descendants"))
-           (foreign                        (shell-log-tests--context configuration "shell-foreign"))
            (orchestrator                   (task-orchestrator-create))
            (definition                     (task-agent-definition-create
                                             :name "reader" :description "Read retained output."
                                             :instructions "Read the capture." :tools '("resource.read")))
            (job                            (task-tests--make-job orchestrator :identifier "current-child"
                                                                   :definition definition
-                                                                  :root-identifier "shell-descendants"))
+                                                                   :root-identifier "shell-receiver"))
+           (producer-job                   (task-tests--make-job orchestrator :identifier "producer-child"
+                                                                   :definition definition
+                                                                   :root-identifier "shell-producer"))
            (registry                       (task-child-tool-registry
                                             (make-default-tool-registry :configuration configuration)
                                             definition :orchestrator orchestrator :depth 1))
            (child                          (task-tests--child-viewer configuration job :registry registry))
+           (producer                       (task-tests--child-viewer configuration producer-job :registry registry))
+           (context                        (make-instance 'tool-context :configuration configuration
+                                                          :agent         producer :worker nil
+                                                          :conversation  (agent-conversation producer)))
            (artifact                       (shell-log-allocate context))
-           (foreign-artifact               (shell-log-allocate foreign))
            (approval-requests              0))
       (flet ((refuse-approval (operation arguments)
                (declare (ignore operation arguments))
@@ -150,8 +154,8 @@
         (let ((observer (callback-agent-observer-create
                          :command-authorization-callback #'refuse-approval
                          :tool-authorization-callback    #'refuse-approval)))
-          (flet ((read-log (capture arguments &key restricted-p)
-                   (setf (gethash "uri" arguments) (shell-log-reference capture))
+          (flet ((read-log (reference arguments &key restricted-p)
+                   (setf (gethash "uri" arguments) reference)
                    (getf (agent--execute-tool-plan
                           child (list :call (json-object "namespace" "resource" "name" "read"
                                                          "arguments" (json-encode arguments)))
@@ -159,31 +163,28 @@
                          :result)))
             (unwind-protect
                  (progn
-                   (shell-log-tests--finish artifact (utf8-string-to-octets "owned descendant"))
-                   (shell-log-tests--finish foreign-artifact (utf8-string-to-octets "foreign output"))
-                   (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
-                         (list (session-job-execution-identifier job)))
-                   (shell-log--write-manifest artifact)
-                   (let ((range (read-log artifact (json-object "byte-offset" 6 "byte-count" 4)))
-                         (query (read-log artifact (json-object "query" "descendant" "max-results" 1))))
+                   (shell-log-tests--finish artifact (utf8-string-to-octets "shared diagnostics"))
+                   (let* ((reference (shell-log-reference artifact))
+                          (range     (read-log reference (json-object "byte-offset" 7 "byte-count" 4)))
+                          (query     (read-log reference (json-object "query" "diagnostics" "max-results" 1))))
                      (test-assert (and (tool-result-success-p range)
-                                       (search (format nil "Content:~%desc") (tool-result-content range)))
-                                  "A child reads a bounded byte window from its descendant's capture")
+                                       (search "returned bytes: 4" (tool-result-content range))
+                                       (search (format nil "Content:~%diag") (tool-result-content range)))
+                                  "A child reads a bounded byte window using a reference shared by another task")
                      (test-assert (and (tool-result-success-p query)
-                                       (search "6: owned descendant" (tool-result-content query)))
-                                  "A child searches its descendant's capture by byte offset"))
-                   (test-assert (eq ':access-denied (tool-result-error-code
-                                                     (read-log artifact (json-object) :restricted-p t)))
-                                "The workspace-only frame restriction excludes shell logs")
-                   (test-assert (eq ':access-denied (tool-result-error-code
-                                                     (read-log foreign-artifact (json-object))))
-                                "A child cannot read a capture from a foreign root session")
-                   (setf (getf (shell-log-artifact-metadata artifact) :owner-execution-ids)
-                         (list "different-sibling-execution"))
-                   (shell-log--write-manifest artifact)
-                   (test-assert (eq ':access-denied (tool-result-error-code
-                                                     (read-log artifact (json-object "query" "owned"))))
-                                "A child cannot search a sibling's capture in the same session")
+                                       (search "7: shared diagnostics" (tool-result-content query)))
+                                  "A child searches the shared reference by byte offset")
+                     (let ((restricted-range (read-log reference (json-object "byte-offset" 7 "byte-count" 4)
+                                                       :restricted-p t))
+                           (restricted-query (read-log reference (json-object "query" "diagnostics" "max-results" 1)
+                                                       :restricted-p t)))
+                       (test-assert (and (tool-result-success-p restricted-range)
+                                         (search (format nil "Content:~%diag")
+                                                 (tool-result-content restricted-range)))
+                                    "An exact shell-log reference can be read in a restricted frame")
+                       (test-assert (and (tool-result-success-p restricted-query)
+                                         (search "7: shared diagnostics" (tool-result-content restricted-query)))
+                                    "An exact shell-log reference can be searched in a restricted frame")))
                    (test-assert (zerop approval-requests) "Log reads do not ask for approval"))
               (task-orchestrator-close orchestrator)))))))
   nil)
@@ -542,18 +543,13 @@
 
 (-> test-shell-log-resource-authority () null)
 (defun test-shell-log-resource-authority ()
-  "Reject cross-session references, traversal and symbolic-link capture substitution."
+  "Allow exact reference handoff while rejecting traversal and symbolic-link substitution."
   (with-test-configuration (configuration root)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 256)
            (owner                          (shell-log-tests--context configuration "shell-authority"))
-           (foreign                        (shell-log-tests--context configuration "shell-foreign"))
            (artifact                       (shell-log-allocate owner)))
       (shell-log-tests--finish artifact (utf8-string-to-octets "private diagnostics"))
-      (test-assert
-       (handler-case (progn (shell-log-tests--resolve artifact foreign) nil)
-         (resource-access-denied () t))
-       "A different root session cannot inspect private captures")
       (dolist (identifier '("shell-authority/../x/output" "shell-authority/x/y/../../output"
                             "shell-authority/x/y/%2e%2e"))
         (test-assert
@@ -582,7 +578,7 @@
                                              owner (json-object)) nil)
              (shell-log-error () t))
            "Capture symlinks are refused before opening foreign bytes")))))
-  (shell-log-tests--descendant-authority)
+  (shell-log-tests--reference-handoff)
   nil)
 
 (-> test-shell-log-reopen-and-pruning () null)

@@ -21,58 +21,31 @@
   (:documentation "A read-only private raw capture with bounded text rendering."))
 
 (defclass shell-log-resolver (resource-resolver) ()
-  (:documentation "Resolve opaque shell capture identities under session ownership."))
-
-(-> shell-log--authorized-p (list tool-context) boolean)
-(defun shell-log--authorized-p (metadata context)
-  "Allow the primary session, or a child inspecting its own execution and descendants.
-A descendant cannot inspect its ancestor's or a sibling's captures."
-  (let* ((agent     (tool-context-agent context))
-         (root      (if agent (task-parent-root-conversation-identifier agent)
-                        (conversation-identifier (tool-context-conversation context))))
-         (child-job (and (typep agent 'task-child-agent) (task-child-agent-job agent)))
-         (execution (and child-job (session-job-execution-identifier child-job))))
-    (and (equal root (getf metadata :root-conversation))
-         (or (null execution)
-             (equal execution (getf metadata :execution-id))
-             (member execution (getf metadata :owner-execution-ids) :test #'equal))
-         t)))
+  (:documentation "Resolve exact references to retained shell captures."))
 
 (defmethod resource-resolver-child-safe-p ((resolver shell-log-resolver) context)
-  "Allow child resolution because each reference is checked against durable ownership."
+  "Allow child agents to read exact retained references."
   (declare (ignore resolver context))
   t)
 
 (defmethod resource-resolver-read-documentation ((resolver shell-log-resolver))
   "Document shell-log: reads."
   (declare (ignore resolver))
-  "shell-log: reads execution-owned retained raw output as bounded UTF-8 text: use byte-offset/byte-count for ranges, or query with byte-offset/max-results for paginated literal search. Logs are authorized by session and task ownership; a missing or pruned artifact returns a diagnostic. Reads never load an entire log into conversation or context storage.")
+  "shell-log: reads retained raw output as bounded UTF-8 text: use byte-offset/byte-count for ranges, or query with byte-offset/max-results for paginated literal search. Share the exact reference with another agent to let it read without approval. A missing or pruned artifact returns a diagnostic. Reads never load an entire log into conversation or context storage.")
 
 (defmethod resource-resolver-resolve
     ((resolver shell-log-resolver) identifier (context tool-context))
-  "Resolve opaque identity segments, refusing traversal and foreign sessions first."
+  "Resolve exact capture identity segments within managed storage."
   (let* ((uri           (format nil "~A:~A" (resource-resolver-scheme resolver) identifier))
          (parts         (uiop:split-string identifier :separator "/"))
          (configuration (tool-context-configuration context)))
     (unless (and (= (length parts) 4) (every #'shell-log--component-p parts)
                  (member (fourth parts) '("output" "error") :test #'string=))
-      ;; The shape is public, so naming it discloses nothing about other logs.
       (error 'tool-error
              :message   (format nil "Malformed shell-log URI ~A; use shell-log:ROOT/EXECUTION/ARTIFACT/output or .../error exactly as shell.run reported it."
                                 uri)
              :tool-name "resource.read"))
     (destructuring-bind (root execution artifact stream) parts
-      ;; Check the root before inspecting even the existence of a foreign manifest.
-      (unless (shell-log--authorized-p (list :root-conversation  root
-                                            :execution-id        execution
-                                            :owner-execution-ids (list execution)) context)
-        ;; Descendant ownership needs the private manifest; only same-root callers
-        ;; may proceed to that check.
-        (let* ((agent       (tool-context-agent context))
-               (viewer-root (if agent (task-parent-root-conversation-identifier agent)
-                                (conversation-identifier (tool-context-conversation context)))))
-          (unless (equal root viewer-root)
-            (error 'resource-access-denied :uri uri :operation ':read))))
       (with-shell-log-lock (configuration)
         (let* ((directory     (merge-pathnames
                                (format nil "~A/shell-log/~A/" execution artifact)
@@ -87,8 +60,7 @@ A descendant cannot inspect its ancestor's or a sibling's captures."
                              :artifact-id artifact :state ':missing)))))
           (unless (and (equal root (getf metadata :root-conversation))
                        (equal execution (getf metadata :execution-id))
-                       (equal artifact (getf metadata :artifact-id))
-                       (shell-log--authorized-p metadata context))
+                       (equal artifact (getf metadata :artifact-id)))
             (error 'resource-access-denied :uri uri :operation ':read))
           (unless (eq (getf metadata :state) ':missing)
             (setf metadata (shell-log--read-manifest configuration directory)))
@@ -97,7 +69,7 @@ A descendant cannot inspect its ancestor's or a sibling's captures."
                          :stream   (if (string= stream "output") ':output ':error)))))))
 
 (defmethod resource-capabilities ((resource shell-log-resource) (context tool-context))
-  "Expose only authorized bounded reads."
+  "Expose only bounded reads."
   (declare (ignore resource context))
   '(:read))
 
@@ -196,8 +168,6 @@ The next offset resumes without skipping matches spanning the scan boundary."
                                                      :maximum                         *shell-log-resource-maximum-results*))
          (query         (tool-argument arguments "query"))
          (file          (getf capture :file)))
-    (unless (shell-log--authorized-p metadata context)
-      (error 'resource-access-denied :uri (resource-uri resource) :operation ':read))
     (when (or (member (getf metadata :state) '(:missing :pruned)) (null file))
       (return-from resource-tool-read
         (tool-success (format nil "URI: ~A~%Shell log unavailable: ~A.~%Capture status: ~A"

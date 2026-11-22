@@ -451,7 +451,7 @@ Prefix these suffixes with =_autolith/=. Catalog operations expose admission and
 availability; tools use their native decoders and ACP approval callbacks.
 Terminal-only operations return an explicit unsupported outcome. Workspace resource
 windows use =startLine= and =lineCount= and include the observed revision. Shell-log
-windows use =byteOffset= and =byteCount= and require session ownership.
+windows use =byteOffset= and =byteCount= with the exact retained reference.
 
 For a command, send =arguments= as a JSON array in Lisp argument order. For
 example, =(settings :turn-timestamps-p t)= takes
@@ -3338,8 +3338,8 @@ Read a reference with =resource.read= using zero-based =byte-offset= and
 search, optionally =max-results= and =byte-offset=. Continue with the returned
 next offset. Each search scans at most 1 MiB and returns at most 20 excerpts.
 Text rendering replaces invalid UTF-8; the retained files contain the original
-bytes. Access follows the owning conversation and ordinary task-descendant
-inspection authority.
+bytes. An agent can share an exact reference with another agent for range reads
+and searches without approval, including across tasks or sessions.
 
 References are included in job inspection, durable tool-result metadata and
 completion notices. Reopen them after restart or compaction without executing

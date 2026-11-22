@@ -70,7 +70,7 @@
 
 (-> test-acp-extension-resource-authorization () null)
 (defun test-acp-extension-resource-authorization ()
-  "Check owned raw log reads, byte defaults, end offsets and foreign ownership."
+  "Check shared shell-log references, byte defaults and end offsets."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
      configuration
@@ -123,12 +123,14 @@
            (lambda () (acp-extension-value
                        (apply #'application-client-resource (acp-session-test--application session)
                               (acp-extension--arguments :resource arguments)))) 'application-client-unavailable))
-         (acp-extension-resource-test--reject
-          (lambda () (acp-extension-value
-                      (apply #'application-client-resource (acp-session-test--application session)
-                             (acp-extension--arguments :resource
-                              (agentcomms:json-object "uri" "shell-log:foreign/execution/artifact/output")))))
-          'resource-access-denied)
+          (let* ((recipient (agentcomms:client-new-session client (namestring root)))
+                 (other     (acp-service--session service recipient))
+                 (result    (acp-extension-value
+                             (apply #'application-client-resource (acp-session-test--application other)
+                                    (acp-extension--arguments :resource
+                                     (agentcomms:json-object "uri" uri "byteOffset" 2 "byteCount" 3))))))
+            (test-assert (equal "cde" (gethash "content" result))
+                         "A second session reads bounded bytes by the exact shared reference"))
          (acp-extension-resource-test--reject
           (lambda () (acp-extension-value
                       (apply #'application-client-resource (acp-session-test--application session)
