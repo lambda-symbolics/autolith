@@ -24,9 +24,9 @@
   (format t "~&~A~A~%" (bootstrap-style "2" "│ ") text)
   (finish-output))
 
-(defun bootstrap-done (text)
-  "Print the green bootstrap completion TEXT."
-  (format t "~&~%~A~%" (bootstrap-style "32" text))
+(defun bootstrap-done ()
+  "Mark successful completion of the whole bootstrap."
+  (format t "~&~%~A~%" (bootstrap-style "32" "Done."))
   (finish-output))
 
 (defclass bootstrap-rail-stream (sb-gray:fundamental-character-output-stream)
@@ -88,8 +88,8 @@ progress redraws collapse into their final text instead of stacking."))
   "Call FUNCTION with its standard output railed under the current section.
 
 The rebinding is thread-local, so this suits single-threaded in-process
-loads; run threaded or subprocess-spawning work through
-BOOTSTRAP-RUN-RAILED, whose pipe captures every writer."
+loads; run subprocess-spawning work through BOOTSTRAP-RUN-SCRIPT, whose
+pipe captures every writer."
   (let ((rail (make-instance 'bootstrap-rail-stream
                              :target *standard-output*)))
     (unwind-protect
@@ -108,21 +108,53 @@ BOOTSTRAP-RUN-RAILED, whose pipe captures every writer."
                  :from-end t)
         "")))
 
-(defun bootstrap-run-railed (command)
-  "Run COMMAND with output under the section rail; signal an error on nonzero exit.
-The output pipe also captures threads and grandchild processes."
-  (let* ((process (uiop:launch-program command
-                                       :input        nil
-                                       :output       ':stream
-                                       :error-output ':output))
-         (output  (uiop:process-info-output process)))
-    (loop for line = (read-line output nil nil)
-          while line
-          do (bootstrap-note (bootstrap-clean-line line)))
-    (let ((status (uiop:wait-process process)))
-      (unless (zerop status)
-        (error "Bootstrap subprocess ~{~A~^ ~} failed with status ~D."
-               command status)))))
+(defun bootstrap-stream-railed (stream)
+  "Show merged Lisp output without mistaking cl-jpeg's status for completion."
+  (loop with optimizing-p = nil
+        for line = (read-line stream nil)
+        while line
+        do (let ((text (bootstrap-clean-line line)))
+             (cond
+               ((string= text "Performing compile-time optimization.. please wait.")
+                (setf optimizing-p t)
+                (bootstrap-note "Optimizing the JPEG dependency"))
+               ((and optimizing-p (string= text "Done."))
+                (setf optimizing-p nil)
+                (bootstrap-note "JPEG optimization finished"))
+               (t
+                (bootstrap-note text))))))
+
+(defun bootstrap-run-script (command &key (railed-p t) (attempts 1))
+  "Stream COMMAND's merged output and exit with its status if all ATTEMPTS fail.
+
+Unrailed output is copied as written so that native tools can redraw progress."
+  (loop for attempt from 1 to attempts
+        for status =
+          (let ((process (uiop:launch-program command
+                                              :input        nil
+                                              :output       ':stream
+                                              :error-output ':output)))
+            (with-open-stream (output (uiop:process-info-output process))
+              (if railed-p
+                  (bootstrap-stream-railed output)
+                  (loop for character = (read-char output nil)
+                        while character
+                        do (write-char character)
+                        when (member character '(#\Newline #\Return))
+                          do (finish-output))))
+            (finish-output)
+            (uiop:wait-process process))
+        when (zerop status)
+          do (return)
+        do (let ((message (format nil "~A failed with exit status ~D."
+                                   (file-namestring (pathname (third command))) status)))
+             (if (< attempt attempts)
+                 (bootstrap-note (format nil "~A Retrying (~D of ~D)."
+                                         message (1+ attempt) attempts))
+                 (progn
+                   (format *error-output* "~&~A~%" message)
+                   (finish-output *error-output*)
+                   (uiop:quit status))))))
 
 
 ;;;; -- Bootstrap Steps --
@@ -132,6 +164,11 @@ The output pipe also captures threads and grandchild processes."
        (source-root      (uiop:pathname-parent-directory-pathname script-directory))
        (version-pathname (merge-pathnames "sbcl-minimum.version" source-root))
        (sbcl-command     (or (uiop:getenv "AUTOLITH_SBCL") "sbcl"))
+       (script-command   (lambda (name &rest arguments)
+                           (list* sbcl-command "--script"
+                                  (uiop:native-namestring
+                                   (merge-pathnames name script-directory))
+                                  arguments)))
        (quicklisp-setup  (merge-pathnames "quicklisp/setup.lisp"
                                           (user-homedir-pathname))))
   (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
@@ -143,21 +180,7 @@ The output pipe also captures threads and grandchild processes."
   (bootstrap-note (format nil "Source ~A" (namestring source-root)))
   (uiop:with-current-directory (source-root)
     (bootstrap-section "Materializing locked Lisp dependencies")
-    (loop for attempt from 1 to 3
-          do (handler-case
-                 (progn
-                   (bootstrap-run-railed
-                    (list sbcl-command
-                          "--script"
-                          (namestring (merge-pathnames "script/qlot-install.lisp"
-                                                       source-root))))
-                   (return))
-               (error (condition)
-                 (when (= attempt 3)
-                   (error condition))
-                 (bootstrap-note
-                  (format nil "qlot install failed (~A); retrying."
-                          condition)))))
+    (bootstrap-run-script (funcall script-command "qlot-install.lisp") :attempts 3)
     (bootstrap-section "Loading bootstrap dependencies")
     (bootstrap-call-railed
      (lambda ()
@@ -175,26 +198,20 @@ The output pipe also captures threads and grandchild processes."
     (bootstrap-call-railed
      (lambda ()
        (load (merge-pathnames "script/build-sandbox.lisp" source-root))))
-    (bootstrap-section "Building the private fff search library")
-    (bootstrap-call-railed
-     (lambda ()
-       (load (merge-pathnames "script/build-fff.lisp" source-root))))
-    (bootstrap-section "Building the private ColorLisp syntax library")
+    (bootstrap-section "Preparing the private fff search library")
+    (bootstrap-run-script
+     (funcall script-command "build-fff.lisp" "--artifact"
+              (uiop:native-namestring
+               (merge-pathnames "source/artifact.lisp"
+                                (asdf:system-source-directory "clifff"))))
+     :railed-p nil)
+    (bootstrap-section "Preparing the private ColorLisp syntax library")
     (bootstrap-call-railed
      (lambda ()
        (asdf:load-system :colorlisp)
        (uiop:symbol-call '#:colorlisp '#:native-library-path)))
     (bootstrap-section "Building the pristine recovery image")
-    (bootstrap-run-railed
-     (list sbcl-command
-           "--script"
-           (namestring (merge-pathnames "script/build-recovery.lisp"
-                                        source-root))))
+    (bootstrap-run-script (funcall script-command "build-recovery.lisp"))
     (bootstrap-section "Building the fast startup image")
-    (bootstrap-run-railed
-     (list sbcl-command
-           "--script"
-           (namestring (merge-pathnames "script/build-active.lisp"
-                                        source-root))))
-    (bootstrap-done
-     "Autolith dependencies, private native libraries, recovery image, and fast startup image are installed.")))
+    (bootstrap-run-script (funcall script-command "build-active.lisp"))
+    (bootstrap-done)))

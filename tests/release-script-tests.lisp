@@ -629,7 +629,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 
 (-> release-script-tests--bootstrap-dependency-order (pathname pathname) null)
 (defun release-script-tests--bootstrap-dependency-order (source-root root)
-  "Exercise project dependency setup before bootstrap CFFI loading."
+  "Exercise bootstrap dependency order, subprocess output, and completion."
   (let* ((fixture             (merge-pathnames "bootstrap-dependency-order/" root))
          (script-directory    (merge-pathnames "script/" fixture))
          (home                (merge-pathnames "home/" fixture))
@@ -730,10 +730,25 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
   nil)
 ")
     (release-script-tests--write-file
+     (merge-pathnames "clifff.asd" fixture) "(asdf:defsystem #:clifff)")
+    (release-script-tests--write-file
      fake-sbcl
      "#!/bin/sh
 set -eu
 printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
+case \"$2\" in
+  */build-fff.lisp)
+    printf 'fixture git fetching\\n'
+    printf 'fixture cargo warning\\n' >&2
+    exit \"${AUTOLITH_TEST_FFF_STATUS:?}\"
+    ;;
+  */build-active.lisp)
+    printf 'Performing compile-time optimization.. please wait.\\n'
+    printf 'fixture compiler warning\\n' >&2
+    printf 'Done.\\n'
+    printf 'fixture active image validated\\n'
+    ;;
+esac
 ")
     (release-script-tests--chmod "755" fake-sbcl)
     (release-script-tests--write-file
@@ -741,29 +756,42 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
      (format nil "~A~%" (lisp-implementation-version)))
     (release-script-tests--write-file
      (merge-pathnames "sbcl-minimum.version" fixture) "2.6.4")
-    (multiple-value-bind (output error-output status)
-        (release-script-tests--run
-         (list (lisp-worker-sbcl-command)
-               "--noinform"
-               "--no-sysinit"
-               "--no-userinit"
-               "--disable-debugger"
-               "--script"
-               (namestring bootstrap))
-         :environment
-         (list (format nil "HOME=~A" (namestring home))
-               (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
-               (format nil "XDG_DATA_HOME=~A" (namestring data-home))
-               (format nil "XDG_STATE_HOME=~A" (namestring state-home))
-               (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
-               (format nil "AUTOLITH_TEST_EVENT_LOG=~A"
-                       (namestring event-log))
-               "NO_COLOR=1")
-         :ignore-error-status t)
-      (test-assert
-       (zerop status)
-       (format nil "the bootstrap dependency-order fixture succeeds:~%~A~%~A"
-               output error-output)))
+    (flet ((run-bootstrap (fff-status)
+             (release-script-tests--run
+              (list (lisp-worker-sbcl-command)
+                    "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
+                    "--script" (namestring bootstrap))
+              :environment
+              (list (format nil "HOME=~A" (namestring home))
+                    (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+                    (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                    (format nil "XDG_STATE_HOME=~A" (namestring state-home))
+                    (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                    (format nil "AUTOLITH_TEST_EVENT_LOG=~A" (namestring event-log))
+                    (format nil "AUTOLITH_TEST_FFF_STATUS=~D" fff-status)
+                    "NO_COLOR=1")
+              :ignore-error-status t)))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0)
+        (test-assert
+         (zerop status)
+         (format nil "the bootstrap fixture succeeds:~%~A~%~A" output error-output))
+        (let* ((lines     (uiop:split-string output :separator '(#\Newline)))
+               (git       (position "fixture git fetching" lines :test #'string=))
+               (cargo     (position "fixture cargo warning" lines :test #'string=))
+               (warning   (position "│ fixture compiler warning" lines :test #'string=))
+               (validated (position "│ fixture active image validated" lines :test #'string=))
+               (done      (position "Done." lines :test #'string=)))
+          (test-assert (and git cargo warning validated done (< git cargo warning validated done))
+                       "native streams appear together outside the rail before final validation and completion")
+          (test-assert (not (member "│ Done." lines :test #'string=))
+                       "dependency compilation does not announce bootstrap completion")))
+      (multiple-value-bind (output error-output status) (run-bootstrap 42)
+        (test-assert (= 42 status)
+                     (format nil "the failing native phase preserves exit status: ~A" error-output))
+        (test-assert (and (search "fixture cargo warning" output)
+                          (not (search "fixture active image validated" output))
+                          (not (search "Done." output)))
+                     "failure preserves diagnostics and stops before validation and completion")))
     (let* ((events       (uiop:read-file-string event-log))
            (qlot-install (search "script/qlot-install.lisp" events))
            (locked-setup (search "locked-setup" events))

@@ -59,11 +59,15 @@
   (fff--prepare-darwin-build-environment)
   nil)
 
-(let ((root (uiop:pathname-parent-directory-pathname
-             (uiop:pathname-directory-pathname *load-truename*))))
-  (load (merge-pathnames ".qlot/setup.lisp" root))
-  (load (merge-pathnames "source/artifact.lisp"
-                         (asdf:system-source-directory "clifff"))))
+(destructuring-bind (&optional option artifact &rest ignored) (uiop:command-line-arguments)
+  (declare (ignore ignored))
+  (load (if (equal option "--artifact")
+            (uiop:parse-native-namestring artifact)
+            (let ((root (uiop:pathname-parent-directory-pathname
+                         (uiop:pathname-directory-pathname *load-truename*))))
+              (load (merge-pathnames ".qlot/setup.lisp" root))
+              (merge-pathnames "source/artifact.lisp"
+                               (asdf:system-source-directory "clifff"))))))
 
 (let* ((script-path         (truename *load-truename*))
        (script-directory    (uiop:pathname-directory-pathname script-path))
@@ -82,13 +86,18 @@
          (equal (uiop:getenv "AUTOLITH_BUILD_STATIC_NATIVE") "1"))
        (static-library-name "libfff_c.a")
        (static-library      (merge-pathnames static-library-name install-root)))
-  (labels ((run (command &key directory)
-             "Run one build COMMAND, preserving its output."
-             (uiop:run-program command
-                                 :directory directory
-                                 :input     ':interactive
-                                 :output    ':interactive
-                              :error-output ':interactive)))
+  (labels ((run (command &key directory (output ':interactive))
+             "Run one build COMMAND, keeping diagnostics and the native exit status."
+             (handler-case
+                 (uiop:run-program command
+                                   :directory    directory
+                                   :input        ':interactive
+                                   :output       output
+                                   :error-output ':interactive)
+               (uiop:subprocess-error (condition)
+                 (format *error-output* "~&~A~%" condition)
+                 (finish-output *error-output*)
+                 (uiop:quit (uiop:subprocess-error-code condition))))))
       (if (uiop:symbol-call :clifff              :fff-library-current-p library commit
                              :required-artifacts (when static-build-p (list static-library)))
         (format t "~&The pinned private fff library is already installed at ~A.~%"
@@ -112,9 +121,8 @@
           (let ((actual
                   (string-trim
                    '(#\Space #\Tab #\Newline #\Return)
-                   (uiop:run-program
-                    (list "git" "-C" (namestring checkout) "rev-parse" "HEAD")
-                    :output ':string))))
+                   (run (list "git" "-C" (namestring checkout) "rev-parse" "HEAD")
+                        :output ':string))))
             (unless (string= actual commit)
               (error "Fetched fff commit ~A instead of ~A." actual commit)))
           (format t "~&Building fff's C library. The first build can take several minutes.~%")
