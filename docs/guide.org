@@ -2054,11 +2054,10 @@ Provider preference fields are sent as supplied, including =order=,
 
 ** Commands
 
-Put user commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=, or load
-a user-owned Lisp file from there. Autolith loads those definitions after the
-tracked system on each startup, including after a source update or an installed
-upgrade. Register commands with =define-application-command=, which defines
-Lisp names, aliases, completion, and busy/terminal policy.
+Put commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= or load a
+Lisp file from there. Autolith loads user initialization after tracked code on
+ordinary startup, including after updates. Use =define-application-command= to
+register the command and set its help, completion and dispatch policies.
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
@@ -2075,214 +2074,176 @@ Lisp names, aliases, completion, and busy/terminal policy.
   :continue)
 #+END_SRC
 
-- Callable handlers accept ordinary Lisp lambda lists, including =&key= and
-  supplied-p parameters. Lisp argument values reach the handler directly.
-- Missing interactive arguments open the restart debugger. =supply-arguments=
-  accepts replacement arguments as Lisp values. Excess arguments are rejected
-  before dispatch.
-- Busy behavior is =:inspect=, =:execute=, =:apply=, =:hold=, or =:cancel=.
-  During active work, =:execute= runs immediately, =:apply= applies its
-  change at the turn's next safe provider boundary, and =:hold= waits for
-  the idle queue. Argument-free =:inspect= and =:apply= invocations only
-  display state, so they run immediately.
-- Terminal behavior is =:shared=, =:exclusive=, or
-  =:exclusive-without-arguments=. It declares which invocations open a modal
-  picker. A modal picker requires exclusive terminal input when open.
-  Commands with =:execute= policy may open their pickers during inference;
-  modal state mutations with =:inspect= or =:apply= policy wait for idle.
-  Channel navigation, messaging, movement and dismissal run immediately.
-  Movement and dismissal stop the affected agent at its safe boundary;
-  work in an unrelated channel need not finish first.
-  The responsive reader continues animating until the picker opens.
-- =:static-options= replaces =:argument= for one finite positional parameter.
-  Supply native strings, keywords, or booleans to derive the help hint and
-  completions. Use =(t nil)= for boolean controls.
+- *Arguments:* Callable handlers take ordinary Lisp lambda lists, including
+  =&key= and supplied-p parameters. Missing interactive arguments open the
+  restart debugger. Use =supply-arguments= to pass replacement Lisp values.
+  Autolith rejects excess arguments before dispatch.
+- *Busy behavior:* Choose =:inspect=, =:execute=, =:apply=, =:hold= or =:cancel=.
+  Use =:execute= to run immediately, =:apply= to change state at the next safe
+  provider boundary, or =:hold= to wait for idle. Argument-free =:inspect= and
+  =:apply= invocations can show state immediately.
+- *Terminal behavior:* Choose =:shared=, =:exclusive= or
+  =:exclusive-without-arguments= to specify which calls need exclusive input.
+  A modal picker that changes state under =:inspect= or =:apply= waits for
+  idle. A picker under =:execute= can open during inference.
+- *Fixed options:* Use =:static-options= instead of =:argument= for one
+  positional choice. Supply strings, keywords or =(t nil)= for a boolean
+  choice. Autolith uses these values in help and completion.
 
 ** Live definitions
 
-Use =self.define= to add or replace loaded Lisp definitions, including
-functions and methods outside the Autolith package. Qualify the target symbol
-in the source, or supply the =package= argument to select its reader package.
-Use qualified symbols with =self.set= for foreign global bindings.
+Use =self.define= to add or replace a loaded Lisp definition. Qualify the
+symbol or set =package= to choose the reader package. Use qualified symbols
+with =self.set= when changing global bindings in other packages. Autolith
+restores package locks after installation, discard or replay.
 
-=self.eval= runs its forms in the active image, which in a world is the
-server's. With =target= set to =client= they run in the attached client's
-image instead: the terminal process that composes the screen and draws the
-sidebar, or a structured client written in Lisp. The controlling terminal is
-asked first, then the structured client attached last. A client says when it
-attaches whether it evaluates, so one in another language is never asked and
-the call fails. Client evaluations are not journaled and do not survive the
-client.
+Use =self.eval= to evaluate in the active image. In a world, that is the server
+image. Set =target= to =client= to evaluate in the controlling terminal or, if
+there is no eligible terminal, the most recently attached eligible structured
+client. The client must advertise Lisp evaluation. Client evaluations are not
+journaled and do not survive the client process.
 
-Installation, discard and replay temporarily unlock the reader and target
-packages, then restore their locks. New definition records include the target's
-owning package separately from the reader package. Replay skips stale definitions
-whose ownership moved to another library. Reapply an old skipped definition to
-record an intentional replacement under its current owner.
+*Tracked source takes precedence.* On startup, Autolith skips a private
+definition if the tracked definition changed, appeared or disappeared, or if
+ownership moved to another library. A startup notice groups skips by reason.
+The next =self.commit= omits skipped definitions. For older commits without
+this metadata, tracked overrides replay only on the source revision used to
+publish the lineage.
 
-Tracked source takes precedence over private replay. Each published definition
-records the tracked source it shadowed, or records that it introduced a new name.
-Startup replay skips a definition if its tracked definition changed, was removed,
-or appeared since publication. One startup notice lists every skip, grouped by
-reason. Skipped definitions are left out of the next =self.commit=.
-
-For commits published before this record was introduced, tracked overrides replay
-only while the image runs the source revision used to publish the lineage.
-
-To restore a skipped definition, reapply it against the current source. Or use
-=(fix-skipped-definitions)= to give the model every skipped definition, along
-with its persisted source, the tracked source it was written against, and the
-current tracked source. Supply an optional comment to say which overrides to
-retain or drop:
+Reapply a skipped definition against the current source to keep it. Or run
+=(fix-skipped-definitions)= to give the model the private, old tracked and
+current tracked versions. By default it rebuilds overrides that are still
+needed and publishes the result with =self.commit=. An optional comment takes
+precedence over that policy. If a turn is active, the command waits for idle.
 
 #+BEGIN_SRC lisp
 (fix-skipped-definitions "Drop all of these. They were temporary development experiments.")
 #+END_SRC
 
-The comment takes precedence over the default repair policy. By default, the
-model rebuilds each override on the current source with =self.define= and
-drops any the tracked source already covers. It publishes the result with
-=self.commit=, including when all skipped overrides are dropped. During an
-active turn, the command waits in the idle queue.
-
 ** Refinement
 
-Inspect recorded refinement proposals with =(refine)=. To record a local
-task-level assessment before promotion:
+Use =(refine)= to inspect proposals. Record a local task assessment before
+promotion:
 
 #+BEGIN_SRC lisp
 (refine :assess "PROPOSAL-ID" :revision 3 :verdict :passed
         :evidence "Evidence from a separate task")
 #+END_SRC
 
-Promotion proceeds from session to project to global scope, with renewed evaluation
-at each scope and an owner-state guard against intervening changes. Recover an
-interrupted operation explicitly using recorded evidence; replay never repeats its
-effects automatically.
+Promote from session to project to global scope. Each step requires renewed
+evaluation and checks for intervening owner changes. If an operation was
+interrupted, use the recorded evidence to recover it explicitly. Replay does
+not repeat the operation.
 
 ** Executable Skills
 
-Use =skill.load= with an exact catalog name to select prose instructions for the
-logical turn. The catalog shows at most 200 characters of a description, and
-fewer when many skills share its budget; a shortened description ends in
-=...=, and =resource.read= of =skill:NAME= returns the whole one. To publish
-executable behavior, put a bounded data-only
-=EXECUTABLE.sexp= beside =SKILL.md= or =SKILL.sexp=. Declare the Skill and ASDF
-system versions, entrypoint, input/output contracts, capabilities and exact host
-tool names. An executable manifest has this shape:
+Use =skill.load= with the exact catalog name to load instructions for the
+current turn. Use =resource.read= on =skill:NAME= if you need the full catalog
+description.
 
-#+BEGIN_SRC lisp
-(:skill-executable :format-version 1 :skill-version "1.0.0"
- :system "my-workflow" :system-version "1.0.0"
- :entrypoint ("MY-WORKFLOW" "RUN")
- :self-test ("MY-WORKFLOW" "SELF-TEST")
- :verify ("MY-WORKFLOW" "VERIFY")
- :capabilities ("workspace-read") :tools ("resource.read")
- :input (:type :object) :output (:type :object))
-#+END_SRC
+1. Put a data-only =EXECUTABLE.sexp= beside =SKILL.md= or =SKILL.sexp=.
+   Declare the Skill and ASDF system versions, entrypoint, contracts,
+   capabilities and exact host tool names.
 
-The invocation function accepts =input &key context=; self-test and verification
-functions accept =&key context=. Input and output use the native portable JSON
-representation, such as =(:object ("status" "ready"))=. Install the declared
-ASDF system in the worker environment, or supply its authorized =asd= pathname.
-Call =skill.invoke= with =name= and contract-valid =input=:
+   #+BEGIN_SRC lisp
+   (:skill-executable :format-version 1 :skill-version "1.0.0"
+    :system "my-workflow" :system-version "1.0.0"
+    :entrypoint ("MY-WORKFLOW" "RUN")
+    :self-test ("MY-WORKFLOW" "SELF-TEST")
+    :verify ("MY-WORKFLOW" "VERIFY")
+    :capabilities ("workspace-read") :tools ("resource.read")
+    :input (:type :object) :output (:type :object))
+   #+END_SRC
 
-#+BEGIN_SRC json
-{"name":"my-workflow","input":{},
- "asd":".autolith/skills/my-workflow/my-workflow.asd","async":true}
-#+END_SRC
+2. Define the entrypoint with =input &key context=. Use =&key context= for
+   self-test and verification functions. Use portable JSON values such as
+   =(:object ("status" "ready"))= for input and output.
+3. Install the ASDF system in the worker environment or pass an authorized
+   =asd= pathname. Call =skill.invoke= with contract-valid =input=:
 
-Use =skill.verify= with =name= to run the self-test; set =entrypoint= to =verify=
-for the verification function. Each operation requires ordinary explicit
-full-access code authorization and runs in a fresh disposable worker. Capabilities
-are declarations for admission; only declared exact host tools allowed by the
-originating agent policy enter the callback bridge. Source and sidecar identity
-and the complete manifest are rechecked before loading executable code; declared
-ASDF versions are checked during authorized system resolution.
+   #+BEGIN_SRC json
+   {"name":"my-workflow","input":{},
+    "asd":".autolith/skills/my-workflow/my-workflow.asd","async":true}
+   #+END_SRC
 
-Invocation output is contract-validated and retained with its executable identity
-as native execution evidence. Result publication is bounded to 1 MiB and read as
-one data-only form after stopping the worker. Use =async: true= for managed jobs;
-completion policy applies as described below. Inspect full results with =job.get=
-or deliberately await them with =job.wait=. Mission accounting and ordinary
-execution supervision apply to workflows and their callbacks.
+Use =skill.verify= with =name= to run the self-test. Set =entrypoint= to
+=verify= to run the verification function instead. Both tools require
+explicit full-access code authorization and run in a fresh worker. A worker
+can call only the declared host tools that the originating agent may use.
+Autolith rechecks source, manifest and ASDF version before execution.
+
+Use =async: true= for a managed job. Autolith validates the result against the
+output contract and retains up to 1 MiB of data with the executable identity.
 
 ** Local text redaction
 
-Call =(redact text)= in the user REPL, or =autolith:redact= from =lisp.eval=
-and Lisp scratchpads, to use the local censorship model:
+Use =(redact text)= in the user REPL. From =lisp.eval= or a scratchpad, use
+=autolith:redact=.
 
 #+BEGIN_SRC lisp
 (redact "Alice Smith lives in Amsterdam.")
 (redact text :language "en")
 #+END_SRC
 
-Read two return values: the complete redacted string and =:ok=, or =nil= and
-a failure status. Long prose is processed in bounded pieces. A failed piece,
-an overlong unbroken token, or saturated native output rejects the whole result.
-Inference runs locally without telemetry consent or network access. Review the
-result before sharing it; model redaction is not a guarantee of anonymity.
+Read both return values: the redacted string and =:ok= on success, or =nil=
+and a failure status. Autolith processes long prose in pieces. If any piece
+fails, you get no partial result. Inference runs locally. /Review the result/
+before sharing it because model redaction does not guarantee anonymity.
 
-Packaged installations use the bundled model and ONNX Runtime. For a source
-installation, set =AUTOLITH_DEFINGERPRINTER_LIBRARY= to the absolute native
-library path and pass both =:model-directory= and =:runtime-library= as absolute
-paths when the library has no packaged defaults.
+Packaged installations include the model and ONNX Runtime. For source
+installations without packaged defaults, set =AUTOLITH_DEFINGERPRINTER_LIBRARY=
+to the absolute native library path. Pass absolute paths for
+=:model-directory= and =:runtime-library=.
 
 ** Worker tool calls
 
-Supply =host-tools=, an array of exact tool names, to =lisp.eval= or
-=lisp.scratchpad-run= for an explicitly authorized workflow request. Inside that
-request, call:
+Pass exact tool names in =host-tools= to =lisp.eval= or
+=lisp.scratchpad-run=. Inside the worker, call:
 
 #+BEGIN_SRC lisp
 (autolith:worker-tool-call "resource.read" "{\"uri\":\"workspace:src/main.lisp\"}")
 (autolith:worker-tool-context)
 #+END_SRC
 
-Read =:success-p=, =:content=, =:code= and =:details= from the returned result.
-The host dispatch retains the originating conversation, callbacks, capability
-policy, mission context and job lineage. Requests and results are bounded and
-correlated in the conversation audit. Sequential callbacks are supported; choose
-a different REPL for nested worker operations. Omit =host-tools= for ordinary
-worker execution.
+Read =:success-p=, =:content=, =:code= and =:details= from the result. The
+originating conversation, permissions and mission admission apply to every
+callback. Use a different REPL for nested worker calls. Omit =host-tools= if
+no callbacks are needed.
 
-For a Lisp-controlled workflow, branch on returned native results and make the
-next authorized call from the same evaluation. For example, pass these arguments
-to =lisp.eval=:
+For example, pass these arguments to =lisp.eval= to return the content on
+success and the error code on failure:
 
 #+BEGIN_SRC json
 {"host-tools":["resource.read"],
  "forms":["(let ((result (autolith:worker-tool-call \"resource.read\" \"{\\\"uri\\\":\\\"workspace:README.org\\\"}\"))) (if (getf result :success-p) (getf result :content) (getf result :code)))"]}
 #+END_SRC
 
-Host calls pass through ordinary registry authorization with the captured
-mission admission, including its absence. An interrupted callback is recorded as
-=unknown-outcome= in the audit. Inspect effects before repeating a mutating call.
+An interrupted callback is recorded as =unknown-outcome=. Inspect the effects
+before repeating a call that can change state.
 
 ** Structural code edits
 
-Load the optional =autolith/structural= system and configure an =ast-grep=
-executable before creating the tool registry:
+Load the optional system and configure =ast-grep= before creating the registry:
 
 #+BEGIN_SRC lisp
 (asdf:load-system "autolith/structural")
 (setf autolith:*structural-program* "/path/to/ast-grep")
 #+END_SRC
 
-Use =structural.query= with an observed workspace URI and revision. Use
-=structural.rewrite= to retain a complete preview, inspect the proposal, then
-publish with =structural.apply=. Executable and file access require ordinary
-command authorization. Proposals are conversation-owned, bounded and single-use;
-publication uses the same stale-revision checks as resource edits.
+1. Call =structural.query= with a workspace URI and revision you have read.
+2. Call =structural.rewrite= and inspect the preview.
+3. Publish with =structural.apply=. Proposals are single-use, owned by the
+   conversation and subject to the same revision checks as resource edits.
 
-For an existing registry, call =structural-register-tools= explicitly with
-=:program=. Run the optional checks with =CLASTED_AST_GREP= set to the backend
-path and =(asdf:test-system "autolith/structural/tests")=.
+For an existing registry, call =structural-register-tools= with =:program=.
+Ordinary executable and file authorization apply. To test the backend, set
+=CLASTED_AST_GREP= to the backend path and run
+=(asdf:test-system "autolith/structural/tests")=.
 
 ** Debug adapter sessions
 
-Load =autolith/debug= before creating a registry. Configure an adapter in user
-initialization, or pass an explicit adapter to =debug.launch= / =debug.attach=:
+Load =autolith/debug= before creating the registry. Configure an adapter in
+user initialization or pass it directly to =debug.launch= or =debug.attach=:
 
 #+BEGIN_SRC lisp
 (asdf:load-system "autolith/debug")
@@ -2291,48 +2252,34 @@ initialization, or pass an explicit adapter to =debug.launch= / =debug.attach=:
 #+END_SRC
 
 For an existing registry, call =debug-register-tools= with =:program= and
-literal =:arguments=. Loading the system starts no adapter. Adapter execution,
-launch, attach and expression evaluation require exact full-access command
-approval. Authorize source and program paths through ordinary path permissions.
+literal =:arguments=. Adapter execution, launch, attach and evaluation require
+exact full-access command approval. Authorize source and program paths as
+usual.
 
-Use the returned session ID for =debug.breakpoints=, =debug.continue=,
-=debug.pause=, =debug.step=, =debug.threads=, =debug.stack=, =debug.scopes=,
-=debug.variables= and =debug.evaluate=. Inspect bounded queued events with
-=debug.events=, using =count= and =wait-for= as needed. Session IDs belong to
-the originating conversation. Use =debug.cancel= to interrupt an operation,
-and =debug.terminate= to close the session and reap its adapter. Timeouts and
-cancellation close the owned adapter. Run the optional checks with
-=(asdf:test-system "autolith/debug/tests")=.
+Use the returned session ID in the conversation that created it:
+
+- Set breakpoints with =debug.breakpoints= and drive execution with
+  =debug.continue=, =debug.pause= and =debug.step=.
+- Inspect state with =debug.threads=, =debug.stack=, =debug.scopes=,
+  =debug.variables= and =debug.evaluate=. Read queued events with
+  =debug.events= and optionally pass =count= or =wait-for=.
+- Interrupt an operation with =debug.cancel= or end the session with
+  =debug.terminate=. On timeout or cancellation, Autolith closes the adapter.
+
+Run the optional checks with =(asdf:test-system "autolith/debug/tests")=.
 
 ** Child roles
 
-Roles load from these directories. First match wins:
+Autolith looks for roles in this order:
 
-- =.autolith/agents/=
-- =${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=
-- =<site-config-root>/agents/=
-- bundled roles
+1. =.autolith/agents/=
+2. =${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=
+3. =<site-config-root>/agents/=
+4. Bundled roles.
 
-A higher-precedence malformed role is reported, not silently replaced.
-
-A role is one bounded UTF-8 =*.sexp= property list:
-
-- required: =:name=, =:description=, =:instructions=
-- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=
-
-Roles cannot grant =self.*=, =task.*=, or =yield.*=. Grant =job.*= when a role
-needs to inspect, await, or cancel asynchronous work. Children can access only
-their own jobs and descendant jobs, not parent or sibling jobs. This is
-independent of permission to spawn another child.
-
-- =:tools= may be =nil=, =:all=, or canonical tool names and namespace
-  patterns.
-- =:spawns= may be =nil=, =:all=, or role names. Task depth still applies.
-- =:reasoning-effort= names a supported effort. Omitting it or writing
-  =:auto= selects =medium=, so routine delegated work does not inherit the
-  parent's effort. Children never inherit Codex Fast mode.
-
-Example:
+The first match wins. If it is malformed, Autolith reports the error rather
+than looking for another copy. Define a role as one bounded UTF-8 =*.sexp=
+property list:
 
 #+BEGIN_SRC lisp
 (:name             "reviewer"
@@ -2344,239 +2291,173 @@ Example:
  :reasoning-effort :high)
 #+END_SRC
 
-=child.roles= shows effective roles. =child.spawn= starts one task in the
-background. Use =job.wait= when you need a result. =job.get= returns bounded
-output from the child's ordinary final response, with status and cancellation
-details.
+- Require =:name=, =:description= and =:instructions=. The other keys are
+  optional.
+- Use =nil=, =:all= or exact names and namespace patterns for =:tools=. A
+  role cannot grant =self.*=, =task.*= or =yield.*=. Grant =job.*= for job
+  inspection, waiting or cancellation. Children can only access their own
+  jobs and those of their descendants.
+- Use =nil=, =:all= or a list of role names for =:spawns=. The task depth
+  limit still applies.
+- Set =:reasoning-effort= to a supported effort. Omit it or use =:auto= for
+  =medium=. Codex Fast mode is not inherited.
 
-A child keeps its channel, name, role and history after its run. Its parent
-sends it more work through that channel, and =channel:current= lists the
-parent's children, each busy or idle. An agent has at most 32 children.
-=child.rename= renames a child; =child.compact= summarizes an idle child's
-history; =child.remove= deletes an idle child with its channel and its own
-children. Nothing else deletes a child. A child's channel
-serves it in its role, with that role's tools and instructions, whether it
-runs for its parent or someone opens the channel. A session that serves one
-conversation in place refuses to swap in a conversation of another role.
+Use =child.roles= to see effective roles and =child.spawn= to start a task.
+Reuse a child by sending work to its channel. An agent can have up to 32
+children. Read =channel:current= to see which are busy. Use =child.rename=
+to rename one, =child.compact= to summarize an idle child's history, or
+=child.remove= to delete an idle child and its descendants. Opening a child's
+channel uses the same role and tools as a delegated run.
 
-Channel deletion validates the whole selection before changing the world and
-prepares shell-delivery evidence for every task root before deleting storage.
-If subsequent storage cleanup fails, the error names a durable cleanup intent
-under =channel-removals/= in the data directory. Use the =retry-cleanup= restart
-when handling that condition; otherwise cleanup is retried at the next server
-start or channel deletion. Deleted identities cannot be reused or rediscovered
-from leftover histories. Private contexts are removed only for participants the
-world transaction actually deleted, after history and worktree cleanup finishes.
+Channel deletion validates the whole selection first. If storage cleanup
+fails after deletion, use the =retry-cleanup= restart or let the next server
+start or deletion retry the intent in =channel-removals/=. Deleted identities
+cannot be reopened from leftover history.
 
 ** Completion-driven turns
 
-Set =completion-policy= to =continue= (the default) or =notify= on asynchronous
-tools and =child.spawn=. A batch inherits its outer policy unless an item overrides
-it. The policy also applies after the synchronous grace period hands work off.
+Set =completion-policy= on asynchronous tools or =child.spawn=. The same
+policy applies if a synchronous call outlasts the blocking grace period.
+Batch items inherit the outer policy unless they specify their own.
 
-In a primary terminal session, continue independent work while jobs run. When
-only job results are pending, yield the current turn.
+- =continue= is the default. In a primary terminal or ACP session, idle
+  completions in a one-second window share one automatic turn. If a turn is
+  busy, results arrive at the next safe request boundary.
+- With =notify=, results arrive on the next ordinary turn. Interfaces without
+  an input controller also deliver results on ordinary turns.
 
-Results arrive in the exact conversation that owns the work, with a bounded
-summary, the actual outcome and an artifact reference. When the session is idle,
-completions within a one-second window share one automatic turn through the
-ordinary controller. During a busy turn, results arrive at the next safe request
-boundary. With =notify=, they arrive on the next ordinary turn instead.
+Continue independent work while jobs run. Yield the turn if all you need is
+the results. An empty reply shows a yield notice that counts the unfinished
+jobs eligible to wake the conversation. Use =job.get= to inspect a result or
+=job.wait= if you need to wait explicitly.
 
-An empty final reply while eligible jobs run appears as an Autolith yield notice
-with the number of unfinished jobs that can wake this conversation. Replayed
-notices retain the count at the time of yielding; completed jobs and notify-only
-work do not contribute to a new notice.
-
-Automatic continuations for an active goal or mission wait while a job that
-will wake the conversation is queued, running or awaiting result delivery.
-The goal stays active. When the wakeup arrives, the transcript shows
-=· continuing with job results=. The goal's continuations resume after that
-turn.
-
-Delivery receipts survive restart and conversation compaction. Notifications are
-reconstructed from terminal artifacts without repeating job effects. Cancellation,
-paused or terminal missions, spent budgets, and conversation ownership constrain
-automatic turns. Inspect retained results with =job.get= or =job.continuity=.
-
-Outside a child's exact conversation, its outcomes are available only for
-inspection. Completing a child does not reopen it or redirect descendant results
-into the primary context.
-
-ACP sessions also own a completion controller and stream automatic turns to the
-connected client. Interfaces without an input controller deliver results on
-subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate.
+A goal or mission waits for eligible job results before resuming automatic
+continuations. Only the conversation that owns the work gets a wakeup.
+Delivery receipts survive restart and compaction, so a notification can be
+restored without repeating the job. Cancellation, paused or terminal
+missions, and spent budgets can prevent automatic turns.
 
 ** Task inspection and continuity
 
-A running child reads messages to its channel at its next safe boundary. Use
-=(tell "CHILD" "text")= to steer it.
+Use =(tell "CHILD" "text")= to steer a running child at its next safe
+boundary. Use =job.continuity= with =action= set to =list= or =get= to see
+which retained jobs are live, complete, recoverable or need a decision.
+Lists default to 20 records (maximum 100). Pass =offset= to page and read
+=:total=, =:next-offset= and =:more-p= from the result.
 
-Use =job.continuity= with =action= =list= or =get= to classify retained work as
-live detached, completed, reconstructible from a checkpoint, safe to restart,
-abandoned or needing a decision. List pages contain whole records with
-=:total=, =:next-offset= and =:more-p=; =offset= defaults to 0 and =limit= to 20
-(maximum 100). Supply a visible job or durable execution =id= for other actions.
+To recover interrupted work:
 
-The primary owner may declare =allow-restart= with a =safety= rationale and
-=authorize: true=, or declare =checkpoint= with a compatible saved worker
-=image=, target =repl= and the same explicit authority. A safety rationale is
-an assertion about repeating external effects. Revival reattaches live work,
-starts the named REPL from its saved image, or dispatches a new child from a safe
-retained shared-workspace task specification. Use =job.continuity= with
-=revive= or =abandon=, an =id=, and =authorize: true=. The recovery decision is
-durably recorded before dispatch and links the old execution to the new execution.
+1. Inspect the retained job and its effects. Use a visible job ID or durable
+   execution ID in =id=.
+2. To permit a restart, the primary owner calls =allow-restart= with a
+   =safety= rationale about repeating external effects and =authorize: true=.
+   For a saved worker, use =checkpoint= with a compatible =image=, target
+   =repl= and =authorize: true=.
+3. Use =revive= or =abandon= with the ID and =authorize: true=. Revival can
+   reattach live work, start the saved worker or dispatch a new child from a
+   retained safe shared-workspace task specification.
 
-A failed or interrupted revival consumes its claim and records an uncertain
-outcome for explicit inspection. When you resume a conversation, you see this
-inventory for a decision. Resuming does not replay the work.
+Autolith records the decision before dispatch and links the executions. If
+revival fails or is interrupted, inspect the uncertain outcome before trying
+again. Resuming a conversation shows the inventory without replaying work.
 
 ** Isolated modifying tasks
 
-Supply an =isolation= object in a =child.spawn= call. Omit it for the ordinary
-shared workspace. The object accepts =baseline=
-(a commit-resolving revision, default =HEAD=), =dirtyPolicy= (=reject= by default,
-or explicit =ignore=), and =artifactKind= (=patch= by default, or =commit-range=).
-With =ignore=, use only the committed baseline; staged, unstaged and untracked
-source edits are excluded. Git isolation is unavailable for non-Git workspaces.
+Pass an =isolation= object to =child.spawn= to give the child a detached Git
+checkout. Omit it for a shared workspace. Use these fields:
 
-Sandboxed commands in an isolated child may write its owned checkout and the
-repository's Git administrative directories, including a linked worktree's common
-Git directory. Integration requires authorization for the target workspace.
+- =baseline= resolves to a commit. The default is =HEAD=.
+- =dirtyPolicy= defaults to =reject=. Use =ignore= to start from the committed
+  baseline and exclude staged, unstaged and untracked source changes.
+- =artifactKind= defaults to =patch=. A patch includes committed and
+  uncommitted tracked changes. Use =commit-range= for a clean checkout whose
+  history descends from the baseline.
 
-The child edits and tests in its detached checkout. Before the child starts, the
-source repository, exact resolved baseline, isolated path and
-conversation-qualified owner are persisted. Stage new files before yielding.
-
-A patch includes committed and uncommitted tracked changes. A commit range
-requires a clean checkout and an ancestor baseline.
-
-Terminal results identify the secured engineering artifact, including when a
-task is aborted. If extraction fails, the checkout is retained and the result
-reports =:worktree-error=. A successful child without a complete artifact is
-reported as failed.
+*Stage new files* before yielding. The terminal result identifies the artifact
+for integration, including on abort. If extraction fails, Autolith retains
+the checkout and reports =:worktree-error=.
 
 Use =child.worktree= with an explicit =action=:
 
-- =inspect= returns provenance, touched paths and the durable artifact pathname;
-  =extract= explicitly retries extraction after repairing an incomplete checkout.
-  Supply a visible terminal job =id= or its durable execution ID.
-- =check= verifies patch applicability without mutation. =apply= applies the patch
-  to the clean target's index and working tree; =commits= cherry-picks the recorded
-  commit range. Supply =id= and an explicit =target= repository.
-- =conflicts= inspects unmerged paths; =abort= explicitly aborts an interrupted
-  cherry-pick. Supply the target repository.
-- =cleanup= removes only the task's owned checkout. Dirty cleanup requires
-  =discardDirty: true=. Secured artifacts are independent of checkout removal.
-- =discover= lists this conversation's active and absent owned records. Supply
-  =source= to recover interrupted registry publication from Git markers.
-  =cleanup-orphan= uses a discovery worktree =id= and explicit =source=, including
-  after task-result publication failed. Unrelated worktrees are excluded.
+- =inspect= reports provenance, touched paths and the artifact path. Use
+  =extract= to retry extraction after repairing a checkout. Pass the terminal
+  job or durable execution ID as =id=.
+- =check= checks patch applicability. Use =apply= to patch the clean target
+  or =commits= to cherry-pick the range. Pass =id= and an explicit =target=.
+- =conflicts= shows unmerged paths. Use =abort= to abort an interrupted
+  cherry-pick. Pass the target repository.
+- =cleanup= removes the owned checkout. Pass =discardDirty: true= to discard
+  local changes. The secured artifact is separate from the checkout.
+- =discover= lists owned worktrees. Pass =source= to recover registration
+  from Git markers. Use =cleanup-orphan= with the discovered worktree =id=
+  and =source= to clean up after failed task publication.
 
-Git lifecycle and integration commands use ordinary command authorization and
-execution policy. Target paths use ordinary tool-path authorization. Isolation
-is an accidental-overlap boundary, not hostile-code confinement. The parent
-chooses integration order and resolves conflicts deliberately.
+The sandbox can write the isolated checkout and its Git administrative
+directories. Integration requires authorization for the target. Worktree
+isolation prevents accidental overlap. It does not confine hostile code.
 
-Primary shell and Lisp executions and child agents appear as live rows with
-spinners and elapsed time. The command and agent strips share a viewport bound,
-with provider activity visible below them. Supply a short =:description= in a
-=shell.run= call to set its row label. Otherwise, the label is derived from the
-command.
-
-Use POSIX shell syntax for commands on POSIX hosts and PowerShell syntax on
-Windows. Both Windows authorization modes use native PowerShell. MSYS/Git Bash
-requires a shared object namespace that AppContainer does not permit.
-
-On Windows, sandboxed commands execute serially while temporary filesystem
-ACLs are installed. Their writable temporary directory is removed after
-completion or cancellation. For tools installed outside system application
-directories, add existing read-only tool directories through
-=*win32-sandbox-read-roots*=.
-
-Windows scopes must be local directories with no reparse points or hard-linked
-files. If a scope is unsupported or the helper is unavailable, execution fails
-rather than proceeding without isolation.
-
-The default pool admits eight concurrent children.
-=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. =AUTOLITH_TASK_MAX_DEPTH=,
-default 3, is how many levels of child agents may sit below a top-level
-agent; a child at the last level cannot create children. Child jobs have no
-deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
+The default pool admits eight concurrent children. Set
+=AUTOLITH_TASK_MAX_CONCURRENCY= to raise this up to 32. Set
+=AUTOLITH_TASK_MAX_DEPTH= to change the default depth of three below a
+primary agent. Child jobs have a one-hour wall-clock deadline by default.
+Set =AUTOLITH_TASK_MAX_RUNTIME_MS= to change it in milliseconds or use zero
+to disable it.
 
 ** Reusable shell sessions
 
-On Linux and macOS, supply =session= to =shell.run= to reuse a named Bash
-shell. Run =eval "$(nix print-dev-env)"= once, then run later commands in that
-same shell with its variables, functions and working directory intact. Omit
-=session= for an independent one-shot command. Shell names are private to the
-requesting agent and conversation.
+Pass =session= to =shell.run= to reuse a POSIX shell. Commands in one shell
+run serially and share variables, functions and the current directory. Pass
+=directory= to change the directory first. Autolith authorizes each command
+in its observed directory and captures separate logs for each invocation.
+Use =description= to label the live row.
 
-Use =shell.sessions= to inspect live and dead shells, =shell.close= to stop and
-forget one, and =shell.reset= to replace one with a fresh shell. An explicit
-=directory= changes the shell's directory before the command; otherwise reuse
-its current directory. Each command receives separate retained logs and ordinary
-command authorization at its observed directory. Commands in one shell execute
-serially.
+- Use =shell.sessions= to inspect live and dead shells.
+- Use =shell.close= to stop and forget a shell.
+- Use =shell.reset= to replace a shell after exit, timeout or cancellation,
+  or after permissions, workspace or writable scopes change.
 
-After exit, timeout or cancellation, reset the dead shell explicitly. No command
-is replayed. Reset also applies after permission modes, workspace or writable
-scopes change. Closing the owning runtime stops its shells and descendants;
-shell state lasts only for that runtime, not across daemon restarts.
-For sandboxed sessions, keep temporary storage outside writable workspace roots.
+The runtime stops its shells and descendants on shutdown. Reset does not
+replay commands. Keep temporary storage outside writable workspace roots for
+sandboxed sessions. On Windows, or for an independent POSIX command, omit
+=session=. Use native PowerShell on Windows.
 
-Reusable shells are unavailable on Windows; use one-shot PowerShell commands
-there.
+On Windows, add existing read-only tool directories with
+=*win32-sandbox-read-roots*=. Sandboxed commands run serially while the
+helper applies temporary access rules. Use local directories without
+reparse points or hard-linked files. Unsupported scopes or a missing
+helper cause the command to fail.
 
 ** Retained command output
 
-Use =shell.run= for synchronous commands, detached commands and command mission
-gates. Each authorized invocation receives private execution-owned raw captures
-before launch. Results include exit, timeout and cancellation status, retained and
-observed byte counts, capture completeness, and stable =shell-log:= references.
-The inline preview samples the beginning and end, with most space reserved for
-trailing diagnostics. Set =separate-output: true= to capture stdout and stderr
-independently; the preview allocates more space to stderr.
+=shell.run= returns the exit status and capture details with a short preview.
+Pass =separate-output: true= to capture stdout and stderr separately. Read
+the =shell-log:= references from the result or from job inspection after a
+restart or compaction. You do not need to rerun the command.
 
-Read a reference with =resource.read= using zero-based =byte-offset= and
-=byte-count= (default and maximum 4096 bytes). Use =query= for a literal UTF-8
-search, optionally =max-results= and =byte-offset=. Continue with the returned
-next offset. Each search scans at most 1 MiB and returns at most 20 excerpts.
-Text rendering replaces invalid UTF-8; the retained files contain the original
-bytes. An agent can share an exact reference with another agent for range reads
-and searches without approval, including across tasks or sessions.
+Use =resource.read= with zero-based =byte-offset= and =byte-count= (default
+and maximum 4096 bytes). For a literal search, use =query= and optionally
+=max-results=. Continue at the returned offset. A search scans up to 1 MiB
+per page. The default is 20 excerpts and the maximum is 50. Text display
+replaces invalid UTF-8. The retained capture preserves the original bytes.
 
-References are included in job inspection, durable tool-result metadata and
-completion notices. Reopen them after restart or compaction without executing
-the command again. Missing, interrupted and pruned captures return diagnostics.
+Share the exact reference with another agent to give it access to range reads
+and searches, including across tasks or sessions.
 
-The defaults are 64 MiB per stream and a 1 GiB aggregate byte budget. Live captures
-reserve their maximum capacity; finished or confirmed abandoned captures count by
-measured bytes. Eligible captures can be pruned at the next allocation after seven
-days or under byte pressure.
+The defaults are 64 MiB per stream and 1 GiB overall. If a stream exceeds
+its limit, the result marks the capture incomplete. Eligible captures can be
+pruned after seven days or if the overall limit is reached. Live captures,
+pending results and captures that support active structured facts receive
+pruning protection.
 
-Live writers, pending publication and admitted undelivered job completions protect
-their captures. Complete artifacts also receive protection while their exact tool
-or file observations support unretracted, unexpired structured facts in any
-workspace, including future-valid supports. Retraction, replacement or expiry of
-the last support releases that protection.
-
-If delivery is observed before child artifact retention, the observation is
-recorded on each capture. This allows normal pruning after the owner's
-conversation storage is removed.
-
-Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*= and
-=*shell-log-retention-age*= in trusted configuration. Captures that exceed their
-stream limit are explicitly marked incomplete.
-
-Session export collects task metadata independently of local log storage.
+Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=
+and =*shell-log-retention-age*= in trusted configuration. Session export
+collects task metadata independently of local log storage.
 
 * Non-interactive jobs
 
-=run-job= executes one caller-supplied child role without an interactive
-terminal. It uses normal project, user, and bundled task-agent discovery,
-provider and MCP configuration, role tool and spawn policy, task traces, and
-usage accounting. It publishes the child's ordinary response.
+Use =run-job= to run one child role from a script or CI. It uses the configured
+providers, MCP servers and role policies. Read the result from =--output=.
+Choose exactly one input form: =--input FILE= or =--prompt TEXT=.
 
 #+BEGIN_SRC sh
 autolith --permissions auto run-job \
@@ -2584,22 +2465,7 @@ autolith --permissions auto run-job \
   --output /path/to/result.sexp
 #+END_SRC
 
-For an inline assignment, use =--prompt TEXT= instead of =--input=. Use
-=--prompt -= to read the prompt from standard input:
-
-#+BEGIN_SRC sh
-autolith --permissions auto run-job \
-  --prompt "Review the current change and report the result." \
-  --role task --timeout-seconds 900 --id review-change \
-  --output /path/to/result.sexp
-#+END_SRC
-
-The inline defaults are role =task=, timeout 86,400 seconds, and a generated job
-ID. Inline jobs use the same role validation, telemetry, events and atomic
-result publication as envelope jobs. Prompt-read failures and oversized prompts
-produce the normal failure artifact and terminal events.
-
-With =--input=, supply exactly one bounded data-only S-expression:
+The input file contains one data-only form:
 
 #+BEGIN_SRC lisp
 (:autolith-job
@@ -2611,22 +2477,31 @@ With =--input=, supply exactly one bounded data-only S-expression:
  :timeout-seconds 900)
 #+END_SRC
 
-Autolith atomically installs the terminal artifact at =--output= as
-=(:autolith-job-result :version 1 ...)=. Successful jobs use =:succeeded= and
-include the child's response text in =:result=. Failures use stable categories
-and statuses =:failed=, =:cancelled=, or =:timed-out=. Trace and usage fields are
-included when available.
+For an inline assignment, pass =--prompt TEXT= or use =--prompt -= to read
+standard input. The defaults are role =task=, 86,400 seconds and a generated ID.
 
-Headless execution never opens an approval picker. =auto= classifies shell
-commands and denies decisions that would require approval. =sandbox= permits
-only sandboxed commands. =full= permits full command execution. External tool
-calls whose configured policy requires approval are denied unless full access
-was selected. The role allowlist remains the child capability boundary.
+#+BEGIN_SRC sh
+autolith --permissions auto run-job \
+  --prompt "Review the current change and report the result." \
+  --role task --timeout-seconds 900 --id review-change \
+  --output /path/to/result.sexp
+#+END_SRC
+
+Autolith atomically publishes an =(:autolith-job-result :version 1 ...)=
+artifact. Read =:result= for the response on =:succeeded=. Other terminal
+statuses are =:failed=, =:cancelled= and =:timed-out=. The result includes
+failure categories and any available trace and usage fields. Prompt read
+errors and oversized prompts produce a failure artifact too.
+
+*Headless jobs cannot ask for approval.* =auto= denies decisions that require
+a prompt. =sandbox= permits only sandboxed shell commands. =full= permits
+full command execution and external tools that otherwise require a prompt.
+The child role still controls which tools it can call.
 
 ** Live S-expression events
 
-Add =--events sexp= to observe a run on stdout. Capture diagnostics separately on
-stderr and read the authoritative terminal result from =--output=:
+Add =--events sexp= to observe progress on stdout. Send diagnostics to a
+separate stream, and use the artifact for the authoritative result:
 
 #+BEGIN_SRC sh
 autolith --permissions auto run-job \
@@ -2634,8 +2509,7 @@ autolith --permissions auto run-job \
   --events sexp >events.sexp 2>diagnostics.log
 #+END_SRC
 
-Read consecutive top-level data forms, rather than splitting physical lines.
-Strings may contain newlines. Each version-one record has this shape:
+Read consecutive top-level forms. /Strings can contain newlines./
 
 #+BEGIN_SRC lisp
 (:autolith-event :version 1
@@ -2643,113 +2517,85 @@ Strings may contain newlines. Each version-one record has this shape:
  :kind :run-started :data nil)
 #+END_SRC
 
-The event kinds are =:run-started=, =:job-started=, =:tool-started=, =:progress=,
-=:tool-finished=, =:job-finished=, =:usage=, =:warning=, =:progress-omitted=, and
-=:run-finished=. Ignore unknown versioned kinds.
+- Sequence numbers increase within one run. A new run starts at one with a
+  new run ID. There is no replay or reconnect cursor.
+- Event kinds are =:run-started=, =:job-started=, =:tool-started=, =:progress=,
+  =:tool-finished=, =:job-finished=, =:usage=, =:warning=, =:progress-omitted=
+  and =:run-finished=. Ignore unknown kinds. Events report registered tool
+  names and bounded metadata, without prompts, tool payloads or output.
+- Root =:job-finished= and final =:run-finished= follow result publication.
+  Published job events carry =:result-uri=. The final event reports
+  =:status= and =:published-p=. It includes =:output-path= on publication.
+  A write failure reports =:category :result-publication-failed= and exits
+  nonzero.
+- A slow reader can miss events. =:progress-omitted= counts omitted progress,
+  and a =:warning= with =:code :queue-full= reports lifecycle overflow.
+  Execution and result publication continue even if the stream disconnects.
 
-Sequence numbers increase strictly within one run. Job and execution
-identifiers are opaque execution UUIDs; provider call identifiers are
-pseudonymous within that run. Tool names come from the registered tool catalog.
-
-Observe only the requested root and its owned descendants, excluding other
-roots in the same conversation. Event data contains allowlisted statuses and
-numeric counters, not prompts, tool arguments, tool output, or provider
-payloads.
-Interactive input is EOF, and diagnostic/query streams go to stderr in the
-initiating thread and its workers.
-
-Use =run-job-event-read-stream= to read one validated record at a time, returning
-NIL at EOF. It uses the bounded =sexp-config= data grammar with =*read-eval*= NIL.
-Only approved keywords, strings, NIL/T, bounded nonnegative integers, and finite
-proper lists are accepted. The maximum record size is 16 KiB of UTF-8; character
-streams supplied to the library must already use UTF-8. Binary streams receive
-UTF-8 octets.
-
-Root =:job-finished= and final =:run-finished= records follow atomic result
-publication. Published terminal job events include a =:result-uri= resource
-reference; descendant references identify execution-qualified artifacts. The
-final data includes =:status= and =:published-p=; successful publication also
-includes =:output-path=. An output write failure reports
-=:failed=, =:published-p nil=, and =:category :result-publication-failed=, with a
-nonzero exit status. Inspect the result artifact for contracted data and full
-failure details.
-
-Delivery is best effort through one bounded queue and a single writer. Progress
-may be omitted under backpressure, with =:progress-omitted= reporting its count.
-Lifecycle overflow is reported with =:warning= and =:code :queue-full=; final
-delivery has a reserved slot. A slow or disconnected consumer may miss the
-terminal record; execution and result publication continue. There is no replay
-or reconnect cursor. For a new invocation, expect a new run UUID and sequence
-beginning at one.
-
-From Lisp, call =run-job-run= with =:events :sexp= and =:event-output STREAM=.
-Without the events option, use the existing artifact-only interface.
+From Lisp, pass =:events :sexp= and =:event-output STREAM= to =run-job-run=.
+Read records with =run-job-event-read-stream=, which returns =nil= at EOF.
+The reader accepts bounded data forms of up to 16 KiB of UTF-8 per record.
+Use UTF-8 for character streams. Binary streams receive UTF-8 octets.
 
 * Generations and recovery
 
-=(checkpoint)= requires a clean Git worktree and a passing =./script/check=.
-=(checkpoint :allow-dirty t)= accepts uncommitted changes and marks the
-generation dirty, since its recorded revision then does not fully describe its
-source; =(generations)= shows such a generation's source as dirty.
-On POSIX it saves a retained image without stopping the active session. On
-Windows it saves the exact live heap, restarts through the stable launcher, and
-resumes the active conversation after the saved image passes its probe.
+Use =(checkpoint)= to save the live image as a retained generation. The
+source checkout must be clean and pass =./script/check= on POSIX or
+=script\check.ps1= on Windows. To allow local changes, use
+=(checkpoint :allow-dirty t)=. Autolith marks the generation dirty because
+the recorded revision does not describe all of the source.
 
-- =(generations)= lists retained images.
-- =(rollback ID)= selects a compatible image and exits through recovery.
+- *POSIX:* You can keep using the active session while the image is saved.
+- *Windows:* Autolith saves the live heap and restarts through the stable
+  launcher. It resumes the conversation after the saved image passes its probe.
+- *World server:* A checkpoint waits for running work and holds new turns.
+  Use =(checkpoint-cancel)= to cancel a waiting checkpoint and release turns.
 
-Inspect or boot retained generations from the CLI:
+Run =(generations)= to list retained images. Run =(rollback "GENERATION-ID")=
+to select a compatible image and exit through recovery. In the terminal,
+=(rollback)= opens the picker. From the command line:
 
 #+BEGIN_SRC sh
 autolith --recovery --list
 autolith --recovery --generation GENERATION-ID
 #+END_SRC
 
-Recovery starts the separately built pristine core, not the damaged active
-core. If that image is missing or invalid, it falls back to source.
+Pristine and retained-image sessions use separate world endpoints from the
+ordinary active image. A retained core must support world startup.
 
-Automatic recovery boots a private clean checkout of current committed source
-with =--pristine=. It does not load retained generations or private mutation
-replay. An intentional =(rollback ID)= still boots the selected generation.
-Explicit generation selection may use an older revision.
+*Automatic recovery* uses a private clean checkout of the current committed
+source with =--pristine=. It uses a separate recovery core if valid and can
+fall back to source. Use explicit generation selection to return to an older
+compatible core.
 
-To start a rescue session directly, use:
+After a fatal active failure, Autolith restores the terminal and writes a
+private crash capsule. Recovery resumes the conversation without duplicating
+scrollback. With a valid capsule, it queues one read-only diagnosis before
+ordinary input. The turn can inspect bounded crash context, workspace and
+tracked source, indexed source and active state. It cannot use shell, MCP,
+hosted-provider or image tools. It asks before applying a repair.
+
+To start a rescue session yourself, use:
 
 #+BEGIN_SRC sh
 autolith open --pristine --permissions full
 #+END_SRC
 
-With =--pristine=, the process uses tracked source instead of a saved active
-core. It skips the selected private image commit, mutation journal
-reconstruction, and executable user initialization.
+A manual pristine session skips private image replay, mutation journal
+reconstruction and executable user initialization. Autolith enables
+=--immutable= and leaves mutation and conversation data on disk. Crash
+diagnosis requires a valid crash capsule from a supervised recovery.
 
-The process also runs with =--immutable=, so ordinary self-mutation tools
-cannot replace the selected private commit. Mutation and conversation data
-are not erased.
+Saved cores require the recorded SBCL version, OS build and architecture.
+To reconstruct without a core:
 
-A fatal active failure publishes a private crash capsule and restores the
-terminal. Recovery restores the conversation without duplicating scrollback.
-With a valid capsule, it queues one read-only diagnosis turn before ordinary
-input.
+1. Check out the revision in the generation manifest.
+2. Run =./script/bootstrap=.
+3. Load Autolith in Lisp, then load the ordered =reconstruct.lisp= from the
+   manifest in package =AUTOLITH=:
 
-That turn can inspect:
-
-- bounded crash context
-- workspace and tracked source
-- indexed source
-- active state
-
-It has no shell, MCP, hosted provider, image, write, mutation, checkpoint,
-or rollback tools. It asks before any repair. A manually started recovery
-image does not queue diagnosis.
-
-Saved cores require their recorded SBCL version, OS build, and architecture.
-Source remains authoritative. To reconstruct without a core, check out the
-manifest revision, run =./script/bootstrap=, load =autolith=, then load the
-manifest's ordered =reconstruct.lisp= in package =AUTOLITH=:
-
-#+BEGIN_SRC lisp
-(asdf:load-asd (truename "autolith.asd"))
-(asdf:load-system :autolith)
-(load #P"/path/from/generation/manifest/reconstruct.lisp")
-#+END_SRC
+   #+BEGIN_SRC lisp
+   (asdf:load-asd (truename "autolith.asd"))
+   (asdf:load-system :autolith)
+   (load #P"/path/from/generation/manifest/reconstruct.lisp")
+   #+END_SRC
