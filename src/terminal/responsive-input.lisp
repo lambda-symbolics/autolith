@@ -1383,6 +1383,20 @@ the ordinary FIFO queue."
     (application-input-controller--publish-counts controller)
     entries))
 
+(-> application-input-controller--take-primary-steering (application-input-controller) list)
+(defun application-input-controller--take-primary-steering (controller)
+  "Take durable terminal steering before the channel's world deliveries."
+  (append (application-input-controller--take-steering controller)
+          (application-world-steering-take (application-input-controller-application controller))))
+
+(-> application-input-controller--acknowledge-primary-steering
+    (application-input-controller non-empty-string)
+    boolean)
+(defun application-input-controller--acknowledge-primary-steering (controller identifier)
+  "Settle a durable world receipt, or retire the terminal entry it does not name."
+  (or (application-world-steering-ack (application-input-controller-application controller) identifier)
+      (application-input-controller--acknowledge-steering controller identifier)))
+
 (-> application-input-controller-call-with-primary-steering
     (application-input-controller function)
     t)
@@ -1400,16 +1414,9 @@ work receive steering as soon as possible instead of as follow-ups."
   (unwind-protect
        (funcall function
                 (lambda ()
-                  (append
-                   (application-input-controller--take-steering controller)
-                   (application-world-steering-take
-                    (application-input-controller-application controller))))
+                  (application-input-controller--take-primary-steering controller))
                 (lambda (identifier)
-                  (or (application-world-steering-ack
-                       (application-input-controller-application controller)
-                       identifier)
-                      (application-input-controller--acknowledge-steering
-                       controller identifier))))
+                  (application-input-controller--acknowledge-primary-steering controller identifier)))
     (with-lock-held ((application-input-controller-lock controller))
       (setf (application-input-controller-primary-steering-p controller)
             nil))))
@@ -3656,14 +3663,10 @@ however it ended."
                        (second work)
                        :steering-function
                        (lambda ()
-                         (append
-                          (application-input-controller--take-steering controller)
-                          (application-world-steering-take application)))
+                         (application-input-controller--take-primary-steering controller))
                        :steering-persisted-function
                        (lambda (identifier)
-                         (or (application-world-steering-ack application identifier)
-                             (application-input-controller--acknowledge-steering
-                              controller identifier)))
+                         (application-input-controller--acknowledge-primary-steering controller identifier))
                        :user-message-persisted-function
                        (lambda (identifier)
                          (application-input-controller--acknowledge-active-work
