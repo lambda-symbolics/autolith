@@ -2,17 +2,6 @@
 (require :sb-posix)
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
-(defun fff--environment-directory (variable fallback)
-  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
-  (let* ((value    (uiop:getenv variable))
-         (pathname (and value
-                        (plusp (length value))
-                        (pathname value))))
-    (uiop:ensure-directory-pathname
-     (if (and pathname (uiop:absolute-pathname-p pathname))
-         pathname
-         fallback))))
-
 #+darwin
 (defun fff--prepare-darwin-build-environment ()
   "Ensure Darwin SDK library paths are available in LIBRARY_PATH."

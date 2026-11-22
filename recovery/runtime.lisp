@@ -125,18 +125,6 @@
     :documentation "The trusted STTY settings captured before a retained core starts."))
   (:documentation "Terminal state restored between retained-generation attempts."))
 
-(serapeum:-> recovery-environment-directory (string pathname) pathname)
-(defun recovery-environment-directory (variable fallback)
-  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
-  (let* ((value    (uiop:getenv variable))
-         (pathname (and value
-                        (plusp (length value))
-                        (pathname value))))
-    (uiop:ensure-directory-pathname
-     (if (and pathname (uiop:absolute-pathname-p pathname))
-         pathname
-         fallback))))
-
 (serapeum:-> recovery-context-create (pathname) recovery-context)
 (defun recovery-context-create (source-root)
   "Return recovery context rooted at SOURCE-ROOT and XDG user directories."
