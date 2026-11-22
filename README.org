@@ -10,7 +10,7 @@
 [[https://zulip.lambda-symbolics.com][https://img.shields.io/badge/chat-Zulip-42b28a.svg]]
 [[https://fossil.lambda-symbolics.com][https://img.shields.io/badge/bugs-Fossil-42b28a.svg]]
 
-Autolith (or AL), is an agent inside a live [[https://en.wikipedia.org/wiki/Common_Lisp][Common Lisp]] image:
+Autolith (or AL), is an agent plopped into a live [[https://en.wikipedia.org/wiki/Common_Lisp][Common Lisp]] image:
 
 - *Live self-modification:* Inspect, modify, and extend its own code and running state,
   with checkpointing and recovery mechanisms to survive failed modifications.
