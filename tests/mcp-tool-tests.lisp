@@ -1817,105 +1817,58 @@
 
 (-> test-mcp-http-credential-exchange-scope () null)
 (defun test-mcp-http-credential-exchange-scope ()
-  "Test background HTTP exchanges sanitize transient credential echoes."
-  (let* ((configuration  (test-configuration))
-         (root           (test-configuration-root configuration))
-         (registrations  (mcp--registry-snapshot))
-         (environment-name
-           (format nil
-                   "AUTOLITH_MCP_HTTP_ECHO_~A"
-                   (remove #\- (string-upcase (make-identifier)))))
-         (credential
-           (format nil "mcp-http-secret-~A" (make-identifier)))
-         (manager        nil)
-         (runtime        nil)
-         (transport      nil)
-         (scope-active-p nil)
-         (thread-failure nil))
-    (unwind-protect
-         (progn
-           (platform-setenv environment-name credential)
-           (mcp--registry-restore nil)
-           (register-mcp-server
-            `(:name "credential-http"
-              :transport
-              (:type :http
-               :url  "https://example.test/mcp"
-               :headers
-               (("Authorization" :environment ,environment-name)))
-              :approval :allow)
-            :source ':runtime)
-           (test-call-with-function-replacements
-            (list
-             (list
-              'mcp-manager--connect-runtimes
-              (lambda (candidate &rest arguments)
-                (declare (ignore candidate arguments))
-                nil)))
-            (lambda ()
-              (setf manager (mcp-manager-create configuration))))
-           (setf runtime (first (mcp-manager-runtimes manager))
-                 transport
-                 (mcp-client-transport
-                  (mcp-server-runtime-client runtime)))
-           (let ((thread
-                   (make-thread
-                    (lambda ()
-                      (handler-case
-                          (funcall
-                           (mcp-http-transport-exchange-scope-function
-                            transport)
-                           (lambda ()
-                             (setf
-                              scope-active-p
-                              (and
-                               (secret-use-active-p)
-                               (not
-                                (null
-                                 (member
-                                  credential
-                                  *mcp-active-credential-values*
-                                  :test #'string=))))
-                              (mcp-http-transport-session-identifier
-                               transport)
-                              (format nil "session echoed ~A" credential)
-                              (mcp-http-transport-pending-session-identifier
-                               transport)
-                              (format nil "pending echoed ~A" credential)
-                              (mcp-http-transport-listener-failure transport)
-                              (make-condition
-                               'simple-error
-                               :format-control
-                               "listener echoed ~A"
-                               :format-arguments (list credential)))))
-                        (error (condition)
-                          (setf thread-failure condition))))
-                    :name "Autolith MCP HTTP credential echo")))
-             (join-thread thread))
-           (let ((retained
-                   (format
-                    nil "~A~%~A~%~A"
-                    (mcp-http-transport-session-identifier transport)
-                    (mcp-http-transport-pending-session-identifier transport)
-                    (mcp-http-transport-listener-failure transport))))
-             (test-assert
-              (and
-               (typep transport 'mcp-streamable-http-transport)
-               scope-active-p
-               (null thread-failure)
-               (not (secret-use-active-p))
-               (test-mcp--credential-redacted-p retained credential)
-               (not
-                (test-mcp--object-contains-string-p runtime credential)))
-              "HTTP listener exchanges redact credentials before leaving their secret scope")))
-      (when manager
-        (ignore-errors
-          (mcp-manager-close manager)))
-      (mcp--registry-restore registrations)
-      (platform-unsetenv environment-name)
-      (platform-delete-directory-tree
-       *platform*
-       root :validate t :if-does-not-exist ':ignore)))
+  "Test projection and cleanup at the HTTP listener failure boundary."
+  (with-test-configuration (configuration)
+    (let* ((environment-name
+             (format nil
+                     "AUTOLITH_MCP_HTTP_ECHO_~A"
+                     (remove #\- (string-upcase (make-identifier)))))
+           (credential (format nil "mcp-http-secret-~A" (make-identifier)))
+           (server
+             (mcp-server-configuration-create
+              :name      "credential-http"
+              :transport `(:type :http
+                           :url "https://example.test/mcp"
+                           :headers (("Authorization" :environment ,environment-name)))
+              :approval  ':allow))
+           (transport  (mcp-tools--transport server configuration))
+           (failure
+             (make-condition 'mcparen:mcp-transport-error
+                             :message   (format nil "Listener fixture: ~A" credential)
+                             :transport transport
+                             :cause     (make-condition 'simple-error
+                                                        :format-control   "~A"
+                                                        :format-arguments (list credential)))))
+      (unwind-protect
+           (with-test-environment ((environment-name credential))
+             ;; Enter the same scope as the idle listener without opening a connection.
+             (mcparen::mcp-http--call-with-exchange-scope
+              transport
+              (lambda ()
+                (test-assert
+                 (and (secret-use-active-p)
+                      (member credential *mcp-active-credential-values* :test #'string=))
+                 "The listener exchange binds the configured credential")
+                (mcparen::mcp-http--listener-record-failure
+                 transport (mcparen::mcp-http-transport-listener-generation transport) failure)))
+             (let ((retained (mcp-http-transport-listener-failure transport)))
+               (test-assert
+                (and (typep retained 'mcparen:mcp-transport-error)
+                     (not (eq retained failure))
+                     (null (mcparen:mcp-transport-error-transport retained))
+                     (null (mcparen:mcp-transport-error-cause retained)))
+                "The listener retains a detached condition, not the original failure")
+               (test-assert
+                (and (not (secret-use-active-p))
+                     (not (member credential *mcp-active-credential-values* :test #'string=))
+                     (let ((diagnostic (princ-to-string retained)))
+                       (and (search "Listener fixture:" diagnostic)
+                            (test-mcp--credential-redacted-p diagnostic credential))))
+                "The retained listener diagnostic is redacted before the credential scope ends")))
+        (mcp-transport-close transport))
+      (test-assert
+       (null (mcp-http-transport-listener-failure transport))
+       "Closing the transport clears the retained listener failure")))
   nil)
 
 (-> test-mcp-credential-echo-containment () null)
