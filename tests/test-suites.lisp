@@ -711,6 +711,7 @@
   test-world-agent-keeps-model-choice
   test-world-application-sync
   test-world-channel-resource
+  test-child-channel-resource-reads
   test-world-channel-catalogue
   test-world-channel-storage
   test-world-participant-availability

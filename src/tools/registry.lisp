@@ -965,7 +965,7 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
   "Resolve the URI or path in ARGUMENTS through TOOL's resource registry under CONTEXT.
 
 Absolute native paths and scheme-less relative paths resolve as workspace:PATH."
-  (let* ((uri (tool-argument arguments "uri" :required t))
+  (let* ((uri      (tool-argument arguments "uri" :required t))
          (identity
            (cond
              ((and (non-empty-string-p uri)
@@ -977,8 +977,13 @@ Absolute native paths and scheme-less relative paths resolve as workspace:PATH."
               (resource-tool-note "~A has no scheme, so it was read as workspace:~A." uri uri)
               (format nil "workspace:~A" (workspace-file--encode-identifier uri)))
              (t
-              uri))))
-    (resource-registry-resolve (resource-tool-resource-registry tool) identity context)))
+               uri)))
+         (registry (resource-tool-resource-registry tool)))
+    ;; Channel reads do not consult the scheme or child authority policy.
+    (if (and (typep tool 'resource-read-tool)
+             (string= (resource-uri-parse identity) "channel"))
+        (cl-resources:resource-registry-resolve registry identity context)
+        (resource-registry-resolve registry identity context))))
 
 (defvar *resource-tool-notes* ':inactive
   "Notes a resource tool call collects about arguments it adjusted instead of rejecting.

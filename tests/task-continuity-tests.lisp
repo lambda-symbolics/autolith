@@ -256,6 +256,69 @@
   nil)
 
 
+;;;; -- Restricted Channel Reads --
+
+(-> test-child-channel-resource-reads () null)
+(defun test-child-channel-resource-reads ()
+  "Read channel history and its directory without granting other resource access."
+  (task-continuity-tests--fixture
+   (lambda (parent orchestrator primary job path)
+     (declare (ignore path))
+     (let* ((configuration (agent-configuration parent))
+            (registry      (task-child-tool-registry (tool-context-registry primary)
+                                                     (task-job-definition job)
+                                                     :orchestrator orchestrator :depth 1))
+            (child         (task-tests--child-viewer configuration job :registry registry))
+            (current       (agent-conversation child))
+            (other         (agent-conversation parent))
+            (context       (make-instance 'tool-context
+                                          :configuration configuration
+                                          :agent         child
+                                          :registry      registry
+                                          :worker        nil
+                                          :conversation  current
+                                          :tool-authorization-function
+                                          (lambda (tool arguments)
+                                            (declare (ignore tool arguments))
+                                            (error "A channel read asked for approval.")))))
+       (conversation-append-user-message current "Fixture child history")
+       (conversation-append-user-message other "Fixture other history")
+       (world-register-conversation configuration current)
+       (world-register-conversation configuration other)
+       (flet ((call-resource (name arguments)
+                (tool-registry-execute-call
+                 registry (json-object "namespace" "resource" "name" name
+                                       "arguments" (json-encode arguments)) context)))
+         (let ((*resource-readable-schemes* '("workspace")))
+           (loop for (uri expected) in
+                 (list '("channel:current" "Fixture child history")
+                       (list (format nil "channel:id/~A" (conversation-identifier other))
+                             "Fixture other history")
+                       (list "channel:list"
+                             (conversation-identifier-display (conversation-identifier current))))
+                 for result = (call-resource "read" (json-object "uri" uri))
+                 do (test-assert (and (tool-result-success-p result)
+                                      (search expected (tool-result-content result)))
+                                 (format nil "Restricted child reads ~A without approval: ~A"
+                                         uri (tool-result-content result))))
+           (test-assert (eq ':access-denied
+                            (tool-result-error-code
+                             (call-resource "read" (json-object "uri" "skill:no-such-fixture-skill"))))
+                        "A child-safe scheme is still denied by an explicit scheme restriction")
+           (test-assert (eq ':access-denied
+                            (tool-result-error-code
+                             (call-resource
+                              "edit" (json-object "uri" "channel:current"
+                                                  "base-revision" "unused"
+                                                  "operations" (vector (json-object "op" "scratchpad-delete"))))))
+                        "Channel edits do not take the channel-read path"))
+         (test-assert (eq ':access-denied
+                          (tool-result-error-code
+                           (call-resource "read" (json-object "uri" "agenda:current"))))
+                      "An unrelated resource read is still denied by task-child authority")))))
+  nil)
+
+
 ;;;; -- Producer-Owned Overflow Contexts --
 
 (defclass child-overflow-test-tool (tool) ()
