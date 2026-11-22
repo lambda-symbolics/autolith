@@ -56,27 +56,7 @@ TOOL-NAME and DESCRIPTION."
 (-> text--split-lines (string) vector)
 (defun text--split-lines (content)
   "Return CONTENT's logical lines without their LF or CRLF delimiters."
-  (if (zerop (length content))
-      #()
-      (let ((lines  nil)
-            (start  0)
-            (length (length content)))
-        (loop
-          for newline = (position #\Newline content :start start)
-          for end = (or newline length)
-          for logical-end = (if (and newline
-                                     (> end start)
-                                     (char= (char content (1- end)) #\Return))
-                                (1- end)
-                                end)
-          do (push (subseq content start logical-end) lines)
-          if newline
-            do (setf start (1+ newline))
-          else
-            do (return)
-          when (= start length)
-            do (return))
-        (coerce (nreverse lines) 'vector))))
+  (coerce (serapeum:lines content :eol-style ':lf :honor-crlf t) 'vector))
 
 (-> text--numbered-line-window
     (vector &key (:start-line (integer 1))

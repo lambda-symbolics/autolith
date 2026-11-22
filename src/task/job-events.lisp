@@ -287,8 +287,7 @@ one in-flight bounded form and the disabled emitter survive until process exit."
   (with-lock-held ((run-job-event-emitter-lock emitter))
     (loop
       (when (run-job-event-emitter-disabled-p emitter) (return nil))
-      (let ((payload (structlisp:deque-pop-front (run-job-event-emitter-queue emitter))))
-        (when payload (return payload)))
+      (when-let ((payload (structlisp:deque-pop-front (run-job-event-emitter-queue emitter)))) (return payload))
       (when (run-job-event-emitter-overflow-p emitter)
         (setf (run-job-event-emitter-overflow-p emitter) nil)
         (return (list :warning (list :code ':queue-full))))

@@ -196,12 +196,11 @@ whole history when a crash or retention boundary interrupted sequencing."
      (lambda (record)
        (when (conversation-replay--user-turn-record-p record)
          (incf turn))
-       (let ((projected (conversation-replay-project-record record)))
-         (when projected
-           (push (make-instance 'conversation-replay-record
-                                :record projected
-                                :turn   turn)
-                 records)))))
+       (when-let ((projected (conversation-replay-project-record record)))
+         (push (make-instance 'conversation-replay-record
+                              :record projected
+                              :turn   turn)
+               records))))
     (unless records
       (error 'conversation-error
              :message  "The conversation contains no replayable records."
@@ -406,15 +405,14 @@ whole history when a crash or retention boundary interrupted sequencing."
      (multiple-value-bind (year month day)
          (conversation-replay--parse-date value)
        (values (lambda (entry)
-                 (let ((time (conversation-replay--record-time entry)))
-                   (when time
-                     (multiple-value-bind
-                         (second minute hour candidate-day candidate-month candidate-year)
-                         (decode-universal-time time)
-                       (declare (ignore second minute hour))
-                       (and (= year candidate-year)
-                            (= month candidate-month)
-                            (= day candidate-day))))))
+                 (when-let ((time (conversation-replay--record-time entry)))
+                   (multiple-value-bind
+                       (second minute hour candidate-day candidate-month candidate-year)
+                       (decode-universal-time time)
+                     (declare (ignore second minute hour))
+                     (and (= year candidate-year)
+                          (= month candidate-month)
+                          (= day candidate-day)))))
                (format nil "date ~A" value))))
     (:time
      (let ((target-time (conversation-replay--target-time value current-time)))

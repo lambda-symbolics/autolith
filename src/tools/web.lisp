@@ -305,17 +305,16 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
     (when (and (message-item-p item)
                (member role '(:user :assistant))
                (vectorp (json-get item "content")))
-      (let ((content
-              (loop for part across (json-get item "content")
-                    for normalized =
-                      (and (json-object-p part)
-                           (web--search-content-item part role))
-                    when normalized
-                      collect normalized)))
-        (when content
-          (json-object "type" "message"
-                       "role" (json-get item "role")
-                       "content" (coerce content 'vector)))))))
+      (when-let ((content
+                   (loop for part across (json-get item "content")
+                         for normalized =
+                           (and (json-object-p part)
+                                (web--search-content-item part role))
+                         when normalized
+                           collect normalized)))
+        (json-object "type" "message"
+                     "role" (json-get item "role")
+                     "content" (coerce content 'vector))))))
 
 (-> web--search-history (conversation configuration) vector)
 (defun web--search-history (conversation configuration)

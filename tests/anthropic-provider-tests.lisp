@@ -529,11 +529,11 @@
                        "repeated rejected identities are deduplicated"))
         (dotimes (index 33)
           (anthropic--note-binding-rejection
-           conversation (context-anchors--digest (format nil "rejection-~D" index))))
+           conversation (memory-source-text-digest (format nil "rejection-~D" index))))
         (let ((loaded (conversation-load (conversation-pathname conversation))))
           (test-assert (and (= 32 (length (conversation-anthropic-rejected-thinking loaded)))
                             (equal (first (conversation-anthropic-rejected-thinking loaded))
-                                   (context-anchors--digest "rejection-32")))
+                                   (memory-source-text-digest "rejection-32")))
                        "replay retains only the newest bounded rejection set")))))
   nil)
 

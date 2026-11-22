@@ -73,8 +73,7 @@
           (client-id (gemini-oauth-client-id))
           (authorization-endpoint *gemini-oauth-authorization-endpoint*)
           (token-endpoint *gemini-oauth-token-endpoint*)
-          (token-parameters (let ((secret (gemini-oauth-client-secret)))
-                              (when secret (list (cons "client_secret" secret))))))
+          (token-parameters (when-let ((secret (gemini-oauth-client-secret))) (list (cons "client_secret" secret)))))
   "Build the shared installed-app client with Gemini's endpoint and host policy."
   (make-instance 'browser-authentication-client
                  :authorization-endpoint  authorization-endpoint

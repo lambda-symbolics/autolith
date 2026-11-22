@@ -472,25 +472,24 @@ filesystem paths are only a programmatic Lisp designator."
                               (tokens *rlm-default-token-budget*)
                               (depth *rlm-default-depth-budget*))
   "Return the frame budget for one tool call, descending inside frames."
-  (let ((parent (rlm-frame-tool--budget tool)))
-    (if parent
-        (rlm-budget-descend parent :task task)
-        (rlm-budget-create
-         :calls  (rlm--bounded-tool-integer
-                  arguments "calls"
-                  :fallback calls
-                  :minimum  1
-                  :maximum  *rlm-tool-maximum-call-budget*)
-         :tokens (rlm--bounded-tool-integer
-                  arguments "tokens"
-                  :fallback tokens
-                  :minimum  1
-                  :maximum  *rlm-tool-maximum-token-budget*)
-         :depth  (rlm--bounded-tool-integer
-                  arguments "depth"
-                  :fallback depth
-                  :minimum  0
-                  :maximum  *rlm-tool-maximum-depth-budget*)))))
+  (if-let ((parent (rlm-frame-tool--budget tool)))
+      (rlm-budget-descend parent :task task)
+      (rlm-budget-create
+       :calls  (rlm--bounded-tool-integer
+                arguments "calls"
+                :fallback calls
+                :minimum  1
+                :maximum  *rlm-tool-maximum-call-budget*)
+       :tokens (rlm--bounded-tool-integer
+                arguments "tokens"
+                :fallback tokens
+                :minimum  1
+                :maximum  *rlm-tool-maximum-token-budget*)
+       :depth  (rlm--bounded-tool-integer
+                arguments "depth"
+                :fallback depth
+                :minimum  0
+                :maximum  *rlm-tool-maximum-depth-budget*))))
 
 (-> rlm--tool-activity-callback (rlm-frame-tool tool-context) (option function))
 (defun rlm--tool-activity-callback (tool context)
@@ -593,10 +592,9 @@ turn, and async requests hand off at admission."
                                  (error 'rlm-inference-error
                                         :message "The frame task must be a string.")))
             (views           (rlm--tool-views (gethash "views" arguments) context))
-            (contract        (let ((schema (gethash "contract" arguments)))
-                               (if schema
-                                   (rlm--json-schema->contract schema)
-                                   ':text)))
+            (contract        (if-let ((schema (gethash "contract" arguments)))
+                                 (rlm--json-schema->contract schema)
+                                 ':text))
             (capabilities    (rlm--tool-capabilities
                               (gethash "capabilities" arguments)))
             (budget          (rlm--tool-budget tool arguments task))
@@ -750,11 +748,10 @@ turn, and async requests hand off at admission."
                              :message "Each map task requires non-empty task text."))
                     (append
                      (list ':task task)
-                     (let ((views (rlm--tool-views
-                                   (json-get element "views")
-                                   context)))
-                       (when views
-                         (list ':context views))))))))
+                     (when-let ((views (rlm--tool-views
+                                        (json-get element "views")
+                                        context)))
+                       (list ':context views)))))))
 
 (defmethod tool-execute
     ((tool rlm-map-tool) (context tool-context) (arguments hash-table))
@@ -762,10 +759,9 @@ turn, and async requests hand off at admission."
   (rlm--guarded-tool-result
    (lambda ()
      (let* ((tasks           (rlm--tool-map-tasks (gethash "tasks" arguments) context))
-            (contract        (let ((schema (gethash "contract" arguments)))
-                               (if schema
-                                   (rlm--json-schema->contract schema)
-                                   ':text)))
+            (contract        (if-let ((schema (gethash "contract" arguments)))
+                                 (rlm--json-schema->contract schema)
+                                 ':text))
             (capabilities    (rlm--tool-capabilities
                               (gethash "capabilities" arguments)))
             (budget          (rlm--tool-budget tool arguments "rlm.map"))

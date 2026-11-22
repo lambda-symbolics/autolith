@@ -406,32 +406,31 @@ by a newer generation stays readable after a rollback."
              (fail (format nil "Support ~A cites unknown evidence ~A." support evidence)))
            (setf (gethash support (knowledge-base-supports base))
                  (copy-list properties))
-           (let ((entry (gethash claim (knowledge-base-claims base))))
-             (if entry
-                 (let ((copy (copy-list entry)))
-                   (setf (getf copy :supports)
-                         (adjoin support (getf entry :supports) :test #'string=)
-                         (gethash claim (knowledge-base-claims base))
-                         copy))
-                (let* ((proposition (getf properties :proposition))
-                       (history     (and (plusp (knowledge-base-archived-claims base))
-                                         (knowledge-base-claim-history base claim))))
-                  (when history
-                    (decf (knowledge-base-archived-claims base)))
-                  (setf (gethash claim (knowledge-base-claims base))
-                        (list :id                claim
-                              :proposition       proposition
-                              :scope             (getf properties :scope)
-                              :workspace         (getf properties :workspace)
-                              :supports          (list support)
-                              :archived-supports (length (getf history :supports))))
-                  (knowledge--index-add (knowledge-base-predicate-index base)
-                                        (knowledge-proposition-predicate proposition)
-                                        claim)
-                  (dolist (term (knowledge-proposition-arguments proposition))
-                    (when (stringp term)
-                      (knowledge--index-add (knowledge-base-term-index base)
-                                            term claim))))))
+           (if-let ((entry (gethash claim (knowledge-base-claims base))))
+               (let ((copy (copy-list entry)))
+                 (setf (getf copy :supports)
+                       (adjoin support (getf entry :supports) :test #'string=)
+                       (gethash claim (knowledge-base-claims base))
+                       copy))
+              (let* ((proposition (getf properties :proposition))
+                     (history     (and (plusp (knowledge-base-archived-claims base))
+                                       (knowledge-base-claim-history base claim))))
+                (when history
+                  (decf (knowledge-base-archived-claims base)))
+                (setf (gethash claim (knowledge-base-claims base))
+                      (list :id                claim
+                            :proposition       proposition
+                            :scope             (getf properties :scope)
+                            :workspace         (getf properties :workspace)
+                            :supports          (list support)
+                            :archived-supports (length (getf history :supports))))
+                (knowledge--index-add (knowledge-base-predicate-index base)
+                                      (knowledge-proposition-predicate proposition)
+                                      claim)
+                (dolist (term (knowledge-proposition-arguments proposition))
+                  (when (stringp term)
+                    (knowledge--index-add (knowledge-base-term-index base)
+                                          term claim)))))
            (when evidence
              (knowledge--index-add (knowledge-base-evidence-index base) evidence support))))
         (:support-retracted
@@ -679,40 +678,36 @@ instead of modifying them so earlier bases keep their snapshot."
 (-> knowledge--archive-support (knowledge-base string) null)
 (defun knowledge--archive-support (base identifier)
   "Remove retracted support IDENTIFIER from BASE, with whatever only it kept resident."
-  (let ((support (gethash identifier (knowledge-base-supports base))))
-    (when support
-      (remhash identifier (knowledge-base-supports base))
-      (incf (knowledge-base-archived-supports base))
-      (let* ((claim    (getf support :claim))
-             (entry    (gethash claim (knowledge-base-claims base)))
-             (evidence (getf support :evidence)))
-        (when entry
-          (let ((supports (remove identifier (getf entry :supports) :test #'string=)))
-            (if supports
-                (let ((copy (copy-list entry)))
-                  (setf (getf copy :supports)          supports
-                        (getf copy :archived-supports) (1+ (getf entry :archived-supports 0))
-                        (gethash claim (knowledge-base-claims base)) copy))
-                (knowledge--archive-claim base claim entry))))
-        (when evidence
-          (let ((citing (remove identifier
-                                (gethash evidence (knowledge-base-evidence-index base))
-                                :test #'string=)))
-            (if citing
-                (setf (gethash evidence (knowledge-base-evidence-index base)) citing)
-                (progn
-                  (remhash evidence (knowledge-base-evidence-index base))
-                  (remhash evidence (knowledge-base-evidence base)))))))))
+  (when-let ((support (gethash identifier (knowledge-base-supports base))))
+    (remhash identifier (knowledge-base-supports base))
+    (incf (knowledge-base-archived-supports base))
+    (let* ((claim    (getf support :claim))
+           (entry    (gethash claim (knowledge-base-claims base)))
+           (evidence (getf support :evidence)))
+      (when entry
+        (if-let ((supports (remove identifier (getf entry :supports) :test #'string=)))
+            (let ((copy (copy-list entry)))
+              (setf (getf copy :supports)          supports
+                    (getf copy :archived-supports) (1+ (getf entry :archived-supports 0))
+                    (gethash claim (knowledge-base-claims base)) copy))
+            (knowledge--archive-claim base claim entry)))
+      (when evidence
+        (if-let ((citing (remove identifier
+                                 (gethash evidence (knowledge-base-evidence-index base))
+                                 :test #'string=)))
+            (setf (gethash evidence (knowledge-base-evidence-index base)) citing)
+            (progn
+              (remhash evidence (knowledge-base-evidence-index base))
+              (remhash evidence (knowledge-base-evidence base)))))))
   nil)
 
 (-> knowledge--archive-claim (knowledge-base string list) null)
 (defun knowledge--archive-claim (base claim entry)
   "Remove CLAIM, whose ENTRY has no resident supports left, from BASE and its indexes."
   (flet ((unindex (index key)
-           (let ((claims (remove claim (gethash key index) :test #'string=)))
-             (if claims
-                 (setf (gethash key index) claims)
-                 (remhash key index)))))
+           (if-let ((claims (remove claim (gethash key index) :test #'string=)))
+               (setf (gethash key index) claims)
+               (remhash key index))))
     (let ((proposition (getf entry :proposition)))
       (remhash claim (knowledge-base-claims base))
       (unindex (knowledge-base-predicate-index base)
@@ -767,11 +762,10 @@ folding. A missing log has no records. NIL reads all complete records."
              (:evidence
               (setf (gethash identifier evidence) (copy-list properties)))
              (:evidence-renewed
-              (let ((renewed (copy-list (gethash identifier evidence))))
-                (when renewed
-                  (setf (getf renewed :observed-at) (getf properties :observed-at)
-                        (getf renewed :valid-until) (getf properties :valid-until)
-                         (gethash identifier evidence) renewed))))))))
+              (when-let ((renewed (copy-list (gethash identifier evidence))))
+                (setf (getf renewed :observed-at) (getf properties :observed-at)
+                      (getf renewed :valid-until) (getf properties :valid-until)
+                       (gethash identifier evidence) renewed)))))))
      :revision revision)
     evidence))
 
@@ -964,16 +958,15 @@ person or model defines.")
 
 A workspace definition shadows a global one, and Autolith's built-in
 predicates, version 0, are visible everywhere."
-  (let ((entry (or (and workspace
-                        (gethash (list ':workspace workspace predicate)
-                                 (knowledge-base-schemas base)))
-                   (gethash (list ':global nil predicate)
-                            (knowledge-base-schemas base)))))
-    (if entry
-        (values (first entry) (second entry))
-        (let ((builtin (find predicate *knowledge-builtin-schemas*
-                             :key #'knowledge-schema-predicate :test #'string=)))
-          (values builtin (and builtin 0))))))
+  (if-let ((entry (or (and workspace
+                           (gethash (list ':workspace workspace predicate)
+                                    (knowledge-base-schemas base)))
+                      (gethash (list ':global nil predicate)
+                               (knowledge-base-schemas base)))))
+      (values (first entry) (second entry))
+      (let ((builtin (find predicate *knowledge-builtin-schemas*
+                           :key #'knowledge-schema-predicate :test #'string=)))
+        (values builtin (and builtin 0)))))
 
 (-> knowledge-visible-p (memory-scope (option string) (option string)) boolean)
 (defun knowledge-visible-p (scope workspace viewer)

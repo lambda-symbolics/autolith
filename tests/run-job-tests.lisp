@@ -6,8 +6,8 @@
 (defun test-run-job-relative-paths ()
   "Resolve both artifact paths against the caller's cwd, including event URIs."
   (with-test-configuration (configuration root)
-    (task-tests--write-text (merge-pathnames "input.sexp" root)
-                            (run-job--write-data-sexp (run-job-tests--request-form) :pretty-p t))
+    (test-write-text (merge-pathnames "input.sexp" root)
+                     (run-job--write-data-sexp (run-job-tests--request-form) :pretty-p t))
     (uiop:with-current-directory (root)
       (dolist (events '(nil :sexp))
         (let ((stream (make-string-output-stream)))
@@ -385,7 +385,7 @@
             (task-tests--role-form
              "init-runner" "Registered model role" "Return a string."
              :models '("init/job-model") :tools nil))
-           (task-tests--write-text
+           (test-write-text
             (configuration-user-init-path configuration)
             "(register-openai-compatible-provider
                :name \"job-init-provider\"
@@ -584,7 +584,7 @@
              (task-tests--role-form
               "custom-runner" "Caller-defined seam" "Return data."
               :tools nil))
-           (task-tests--write-text
+           (test-write-text
             input
             (run-job--write-data-sexp
              (run-job-tests--request-form) :pretty-p t))
@@ -619,7 +619,7 @@
          (output (merge-pathnames "interrupted-result.sexp" root)))
     (unwind-protect
          (progn
-           (task-tests--write-text
+           (test-write-text
             input
             (run-job--write-data-sexp
              (run-job-tests--request-form) :pretty-p t))

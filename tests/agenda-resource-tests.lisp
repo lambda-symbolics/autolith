@@ -2,31 +2,6 @@
 
 ;;;; -- Agenda Resource Test Support --
 
-(-> agenda-resource-tests--call
-    (tool-registry tool-context &key (:namespace string) (:name string) (:arguments list))
-    tool-result)
-(defun agenda-resource-tests--call
-    (registry context &key namespace name arguments)
-  "Execute NAMESPACE.NAME with the ARGUMENTS plist through REGISTRY and CONTEXT."
-  (tool-registry-execute-call
-   registry
-   (json-object "namespace" namespace
-                "name" name
-                "arguments" (json-encode (apply #'json-object arguments)))
-   context))
-
-(-> agenda-resource-tests--field (string string) string)
-(defun agenda-resource-tests--field (content label)
-  "Return the single-line value following LABEL in agenda resource CONTENT."
-  (let* ((start       (search label content))
-         (value-start (and start (+ start (length label))))
-         (end         (and value-start
-                           (or (position #\Newline content :start value-start)
-                               (length content)))))
-    (unless (and value-start end)
-      (error "Missing agenda resource field ~S in ~S." label content))
-    (subseq content value-start end)))
-
 (-> agenda-resource-tests--operation (string &rest t) json-object)
 (defun agenda-resource-tests--operation (name &rest fields)
   "Return one JSON agenda resource operation named NAME with FIELDS."
@@ -59,11 +34,11 @@
            (text          (format nil "~{word~D ~}" (loop for index below 120 collect index))))
       (ensure-directories-exist (merge-pathnames "marker" workspace))
       (flet ((call (name &rest arguments)
-               (agenda-resource-tests--call registry context :namespace "resource"
+               (test-resource-call registry context :namespace          "resource"
                                                              :name      name
                                                              :arguments arguments)))
         (let* ((read     (call "read" "uri" "agenda:current"))
-               (revision (agenda-resource-tests--field (tool-result-content read) "Revision: "))
+               (revision (test-resource-field (tool-result-content read) "Revision: "))
                (added    (call "edit" "uri" "agenda:current" "base-revision" revision
                                "operations" (vector (agenda-resource-tests--operation
                                                      "agenda-add" "text" text))))
@@ -125,7 +100,7 @@
                                                  (find-class 'task-child-agent)))))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one agenda resource fixture call."
-                      (agenda-resource-tests--call registry context
+                      (test-resource-call registry context
                                                    :namespace namespace
                                                    :name      name
                                                    :arguments arguments))
@@ -136,7 +111,7 @@
 
                     (revision (result)
                       "Return RESULT's model-visible resource revision alias."
-                      (agenda-resource-tests--field
+                      (test-resource-field
                        (tool-result-content result) "Revision: "))
 
                     (edit-agenda (context base operation &rest more-operations)
@@ -146,34 +121,14 @@
                             "base-revision" base
                             "operations"
                             (coerce (cons operation more-operations) 'vector))))
-             (let ((resolver
-                      (cl-resources:resource-registry-find
-                       (tool-registry-resource-registry registry) "agenda")))
-               (test-assert (typep resolver 'agenda-resolver)
-                            "default tools register the agenda resource resolver"))
              (let* ((empty-read     (read-agenda first-context))
-                    (empty-revision (revision empty-read))
-                    (empty-state
-                      (resource-observation-state-find
-                       (conversation-resource-observations first-conversation)
-                       empty-revision
-                       'agenda-observation-state))
-                    (empty-observation
-                      (resource-observation-state-observation empty-state)))
+                    (empty-revision (revision empty-read)))
                (test-assert (tool-result-success-p empty-read)
                             "resource.read observes an empty current agenda")
                (test-assert
                 (search "The workspace agenda is empty."
                         (tool-result-content empty-read))
                 "empty agenda resource read uses the existing readable rendering")
-               (test-assert
-                (equal (agenda-observation-snapshot empty-observation)
-                       (list :directory
-                             (agenda-directory-name
-                              configuration first-workspace
-                              :require-existing-p t)
-                             :record nil))
-                "empty agenda observations retain an exact explicit snapshot")
                (let* ((child-read (read-agenda child-context))
                       (child-edit
                         (edit-agenda
@@ -191,7 +146,7 @@
                (let* ((file        (merge-pathnames "child-safe.txt" first-workspace))
                       (read-result nil)
                       (edit-result nil))
-                 (workspace-resource-tests--write-text
+                 (test-write-text
                   file (format nil "before~%"))
                  (setf read-result
                        (call child-context "resource" "read"

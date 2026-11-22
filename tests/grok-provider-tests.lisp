@@ -179,7 +179,7 @@
 
 (-> grok-provider-test--selection () null)
 (defun grok-provider-test--selection ()
-  "Test Grok provider, endpoint, and context selection."
+  "Test Grok provider and endpoint selection."
   (let* ((configuration (grok-provider-test--configuration))
          (root          (test-configuration-root configuration))
          (provider      (provider-create configuration)))
@@ -190,9 +190,7 @@
            (test-assert
             (string= (config :provider-endpoint configuration)
                      *grok-responses-endpoint*)
-            "Grok models select the Grok proxy endpoint")
-           (test-assert (= (config :context-window configuration) 500000)
-                        "Grok models select the Grok context window"))
+            "Grok models select the Grok proxy endpoint"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

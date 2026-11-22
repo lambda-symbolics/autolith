@@ -84,19 +84,13 @@
 (-> agenda--memory-identifiers-p (t) boolean)
 (defun agenda--memory-identifiers-p (identifiers)
   "Return true when IDENTIFIERS is a bounded unique memory-id list."
-  (handler-case
-      (let ((length (list-length identifiers)))
-        (and (integerp length)
-             (<= length *agenda-item-memory-limit*)
-             (every (lambda (identifier)
-                      (and (non-empty-string-p identifier)
-                           (<= (length identifier)
-                               *agenda-memory-identifier-limit*)))
-                    identifiers)
-             (= length
-                (length (remove-duplicates identifiers :test #'string=)))))
-    (type-error ()
-      nil)))
+  (and (proper-list-p identifiers)
+       (<= (length identifiers) *agenda-item-memory-limit*)
+       (every (lambda (identifier)
+                (and (non-empty-string-p identifier)
+                     (<= (length identifier) *agenda-memory-identifier-limit*)))
+              identifiers)
+       (alexandria:setp identifiers :test #'string=)))
 
 (-> agenda--item-form-p (t integer) boolean)
 (defun agenda--item-form-p (form version)
@@ -595,45 +589,44 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
   "Return TARGET-ITEMS followed by non-duplicate copies from SOURCE-ITEMS."
   (let ((result (copy-list target-items)))
     (dolist (source source-items)
-      (let ((duplicate
-              (find-if
-               (lambda (target)
-                 (and (string= (agenda-item-text source)
-                               (agenda-item-text target))
-                      (eq (agenda-item-status source)
-                          (agenda-item-status target))))
-               result)))
-        (if duplicate
+      (if-let ((duplicate
+                 (find-if
+                  (lambda (target)
+                    (and (string= (agenda-item-text source)
+                                  (agenda-item-text target))
+                         (eq (agenda-item-status source)
+                             (agenda-item-status target))))
+                  result)))
+          (setf result
+                (substitute
+                 (agenda--copy-item
+                  duplicate
+                  :memory-identifiers
+                  (agenda--merge-memory-identifiers
+                   configuration
+                   (agenda-item-memory-identifiers duplicate)
+                   (agenda-item-memory-identifiers source)))
+                 duplicate
+                 result
+                 :test #'eq))
+          (let ((identifier (agenda-item-identifier source)))
             (setf result
-                  (substitute
-                   (agenda--copy-item
-                    duplicate
-                    :memory-identifiers
-                    (agenda--merge-memory-identifiers
-                     configuration
-                     (agenda-item-memory-identifiers duplicate)
-                     (agenda-item-memory-identifiers source)))
-                   duplicate
+                  (append
                    result
-                   :test #'eq))
-            (let ((identifier (agenda-item-identifier source)))
-              (setf result
-                    (append
-                     result
-                     (list
-                      (agenda--copy-item
-                       source
-                       :identifier
-                       (if (find identifier result
-                                 :key  #'agenda-item-identifier
-                                 :test #'string=)
-                           (make-user-identifier
-                            :occupied-p (lambda (candidate)
-                                          (or (find candidate result
-                                                    :key #'agenda-item-identifier :test #'string=)
-                                              (find candidate source-items
-                                                    :key #'agenda-item-identifier :test #'string=))))
-                           (copy-seq identifier))))))))))
+                   (list
+                    (agenda--copy-item
+                     source
+                     :identifier
+                     (if (find identifier result
+                               :key  #'agenda-item-identifier
+                               :test #'string=)
+                         (make-user-identifier
+                          :occupied-p (lambda (candidate)
+                                        (or (find candidate result
+                                                  :key #'agenda-item-identifier :test #'string=)
+                                            (find candidate source-items
+                                                  :key #'agenda-item-identifier :test #'string=))))
+                         (copy-seq identifier)))))))))
     result))
 
 (-> agenda--transport-unlocked

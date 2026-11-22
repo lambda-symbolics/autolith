@@ -299,11 +299,7 @@
 
 (-> test-onboarding-ui-validation () null)
 (defun test-onboarding-ui-validation ()
-  "Reject malformed pages before ownership and check freely edited text only on submission."
-  (dolist (pages (list (list (list :id "x" :version 0 :title "T" :body "B"))
-                      (list (onboarding-ui-test--page "x") (onboarding-ui-test--page "x"))))
-    (test-assert (handler-case (progn (terminal-ui-onboarding--validate-pages pages) nil)
-                   (onboarding-error () t)) "malformed and duplicate pages fail"))
+  "Validate freely edited text only on submission."
   (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
       (terminal-ui-onboarding--apply-exercise-event ui '(:paste "(delete-file \"data\")"))

@@ -183,7 +183,7 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
         (clinker-transcript:projection-copy-metadata
          (conversation-projection conversation) projection)
         (conversation-compaction--mark-checkpoint
-         projection (first (last replacement-items)) (getf (rest record) :continuation))
+         projection (lastcar replacement-items) (getf (rest record) :continuation))
         (setf (getf (rest record) :through-seq)
               (1- (conversation-next-sequence conversation))
               (getf (rest record) :cutoff-seq)

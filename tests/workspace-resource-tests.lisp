@@ -2,31 +2,6 @@
 
 ;;;; -- Workspace Resource Test Support --
 
-(-> workspace-resource-tests--write-text (pathname string) null)
-(defun workspace-resource-tests--write-text (path text)
-  "Replace PATH with exact UTF-8 TEXT for a workspace resource test."
-  (ensure-directories-exist path)
-  (with-open-file (stream path
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :element-type      '(unsigned-byte 8))
-    (write-sequence (sb-ext:string-to-octets text :external-format ':utf-8)
-                    stream))
-  nil)
-
-(-> workspace-resource-tests--field (string string) string)
-(defun workspace-resource-tests--field (content label)
-  "Return the single-line value following LABEL in tool result CONTENT."
-  (let* ((start       (search label content))
-         (value-start (and start (+ start (length label))))
-         (end         (and value-start
-                           (or (position #\Newline content :start value-start)
-                               (length content)))))
-    (unless (and value-start end)
-      (error "Missing result field ~S in ~S." label content))
-    (subseq content value-start end)))
-
 (-> workspace-resource-tests--line-anchor (string (integer 1)) string)
 (defun workspace-resource-tests--line-anchor (content line)
   "Return LINE's rendered hash anchor from resource result CONTENT."
@@ -36,20 +11,6 @@
       (error "Missing rendered line ~D in ~S." line content))
     (subseq content (+ start (length prefix))
             (+ start (length prefix) 4))))
-
-(-> workspace-resource-tests--call
-    (tool-registry tool-context
-     &key (:namespace string) (:name string) (:arguments list))
-    tool-result)
-(defun workspace-resource-tests--call
-    (registry context &key namespace name arguments)
-  "Execute NAMESPACE.NAME with the ARGUMENTS plist through REGISTRY and CONTEXT."
-  (tool-registry-execute-call
-   registry
-   (json-object "namespace" namespace
-                "name" name
-                "arguments" (json-encode (apply #'json-object arguments)))
-   context))
 
 (-> workspace-resource-tests--operation (string &rest t) json-object)
 (defun workspace-resource-tests--operation (name &rest fields)
@@ -133,15 +94,15 @@
                                          :configuration configuration
                                          :worker        nil
                                          :conversation  (conversation-create configuration))))
-      (workspace-resource-tests--write-text
+      (test-write-text
        (merge-pathnames "notes.txt" workspace)
        (format nil "~{line ~D~%~}" (loop for line from 1 to 200 collect line)))
       (flet ((call (name &rest arguments)
-               (workspace-resource-tests--call registry context :namespace "resource"
+               (test-resource-call registry context :namespace             "resource"
                                                                 :name      name
                                                                 :arguments arguments)))
         (let* ((read     (call "read" "uri" "notes.txt"))
-               (revision (workspace-resource-tests--field (tool-result-content read) "Revision: ")))
+               (revision (test-resource-field (tool-result-content read) "Revision: ")))
           (test-assert (and (tool-result-success-p read)
                             (search "read as workspace:notes.txt" (tool-result-content read)))
                        "a relative path without a scheme reads the workspace file")
@@ -149,7 +110,7 @@
                                  "operations" (vector (workspace-resource-tests--operation
                                                        "replace-lines" "start-line" 2 "end-line" 2
                                                        "content" (format nil "LINE 2~%LINE 2B")))))
-                 (revision (workspace-resource-tests--field (tool-result-content first) "Revision: "))
+                 (revision (test-resource-field (tool-result-content first) "Revision: "))
                  (second   (call "edit" "uri" "workspace:notes.txt" "base-revision" revision
                                  "operations" (vector (workspace-resource-tests--operation
                                                        "replace-lines" "start-line" 190 "end-line" 190
@@ -222,7 +183,7 @@
                                  :conversation  heterogeneous-conversation)))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one resource fixture call."
-                      (workspace-resource-tests--call
+                      (test-resource-call
                        registry context :namespace namespace
                                         :name      name
                                         :arguments arguments))
@@ -242,11 +203,11 @@
                           (values result
                                   (and (or (tool-result-success-p result)
                                            (eq (tool-result-error-code result) ':not-found))
-                                       (workspace-resource-tests--field
+                                       (test-resource-field
                                         content "URI: "))
                                   (and (or (tool-result-success-p result)
                                            (eq (tool-result-error-code result) ':not-found))
-                                       (workspace-resource-tests--field
+                                       (test-resource-field
                                         content "Revision: "))))))
 
                     (edit-resource (context uri revision operations)
@@ -256,7 +217,7 @@
                             "base-revision" revision
                             "operations" (coerce operations 'vector))))
                (let ((path (merge-pathnames "src/c++/x.cpp" workspace)))
-                 (workspace-resource-tests--write-text path "plus path")
+                 (test-write-text path "plus path")
                  (multiple-value-bind (result canonical-uri revision)
                      (read-resource first-context "workspace:src/c++/x.cpp")
                    (declare (ignore revision))
@@ -271,7 +232,7 @@
                        (path
                          (merge-pathnames
                           (uiop:parse-native-namestring relative) workspace)))
-                  (workspace-resource-tests--write-text path "native path")
+                  (test-write-text path "native path")
                   (multiple-value-bind (result canonical-uri revision)
                       (read-resource
                        first-context "workspace:src/notes*[1]?\\x.md")
@@ -297,7 +258,7 @@
                                     (tool-result-content edited)))
                        "resource.edit publishes files with native pathname metacharacters")))))
               (let ((path (merge-pathnames "descriptor-growth.txt" workspace)))
-                (workspace-resource-tests--write-text path "before")
+                (test-write-text path "before")
                 (test-assert
                  (handler-case
                      (progn
@@ -323,7 +284,7 @@
                      t))
                  "bounded descriptor reads reject files that grow during validation"))
               (let ((path (merge-pathnames "retained-ranges.txt" workspace)))
-                (workspace-resource-tests--write-text
+                (test-write-text
                  path (format nil "one~%two~%three~%four~%"))
                 (multiple-value-bind (first-result uri alias)
                     (read-resource first-context "workspace:retained-ranges.txt"
@@ -348,7 +309,7 @@
                        "equivalent workspace reads reuse state and merge visible ranges")))))
               (let ((*workspace-file-resource-maximum-observations* 2))
                 (dolist (name '("reused-a.txt" "reused-b.txt" "reused-c.txt"))
-                  (workspace-resource-tests--write-text
+                  (test-write-text
                    (merge-pathnames name workspace) name))
                 (multiple-value-bind (first-result uri alias)
                     (read-resource first-context "workspace:reused-a.txt")
@@ -382,7 +343,7 @@
                        'workspace-resource-tests-other-observation-state
                        :alias       "Rforeign"
                        :observation other-observation)))
-               (workspace-resource-tests--write-text path "workspace")
+               (test-write-text path "workspace")
                (with-recursive-lock-held
                    ((conversation-resource-observation-lock
                      heterogeneous-conversation))
@@ -449,7 +410,7 @@
                    "Rretained-other"
                    other-state))
                 (let ((*workspace-file-resource-maximum-retained-bytes* 12))
-                  (workspace-resource-tests--write-text path "ááá")
+                  (test-write-text path "ááá")
                   (multiple-value-bind (first-result uri first-revision)
                       (read-resource retention-context "workspace:retained.txt")
                     (test-assert (tool-result-success-p first-result)
@@ -460,13 +421,13 @@
                            (observation
                              (resource-observation-state-observation state)))
                       (test-assert
-                       (null (workspace-file-observation-stored-lines observation))
+                       (null (text-resource-observation-stored-lines observation))
                        "workspace observations do not retain duplicated logical lines")
                       (test-assert
                        (equalp (workspace-file-observation-lines observation)
                                #("ááá"))
                        "workspace observation lines remain available on demand"))
-                    (workspace-resource-tests--write-text path "žžžž")
+                    (test-write-text path "žžžž")
                     (multiple-value-bind (second-result second-uri second-revision)
                         (read-resource retention-context "workspace:retained.txt")
                       (test-assert (tool-result-success-p second-result)
@@ -501,7 +462,7 @@
                        (cl-resources:resource-registry-find
                         (tool-registry-resource-registry registry) "workspace"))
                     (spaced-path (merge-pathnames "space name.txt" workspace)))
-               (workspace-resource-tests--write-text spaced-path "content")
+               (test-write-text spaced-path "content")
                (test-assert (typep resolver 'workspace-file-resolver)
                             "default registries install the workspace resolver")
                (let ((resource
@@ -541,7 +502,7 @@
                       (format nil "workspace:~A"
                               (workspace-file--encode-identifier
                                (namestring outside-path)))))
-               (workspace-resource-tests--write-text outside-path "secret")
+               (test-write-text outside-path "secret")
                (let ((resource
                        (resource-registry-resolve
                         (tool-registry-resource-registry registry)
@@ -654,7 +615,7 @@
                   "out-of-root resource authorization uses the active workspace directory")))
              (with-test-fixture (':permission-denials "resource.read permission failures")
                (let ((path (merge-pathnames "unreadable.txt" workspace)))
-                 (workspace-resource-tests--write-text path "private content")
+                 (test-write-text path "private content")
                  (unwind-protect
                       (progn
                         (test-fixture-set-file-mode *platform* path 0)
@@ -665,7 +626,7 @@
                            "An OS-denied file read returns a stable permission code.")))
                    (test-fixture-set-file-mode *platform* path #o600))))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
-               (workspace-resource-tests--write-text oversized "123456789")
+               (test-write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
                  (let ((result
                          (read-resource first-context
@@ -706,14 +667,14 @@
              (let* ((path   (merge-pathnames "overlong-window.txt" workspace))
                     (states (conversation-resource-observations first-conversation))
                     (before (fifo-cache-count states)))
-               (workspace-resource-tests--write-text path (make-string 10000 :initial-element #\x))
+               (test-write-text path (make-string 10000 :initial-element #\x))
                (let ((result (read-resource first-context "workspace:overlong-window.txt")))
                  (test-assert (not (tool-result-success-p result))
                               "an unrenderable file line does not establish edit visibility")
                  (test-assert (= before (fifo-cache-count states))
                               "a refused oversized file window retains no edit observation")))
              (let ((path (merge-pathnames "visible.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "one~%two~%three~%four~%five~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:visible.txt"
@@ -778,7 +739,7 @@
                                   (conversation-resource-observations reloaded))))
                      "resource observations stay out of conversation persistence and expire after reload"))))
              (let ((path (merge-pathnames "anchors-exact.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "alpha~%beta~%gamma~%delta~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:anchors-exact.txt")
@@ -804,7 +765,7 @@
                                   (format nil "alpha~%middle~%delta~%")))
                     "resource.edit accepts exact range-boundary anchors"))))
              (let ((path (merge-pathnames "anchor-refusal.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "one~%duplicate~%three~%duplicate~%five~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:anchor-refusal.txt")
@@ -827,7 +788,7 @@
                                   (format nil "one~%duplicate~%three~%duplicate~%five~%")))
                     "resource.edit refuses an ambiguous nearby anchor"))))
              (let ((path (merge-pathnames "anchors-compatible.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "one~%two~%three~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:anchors-compatible.txt")
@@ -847,14 +808,14 @@
                                   (format nil "one~%TWO~%three~%")))
                     "resource.edit remains compatible when anchors are omitted"))))
              (let ((path (merge-pathnames "anchors-stale.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "one~%two~%three~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:anchors-stale.txt")
                  (let ((anchor
                          (workspace-resource-tests--line-anchor
                           (tool-result-content read-result) 2)))
-                   (workspace-resource-tests--write-text
+                   (test-write-text
                     path (format nil "external~%two~%three~%"))
                    (let ((result
                            (edit-resource
@@ -874,7 +835,7 @@
                                     (format nil "external~%two~%three~%")))
                       "resource.edit rejects stale revisions before anchored correction")))))
              (let ((path (merge-pathnames "empty.txt" workspace)))
-               (workspace-resource-tests--write-text path "")
+               (test-write-text path "")
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:empty.txt")
                  (test-assert
@@ -896,7 +857,7 @@
                              (format nil "first~%second~%"))
                     "replace-empty preserves supplied content and final newline"))))
              (let ((path (merge-pathnames "multi.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "one~%two~%three~%four~%five~%six~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:multi.txt")
@@ -923,7 +884,7 @@
                                      "one~%TWO~%THREE~%four~%five~%five-and-a-half~%six~%"))
                     "resource.edit interprets every operation against original line numbers")
                    (let ((new-revision
-                           (workspace-resource-tests--field
+                           (test-resource-field
                             (tool-result-content result) "Revision: ")))
                      (test-assert (not (string= revision new-revision))
                                   "successful edits return a fresh revision alias")
@@ -943,7 +904,7 @@
                           "content" "FOUR"))))
                       "the refreshed observation supports the next nearby edit")))))
              (let ((path (merge-pathnames "overlap.txt" workspace)))
-               (workspace-resource-tests--write-text
+               (test-write-text
                 path (format nil "a~%b~%c~%d~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:overlap.txt")
@@ -965,8 +926,8 @@
                     "overlap rejection leaves the file unchanged"))))
              (let ((path      (merge-pathnames "stage-collision.txt" workspace))
                    (temporary (merge-pathnames "occupied-stage.tmp" workspace)))
-               (workspace-resource-tests--write-text path "base")
-               (workspace-resource-tests--write-text temporary "occupied")
+               (test-write-text path "base")
+               (test-write-text temporary "occupied")
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:stage-collision.txt")
                  (declare (ignore read-result))
@@ -988,11 +949,11 @@
                             (string= "occupied" (workspace-file--read-content temporary)))
                        "staging collisions preserve both the target and the existing temporary file"))))))
              (let ((path (merge-pathnames "stale.txt" workspace)))
-               (workspace-resource-tests--write-text path (format nil "old~%value~%"))
+               (test-write-text path (format nil "old~%value~%"))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:stale.txt")
                  (declare (ignore read-result))
-                 (workspace-resource-tests--write-text
+                 (test-write-text
                   path (format nil "external~%value~%"))
                  (let ((result
                          (edit-resource
@@ -1027,7 +988,7 @@
              (let* ((crlf     (format nil "~C~C" #\Return #\Newline))
                     (path     (merge-pathnames "crlf.txt" workspace))
                     (original (format nil "one~Atwo~A" crlf crlf)))
-               (workspace-resource-tests--write-text path original)
+               (test-write-text path original)
                (when (test-fixture-available-p *platform* ':file-modes)
                  (test-fixture-set-file-mode *platform* path #o640))
                (multiple-value-bind (read-result uri revision)
@@ -1054,7 +1015,7 @@
               (let* ((crlf     (format nil "~C~C" #\Return #\Newline))
                      (path     (merge-pathnames "mixed-line-endings.txt" workspace))
                      (original (format nil "one~%two~Athree~%" crlf)))
-                (workspace-resource-tests--write-text path original)
+                (test-write-text path original)
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context
                                    "workspace:mixed-line-endings.txt")
@@ -1075,7 +1036,7 @@
                      (string= (workspace-file--read-content path) original)
                      "mixed-line-ending refusal preserves exact content"))))
               (let ((path (merge-pathnames "no-final-newline.txt" workspace)))
-                (workspace-resource-tests--write-text path (format nil "one~%two"))
+                (test-write-text path (format nil "one~%two"))
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context "workspace:no-final-newline.txt")
                   (declare (ignore read-result))
@@ -1092,7 +1053,7 @@
                             (format nil "one~%middle~%two"))
                    "resource.edit preserves absence of a final newline")))
               (let ((path (merge-pathnames "oversized-edit.txt" workspace)))
-                (workspace-resource-tests--write-text path (format nil "a~%"))
+                (test-write-text path (format nil "a~%"))
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context "workspace:oversized-edit.txt")
                   (declare (ignore read-result))
@@ -1127,7 +1088,7 @@
                                ".*.autolith-resource-*.tmp" workspace))))
                        "oversized replacement rejection writes nothing and preserves the original")))))
               (let ((path (merge-pathnames "publish-failure.txt" workspace)))
-                (workspace-resource-tests--write-text path (format nil "before~%"))
+                (test-write-text path (format nil "before~%"))
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context "workspace:publish-failure.txt")
                   (declare (ignore read-result))
@@ -1155,7 +1116,7 @@
                                                      workspace)))
                    "failed atomic publication cleans its same-directory temporary file")))
               (let ((path (merge-pathnames "publish-mismatch.txt" workspace)))
-                (workspace-resource-tests--write-text path (format nil "before~%"))
+                (test-write-text path (format nil "before~%"))
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context "workspace:publish-mismatch.txt")
                   (declare (ignore read-result))
@@ -1186,7 +1147,7 @@
                                                      workspace)))
                    "publication mismatch cleans its same-directory temporary file")))
               (let ((path (merge-pathnames "extensionless" workspace)))
-                (workspace-resource-tests--write-text path (format nil "before~%"))
+                (test-write-text path (format nil "before~%"))
                 (multiple-value-bind (read-result uri revision)
                     (read-resource first-context "workspace:extensionless")
                   (declare (ignore read-result))
@@ -1223,7 +1184,7 @@
                      (first-thread      nil)
                      (second-thread     nil)
                      (original-publish  *workspace-file-resource-publish-function*))
-                (workspace-resource-tests--write-text path (format nil "before~%"))
+                (test-write-text path (format nil "before~%"))
                 (multiple-value-bind (first-read first-uri first-revision)
                     (read-resource first-context "workspace:serialized.txt")
                   (declare (ignore first-read))
@@ -1309,7 +1270,7 @@
                      (edit-started-p nil)
                      (read-thread    nil)
                      (edit-thread    nil))
-                (workspace-resource-tests--write-text path (format nil "before~%"))
+                (test-write-text path (format nil "before~%"))
                 (multiple-value-bind (edit-read edit-uri edit-revision)
                     (read-resource second-context "workspace:serialized-read.txt")
                   (declare (ignore edit-read))
@@ -1387,7 +1348,7 @@
                          (join-thread read-thread)
                          (join-thread edit-thread)
                          (let ((revision
-                                 (workspace-resource-tests--field
+                                 (test-resource-field
                                   (tool-result-content read-result) "Revision: ")))
                            (test-assert
                             (and (tool-result-success-p read-result)
@@ -1481,7 +1442,7 @@
                      (extra-file   (merge-pathnames "beta.txt" directory))
                      (fifo         (merge-pathnames "named-pipe" directory)))
                 (ensure-directories-exist (merge-pathnames "marker" subdirectory))
-                (workspace-resource-tests--write-text file "abc")
+                (test-write-text file "abc")
                 (multiple-value-bind (result uri revision)
                     (read-resource first-context "workspace:listing")
                   (let ((content (tool-result-content result)))
@@ -1538,7 +1499,7 @@
                                (ignore-errors
                                  (sb-thread:join-thread
                                   thread :timeout 0.2 :default nil))))))
-                       (workspace-resource-tests--write-text extra-file "extra")
+                       (test-write-text extra-file "extra")
                        (let* ((*workspace-file-resource-maximum-directory-entries* 2)
                               (*workspace-file-resource-maximum-result-characters* 96)
                               (resource
@@ -1586,7 +1547,7 @@
                         (list
                          (list ':file
                                (lambda (path)
-                                 (workspace-resource-tests--write-text path "racer"))
+                                 (test-write-text path "racer"))
                                nil)
                          (list ':directory
                                (lambda (path)
@@ -1633,7 +1594,7 @@
                   (declare (ignore read-result))
                   (let ((*workspace-file-resource-create-function*
                           (lambda (source target)
-                            (workspace-resource-tests--write-text target "racer")
+                            (test-write-text target "racer")
                             (funcall original-create source target))))
                     (let ((result
                             (edit-resource

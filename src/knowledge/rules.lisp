@@ -43,7 +43,7 @@ A :SYMMETRIC-P comparison accepts its operands' types in either direction.")
 (-> knowledge--date-add (string integer) list)
 (defun knowledge--date-add (date seconds)
   "Return the date term SECONDS of whole days after canonical DATE."
-  (list :date (subseq (knowledge-format-instant
+  (list :date (subseq (format-utc-timestamp
                        (+ (knowledge-date-universal-time date)
                           (* 86400 (knowledge--days-only seconds))))
                       0 10)))
@@ -559,23 +559,17 @@ restricted, not well typed, or exceeds its bounds."
 (-> knowledge-rules-acyclic-p (list) boolean)
 (defun knowledge-rules-acyclic-p (rules)
   "Return true when no predicate depends on itself through RULES."
-  (let ((edges (make-hash-table :test #'equal))
-        (state (make-hash-table :test #'equal)))
-    (dolist (rule rules)
-      (dolist (predicate (knowledge-rule-premise-predicates rule))
-        (pushnew (knowledge-rule-conclusion-predicate rule) (gethash predicate edges)
-                 :test #'string=)))
-    (labels ((visit (predicate)
-               (case (gethash predicate state)
-                 (:visiting
-                  nil)
-                 (:done
-                  t)
-                 (otherwise
-                  (setf (gethash predicate state) ':visiting)
-                  (prog1 (every #'visit (gethash predicate edges))
-                    (setf (gethash predicate state) ':done))))))
-      (and (loop for predicate being the hash-keys of edges always (visit predicate)) t))))
+  (handler-case
+      (progn
+        (serapeum:toposort
+         (loop for rule in rules
+               for conclusion = (knowledge-rule-conclusion-predicate rule)
+               append (loop for premise in (knowledge-rule-premise-predicates rule)
+                            collect (list premise conclusion)))
+         :test #'equal)
+        t)
+    (serapeum:inconsistent-graph ()
+      nil)))
 
 
 ;;;; -- Stored Rules --

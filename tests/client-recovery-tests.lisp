@@ -497,13 +497,6 @@
   (channel-view--drain-events view)
   nil)
 
-(-> client-history-tests--occurrences (string string) (integer 0))
-(defun client-history-tests--occurrences (needle text)
-  "Count non-overlapping occurrences of NEEDLE in TEXT."
-  (loop for start = 0 then (+ match (length needle))
-        for match = (search needle text :start2 start)
-        while match count match))
-
 (-> test-channel-view-durable-history () null)
 (defun test-channel-view-durable-history ()
   "Seed a second real view after cache eviction and page without changing its peer."
@@ -549,8 +542,8 @@
                                   (not (search "history-item-001" text-b)))
                              "A fresh second view receives the newest durable page, not the evicted cache.")
                 (dolist (text (list text-a text-b))
-                  (test-assert (and (= 1 (client-history-tests--occurrences "history-boundary-301" text))
-                                    (= 1 (client-history-tests--occurrences "history-live-302" text)))
+                  (test-assert (and (= 1 (test-substring-count "history-boundary-301" text))
+                                    (= 1 (test-substring-count "history-live-302" text)))
                                "The durable/live cut presents both boundary and later records exactly once.")))
               (let ((floor-a      (channel-view-transcript-history-floor view-a))
                     (text-a       (client-history-tests--text view-a))
@@ -661,7 +654,7 @@
                 (client-history-tests--settle view)
                 (let ((display (client-history-tests--text view)))
                   (dolist (text (list first second summary))
-                    (test-assert (= 1 (client-history-tests--occurrences text display))
+                    (test-assert (= 1 (test-substring-count text display))
                                  "Each multipart or reasoning fragment appears once across the stream cut"))
                   (let* ((reply        (search second display))
                          (first-notice (search "cache miss" display))
@@ -671,7 +664,7 @@
                          (last-input   (search last display)))
                     (test-assert (and reply first-notice later-reply last-notice last-input
                                       (< reply first-notice later-reply last-notice last-input)
-                                      (= 2 (client-history-tests--occurrences "cache miss" display)))
+                                      (= 2 (test-substring-count "cache miss" display)))
                                  "Live and fresh views show both cache notices once, in request order.")))))
          (dolist (view (list view-c view-b view-a)) (channel-subscription-close view))
          (dolist (screen (list screen-c screen-b screen-a)) (world-terminal-screen-close screen))))))
@@ -913,7 +906,7 @@
                      (ordered)
                      (let ((text (client-history-tests--text view)))
                        (dolist (marker markers)
-                         (test-assert (= 1 (client-history-tests--occurrences marker text))
+                         (test-assert (= 1 (test-substring-count marker text))
                                       "Overlapping history pages do not duplicate local or durable output."))))))
                 (let ((cut (application-client-history--cut application)))
                   (multiple-value-bind (events fields)

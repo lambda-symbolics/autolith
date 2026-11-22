@@ -31,11 +31,8 @@
 (-> lsp-client-tests--write (configuration string string) pathname)
 (defun lsp-client-tests--write (configuration name text)
   "Write TEXT beneath CONFIGURATION's temporary workspace."
-  (let ((path (merge-pathnames name (test-configuration-root configuration))))
-    (ensure-directories-exist path)
-    (with-open-file (stream path :direction ':output :if-exists ':supersede :if-does-not-exist ':create)
-      (write-string text stream))
-    path))
+  (test-write-text (merge-pathnames name (test-configuration-root configuration))
+                   text :external-format ':default))
 
 (-> test-lsp-result-bounds () null)
 (defun test-lsp-result-bounds ()
@@ -201,13 +198,13 @@
                              (lambda (&rest arguments)
                                (declare (ignore arguments))
                                (sleep 10))))))
-              (let* ((read-result (workspace-resource-tests--call registry context
+              (let* ((read-result (test-resource-call registry context
                                                                  :namespace "resource"
                                                                  :name      "read"
                                                                  :arguments (list "uri" "workspace:deadline.txt")))
-                     (revision    (workspace-resource-tests--field (tool-result-content read-result) "Revision: "))
+                     (revision    (test-resource-field (tool-result-content read-result) "Revision: "))
                      (start       (get-internal-real-time))
-                     (result      (workspace-resource-tests--call
+                     (result      (test-resource-call
                                    registry context
                                    :namespace "resource"
                                    :name      "edit"

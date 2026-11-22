@@ -169,9 +169,8 @@ saved, so the saver strips no channel the booted heap serves again.
 READY-FUNCTION receives the final generation just before the save. If the
 save cannot begin, the leases and telemetry are taken again and the
 condition is signaled for the channels to be served again."
-  (let ((requester (find application (world-server--hosts server) :key #'world-host-application)))
-    (when requester
-      (world-server--quiesce-host-tools requester)))
+  (when-let ((requester (find application (world-server--hosts server) :key #'world-host-application)))
+    (world-server--quiesce-host-tools requester))
   (dolist (host (world-server--hosts server))
     (lisp-worker-manager-stop (application-worker (world-host-application host))))
   (let ((leases (world-server--restart-release-leases server)))
@@ -212,9 +211,8 @@ that boots it."
         (when lease
           (push (cons host (conversation-lease-identifier lease)) released)
           (application-release-conversation-lease application))))
-    (let ((lease (shiftf (world-server-lease server) nil)))
-      (when lease
-        (lease-release lease)))
+    (when-let ((lease (shiftf (world-server-lease server) nil)))
+      (lease-release lease))
     (nreverse released)))
 
 (-> world-server--restart-reclaim-leases (world-server list) list)

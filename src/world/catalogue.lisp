@@ -5,12 +5,11 @@
 (-> world-channel-statuses (configuration &key (:entry t)) list)
 (defun world-channel-statuses (configuration &key entry)
   "Return the server's live channel statuses, or NIL when it is unavailable."
-  (let ((entry (or entry (world-client-entry configuration))))
-    (when entry
-      (handler-case
-          (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels))
-        (autolith-error ()
-          nil)))))
+  (when-let ((entry (or entry (world-client-entry configuration))))
+    (handler-case
+        (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels))
+      (autolith-error ()
+        nil))))
 
 (-> world-channel-catalogue
     (configuration &key (:world world) (:statuses list)) world)

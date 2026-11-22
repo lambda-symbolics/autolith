@@ -108,14 +108,14 @@
          (expires-at (json-get document "expires_at")))
     (unless (and (non-empty-string-p token)
                  (integerp expires-at)
-                 (> expires-at (- (get-universal-time) 2208988800)))
+                 (> (unix-time->universal-time expires-at) (get-universal-time)))
       (error 'authentication-error
              :message "GitHub did not return a valid Copilot token; check your Copilot subscription."))
     (make-instance 'oauth-credentials
                    :access-token token :refresh-token github-token
                    :account-id  account-id
                    ;; The shared manager renews within 300 seconds of expiry.
-                   :expires-at  (+ expires-at 2208988800)
+                   :expires-at  (unix-time->universal-time expires-at)
                    :source-path (credential-source-pathname
                                  (credential-manager-primary-source manager)))))
 

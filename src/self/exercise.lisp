@@ -17,7 +17,7 @@ can verify the current active state after a discard."
                      :key  (lambda (candidate)
                              (getf (rest candidate) :id))
                      :test #'string=)
-               (first (last effective)))))
+               (lastcar effective))))
     (when (and identifier (null record))
       (error 'source-mutation-error
              :message

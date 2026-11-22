@@ -20,19 +20,18 @@
     list)
 (defun application--preview-rows (text style limit &key gutter)
   "Return up to LIMIT styled rows from TEXT, followed by an omission row."
-  (let ((lines (application--display-lines text)))
-    (when lines
-      (let* ((visible-count (min limit (length lines)))
-             (omitted       (- (length lines) visible-count)))
-        (append
-         (loop for line in (subseq lines 0 visible-count)
-               collect (append (when gutter
-                                 (list (terminal-span ':dim gutter)))
-                               (list (terminal-span style line))))
-         (when (plusp omitted)
-           (list (list (terminal-span
-                        ':dim
-                        (format nil "… +~D more line~:P" omitted))))))))))
+  (when-let ((lines (application--display-lines text)))
+    (let* ((visible-count (min limit (length lines)))
+           (omitted       (- (length lines) visible-count)))
+      (append
+       (loop for line in (subseq lines 0 visible-count)
+             collect (append (when gutter
+                               (list (terminal-span ':dim gutter)))
+                             (list (terminal-span style line))))
+       (when (plusp omitted)
+         (list (list (terminal-span
+                      ':dim
+                      (format nil "… +~D more line~:P" omitted)))))))))
 
 (defvar *application-provider-call-presentation* nil
   "The provider function call currently being rendered as one transcript entry.")
@@ -672,14 +671,8 @@ structural discriminator as a readable heading instead."
     (call-next-method tool application display-call)))
 
 (defmethod application-tool-call-entry
-    ((tool tool) (application application) (call hash-table))
+    ((tool t) (application application) (call hash-table))
   "Present CALL using the generic readable argument layout."
-  (declare (ignore tool))
-  (application--generic-tool-call-entry application call))
-
-(defmethod application-tool-call-entry
-    ((tool null) (application application) (call hash-table))
-  "Present an unregistered CALL using the generic readable argument layout."
   (declare (ignore tool))
   (application--generic-tool-call-entry application call))
 
@@ -835,7 +828,7 @@ structural discriminator as a readable heading instead."
   (when (stringp value)
     (let ((text
             (sanitize-text
-             (string-trim '(#\Space #\Tab #\Newline #\Return) value)
+             (string-trim *line-whitespace* value)
              :single-line-p t)))
       (and (plusp (length text)) text))))
 
@@ -985,13 +978,8 @@ structural discriminator as a readable heading instead."
 (-> application--task-run-summary-text (string) string)
 (defun application--task-run-summary-text (text)
   "Return TEXT as one sanitized whitespace-normalized summary line."
-  (format nil
-          "~{~A~^ ~}"
-          (remove-if
-           (lambda (part) (zerop (length part)))
-           (uiop:split-string
-            (sanitize-text text :single-line-p t)
-            :separator '(#\Space #\Tab #\Newline #\Return #\Page)))))
+  (serapeum:trim-whitespace
+   (serapeum:collapse-whitespace (sanitize-text text :single-line-p t))))
 
 (-> application--fit-ellipsized (string integer) string)
 (defun application--fit-ellipsized (text width)
@@ -1224,39 +1212,24 @@ structural discriminator as a readable heading instead."
 
 Use only the exact transient observation and ranges already shown to the model.
 Never read the current file as a revision-gated preimage."
-  (block nil
-    (unless (and (slot-boundp application 'conversation)
-                 (non-empty-string-p revision)
-                 (plusp start-line)
-                 (<= start-line end-line))
-      (return nil))
-    (let ((conversation (application-conversation application)))
-      (with-recursive-lock-held
-          ((conversation-resource-observation-lock conversation))
-        (let ((state
-                (resource-observation-state-find
-                 (conversation-resource-observations conversation)
-                 revision
-                 'text-resource-observation-state)))
-          (unless state
-            (return nil))
-          (let* ((observation
-                   (resource-observation-state-observation state))
-                 (lines (text-resource-observation-lines observation)))
-            (unless (and (string= uri (resource-observation-uri observation))
-                         (structlisp:integer-interval-set-covers-p
-                          (text-resource-observation-state-visible-ranges state)
-                          start-line (1+ end-line))
-                         (<= end-line (length lines)))
-              (return nil))
-            (let ((selected-lines
-                    (loop for line from start-line to end-line
-                          collect (aref lines (1- line)))))
-              (format nil "~{~A~^~%~}~:[~;~%~]"
-                      selected-lines
-                      (and selected-lines
-                           (zerop
-                            (length (first (last selected-lines)))))))))))))
+  (when (and (plusp start-line) (<= start-line end-line))
+    (nth-value 0
+      (application--call-with-observation-state
+       application uri revision
+       :state-class       'text-resource-observation-state
+       :observation-class 'text-resource-observation
+       :function          (lambda (state observation)
+                            (let ((lines (text-resource-observation-lines observation)))
+                              (when (and (<= end-line (length lines))
+                                         (structlisp:integer-interval-set-covers-p
+                                          (text-resource-observation-state-visible-ranges state)
+                                          start-line (1+ end-line)))
+                                (let ((selected-lines
+                                        (loop for line from start-line to end-line
+                                              collect (aref lines (1- line)))))
+                                  (format nil "~{~A~^~%~}~:[~;~%~]"
+                                          selected-lines
+                                          (zerop (length (lastcar selected-lines))))))))))))
 
 (-> application--workspace-resource-operation-set-valid-p
     (application vector &key (:uri string) (:revision string))
@@ -1264,39 +1237,24 @@ Never read the current file as a revision-gated preimage."
 (defun application--workspace-resource-operation-set-valid-p
     (application operations &key uri revision)
   "Return whether OPERATIONS are valid against the exact observed workspace file."
-  (block nil
-    (unless (and (slot-boundp application 'conversation)
-                 (non-empty-string-p uri)
-                 (non-empty-string-p revision)
-                 (plusp (length operations)))
-      (return nil))
-    (let ((conversation (application-conversation application)))
-      (unless (typep conversation 'conversation)
-        (return nil))
-      (with-recursive-lock-held
-          ((conversation-resource-observation-lock conversation))
-        (let ((state
-                (resource-observation-state-find
-                 (conversation-resource-observations conversation)
-                 revision
-                 'text-resource-observation-state)))
-          (unless state
-            (return nil))
-          (let ((observation
-                  (resource-observation-state-observation state)))
-            (unless (string= uri (resource-observation-uri observation))
-              (return nil))
-            (handler-case
-                (progn
-                  (cl-hashline:edit-text
-                   (resource-observation-content observation)
-                   (map 'list #'text-resource--json-operation operations)
-                   :visible-lines         (text-resource-observation-state-visible-ranges state)
-                   :split-lines           #'text--split-lines
-                   :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
-                  t)
-              (error ()
-                nil))))))))
+  (when (plusp (length operations))
+    (nth-value 0
+      (application--call-with-observation-state
+       application uri revision
+       :state-class       'text-resource-observation-state
+       :observation-class 'text-resource-observation
+       :function          (lambda (state observation)
+                            (handler-case
+                                (progn
+                                  (cl-hashline:edit-text
+                                   (resource-observation-content observation)
+                                   (map 'list #'text-resource--json-operation operations)
+                                   :visible-lines         (text-resource-observation-state-visible-ranges state)
+                                   :split-lines           #'text--split-lines
+                                   :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
+                                  t)
+                              (error ()
+                                nil)))))))
 
 (-> application--workspace-resource-added-start-lines
     (application vector &key (:uri string) (:revision string))
@@ -1431,50 +1389,22 @@ OPERATION's own declared target line so they stay numbered."
 (defun application--workspace-resource-operation-rows
     (application operations &key uri revision path)
   "Return syntax-highlighted line changes for workspace resource OPERATIONS."
-  (cond
-    ((not (and (vectorp operations) (not (stringp operations))))
-     (list (application--tool-section-row "operations unavailable")))
-    ((zerop (length operations))
-     (list (application--tool-section-row "no operations")))
-    (t
-     (let* ((new-start-lines
-              (application--workspace-resource-added-start-lines
-               application operations :uri uri :revision revision))
-            (visible-count (min *application-tool-structure-items*
-                                (length operations)))
-            (omitted       (- (length operations) visible-count)))
-       (append
-        (loop for index below visible-count
-              for operation = (aref operations index)
-              for first-p = t then nil
-              append
-              (append
-               (unless first-p (list nil))
-               (if (json-object-p operation)
-                   (let ((change-rows
-                           (application--workspace-resource-operation-change-rows
-                            application operation
-                            :uri            uri
-                            :revision       revision
-                            :path           path
-                            :new-start-line (aref new-start-lines index))))
-                     (append
-                      (list (application--tool-section-row
-                             (application--resource-operation-heading
-                              operation
-                              (1+ index))))
-                      (or change-rows
-                          (application--generic-argument-rows
-                           application operation :excluded-keys '("op")))))
-                   (application--structured-value-rows
-                    application
-                    (format nil "operation ~D" (1+ index))
-                    operation))))
-        (when (plusp omitted)
-          (list nil
-                (list (terminal-span
-                       ':dim
-                       (format nil "… +~D more operation~:P" omitted))))))))))
+  (let ((new-start-lines
+          (and (vectorp operations)
+               (not (stringp operations))
+               (plusp (length operations))
+               (application--workspace-resource-added-start-lines
+                application operations :uri uri :revision revision))))
+    (application--resource-operation-rows
+     application operations
+     :change-rows-function
+     (lambda (operation index)
+       (application--workspace-resource-operation-change-rows
+        application operation
+        :uri            uri
+        :revision       revision
+        :path           path
+        :new-start-line (aref new-start-lines index))))))
 
 (-> application--resource-operation-rows
     (application t &key (:change-rows-function (option function)))
@@ -1501,7 +1431,7 @@ OPERATION's own declared target line so they stay numbered."
                (if (json-object-p operation)
                    (let ((change-rows
                            (and change-rows-function
-                                (funcall change-rows-function operation))))
+                                (funcall change-rows-function operation index))))
                      (append
                       (list (application--tool-section-row
                              (application--resource-operation-heading
@@ -1519,12 +1449,6 @@ OPERATION's own declared target line so they stay numbered."
                 (list (terminal-span
                        ':dim
                        (format nil "… +~D more operation~:P" omitted))))))))))
-
-(defmethod application-tool-call-entry
-    ((tool resource-read-tool) (application application) (call hash-table))
-  "Present resource.read as a URI and optional bounded line window."
-  (declare (ignore tool))
-  (application--generic-tool-call-entry application call))
 
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))
@@ -2041,14 +1965,8 @@ the call itself."
        (call-next-method)))))
 
 (defmethod application-tool-result-entry
-    ((tool tool) (application application) record)
+    ((tool t) (application application) record)
   "Present RECORD using the generic readable result layout."
-  (declare (ignore tool))
-  (application--generic-tool-result-entry application record))
-
-(defmethod application-tool-result-entry
-    ((tool null) (application application) record)
-  "Present an unregistered tool result using the generic readable layout."
   (declare (ignore tool))
   (application--generic-tool-result-entry application record))
 
@@ -2314,19 +2232,18 @@ Mark reports that repeat an active papercut as already reported."
   (let* ((start (position-if-not (lambda (character) (char= character #\Space)) line))
          (end   (and start (position-if-not #'digit-char-p line :start start))))
     (when (and start end (< start end))
-      (let ((separator
-              (cond
-                ((and (char= (char line end) #\:)
-                      (<= (+ end 7) (length line))
-                      (every (lambda (character) (digit-char-p character 16))
-                             (subseq line (1+ end) (+ end 5)))
-                      (string= "  " line :start2 (+ end 5) :end2 (+ end 7)))
-                 (+ end 7))
-                ((and (<= (+ end 2) (length line))
-                      (string= "  " line :start2 end :end2 (+ end 2)))
-                 (+ end 2)))))
-        (when separator
-          (cons (subseq line 0 separator) (subseq line separator)))))))
+      (when-let ((separator
+                   (cond
+                     ((and (char= (char line end) #\:)
+                           (<= (+ end 7) (length line))
+                           (every (lambda (character) (digit-char-p character 16))
+                                  (subseq line (1+ end) (+ end 5)))
+                           (string= "  " line :start2 (+ end 5) :end2 (+ end 7)))
+                      (+ end 7))
+                     ((and (<= (+ end 2) (length line))
+                           (string= "  " line :start2 end :end2 (+ end 2)))
+                      (+ end 2)))))
+        (cons (subseq line 0 separator) (subseq line separator))))))
 
 (-> application--resource-source-rows (list) (option list))
 (defun application--resource-source-rows (details)
@@ -2423,9 +2340,8 @@ Mark reports that repeat an active papercut as already reported."
 (defmethod application-tool-result-entry
     ((tool search-content-tool) (application application) record)
   "Present source matches with path-derived token styles and original annotations."
-  (let ((rows (and (application--tool-result-success-p record)
-                   (application--search-source-rows
-                    (or (getf (rest record) :output) "")))))
-    (if rows
-        (application--tool-result-entry application record :rows rows)
-        (call-next-method))))
+  (if-let ((rows (and (application--tool-result-success-p record)
+                      (application--search-source-rows
+                       (or (getf (rest record) :output) "")))))
+      (application--tool-result-entry application record :rows rows)
+      (call-next-method)))

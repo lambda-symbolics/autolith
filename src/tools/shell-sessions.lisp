@@ -328,10 +328,9 @@
       (workspace-tool-confined-path context (uiop:native-namestring directory) :tool-name "shell.run"))
     (with-lock-held (*shell-session-lock*)
       (setf session
-            (or (gethash (shell-session--key context name) *shell-sessions*)
-                (setf (gethash (shell-session--key context name) *shell-sessions*)
-                      (make-instance 'shell-session :name name :directory directory
-                                     :scope (shell-session--scope context authorization))))))
+            (values (ensure-gethash (shell-session--key context name) *shell-sessions*
+                                 (make-instance 'shell-session :name name :directory directory
+                                                :scope (shell-session--scope context authorization))))))
     (tool-execution-invoke
      (tool-context-execution-runtime context) (tool-context-agent context)
      :tool-name "shell.run" :description (tool-argument arguments "description")
@@ -364,11 +363,10 @@
       ((:close :reset)
        (unless (non-empty-string-p name)
          (shell-session--fail "A session name is required."))
-       (let ((session (shell-session--find context name)))
-         (when session
-           (shell-session--stop session)
-           (with-lock-held (*shell-session-lock*)
-             (remhash (shell-session--key context name) *shell-sessions*))))
+       (when-let ((session (shell-session--find context name)))
+         (shell-session--stop session)
+         (with-lock-held (*shell-session-lock*)
+           (remhash (shell-session--key context name) *shell-sessions*)))
        (if (eq (shell-session-tool-operation tool) ':reset)
            (shell-session-run context (json-object "session" name "command" ":"
                                                     "directory" (tool-argument arguments "directory")))

@@ -308,9 +308,8 @@ premise of a support path."
     knowledge-node)
 (defun knowledge--view-node (view identifier &key proposition scope workspace)
   "Return VIEW's node IDENTIFIER, creating it for PROPOSITION when absent."
-  (or (gethash identifier (knowledge-view-nodes view))
-      (setf (gethash identifier (knowledge-view-nodes view))
-            (make-instance 'knowledge-node
+  (values (ensure-gethash identifier (knowledge-view-nodes view)
+                          (make-instance 'knowledge-node
                            :identifier  identifier
                            :proposition proposition
                            :scope       scope
@@ -622,11 +621,10 @@ are independent support paths even when their propositions agree."
                               (knowledge-node-conflicts node) :test #'string=)
                      (pushnew (knowledge-node-identifier node)
                               (knowledge-node-conflicts positive) :test #'string=))
-                   (let ((key (and (knowledge-node-schema node)
-                                   (knowledge-proposition-key (knowledge-node-proposition node)
-                                                              (knowledge-node-schema node)))))
-                     (when key
-                       (push node (gethash (prin1-to-string key) groups))))))
+                   (when-let ((key (and (knowledge-node-schema node)
+                                        (knowledge-proposition-key (knowledge-node-proposition node)
+                                                                   (knowledge-node-schema node)))))
+                     (push node (gethash (prin1-to-string key) groups)))))
     (loop for nodes being the hash-values of groups
           do (dolist (node nodes)
                (dolist (other nodes)
@@ -778,9 +776,6 @@ without a limit every child would leave a whole view and its base behind.")
       (setf *knowledge-view-cache* replacement)))
   *knowledge-view-cache*)
 
-(defparameter *knowledge-unix-epoch* (encode-universal-time 0 0 0 1 1 1970 0)
-  "The universal time of the Unix epoch, which file modification times count from.")
-
 (-> knowledge--file-fingerprint (pathname source-observation-context) t)
 (defun knowledge--file-fingerprint (pathname sources)
   "Return PATHNAME's observed digest or failure from the shared pass SOURCES."
@@ -807,7 +802,8 @@ assessment, including files modified within a filesystem timestamp tick."
          (eq (knowledge-view-base view) base)
          (equal (getf entry :memory-key) memory-key)
          (or (eq memory-key ':missing)
-             (< (+ (third memory-key) *knowledge-unix-epoch*) (getf entry :evaluated-at)))
+             (< (unix-time->universal-time (third memory-key))
+                (getf entry :evaluated-at)))
          (>= now (knowledge-view-now view))
          (let ((boundary (knowledge-view-boundary view)))
            (or (null boundary) (< now boundary)))

@@ -190,11 +190,10 @@ written before 0.67.58 give it; the spelling is read from stores until 0.69.0."
 (defun papercut--telemetry-record (papercut)
   "Return a durable identity annotation when a previously unexported issue gains consent."
   (unless (papercut-telemetry-id papercut)
-    (let ((identifier (telemetry-new-report-id)))
-      (when identifier
-        (setf (papercut-telemetry-id papercut) identifier)
-        (list (list :papercut-telemetry :version *papercut-format-version*
-                    :id (papercut-identifier papercut) :telemetry-id identifier))))))
+    (when-let ((identifier (telemetry-new-report-id)))
+      (setf (papercut-telemetry-id papercut) identifier)
+      (list (list :papercut-telemetry :version *papercut-format-version*
+                  :id (papercut-identifier papercut) :telemetry-id identifier)))))
 
 (-> papercut--closed-record (string string timestamp &key (:diagnostic (option string))) list)
 (defun papercut--closed-record (identifier resolution closed-at &key diagnostic)
@@ -786,11 +785,6 @@ its first consented telemetry identity without recording another report."
 
 
 ;;;; -- Presentation Values --
-
-(-> papercut-timestamp-string (timestamp) string)
-(defun papercut-timestamp-string (timestamp)
-  "Return TIMESTAMP as an ISO-8601 UTC string."
-  (format-utc-timestamp timestamp))
 
 (-> papercut-short-identifier (papercut) string)
 (defun papercut-short-identifier (papercut)

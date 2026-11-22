@@ -27,8 +27,7 @@
                         (acp-replay--map-records
                          conversation
                          (lambda (record turn-sequence)
-                           (let ((producer (acp-replay--record-producer record turn-sequence)))
-                             (when producer (funcall emit 1 producer))))))
+                           (when-let ((producer (acp-replay--record-producer record turn-sequence))) (funcall emit 1 producer)))))
            :collector (lambda (producer first last)
                         (declare (ignore first last))
                         ;; The array alone is a lower bound for every final envelope.

@@ -458,8 +458,7 @@ Clicking the rendered call's header inserts it into the composer.")
 (-> application--recovery-conversation-id () (option string))
 (defun application--recovery-conversation-id ()
   "Return the conversation selected by automatic recovery, when present."
-  (let ((value (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID")))
-    (and (non-empty-string-p value) value)))
+  (configuration-environment-value "AUTOLITH_RECOVERY_CONVERSATION_ID"))
 
 (-> application--recovery-sequence (string) (option integer))
 (defun application--recovery-sequence (name)
@@ -2908,9 +2907,7 @@ A channel message shows its sender and channel instead of an operation."
      :timestamp (getf properties :time)
      :body      (when (and (not shell) (eq outcome ':cancellation-pending)
                            (non-empty-string-p summary))
-                  (if (> (length summary) 500)
-                      (concatenate 'string (subseq summary 0 500) "…")
-                      summary)))))
+                  (text--bounded-ellipsis summary 500 :ellipsis "…" :prefix-limit 500)))))
 
 (-> application--transcript-source-value (list function) t)
 (defun application--transcript-source-value (key build)
@@ -2987,9 +2984,8 @@ A channel message shows its sender and channel instead of an operation."
    (list (terminal-span ':notice "› ")
          (terminal-span
           ':code
-          (string-trim
-           *application-command-whitespace*
-           (application-command-invocation-input invocation)))
+            (serapeum:trim-whitespace
+             (application-command-invocation-input invocation)))
          (terminal-span ':plain (string #\Newline))
          (terminal-span ':notice "└ "))
    entry))

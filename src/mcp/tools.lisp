@@ -231,10 +231,7 @@
                 (value (rest entry)))
             (feed-string target)
             (feed-string value))))
-      (let ((digest (produce-mac mac)))
-        (with-output-to-string (stream)
-          (loop for octet across digest
-                do (format stream "~2,'0X" octet)))))))
+      (string-upcase (ironclad:byte-array-to-hex-string (produce-mac mac))))))
 
 (defgeneric acp-mcp--transport-values (transport)
   (:documentation "Return ephemeral literal credential bindings, or NIL for native policy."))
@@ -346,19 +343,17 @@
      (format nil
              "MCP server ~A requested an environment value outside guarded secret use."
              (mcp-server-configuration-name configuration))))
-  (let ((entry
-          (assoc binding *mcp-active-environment-snapshot* :test #'eq)))
-    (if entry
-        (rest entry)
-        (error
-         (mcp-tools--environment-unavailable-condition
-          configuration binding)))))
+  (if-let ((entry
+             (assoc binding *mcp-active-environment-snapshot* :test #'eq)))
+      (rest entry)
+      (error
+       (mcp-tools--environment-unavailable-condition
+        configuration binding))))
 
 (-> mcp-tools--environment-entry-name (string) string)
 (defun mcp-tools--environment-entry-name (entry)
   "Return the variable name from one NAME=VALUE environment ENTRY."
-  (let ((separator (position #\= entry)))
-    (if separator (subseq entry 0 separator) entry)))
+  (if-let ((separator (position #\= entry))) (subseq entry 0 separator) entry))
 
 (-> mcp-tools--stdio-environment-function
     (mcp-server-configuration mcp-stdio-transport-configuration)
@@ -1895,19 +1890,17 @@ retained value is credential-redacted or projected."
                 "~%  ~:D task-required tool~:P unavailable: ~A"
                 task-required-count
                 (getf record :task-required-tool-reason))))
-    (let ((failure (getf record :failure)))
-      (when failure
-        (format stream "~%  ~A" failure)))))
+    (when-let ((failure (getf record :failure)))
+      (format stream "~%  ~A" failure))))
 
 (-> mcp-manager-render-status (mcp-manager) string)
 (defun mcp-manager-render-status (manager)
   "Render MANAGER's observable non-credential server status."
-  (let ((records (mcp-manager-status-records manager)))
-    (if records
-        (format nil
-                "~{~A~^~%~}"
-                (mapcar #'mcp-tools--render-status-record records))
-        "No MCP servers are configured.")))
+  (if-let ((records (mcp-manager-status-records manager)))
+      (format nil
+              "~{~A~^~%~}"
+              (mapcar #'mcp-tools--render-status-record records))
+      "No MCP servers are configured."))
 
 (-> mcp-tools--bounded-server-instructions (string) string)
 (defun mcp-tools--bounded-server-instructions (instructions)
@@ -2093,20 +2086,15 @@ retained value is credential-redacted or projected."
 (-> mcp-tool-registry-discovered-tools (tool-registry) list)
 (defun mcp-tool-registry-discovered-tools (registry)
   "Return REGISTRY's discovered MCP tools that a search can activate."
-  (let ((binding (mcp-tool-registry-binding registry)))
-    (if binding
-        (copy-list (mcp-registry-binding-discovered-tools binding))
-        nil)))
+  (if-let ((binding (mcp-tool-registry-binding registry)))
+      (copy-list (mcp-registry-binding-discovered-tools binding))
+      nil))
 
 (-> mcp-tools--search-terms (string) list)
 (defun mcp-tools--search-terms (query)
   "Return the distinct lower-case terms of QUERY."
   (remove-duplicates
-   (remove ""
-           (mapcar
-            #'string-downcase
-            (uiop:split-string query :separator '(#\Space #\Tab #\Newline)))
-           :test #'string=)
+   (mapcar #'string-downcase (serapeum:tokens query))
    :test #'string=))
 
 (-> mcp-tools--search-score (mcp-provider-tool list) (option integer))
@@ -2129,18 +2117,15 @@ retained value is credential-redacted or projected."
   "Return TOOLS matching every TERM, best name matches first."
   (let ((scored nil))
     (dolist (tool tools)
-      (let ((score (mcp-tools--search-score tool terms)))
-        (when score
-          (push (cons score tool) scored))))
+      (when-let ((score (mcp-tools--search-score tool terms)))
+        (push (cons score tool) scored)))
     (mapcar #'rest (stable-sort scored #'> :key #'first))))
 
 (-> mcp-tools--bounded-description (mcp-provider-tool) string)
 (defun mcp-tools--bounded-description (tool)
   "Return one bounded description line for TOOL."
   (let ((description (or (tool-description tool) "")))
-    (if (<= (length description) 120)
-        description
-        (concatenate 'string (subseq description 0 117) "..."))))
+    (text--bounded-ellipsis description 120)))
 
 (-> mcp-tools--render-search-result
     (string list &key (:discovered-count integer) (:bounded list) (:active list))
@@ -2197,9 +2182,8 @@ retained value is credential-redacted or projected."
     (dolist (tool held)
       (setf (gethash (tool-canonical-name tool) by-name) tool))
     (dolist (name names)
-      (let ((tool (gethash name by-name)))
-        (when tool
-          (push tool retained))))
+      (when-let ((tool (gethash name by-name)))
+        (push tool retained)))
     (setf retained (nreverse retained))
     (labels ((total ()
                (loop for tool in retained
@@ -2235,9 +2219,8 @@ retained value is credential-redacted or projected."
                 (not (member (tool-canonical-name candidate) names
                              :test #'string=)))))
         (dolist (name names)
-          (let ((tool (find name held :test #'string= :key #'tool-canonical-name)))
-            (when tool
-              (tool-registry-register registry tool))))))
+          (when-let ((tool (find name held :test #'string= :key #'tool-canonical-name)))
+            (tool-registry-register registry tool)))))
     registry))
 
 (-> mcp-tool-registry-activate-tools (tool-registry list) (option list))
@@ -2245,44 +2228,43 @@ retained value is credential-redacted or projected."
   "Activate TOOLS in REGISTRY and return the active names, oldest first.
 
 Evict the oldest activation first when either activation bound is exceeded."
-  (let ((binding (mcp-tool-registry-binding registry)))
-    (when binding
-      (let* ((held    (mcp-registry-binding-discovered-tools binding))
-             (order   (copy-list (mcp-registry-binding-activation-order binding)))
-             (by-name (make-hash-table :test #'equal)))
-        (dolist (tool held)
-          (setf (gethash (tool-canonical-name tool) by-name) tool))
-        (labels
-            ((active-characters ()
-               (loop for name in order
-                     for held-tool = (gethash name by-name)
-                     when held-tool
-                       sum (mcp-tools--schema-characters held-tool)))
+  (when-let ((binding (mcp-tool-registry-binding registry)))
+    (let* ((held    (mcp-registry-binding-discovered-tools binding))
+           (order   (copy-list (mcp-registry-binding-activation-order binding)))
+           (by-name (make-hash-table :test #'equal)))
+      (dolist (tool held)
+        (setf (gethash (tool-canonical-name tool) by-name) tool))
+      (labels
+          ((active-characters ()
+             (loop for name in order
+                   for held-tool = (gethash name by-name)
+                   when held-tool
+                     sum (mcp-tools--schema-characters held-tool)))
 
-             (fits-p (tool)
-               (and (< (length order) *mcp-activated-tool-limit*)
-                    (<= (+ (active-characters)
-                           (mcp-tools--schema-characters tool))
-                        *mcp-activated-tool-schema-character-limit*)))
+           (fits-p (tool)
+             (and (< (length order) *mcp-activated-tool-limit*)
+                  (<= (+ (active-characters)
+                         (mcp-tools--schema-characters tool))
+                      *mcp-activated-tool-schema-character-limit*)))
 
-             (evict-oldest ()
-               (let ((oldest (first order)))
-                 (setf order (rest order))
-                 (tool-registry-delete-if
-                  registry
-                  (lambda (candidate)
-                    (and (typep candidate 'mcp-provider-tool)
-                         (string= (tool-canonical-name candidate) oldest)))))))
-          (dolist (tool tools)
-            (let ((name (tool-canonical-name tool)))
-              (unless (member name order :test #'string=)
-                (loop while (and order (not (fits-p tool)))
-                      do (evict-oldest))
-                (when (fits-p tool)
-                  (tool-registry-register registry tool)
-                  (setf order (append order (list name)))))))
-          (setf (mcp-registry-binding-activation-order binding) order)
-          (copy-list order))))))
+           (evict-oldest ()
+             (let ((oldest (first order)))
+               (setf order (rest order))
+               (tool-registry-delete-if
+                registry
+                (lambda (candidate)
+                  (and (typep candidate 'mcp-provider-tool)
+                       (string= (tool-canonical-name candidate) oldest)))))))
+        (dolist (tool tools)
+          (let ((name (tool-canonical-name tool)))
+            (unless (member name order :test #'string=)
+              (loop while (and order (not (fits-p tool)))
+                    do (evict-oldest))
+              (when (fits-p tool)
+                (tool-registry-register registry tool)
+                (setf order (append order (list name)))))))
+        (setf (mcp-registry-binding-activation-order binding) order)
+        (copy-list order)))))
 
 (-> mcp-tool-registry-activate-discovered-tools (tool-registry) tool-registry)
 (defun mcp-tool-registry-activate-discovered-tools (registry)
@@ -2296,13 +2278,12 @@ Evict the oldest activation first when either activation bound is exceeded."
     tool-registry)
 (defun mcp-tool-registry-restrict-discovered-tools (registry predicate)
   "Keep only discovered MCP tools satisfying PREDICATE and activate them."
-  (let ((binding (mcp-tool-registry-binding registry)))
-    (when binding
-      (setf (mcp-registry-binding-provider-tool-predicate binding) predicate)
-      (setf (mcp-registry-binding-discovered-tools binding)
-            (remove-if-not
-             predicate (mcp-registry-binding-discovered-tools binding)))
-      (mcp-tool-registry-activate-discovered-tools registry)))
+  (when-let ((binding (mcp-tool-registry-binding registry)))
+    (setf (mcp-registry-binding-provider-tool-predicate binding) predicate)
+    (setf (mcp-registry-binding-discovered-tools binding)
+          (remove-if-not
+           predicate (mcp-registry-binding-discovered-tools binding)))
+    (mcp-tool-registry-activate-discovered-tools registry))
   registry)
 
 (defmethod tool-execute

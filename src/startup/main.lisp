@@ -31,56 +31,16 @@
 (-> application--banner-columns (application) (integer 1))
 (defun application--banner-columns (application)
   "Return APPLICATION's current terminal width or the restrained default."
-  (let ((ui (and (slot-boundp application 'ui)
-                 (application-ui application))))
-    (if ui
-        (terminal-columns (terminal-ui-terminal ui))
-        *terminal-default-columns*)))
+  (if-let ((ui (and (slot-boundp application 'ui)
+                    (application-ui application))))
+      (terminal-columns (terminal-ui-terminal ui))
+      *terminal-default-columns*))
 
 (-> application--banner-metadata-field (string string) list)
 (defun application--banner-metadata-field (label value)
   "Return one aligned metadata LABEL and VALUE row without a newline."
   (list (terminal-span :dim (format nil "~12A  " label))
         (terminal-span :plain value)))
-
-(-> application--banner-metadata-rows (application (integer 1)) list)
-(defun application--banner-metadata-rows (application maximum-width)
-  "Return identity and runtime rows no wider than MAXIMUM-WIDTH."
-  (let* ((configuration (application-configuration application))
-         (title
-            (list (terminal-span :strong "AUTOLITH")
-                  (terminal-span :dim (format nil " ~Av~A"
-                                              (if (application-world-server application)
-                                                  "world server "
-                                                  "")
-                                              *autolith-version*))))
-         (model
-           (application--banner-metadata-field
-            "model"
-            (format nil "~A (effort ~A)"
-                    (config :model configuration)
-                    (config :reasoning-effort configuration))))
-         (workspace
-           (application--banner-metadata-field
-            "workspace"
-            (namestring (config :working-directory configuration))))
-         (mode
-           (and (config :immutable-p configuration)
-                (application--banner-metadata-field "mode" "immutable")))
-         (detail-rows   (append (list title model workspace)
-                                (when mode (list mode))))
-         (divider-width
-           (min maximum-width
-                (loop for row in detail-rows
-                      maximize (termdown:spans-width row)))))
-    (append
-     (list title
-           (list (terminal-span
-                  :dim
-                  (make-string divider-width :initial-element #\─)))
-           model
-           workspace)
-     (when mode (list mode)))))
 
 (-> application--banner-terminate-row (list) list)
 (defun application--banner-terminate-row (spans)
@@ -182,57 +142,25 @@ the terminal wraps the semantic spans."
          (loop for (style text) in (nth (- index (length commands)) *application-startup-tips*)
                collect (terminal-span style text))))))
 
-(-> application-banner (application) list)
-(defun application-banner (application)
-  "Return APPLICATION's identity, session metadata, security notice, and tip."
-  (let* ((columns (application--banner-columns application))
-         (metadata-width
-           (- columns
-              (application--banner-logo-width)
-              (text-cell-width *application-banner-gap*)))
-         (side-by-side-minimum
-           (+ (application--banner-logo-width)
-              (text-cell-width *application-banner-gap*)
-              *application-banner-minimum-metadata-width*))
-         (header
-           (if (>= columns side-by-side-minimum)
-               (application--banner-side-by-side-spans
-                (application--banner-metadata-rows application metadata-width)
-                columns)
-               (application--banner-stacked-spans
-                (application--banner-metadata-rows application columns)
-                columns))))
-    (append
-     (list (terminal-span :plain (string #\Newline)))
-     header
-     (list
-      (terminal-span
-       :notice
-       (format nil "~%! autolith executes model-generated code with your user ~
-                    privileges~%  sandboxing is no substitute for human oversight")))
-     (list (terminal-span ':plain (format nil "~2%")))
-     (application--startup-tip-spans))))
-
 (-> application--update-notice (application) (option list))
 (defun application--update-notice (application)
   "Return the cached update notice appropriate to APPLICATION's installation."
-  (let ((availability (application-update-availability application)))
-    (when availability
-      (let ((current-version *autolith-version*)
-            (latest-version  (subseq (update-availability-tag availability) 1)))
-        (list
-         (terminal-span
-          ':notice
-           (format nil "· ~Aupdate available: Autolith ~A -> ~A~%"
-                   (if (application-world-server application)
-                       "world server "
-                       "")
-                   current-version latest-version))
-         (terminal-span
-          ':dim
-          (if (eq (update-availability-method availability) ':nix)
-              "  installed through Nix; update the flake or profile that provides Autolith"
-              "  choose whether to install it before continuing")))))))
+  (when-let ((availability (application-update-availability application)))
+    (let ((current-version *autolith-version*)
+          (latest-version  (subseq (update-availability-tag availability) 1)))
+      (list
+       (terminal-span
+        ':notice
+         (format nil "· ~Aupdate available: Autolith ~A -> ~A~%"
+                 (if (application-world-server application)
+                     "world server "
+                     "")
+                 current-version latest-version))
+       (terminal-span
+        ':dim
+        (if (eq (update-availability-method availability) ':nix)
+            "  installed through Nix; update the flake or profile that provides Autolith"
+            "  choose whether to install it before continuing"))))))
 
 (-> application-present-generation-health-warning (application) boolean)
 (defun application-present-generation-health-warning (application)
@@ -343,8 +271,7 @@ Attached clients report their own channel after releasing their shared screen."
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
-     (let ((work (input-work-from-input initial-command)))
-       (when work (list work))))
+     (when-let ((work (input-work-from-input initial-command))) (list work)))
     (recovery-diagnosis
      (list (list ':recovery-diagnosis recovery-diagnosis)))
     (t
@@ -441,17 +368,15 @@ controller's exit reason."
                   (progn
                     (application-sync-window-title application)
                     (unless resume-p
-                      (let ((update-notice
-                              (application--update-notice application)))
-                        (when update-notice
-                          (application-present application update-notice))))
-                    (let ((provenance
-                            (application-installation-provenance application)))
-                      (when provenance
-                        (setf (application-update-check-thread application)
-                              (update-check-start
-                               (application-configuration application)
-                               provenance))))
+                      (when-let ((update-notice
+                                   (application--update-notice application)))
+                        (application-present application update-notice)))
+                    (when-let ((provenance
+                                 (application-installation-provenance application)))
+                      (setf (application-update-check-thread application)
+                            (update-check-start
+                             (application-configuration application)
+                             provenance)))
                     (unless resume-p
                       (dolist (failure
                                (application-mutation-replay-failures application))
@@ -464,9 +389,8 @@ controller's exit reason."
                           :body   (format nil "~A~%~A"
                                           (namestring (first failure))
                                           (rest failure)))))
-                      (let ((skips (application-replay-skips-entry application)))
-                        (when skips
-                          (application-present application skips))))
+                      (when-let ((skips (application-replay-skips-entry application)))
+                        (application-present application skips)))
                     (application-render-records application)
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
@@ -671,7 +595,7 @@ Dot-prefixed directories such as .git and .qlot are always skipped.")
                    (return-from main--find-system-definition-under
                      candidate)))
                (dolist (subdirectory (uiop:subdirectories directory))
-                 (let ((leaf (first (last (pathname-directory subdirectory)))))
+                 (let ((leaf (lastcar (pathname-directory subdirectory))))
                    (unless (or (not (stringp leaf))
                                (zerop (length leaf))
                                (char= (char leaf 0) #\.)
@@ -724,11 +648,10 @@ dependencies."
       (format t "~&~A~%"
               (provider-authenticate-with-method
                provider method :stream *standard-output* :open-browser-p t))
-      (let ((model (provider-authenticated-model configuration provider)))
-        (when model
-          (setf (config :model configuration) model)
-          (format t "~&Active provider: ~A; model: ~A.~%"
-                  (provider-model-provider-name model) model)))))
+      (when-let ((model (provider-authenticated-model configuration provider)))
+        (setf (config :model configuration) model)
+        (format t "~&Active provider: ~A; model: ~A.~%"
+                (provider-model-provider-name model) model))))
   nil)
 
 (-> main--site-root-arguments (clingon:command) list)
@@ -940,12 +863,10 @@ ends the start with the reason; no session runs in this terminal instead."
 Only options given on the command line appear, PERMISSION-MODE among them
 when --permissions was, so a channel the server already serves can tell a
 request it conflicts with from one that says nothing."
-  (append (let ((model (getopt* command ':model)))
-            (when model
-              (list :model model)))
-          (let ((provider (getopt* command ':provider)))
-            (when provider
-              (list :provider provider)))
+  (append (when-let ((model (getopt* command ':model)))
+            (list :model model))
+          (when-let ((provider (getopt* command ':provider)))
+            (list :provider provider))
           (when (and permission-mode (getopt* command ':permissions))
             (list :permission-mode permission-mode))
           (when (getopt* command ':immutable)
@@ -1091,7 +1012,7 @@ still shows the boot panel keeps it until the user starts the session."
     (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice)
   "Render safe client startup information centered in the current pane."
   (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
-    (let* ((content-width (max 1 (min 88 width)))
+    (let* ((content-width (clamp width 1 88))
            (terminal      (world-terminal-screen-terminal screen))
            (title
              (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*))))
@@ -1299,11 +1220,10 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                    (when started-p
                                      ; mallet:suppress no-ignore-errors -- preserve attachment failure while closing an unattached new channel
                                      (ignore-errors
-                                      (let ((world (world-client-entry configuration)))
-                                        (when world
-                                          (world-terminal-query-record world ':close
-                                                                   (list :channel           session-id
-                                                                         :unattached-only-p t))))))
+                                      (when-let ((world (world-client-entry configuration)))
+                                        (world-terminal-query-record world ':close
+                                                                 (list :channel           session-id
+                                                                       :unattached-only-p t)))))
                                    (cond
                                     (switching-p
                                      (setf notice (main--switch-failure session-id condition))

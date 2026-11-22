@@ -20,21 +20,21 @@
          (ensure-directories-exist directory)
          (ensure-directories-exist read-only)
          (setf (config :working-directory configuration) workspace)
-         (workspace-resource-tests--write-text file "private content")
-         (workspace-resource-tests--write-text nested "private nested content")
-         (workspace-resource-tests--write-text editable "original")
-         (let* ((read-result      (workspace-resource-tests--call
+         (test-write-text file "private content")
+         (test-write-text nested "private nested content")
+         (test-write-text editable "original")
+         (let* ((read-result      (test-resource-call
                                    registry context
                                    :namespace "resource"
                                    :name      "read"
                                    :arguments (list "uri" "workspace:read-only/file.txt")))
-                (revision         (workspace-resource-tests--field (tool-result-content read-result) "Revision: "))
-                (missing-result   (workspace-resource-tests--call
+                (revision         (test-resource-field (tool-result-content read-result) "Revision: "))
+                (missing-result   (test-resource-call
                                    registry context
                                    :namespace "resource"
                                    :name      "read"
                                    :arguments (list "uri" "workspace:read-only/new/file.txt")))
-                (missing-revision (workspace-resource-tests--field (tool-result-content missing-result) "Revision: ")))
+                (missing-revision (test-resource-field (tool-result-content missing-result) "Revision: ")))
            (test-assert (tool-result-success-p read-result) "The edit target is readable before staging.")
            (test-assert (eq (tool-result-error-code missing-result) ':not-found) "The absent parent is observed before editing.")
            (unwind-protect

@@ -2,43 +2,18 @@
 
 ;;;; -- Memory Resource Test Support --
 
-(-> memory-resource-tests--call
-    (tool-registry tool-context &key (:namespace string) (:name string) (:arguments list))
-    tool-result)
-(defun memory-resource-tests--call
-    (registry context &key namespace name arguments)
-  "Execute NAMESPACE.NAME with the ARGUMENTS plist through REGISTRY and CONTEXT."
-  (tool-registry-execute-call
-   registry
-   (json-object "namespace" namespace
-                "name" name
-                "arguments" (json-encode (apply #'json-object arguments)))
-   context))
-
 (-> memory-resource-tests--edit
     (tool-registry tool-context &key (:uri string) (:revision string) (:operation json-object))
     tool-result)
 (defun memory-resource-tests--edit (registry context &key uri revision operation)
   "Apply one revision-gated memory resource OPERATION."
-  (memory-resource-tests--call
+  (test-resource-call
    registry context
    :namespace "resource"
    :name      "edit"
    :arguments (list "uri" uri
                     "base-revision" revision
                     "operations" (vector operation))))
-
-(-> memory-resource-tests--field (string string) string)
-(defun memory-resource-tests--field (content label)
-  "Return the single-line value following LABEL in memory resource CONTENT."
-  (let* ((start       (search label content))
-         (value-start (and start (+ start (length label))))
-         (end         (and value-start
-                           (or (position #\Newline content :start value-start)
-                               (length content)))))
-    (unless (and value-start end)
-      (error "Missing memory resource field ~S in ~S." label content))
-    (subseq content value-start end)))
 
 (-> memory-resource-tests--observation
     (conversation non-empty-string)
@@ -119,7 +94,7 @@
 
                (read-resource (context uri)
                  "Read one memory through ordinary lookup and invocation."
-                 (memory-resource-tests--call registry context :namespace "resource" :name "read"
+                 (test-resource-call registry context :namespace "resource" :name "read"
                                               :arguments (list "uri" uri)))
 
                (edit-resource (context uri operation)
@@ -128,7 +103,7 @@
                    (test-assert (tool-result-success-p read) (tool-result-content read))
                    (memory-resource-tests--edit
                     registry context :uri uri :operation operation
-                    :revision (memory-resource-tests--field (tool-result-content read) "Revision: "))))
+                    :revision (test-resource-field (tool-result-content read) "Revision: "))))
 
                (remember (context uri title)
                  "Create one test memory through the public resource boundary."
@@ -315,7 +290,7 @@
                    :content "Canonical exact URIs support every persisted string identifier.")))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one memory resource fixture call."
-                      (memory-resource-tests--call registry context
+                      (test-resource-call registry context
                                                    :namespace namespace
                                                    :name      name
                                                    :arguments arguments))
@@ -334,7 +309,7 @@
 
                     (revision (result)
                       "Return RESULT's model-visible resource revision alias."
-                      (memory-resource-tests--field
+                      (test-resource-field
                        (tool-result-content result) "Revision: ")))
              (let ((resolver
                       (cl-resources:resource-registry-find
@@ -720,7 +695,7 @@
                                                  (find-class 'task-child-agent)))))
            (labels ((read-resource (selected-context uri)
                       "Read one complete memory resource."
-                      (memory-resource-tests--call
+                      (test-resource-call
                        registry selected-context
                        :namespace "resource"
                        :name      "read"
@@ -728,12 +703,12 @@
 
                     (revision (result)
                       "Return RESULT's transient revision alias."
-                      (memory-resource-tests--field
+                      (test-resource-field
                        (tool-result-content result) "Revision: "))
 
                     (exact-uri (result)
                       "Return RESULT's exact created or replaced memory URI."
-                      (memory-resource-tests--field
+                      (test-resource-field
                        (tool-result-content result) "Exact URI: "))
 
                     (edit-resource (selected-context uri alias operation)
@@ -1127,7 +1102,7 @@
                    :title   "Unmatched filtered revision probe"
                    :content "This memory must still affect the collection revision."))
                 (read-result
-                  (memory-resource-tests--call
+                  (test-resource-call
                    registry context
                    :namespace "resource"
                    :name      "read"
@@ -1135,16 +1110,16 @@
                                     "query" "needle"
                                     "max-results" 10)))
                 (revision
-                  (memory-resource-tests--field
+                  (test-resource-field
                    (tool-result-content read-result) "Revision: "))
                 (unfiltered-result
-                  (memory-resource-tests--call
+                  (test-resource-call
                    registry context
                    :namespace "resource"
                    :name      "read"
                    :arguments (list "uri" "memory:workspace")))
                 (filtered-again-result
-                  (memory-resource-tests--call
+                  (test-resource-call
                    registry context
                    :namespace "resource"
                    :name      "read"
@@ -1201,14 +1176,14 @@
                                          :configuration configuration
                                          :worker        nil
                                          :conversation  conversation))
-           (notes         (memory-source-tests--write
+           (notes         (test-write-text
                            (merge-pathnames "NOTES.md" workspace)
                            (format nil "Deploy with make release-prod after tagging.~%"))))
       (conversation-append-user-message
        conversation "Please always use tabs for indentation here.")
       (labels ((read-resource (uri)
                  "Read one complete memory resource."
-                 (memory-resource-tests--call
+                 (test-resource-call
                   registry context
                   :namespace "resource"
                   :name      "read"
@@ -1216,7 +1191,7 @@
 
                (revision (result)
                  "Return RESULT's transient revision alias."
-                 (memory-resource-tests--field
+                 (test-resource-field
                   (tool-result-content result) "Revision: "))
 
                (edit (uri operation)
@@ -1237,7 +1212,7 @@
 
                (created-uri (result)
                  "Return the exact URI of a created memory."
-                 (memory-resource-tests--field
+                 (test-resource-field
                   (tool-result-content result) "Exact URI: "))
 
                (failure-p (result text)
@@ -1296,7 +1271,7 @@
             (destructuring-bind (label result text) case
               (test-assert (failure-p result text)
                            (format nil "~A is rejected correctively" label))))
-          (memory-source-tests--write notes (format nil "Deploy with make ship.~%"))
+          (test-write-text notes (format nil "Deploy with make ship.~%"))
           (test-assert (search "status: stale (NOTES.md changed)"
                                (tool-result-content (read-resource deploy-uri)))
                        "rereading a memory whose cited text changed reports it stale")
@@ -1347,13 +1322,13 @@
                                          :configuration configuration
                                          :worker        nil
                                          :conversation  conversation))
-           (schedule      (memory-source-tests--write
+           (schedule      (test-write-text
                            (merge-pathnames "schedule.txt" workspace)
                            (format nil "Design review at 13:00 UTC on 22 October.~%"))))
       (conversation-append-user-message conversation "It takes half an hour to get there.")
       (labels ((read-resource (uri &rest arguments)
                  "Read URI with optional ARGUMENTS and return the result."
-                 (memory-resource-tests--call registry context
+                 (test-resource-call registry context
                                               :namespace "resource"
                                               :name      "read"
                                               :arguments (list* "uri" uri arguments)))
@@ -1364,12 +1339,12 @@
 
                (edit (&rest operations)
                  "Apply OPERATIONS to memory:facts against a fresh revision."
-                 (memory-resource-tests--call
+                 (test-resource-call
                   registry context
                   :namespace "resource"
                   :name      "edit"
                   :arguments (list "uri" "memory:facts"
-                                   "base-revision" (memory-resource-tests--field
+                                   "base-revision" (test-resource-field
                                                     (content (read-resource "memory:facts")) "Revision: ")
                                    "operations" (coerce operations 'vector))))
 
@@ -1450,7 +1425,7 @@
         (test-assert (search "First look: 4 facts hold now"
                              (content (read-resource "memory:changes")))
                      "the first memory:changes read records what this conversation saw")
-        (memory-source-tests--write schedule
+        (test-write-text schedule
                                     (format nil "Design review at 14:00 UTC on 22 October.~%"))
         (let ((moved (edit (json-object "op" "fact-assert" "predicate" "event.start"
                                         "arguments" (vector "review" "2026-10-22T14:00:00Z")
@@ -1514,7 +1489,7 @@
              (let* ((fetch-context (make-instance 'tool-context
                                                  :configuration configuration :worker nil
                                                  :conversation conversation :call-id "fetch-1"))
-                    (result        (memory-resource-tests--call
+                    (result        (test-resource-call
                                     registry fetch-context
                                     :namespace "web_extra"
                                     :name      "gist"
@@ -1545,12 +1520,12 @@
                                                          "arguments" (vector "lunch" "PT5M"))
                                             (json-object "op" "nonsense"))))
                      "a failure names the operations already applied")
-        (let ((unobserved (memory-resource-tests--call
+        (let ((unobserved (test-resource-call
                            registry context
                            :namespace "resource"
                            :name      "edit"
                            :arguments (list "uri" "memory:facts"
-                                            "base-revision" (memory-resource-tests--field
+                                            "base-revision" (test-resource-field
                                                              (content (read-resource "memory:workspace"))
                                                              "Revision: ")
                                             "operations" (vector (json-object "op" "fact-retract"
@@ -1589,18 +1564,18 @@
                                                       :arguments '((:name "site" :type :entity))))
       (labels ((assert-fact (&optional quote (page "page"))
                  "Assert from URL through a fresh resource revision and return its evaluated node."
-                 (let* ((read   (memory-resource-tests--call registry context
+                 (let* ((read   (test-resource-call registry context
                                                              :namespace "resource"
                                                              :name      "read"
                                                              :arguments (list "uri" "memory:facts")))
                         (source (if quote (json-object "url" url "quote" quote)
                                     (json-object "url" url)))
-                        (result (memory-resource-tests--call
+                        (result (test-resource-call
                                  registry context
                                  :namespace "resource"
                                  :name      "edit"
                                  :arguments (list "uri" "memory:facts"
-                                                  "base-revision" (memory-resource-tests--field
+                                                  "base-revision" (test-resource-field
                                                                    (tool-result-content read) "Revision: ")
                                                   "operations" (vector (json-object
                                                                         "op" "fact-assert" "predicate" "site.ready"
@@ -1631,7 +1606,7 @@
                     (let* ((fetch-context (make-instance 'tool-context
                                                         :configuration configuration :worker nil
                                                         :conversation conversation :call-id call-id))
-                           (result        (memory-resource-tests--call registry fetch-context
+                           (result        (test-resource-call registry fetch-context
                                                                        :namespace "web_extra"
                                                                        :name      "gist"
                                                                        :arguments (list "url" url))))
@@ -1722,14 +1697,14 @@
                                                (declare (ignore directory))
                                                (push command requests)
                                                decision))))
-                 (memory-resource-tests--call
+                 (test-resource-call
                   registry context
                   :namespace "resource"
                   :name      "edit"
                   :arguments (list "uri" "memory:facts"
-                                   "base-revision" (memory-resource-tests--field
+                                   "base-revision" (test-resource-field
                                                     (tool-result-content
-                                                     (memory-resource-tests--call
+                                                     (test-resource-call
                                                       registry context
                                                       :namespace "resource"
                                                       :name      "read"

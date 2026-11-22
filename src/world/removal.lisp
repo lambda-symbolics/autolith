@@ -190,14 +190,13 @@ An exception leaves the intent on disk and exposes RETRY-CLEANUP."
 (-> channel--quiesce (configuration list string) null)
 (defun channel--quiesce (configuration channels tool-name)
   "Ask the world to release idle unattended hosts before TOOL-NAME leases CHANNELS."
-  (let ((entry (world-client-entry configuration)))
-    (when entry
-      (let ((states (getf (rest (world-terminal-query-record entry ':quiesce
-                                                      (list :channels channels)))
-                         :states)))
-        (dolist (state states)
-          (unless (member (rest state) '(:closed :idle))
-            (channel--busy (first state) tool-name :state (rest state)))))))
+  (when-let ((entry (world-client-entry configuration)))
+    (let ((states (getf (rest (world-terminal-query-record entry ':quiesce
+                                                    (list :channels channels)))
+                       :states)))
+      (dolist (state states)
+        (unless (member (rest state) '(:closed :idle))
+          (channel--busy (first state) tool-name :state (rest state))))))
   nil)
 
 (-> channel--busy (string string &key (:state keyword)) nil)

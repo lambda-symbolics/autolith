@@ -67,8 +67,7 @@
 (-> permissions--rules-p (t) boolean)
 (defun permissions--rules-p (rules)
   "Return true when RULES is a list of exact command permission records."
-  (and (listp rules)
-       (integerp (list-length rules))
+  (and (proper-list-p rules)
        (every #'permissions--rule-form-p rules)))
 
 (-> permissions--form-p (t) boolean)
@@ -262,9 +261,7 @@
     sexp-store:snapshot-store)
 (defun permissions--channel-mode-store (configuration identity created-at &key recover-read-error)
   "Store channel authority in private state, outside transferable conversation data."
-  (let* ((key      (ironclad:byte-array-to-hex-string
-                    (ironclad:digest-sequence ':sha256
-                                             (utf8-string-to-octets (namestring identity)))))
+  (let* ((key      (memory-source-text-digest (namestring identity)))
          (pathname (merge-pathnames (format nil "channel-permissions/~A.sexp" key)
                                     (config :state-root configuration))))
     (make-instance 'sexp-store:snapshot-store

@@ -52,7 +52,7 @@ commands before sections. Tool namespaces and command aliases are also accepted.
                (or (keywordp topic)
                    (and (stringp topic)
                         (uiop:string-prefix-p
-                         ":" (string-left-trim '(#\Space #\Tab #\Newline #\Return) topic)))))
+                         ":" (string-left-trim serapeum:whitespace topic)))))
              (operation  (and name (application-help--find-operation name operations)))
              (section    (and name
                               (or section-p (null operation))
@@ -299,7 +299,7 @@ Choose a namespace or a tool name, for example `(help :lisp)` or `(help \"lisp.e
 (defun application-help--topic-name (topic)
   "Normalize a bounded symbol or string help subject without interning user text."
   (when (typep topic '(or string symbol))
-    (let ((name (string-trim '(#\Space #\Tab #\Newline #\Return) (string topic))))
+    (let ((name (serapeum:trim-whitespace (string topic))))
       (when (and (plusp (length name)) (<= (length name) 200))
         (string-downcase (string-left-trim '(#\: #\/) name))))))
 

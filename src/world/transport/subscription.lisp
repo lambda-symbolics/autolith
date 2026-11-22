@@ -324,13 +324,12 @@ and tried once. No channel command has been sent by then."
     (when (and reconnect (not (eq reconnect (current-thread))))
       (join-thread reconnect))
     (when (and connection (channel-subscription-started-p subscription))
-      (let ((world (world-client-entry (channel-subscription-configuration subscription))))
-        (when world
-          (handler-case
-              (world-terminal-query-record world ':close
-                                       (list :channel           (channel-subscription-identifier subscription)
-                                             :unattached-only-p t))
-            (world-terminal-error () nil))))))
+      (when-let ((world (world-client-entry (channel-subscription-configuration subscription))))
+        (handler-case
+            (world-terminal-query-record world ':close
+                                     (list :channel           (channel-subscription-identifier subscription)
+                                           :unattached-only-p t))
+          (world-terminal-error () nil)))))
   nil)
 
 (-> channel-subscription--mark-closed (channel-subscription &optional (option string)) null)

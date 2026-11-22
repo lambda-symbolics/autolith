@@ -257,26 +257,25 @@ journaling or provider conversation projection."
     (application-lisp-evaluation-output evaluation))
    (case (application-lisp-evaluation-status evaluation)
      (:ok
-      (let ((values (application-lisp-evaluation-values evaluation)))
-        (if values
-            (loop for value in values
-                  for index from 0
-                  for kind = (nth index (application-lisp-evaluation-value-kinds evaluation))
-                  append
-                  (append
-                   (unless (zerop index)
-                     (list (terminal-span ':plain (string #\Newline))))
-                   (case kind
-                     (:handoff
-                      value)
-                     (:text
-                      (list (terminal-span ':success "⇒ ")
-                            (terminal-span ':plain value)))
-                     (otherwise
-                      (cons (terminal-span ':success "⇒ ")
-                            (application-lisp--value-spans value))))))
-            (list (terminal-span ':success "⇒ ")
-                  (terminal-span ':dim "no values")))))
+      (if-let ((values (application-lisp-evaluation-values evaluation)))
+          (loop for value in values
+                for index from 0
+                for kind = (nth index (application-lisp-evaluation-value-kinds evaluation))
+                append
+                (append
+                 (unless (zerop index)
+                   (list (terminal-span ':plain (string #\Newline))))
+                 (case kind
+                   (:handoff
+                    value)
+                   (:text
+                    (list (terminal-span ':success "⇒ ")
+                          (terminal-span ':plain value)))
+                   (otherwise
+                    (cons (terminal-span ':success "⇒ ")
+                          (application-lisp--value-spans value))))))
+          (list (terminal-span ':success "⇒ ")
+                (terminal-span ':dim "no values"))))
      (:aborted
       (append
        (list (terminal-span ':failure "! aborted"))

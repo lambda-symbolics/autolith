@@ -128,7 +128,7 @@ chunk files follow in numeric start-sequence order."
 (-> conversation-storage-active-pathname (pathname) (option pathname))
 (defun conversation-storage-active-pathname (pathname)
   "Return PATHNAME's newest durable log segment, or NIL when absent."
-  (first (last (conversation-storage-pathnames pathname))))
+  (lastcar (conversation-storage-pathnames pathname)))
 
 (-> conversation-storage-occupied-p (pathname) boolean)
 (defun conversation-storage-occupied-p (pathname)
@@ -153,7 +153,7 @@ chunk files follow in numeric start-sequence order."
       (dolist (pathname (uiop:directory-files root "*.sexp"))
         (pushnew pathname identities :test #'equal))
       (dolist (directory (uiop:subdirectories root))
-        (let ((identifier (first (last (pathname-directory directory)))))
+        (let ((identifier (lastcar (pathname-directory directory))))
           (when (stringp identifier)
             (pushnew (merge-pathnames (make-pathname :name identifier :type "sexp") root)
                      identities :test #'equal)))))
@@ -166,7 +166,7 @@ chunk files follow in numeric start-sequence order."
     (when (uiop:directory-exists-p tasks)
       (loop for group in (uiop:subdirectories tasks)
             append (loop for execution in (uiop:subdirectories group)
-                         for name = (first (last (pathname-directory execution)))
+                         for name = (lastcar (pathname-directory execution))
                          for identity = (merge-pathnames (make-pathname :name name :type "sexp")
                                                          execution)
                          when (conversation-storage-occupied-p identity)
@@ -257,16 +257,14 @@ only changes replaceable output; its source lock and anchors never move."
 (-> conversation-cache--directory (pathname) pathname)
 (defun conversation-cache--directory (conversation-pathname)
   "Return the namespaced cache directory for CONVERSATION-PATHNAME's source root."
-  (let* ((identity (conversation-storage-identity-pathname conversation-pathname))
-         (key      (conversation-cache--root-key
-                    (uiop:pathname-directory-pathname identity)))
+  (let* ((identity  (conversation-storage-identity-pathname conversation-pathname))
+         (key       (conversation-cache--root-key
+                     (uiop:pathname-directory-pathname identity)))
          (cache-root
            (or (with-lock-held (*conversation-cache-roots-lock*)
                  (gethash key *conversation-cache-roots*))
                (platform-application-root *platform* ':cache)))
-         (namespace
-           (ironclad:byte-array-to-hex-string
-            (ironclad:digest-sequence ':sha256 (utf8-string-to-octets key)))))
+         (namespace (memory-source-text-digest key)))
     (merge-pathnames (format nil "conversation-picker/~A/" namespace) cache-root)))
 
 (-> conversation-sidecar-data-pathname (pathname) pathname)

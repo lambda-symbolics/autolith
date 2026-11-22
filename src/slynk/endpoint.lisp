@@ -151,13 +151,12 @@ otherwise the call returns once the endpoint is :RUNNING or :FAILED."
 (defun slynk-status ()
   "Return a plist describing the endpoint: :STATE, :PORT, :DIRECTORY and :MESSAGE."
   (with-recursive-lock-held (*slynk-lock*)
-    (let ((endpoint *slynk-endpoint*))
-      (if endpoint
-          (list :state     (slynk-endpoint-state endpoint)
-                :port      (slynk-endpoint-port endpoint)
-                :directory (slynk-endpoint-directory endpoint)
-                :message   (slynk-endpoint-message endpoint))
-          (list :state ':stopped :port nil :directory nil :message nil)))))
+    (if-let ((endpoint *slynk-endpoint*))
+        (list :state     (slynk-endpoint-state endpoint)
+              :port      (slynk-endpoint-port endpoint)
+              :directory (slynk-endpoint-directory endpoint)
+              :message   (slynk-endpoint-message endpoint))
+        (list :state ':stopped :port nil :directory nil :message nil))))
 
 (-> slynk-call-quiesced (function) t)
 (defun slynk-call-quiesced (function)
@@ -413,9 +412,8 @@ reach a sly connection."
     (let ((connections (slynk--symbol "*CONNECTIONS*")))
       ;; Keep the sentinel until all close hooks have completed. It removes a
       ;; connection from *CONNECTIONS* before invoking those hooks.
-      (let ((sentinel (slynk--call "FIND-REGISTERED" (slynk--symbol "SENTINEL"))))
-        (when sentinel
-          (pushnew sentinel (slynk-endpoint-closing-threads endpoint))))
+      (when-let ((sentinel (slynk--call "FIND-REGISTERED" (slynk--symbol "SENTINEL"))))
+        (pushnew sentinel (slynk-endpoint-closing-threads endpoint)))
       (with-lock-held (*slynk-observation-lock*)
         (dolist (connection *slynk-closed-connections*)
           (pushnew connection (slynk-endpoint-closing-connections endpoint))))
@@ -453,10 +451,9 @@ reach a sly connection."
 (-> slynk--publish (slynk-endpoint string) null)
 (defun slynk--publish (endpoint text)
   "Atomically write TEXT to ENDPOINT's port file, when it has one."
-  (let ((pathname (slynk-endpoint-port-file endpoint)))
-    (when pathname
-      (ensure-directories-exist pathname)
-      (publish-file pathname text)))
+  (when-let ((pathname (slynk-endpoint-port-file endpoint)))
+    (ensure-directories-exist pathname)
+    (publish-file pathname text))
   nil)
 
 (-> slynk--symbol (string) symbol)

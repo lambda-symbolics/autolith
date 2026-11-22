@@ -194,7 +194,7 @@
            (application-conversation application) (application-tool-outcome-tests--result 0 call-id))))
       (application-render-records application)
       (let ((text (application-tool-outcome-tests--text application)))
-        (test-assert (= 2 (terminal-tests--substring-count "✓ (resource.read :uri" text))
+        (test-assert (= 2 (test-substring-count "✓ (resource.read :uri" text))
                      "hidden compact results do not crowd visible startup calls out of the page")
         (test-assert (= 6 (application-rendered-sequence application))
                      "startup advances past hidden results"))))
@@ -236,7 +236,7 @@
            "startup resolves a selected older call from the active segment")
           (test-assert
            (= (if success-p 2 1)
-              (terminal-tests--substring-count "✓ (resource.read :uri" text))
+              (test-substring-count "✓ (resource.read :uri" text))
            "the active segment's selected call also receives its outcome")
           (test-assert
            (= (1- (conversation-next-sequence conversation))

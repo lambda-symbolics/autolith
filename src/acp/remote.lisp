@@ -124,9 +124,8 @@ Shutdown waits until all clients have released their sessions."
          (let ((url (agentcomms:acp-remote-server-url server :scheme (if http-p "http" "ws"))))
            (format *error-output* "Autolith ACP is listening at ~A~:[~; and ~A~]~%"
                    url http-p (agentcomms:acp-remote-server-url server :scheme "ws"))
-           (let ((warning (acp-endpoint-warning endpoint url)))
-             (when warning
-               (format *error-output* "~A~%" warning)))
+           (when-let ((warning (acp-endpoint-warning endpoint url)))
+             (format *error-output* "~A~%" warning))
            (finish-output *error-output*)
            (loop (sleep 3600)))
       (agentcomms:acp-remote-server-stop server)))

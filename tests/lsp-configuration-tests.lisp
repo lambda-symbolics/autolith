@@ -5,12 +5,7 @@
 (-> lsp-configuration-tests--write (configuration string) pathname)
 (defun lsp-configuration-tests--write (configuration contents)
   "Write CONTENTS to CONFIGURATION's native LSP file."
-  (let ((pathname (lsp-configuration-path configuration)))
-    (ensure-directories-exist pathname)
-    (with-open-file (stream pathname :direction ':output :if-exists ':supersede
-                            :if-does-not-exist ':create)
-      (write-string contents stream))
-    pathname))
+  (test-write-text (lsp-configuration-path configuration) contents :external-format ':default))
 
 (-> lsp-configuration-tests--signals-p (configuration string) boolean)
 (defun lsp-configuration-tests--signals-p (configuration contents)

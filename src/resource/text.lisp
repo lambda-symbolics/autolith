@@ -335,7 +335,7 @@ An edit may produce an overlong line; its successful publication is still report
   (let* ((first-line (reduce #'min operations :key (lambda (operation) (getf operation :start))))
          (last-line  (reduce #'max operations :key (lambda (operation) (getf operation :end))))
          (start      (max 1 (- first-line 2)))
-         (count      (max 1 (min 120 (+ (- last-line start) 6)))))
+         (count      (clamp (+ (- last-line start) 6) 1 120)))
     (values (if (zerop total-lines) 1 (min start total-lines)) count)))
 
 (-> text-resource--json-operation (json-object) list)

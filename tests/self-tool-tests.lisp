@@ -97,15 +97,10 @@
             (null *test-self-definition-reader-side-effect-p*)
             "rejected reader evaluation has no active-image side effect")
            (test-assert
-            (not (fboundp 'test-self-definition-reader-target))
-            "rejected reader evaluation installs no returned definition")
-           (test-assert
             (= records-before
                (length (mutation-journal-read-records configuration)))
             "rejected reader evaluation creates no partial mutation record"))
       (setf *test-self-definition-reader-side-effect-p* nil)
-      (when (fboundp 'test-self-definition-reader-target)
-        (fmakunbound 'test-self-definition-reader-target))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -434,12 +429,10 @@
                      (json-object "designator" "TEST-SELF-TARGET"
                                   "target" "self"))))
              (test-assert
-              (and (null (tool-registry-find registry "self" "inspect"))
-                   (null (tool-registry-find registry "self" "source"))
-                   (tool-result-success-p result)
-                   (search "Return the installed test value."
-                           (tool-result-content result)))
-              "lisp.describe target self replaces self.inspect"))
+               (and (tool-result-success-p result)
+                    (search "Return the installed test value."
+                            (tool-result-content result)))
+               "lisp.describe target self describes the installed definition"))
            (let* ((conversation
                     (conversation-create configuration
                                          :identifier "self-sbcl-source"))

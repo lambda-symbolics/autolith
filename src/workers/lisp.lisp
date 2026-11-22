@@ -57,14 +57,6 @@
                (lisp-worker--tool-name
                 (sbcl-worker-error-operation condition)))))))
 
-(-> lisp-worker-sbcl-command () string)
-(defun lisp-worker-sbcl-command ()
-  "Return the configured SBCL executable used by disposable workers."
-  (let ((configured-command (uiop:getenv "AUTOLITH_SBCL")))
-    (if (non-empty-string-p configured-command)
-        configured-command
-        "sbcl")))
-
 (-> lisp-worker-create
     (configuration &key (:name string) (:image-identifier string))
     lisp-worker)
@@ -98,17 +90,6 @@
    (lambda ()
      (sbcl-worker-reset worker))))
 
-(-> lisp-worker-change-working-directory
-    (lisp-worker configuration)
-    lisp-worker)
-(defun lisp-worker-change-working-directory (worker configuration)
-  "Set WORKER's working directory to CONFIGURATION's workspace without discarding its heap."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-change-working-directory
-      worker
-      (lisp-worker--environment configuration)))))
-
 (-> lisp-worker-request (lisp-worker keyword list) list)
 (defun lisp-worker-request (worker operation arguments)
   "Send OPERATION to WORKER, cancelling only an interrupted protocol request."
@@ -137,22 +118,6 @@
   (sbcl-worker-environment-context
    (sbcl-worker-pool-environment pool)))
 
-(-> lisp-worker-pool-start
-    (lisp-worker-pool string (option string))
-    lisp-worker)
-(defun lisp-worker-pool-start (pool name image-identifier)
-  "Start or return NAME, enforcing IMAGE-IDENTIFIER when supplied."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-pool-start pool name image-identifier))))
-
-(-> lisp-worker-pool-worker (lisp-worker-pool string) lisp-worker)
-(defun lisp-worker-pool-worker (pool name)
-  "Return NAME, starting it from pristine SBCL when absent."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-pool-worker pool name))))
-
 (-> lisp-worker-pool-stop
     (lisp-worker-pool string &key (:if-missing keyword))
     null)
@@ -162,28 +127,10 @@
    (lambda ()
      (sbcl-worker-pool-stop pool name :if-missing if-missing))))
 
-(-> lisp-worker-pool-reset (lisp-worker-pool string string) lisp-worker)
-(defun lisp-worker-pool-reset (pool name image-identifier)
-  "Replace named REPL NAME with a fresh process from IMAGE-IDENTIFIER."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-pool-reset pool name image-identifier))))
-
 (-> lisp-worker-pool-stop-all (lisp-worker-pool) null)
 (defun lisp-worker-pool-stop-all (pool)
   "Stop and forget every REPL managed by POOL."
   (sbcl-worker-pool-stop-all pool))
-
-(-> lisp-worker-pool-change-working-directory
-    (lisp-worker-pool configuration)
-    lisp-worker-pool)
-(defun lisp-worker-pool-change-working-directory (pool configuration)
-  "Set each REPL's working directory from CONFIGURATION; roll back on failure."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-pool-change-working-directory
-      pool
-      (lisp-worker--environment configuration)))))
 
 ;;; A manager is one worker, a named pool, or NIL; sbcl-workers' manager
 ;;; protocol addresses all three, and these wrappers translate its failures.
@@ -339,22 +286,21 @@ An empty :VALUES string denotes zero values; a returned NIL is printed as NIL."
     (option pathname))
 (defun lisp-tool-asd-pathname (context arguments tool-name)
   "Return the optional canonical ASD file selected by ARGUMENTS."
-  (let ((requested (tool-argument arguments "asd")))
-    (when requested
-      (unless (non-empty-string-p requested)
+  (when-let ((requested (tool-argument arguments "asd")))
+    (unless (non-empty-string-p requested)
+      (error 'tool-error
+             :message   (format nil
+                                "The ~A asd argument must be a non-empty string."
+                                tool-name)
+             :tool-name tool-name))
+    (let ((path (workspace-tool-path context requested :tool-name tool-name)))
+      (unless (uiop:file-exists-p path)
         (error 'tool-error
                :message   (format nil
-                                  "The ~A asd argument must be a non-empty string."
-                                  tool-name)
+                                  "The ~A asd argument does not name an existing file: ~A"
+                                  tool-name path)
                :tool-name tool-name))
-      (let ((path (workspace-tool-path context requested :tool-name tool-name)))
-        (unless (uiop:file-exists-p path)
-          (error 'tool-error
-                 :message   (format nil
-                                    "The ~A asd argument does not name an existing file: ~A"
-                                    tool-name path)
-                 :tool-name tool-name))
-        path))))
+      path)))
 
 (-> lisp-tool-invoke-managed-execution
     (tool-context hash-table
@@ -419,27 +365,32 @@ that worker, while cancellation after a completed request leaves the REPL intact
                                     (list :forms forms)
                                     :context context :tools tools :enabled-p enabled-p)))))))
 
-(defmethod tool-execute ((tool lisp-load-system-tool)
+(defmethod tool-execute ((tool lisp-system-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Load the required system once through CONTEXT's isolated worker."
-  (declare (ignore tool))
-  (let* ((system (tool-argument arguments "system" :required t))
-         (asd-pathname
-           (lisp-tool-asd-pathname context arguments "lisp.load-system")))
+  "Load the required system or run its tests through CONTEXT's isolated worker."
+  (let* ((system       (tool-argument arguments "system" :required t))
+         (tool-name    (tool-canonical-name tool))
+         (operation    (tool-operation tool))
+         (asd-pathname (lisp-tool-asd-pathname context arguments tool-name))
+         (summary
+           (format nil (ecase operation
+                         (:load-system
+                          "Load system ~A")
+                         (:run-tests
+                          "Run tests for system ~A"))
+                   system)))
     (lisp-tool-invoke-execution
      context arguments
-     :tool-name "lisp.load-system"
-     :summary   (format nil "Load system ~A" system)
+     :tool-name tool-name
+     :summary   summary
      :operation-function
      (lambda (worker)
        (worker-response-tool-result
         (lisp-worker-request
-         worker
-         :load-system
+         worker operation
          (list :system       system
-               :asd-pathname (and asd-pathname
-                                  (namestring asd-pathname)))))))))
+               :asd-pathname (and asd-pathname (namestring asd-pathname)))))))))
 
 (-> lisp-tool--active-target-p (tool-context hash-table string) boolean)
 (defun lisp-tool--active-target-p (context arguments tool-name)
@@ -502,28 +453,6 @@ that worker, while cancellation after a completed request leaves the REPL intact
            (worker-response-tool-result
             (lisp-worker-request
              worker :source (list :name name :kind kind))))))))
-
-(defmethod tool-execute ((tool lisp-run-tests-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Run the required system's tests once through CONTEXT's isolated worker."
-  (declare (ignore tool))
-  (let* ((system (tool-argument arguments "system" :required t))
-         (asd-pathname
-           (lisp-tool-asd-pathname context arguments "lisp.run-tests")))
-    (lisp-tool-invoke-execution
-     context arguments
-     :tool-name "lisp.run-tests"
-     :summary   (format nil "Run tests for system ~A" system)
-     :operation-function
-     (lambda (worker)
-       (worker-response-tool-result
-        (lisp-worker-request
-         worker
-         :run-tests
-         (list :system       system
-               :asd-pathname (and asd-pathname
-                                  (namestring asd-pathname)))))))))
 
 (defmethod tool-execute ((tool lisp-reset-tool)
                          (context tool-context)

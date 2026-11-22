@@ -2,14 +2,6 @@
 
 ;;;; -- Emergency Contract Recovery --
 
-(-> contract-recovery-tests--octets (pathname) (simple-array (unsigned-byte 8) (*)))
-(defun contract-recovery-tests--octets (pathname)
-  "Read PATHNAME without text decoding for byte-exact recovery assertions."
-  (with-open-file (stream pathname :element-type '(unsigned-byte 8))
-    (let ((octets (make-array (file-length stream) :element-type '(unsigned-byte 8))))
-      (read-sequence octets stream)
-      octets)))
-
 (-> test-contract-reset-unreadable () null)
 (defun test-contract-reset-unreadable ()
   "Recover through ordinary dispatch without replaying malformed contract records."
@@ -42,11 +34,11 @@
       (test-assert (handler-case (progn (knowledge-base-read configuration) nil)
                      (knowledge-error () t))
                    "malformed contract state actually prevents ordinary knowledge replay")
-      (let* ((original (contract-recovery-tests--octets pathname))
-             (refused  (memory-resource-tests--call
+      (let* ((original (read-file-into-byte-vector pathname))
+             (refused  (test-resource-call
                         registry context :namespace "resource" :name "read"
                         :arguments '("uri" "memory:facts")))
-             (reset    (memory-resource-tests--call
+             (reset    (test-resource-call
                         registry context :namespace "contracts" :name "reset"
                         :arguments nil)))
         (test-assert (not (tool-result-success-p refused))
@@ -61,7 +53,7 @@
                             (pathname-name candidate)))
                          (uiop:directory-files (uiop:pathname-directory-pathname pathname)))))
           (test-assert (= 1 (length archives)) "recovery preserves one original archive")
-          (test-assert (equalp original (contract-recovery-tests--octets (first archives)))
+          (test-assert (equalp original (read-file-into-byte-vector (first archives)))
                        "the archive preserves the entire original damaged log")
           (test-assert (platform-file-status-private-p
                         (platform-path-status *platform* (first archives) :follow-links-p t))
@@ -77,7 +69,7 @@
                        "unrelated records inside a mixed transaction survive recovery"))
         (test-assert
          (tool-result-success-p
-          (memory-resource-tests--call registry context :namespace "resource" :name "read"
+          (test-resource-call registry context :namespace "resource" :name "read"
                                        :arguments '("uri" "memory:facts")))
          "ordinary tool dispatch succeeds after recovery")
         (knowledge-define-contract configuration :id "new-probe" :tool "resource.read")
@@ -125,10 +117,10 @@
     (let ((pathname (configuration-knowledge-path configuration)))
       (with-open-file (stream pathname :direction ':output :if-exists ':append)
         (write-line "#.(error \"Read-time evaluation must not run.\")" stream))
-      (let ((original (contract-recovery-tests--octets pathname)))
+      (let ((original (read-file-into-byte-vector pathname)))
         (test-assert (handler-case (progn (knowledge-reset-contracts configuration) nil)
                        (knowledge-error () t))
                      "unsafe reader syntax is rejected with evaluation disabled")
-        (test-assert (equalp original (contract-recovery-tests--octets pathname))
+        (test-assert (equalp original (read-file-into-byte-vector pathname))
                      "an unreadable record cannot cause a partial replacement"))))
   nil)

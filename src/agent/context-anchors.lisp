@@ -40,7 +40,7 @@ costs at most a cache miss after resuming."
 (-> context-anchors-key-digest (list) string)
 (defun context-anchors-key-digest (key)
   "Return the durable identity of contribution KEY as a SHA-256 digest."
-  (context-anchors--digest
+  (memory-source-text-digest
    (with-standard-io-syntax
      (let ((*print-readably* nil))
        (prin1-to-string key)))))
@@ -48,13 +48,7 @@ costs at most a cache miss after resuming."
 (-> context-anchors-item-digest (t) string)
 (defun context-anchors-item-digest (item)
   "Return the durable identity of history ITEM as a SHA-256 digest of its JSON."
-  (context-anchors--digest (json-encode item)))
-
-(-> context-anchors--digest (string) string)
-(defun context-anchors--digest (text)
-  "Return TEXT's lowercase hexadecimal SHA-256 digest."
-  (ironclad:byte-array-to-hex-string
-   (ironclad:digest-sequence :sha256 (utf8-string-to-octets text))))
+  (memory-source-text-digest (json-encode item)))
 
 (-> context-anchors--pathname (conversation) pathname)
 (defun context-anchors--pathname (conversation)

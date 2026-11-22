@@ -23,7 +23,7 @@
 (defun refinement--text (value)
   "Validate a bounded, nonblank portable text field without truncation."
   (unless (and (stringp value) (<= (length value) *refinement-text-limit*)
-               (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return) value))))
+               (plusp (length (string-trim *line-whitespace* value))))
     (refinement--reject ':invalid "Expected nonblank text within the refinement field limit."))
   value)
 

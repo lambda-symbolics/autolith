@@ -714,3 +714,52 @@ owns the response stream and must bound its body before allocating it."))
     :type          keyword
     :documentation "The capability this host withholds."))
   (:documentation "A capability is withheld on this host for a user-visible reason."))
+
+(defmethod platform-process-resident-bytes ((platform platform) process-id)
+  "Observe the resident bytes of PROCESS-ID."
+  (ls-compat.posix:process-resident-bytes process-id))
+
+(defmethod platform-process-parent-snapshot ((platform platform))
+  "Observe parent relationships and whether the observation completed."
+  (ls-compat.posix:process-parent-snapshot))
+
+(defmethod platform-process-alive-p ((platform platform) process-id)
+  "Probe PROCESS-ID with signal zero through ls-compat."
+  (process-alive-p process-id))
+
+(defmethod platform-delete-file ((platform platform) pathname)
+  "Remove the exact native pathname through ls-compat."
+  (handler-case (ls-compat.posix:remove-file pathname)
+    (file-error (condition)
+      (platform--file-failure ':delete pathname condition))))
+
+(defmethod platform-replace-file ((platform platform) source target)
+  "Rename SOURCE over TARGET through ls-compat."
+  (handler-case (ls-compat.posix:replace-file source target)
+    (file-error (condition)
+      (platform--file-failure ':replace target condition))))
+
+(defmethod platform-make-temporary-directory ((platform platform)
+                                              parent prefix)
+  "Create a private temporary directory through ls-compat."
+  (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
+    (file-error (condition)
+      (platform--file-failure ':create parent condition))))
+
+(defmethod platform-delete-directory-tree ((platform platform) pathname
+                                           &rest arguments
+                                           &key validate if-does-not-exist)
+  "Remove PATHNAME's tree through ls-compat with the caller's policy."
+  (declare (ignore platform validate if-does-not-exist))
+  (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
+
+
+;;;; -- Host Executables --
+
+(-> sbcl-command () string)
+(defun sbcl-command ()
+  "Return the configured SBCL executable, or sbcl from PATH."
+  (let ((configured-command (uiop:getenv "AUTOLITH_SBCL")))
+    (if (non-empty-string-p configured-command)
+        configured-command
+        "sbcl")))

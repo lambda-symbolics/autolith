@@ -879,10 +879,6 @@ without changing the registry."
 (defvar *application-command-interactive-p* nil
   "Whether the current local command call may acquire omitted arguments interactively.")
 
-(defparameter *application-command-whitespace*
-  '(#\Space #\Tab #\Newline #\Return #\Page)
-  "Whitespace trimmed from command presentation labels.")
-
 (-> application-command--display-name (application-command) string)
 (defun application-command--display-name (command)
   "Return COMMAND's canonical callable spelling for human-facing diagnostics."

@@ -331,17 +331,15 @@ RESTART-NAME and RESTART-VALUE-SOURCE retry a failure as self.eval does."))
 
 (defmethod agent-observer-text ((observer callback-agent-observer) (text string))
   "Send assistant TEXT to OBSERVER's configured callback."
-  (let ((callback (callback-agent-observer-text-callback observer)))
-    (when callback
-      (funcall callback text)))
+  (when-let ((callback (callback-agent-observer-text-callback observer)))
+    (funcall callback text))
   nil)
 
 (defmethod agent-observer-reasoning
     ((observer callback-agent-observer) (text string))
   "Send reasoning TEXT to OBSERVER's configured callback."
-  (let ((callback (callback-agent-observer-reasoning-callback observer)))
-    (when callback
-      (funcall callback text)))
+  (when-let ((callback (callback-agent-observer-reasoning-callback observer)))
+    (funcall callback text))
   nil)
 
 (defmethod agent-observer-status
@@ -349,54 +347,48 @@ RESTART-NAME and RESTART-VALUE-SOURCE retry a failure as self.eval does."))
   "Send STATUS and DETAILS to OBSERVER's configured callback."
   (declare (type keyword status)
            (type list details))
-  (let ((callback (callback-agent-observer-status-callback observer)))
-    (when callback
-      (funcall callback status details))))
+  (when-let ((callback (callback-agent-observer-status-callback observer)))
+    (funcall callback status details)))
 
 (defmethod agent-observer-take-steering ((observer callback-agent-observer))
   "Drain steering messages through OBSERVER's configured callback."
-  (let ((callback (callback-agent-observer-steering-callback observer)))
-    (if callback
-        (funcall callback)
-        nil)))
+  (if-let ((callback (callback-agent-observer-steering-callback observer)))
+      (funcall callback)
+      nil))
 
 (defmethod agent-observer-steering-persisted
     ((observer callback-agent-observer) (identifier string))
   "Acknowledge durable steering IDENTIFIER through OBSERVER's callback."
-  (let ((callback
-          (callback-agent-observer-steering-persisted-callback observer)))
-    (when callback
-      (funcall callback identifier)))
+  (when-let ((callback
+               (callback-agent-observer-steering-persisted-callback observer)))
+    (funcall callback identifier))
   nil)
 
 (defmethod agent-observer-apply-pending-operations
     ((observer callback-agent-observer) agent)
   "Apply queued operations through OBSERVER's configured callback."
-  (let ((callback
-          (callback-agent-observer-pending-operations-callback observer)))
-    (when callback
-      (funcall callback agent)))
+  (when-let ((callback
+               (callback-agent-observer-pending-operations-callback observer)))
+    (funcall callback agent))
   nil)
 
 (defmethod agent-observer-authorize-command
     ((observer callback-agent-observer) (command string) (directory pathname))
   "Authorize COMMAND through OBSERVER's callback, denying when absent."
-  (let ((callback
-          (callback-agent-observer-command-authorization-callback observer)))
-    (if callback
-        (funcall callback command directory)
-        ':deny)))
+  (if-let ((callback
+             (callback-agent-observer-command-authorization-callback observer)))
+      (funcall callback command directory)
+      ':deny))
 
 (defmethod agent-observer-authorize-tool
     ((observer callback-agent-observer)
      (tool tool)
      (arguments hash-table))
   "Authorize TOOL through OBSERVER's callback, denying when absent."
-  (let ((callback
-          (callback-agent-observer-tool-authorization-callback observer)))
-    (if callback
-        (funcall callback tool arguments)
-        ':deny)))
+  (if-let ((callback
+             (callback-agent-observer-tool-authorization-callback observer)))
+      (funcall callback tool arguments)
+      ':deny))
 
 (defmethod agent-observer-evaluate-on-client
     (observer (sources list) &key restart-name restart-value-source)
@@ -409,12 +401,11 @@ RESTART-NAME and RESTART-VALUE-SOURCE retry a failure as self.eval does."))
 (defmethod agent-observer-evaluate-on-client
     ((observer callback-agent-observer) (sources list) &key restart-name restart-value-source)
   "Evaluate SOURCES through OBSERVER's callback, refusing when absent."
-  (let ((callback (callback-agent-observer-client-evaluation-callback observer)))
-    (if callback
-        (funcall callback sources
-                 :restart-name         restart-name
-                 :restart-value-source restart-value-source)
-        (call-next-method))))
+  (if-let ((callback (callback-agent-observer-client-evaluation-callback observer)))
+      (funcall callback sources
+               :restart-name         restart-name
+               :restart-value-source restart-value-source)
+      (call-next-method)))
 
 (defmethod agent-observer-evaluate-on-client
     ((observer serialized-agent-observer) (sources list) &key restart-name restart-value-source)
@@ -882,7 +873,7 @@ restricted turn cannot discover tools outside its allowlist."
     (when (and (non-empty-string-p text)
                (plusp
                 (length
-                 (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
+                 (string-trim *line-whitespace* text))))
       (agent-observer-status
        observer
        ':assistant-response-persisted
@@ -1321,12 +1312,11 @@ worker results become explicit unknown outcomes so provider history stays valid.
                :real-microseconds (getf execution :real-microseconds)
                :output            output
                :details           (tool-result-details effective-result))))))
-  (let ((failure
-          (find-if (lambda (execution)
-                     (getf execution :condition))
-                   executions)))
-    (when failure
-      (error (getf failure :condition))))
+  (when-let ((failure
+               (find-if (lambda (execution)
+                          (getf execution :condition))
+                        executions)))
+    (error (getf failure :condition)))
   nil)
 
 (-> agent--tool-thread-function (function) function)

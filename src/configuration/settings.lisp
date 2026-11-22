@@ -77,17 +77,22 @@
 (defparameter *gemini-oauth-callback-timeout* 300
   "The maximum seconds to wait for the installed-app loopback callback.")
 
+(-> configuration-environment-value (string) (option string))
+(defun configuration-environment-value (name)
+  "Return the original value of NAME unless it is unset or blank."
+  (let ((value (uiop:getenvp name)))
+    (and (non-empty-string-p value) value)))
+
 (-> gemini-oauth-client-id () string)
 (defun gemini-oauth-client-id ()
   "Return the configured Google installed-app OAuth client identifier."
-  (let ((override (uiop:getenv "AUTOLITH_GEMINI_OAUTH_CLIENT_ID")))
-    (if (non-empty-string-p override) override *gemini-oauth-client-id*)))
+  (or (configuration-environment-value "AUTOLITH_GEMINI_OAUTH_CLIENT_ID")
+      *gemini-oauth-client-id*))
 
 (-> gemini-oauth-client-secret () (option string))
 (defun gemini-oauth-client-secret ()
   "Return an optional configured Google installed-app client secret."
-  (let ((secret (uiop:getenv "AUTOLITH_GEMINI_OAUTH_CLIENT_SECRET")))
-    (and (non-empty-string-p secret) secret)))
+  (configuration-environment-value "AUTOLITH_GEMINI_OAUTH_CLIENT_SECRET"))
 
 ;; The subscription proxy serving Grok Build sessions, read from grok-build
 ;; reference commit 47348d13 (crates/codegen/xai-grok-env).
@@ -128,20 +133,18 @@
 (-> nous-portal-url () string)
 (defun nous-portal-url ()
   "Return the configured Nous Research portal URL."
-  (let ((override (uiop:getenv "AUTOLITH_NOUS_PORTAL_URL")))
-    (string-right-trim
-     '(#\/)
-     (if (non-empty-string-p override) override *nous-portal-url*))))
+  (string-right-trim
+   '(#\/)
+   (or (configuration-environment-value "AUTOLITH_NOUS_PORTAL_URL")
+       *nous-portal-url*)))
 
 (-> nous-inference-base-url () string)
 (defun nous-inference-base-url ()
   "Return the configured Nous Research inference API base URL."
-  (let ((override (uiop:getenv "AUTOLITH_NOUS_INFERENCE_BASE_URL")))
-    (string-right-trim
-     '(#\/)
-     (if (non-empty-string-p override)
-         override
-         *nous-inference-base-url*))))
+  (string-right-trim
+   '(#\/)
+   (or (configuration-environment-value "AUTOLITH_NOUS_INFERENCE_BASE_URL")
+       *nous-inference-base-url*)))
 
 (-> nous-chat-completions-endpoint () string)
 (defun nous-chat-completions-endpoint ()
@@ -192,10 +195,8 @@
 (-> opencode-models-endpoint () string)
 (defun opencode-models-endpoint ()
   "Return the configured OpenCode models endpoint."
-  (let ((override (uiop:getenv *opencode-models-environment-variable*)))
-    (if (non-empty-string-p override)
-        override
-        *opencode-models-endpoint*)))
+  (or (configuration-environment-value *opencode-models-environment-variable*)
+      *opencode-models-endpoint*))
 
 (defparameter *opencode-zen-chat-completions-endpoint*
   "https://opencode.ai/inference/openai/v1/chat/completions"
@@ -208,10 +209,8 @@
 (-> opencode-zen-models-endpoint () string)
 (defun opencode-zen-models-endpoint ()
   "Return the configured OpenCode Zen models endpoint."
-  (let ((override (uiop:getenv "AUTOLITH_OPENCODE_ZEN_MODELS_ENDPOINT")))
-    (if (non-empty-string-p override)
-        override
-        *opencode-zen-models-endpoint*)))
+  (or (configuration-environment-value "AUTOLITH_OPENCODE_ZEN_MODELS_ENDPOINT")
+      *opencode-zen-models-endpoint*))
 
 ;; The public OpenRouter Chat Completions API, verified on 2026-08-24: the
 ;; endpoint accepts streaming text, function tools, normalized reasoning
@@ -227,10 +226,8 @@
 (-> openrouter-models-endpoint () string)
 (defun openrouter-models-endpoint ()
   "Return the configured OpenRouter model discovery endpoint."
-  (let ((override (uiop:getenv "AUTOLITH_OPENROUTER_MODELS_ENDPOINT")))
-    (if (non-empty-string-p override)
-        override
-        *openrouter-models-endpoint*)))
+  (or (configuration-environment-value "AUTOLITH_OPENROUTER_MODELS_ENDPOINT")
+      *openrouter-models-endpoint*))
 
 (defparameter *anthropic-models-endpoint*
   "https://api.anthropic.com/v1/models"
@@ -257,10 +254,8 @@
 (-> mistral-models-endpoint () string)
 (defun mistral-models-endpoint ()
   "Return the configured Mistral model discovery endpoint."
-  (let ((override (uiop:getenv "AUTOLITH_MISTRAL_MODELS_ENDPOINT")))
-    (if (non-empty-string-p override)
-        override
-        *mistral-models-endpoint*)))
+  (or (configuration-environment-value "AUTOLITH_MISTRAL_MODELS_ENDPOINT")
+      *mistral-models-endpoint*))
 
 (defparameter *supported-reasoning-efforts*
   '("none" "low" "medium" "high" "xhigh" "max" "ultra")
@@ -438,9 +433,8 @@ gpt-6.1-terra is assumed to support it, like gpt-5.6-terra, until upstream lists
 (-> environment-directory (string pathname) pathname)
 (defun environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
-  (let* ((value    (uiop:getenv variable))
-         (pathname (and (non-empty-string-p value)
-                        (pathname value))))
+  (let* ((value    (configuration-environment-value variable))
+         (pathname (and value (pathname value))))
     (uiop:ensure-directory-pathname
      (if (and pathname (uiop:absolute-pathname-p pathname))
          pathname
@@ -449,40 +443,38 @@ gpt-6.1-terra is assumed to support it, like gpt-5.6-terra, until upstream lists
 (-> environment-boolean (string boolean) boolean)
 (defun environment-boolean (variable fallback)
   "Return boolean VARIABLE, or FALLBACK when it is unset."
-  (let ((value (uiop:getenv variable)))
-    (if (non-empty-string-p value)
-        (let ((normalized (string-downcase value)))
-          (cond
-            ((member normalized '("1" "true" "yes" "on") :test #'string=)
-             t)
-            ((member normalized '("0" "false" "no" "off") :test #'string=)
-             nil)
-            (t
-             (error 'configuration-error
-                    :message
-                    (format nil
-                            "~A must be on or off, not ~S."
-                            variable
-                            value)))))
-        fallback)))
+  (if-let ((value (configuration-environment-value variable)))
+      (let ((normalized (string-downcase value)))
+        (cond
+          ((member normalized '("1" "true" "yes" "on") :test #'string=)
+           t)
+          ((member normalized '("0" "false" "no" "off") :test #'string=)
+           nil)
+          (t
+           (error 'configuration-error
+                  :message
+                  (format nil
+                          "~A must be on or off, not ~S."
+                          variable
+                          value)))))
+      fallback))
 
 (-> environment-positive-integer (string (integer 1)) (integer 1))
 (defun environment-positive-integer (variable fallback)
   "Return positive integer VARIABLE, or FALLBACK when it is unset."
-  (let ((value (uiop:getenv variable)))
-    (if (non-empty-string-p value)
-        (handler-case
-            (let ((parsed (parse-integer value :junk-allowed nil)))
-              (unless (plusp parsed)
-                (error 'configuration-error
-                       :message (format nil "~A must be a positive integer." variable)))
-              parsed)
-          (configuration-error (condition)
-            (error condition))
-          (error ()
-            (error 'configuration-error
-                   :message (format nil "~A must be a positive integer." variable))))
-        fallback)))
+  (if-let ((value (configuration-environment-value variable)))
+      (handler-case
+          (let ((parsed (parse-integer value :junk-allowed nil)))
+            (unless (plusp parsed)
+              (error 'configuration-error
+                     :message (format nil "~A must be a positive integer." variable)))
+            parsed)
+        (configuration-error (condition)
+          (error condition))
+        (error ()
+          (error 'configuration-error
+                 :message (format nil "~A must be a positive integer." variable))))
+      fallback))
 
 (-> configuration--default-config-root () pathname)
 (defun configuration--default-config-root ()
@@ -513,32 +505,31 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
          (override
            (case family
              (:codex
-              (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT"))
+               (configuration-environment-value "AUTOLITH_PROVIDER_ENDPOINT"))
              (:grok
-              (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT"))
+              (configuration-environment-value "AUTOLITH_GROK_PROVIDER_ENDPOINT"))
              (:nous
-              (or (uiop:getenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT")
-                  (let ((base (uiop:getenv "AUTOLITH_NOUS_INFERENCE_BASE_URL")))
-                    (and (non-empty-string-p base)
-                         (concatenate
-                          'string
-                          (string-right-trim '(#\/) base)
-                          "/chat/completions")))))
+              (if-let ((direct (uiop:getenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT")))
+                ;; An explicitly blank direct override skips the base override.
+                (and (non-empty-string-p direct) direct)
+                (when-let ((base (configuration-environment-value "AUTOLITH_NOUS_INFERENCE_BASE_URL")))
+                  (concatenate 'string
+                               (string-right-trim '(#\/) base)
+                               "/chat/completions"))))
              (:fireworks
-              (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
+              (configuration-environment-value "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
              (:opencode
-              (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))
-
+              (configuration-environment-value "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))
              (:opencode-zen
-              (uiop:getenv "AUTOLITH_OPENCODE_ZEN_PROVIDER_ENDPOINT"))
+              (configuration-environment-value "AUTOLITH_OPENCODE_ZEN_PROVIDER_ENDPOINT"))
              (:openrouter
-              (uiop:getenv "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT"))
+              (configuration-environment-value "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT"))
              (:mistral
-              (uiop:getenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"))))
+              (configuration-environment-value "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"))))
          (registered
            (and (fboundp 'provider-model-endpoint)
                 (provider-model-endpoint model :provider (and (non-empty-string-p provider) provider)))))
-    (or (and (non-empty-string-p override) override)
+    (or override
         registered
         (case family
           (:codex

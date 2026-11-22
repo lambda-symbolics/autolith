@@ -210,8 +210,7 @@ Return its ID and whether the definition changed."
 (defun knowledge--instantiate-term (item environment)
   "Return ITEM with its value in ENVIRONMENT when it is a bound variable."
   (if (knowledge-variable-p item)
-      (let ((binding (assoc item environment :test #'string=)))
-        (if binding (rest binding) item))
+      (if-let ((binding (assoc item environment :test #'string=))) (rest binding) item)
       item))
 
 (-> knowledge--instantiate-pattern (list list) list)

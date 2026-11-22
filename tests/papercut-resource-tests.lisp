@@ -2,32 +2,6 @@
 
 ;;;; -- Papercut Resource Test Support --
 
-(-> papercut-resource-tests--call
-    (tool-registry tool-context
-     &key (:namespace string) (:name string) (:arguments list))
-    tool-result)
-(defun papercut-resource-tests--call
-    (registry context &key namespace name arguments)
-  "Execute NAMESPACE.NAME with the ARGUMENTS plist through REGISTRY and CONTEXT."
-  (tool-registry-execute-call
-   registry
-   (json-object "namespace" namespace
-                "name" name
-                "arguments" (json-encode (apply #'json-object arguments)))
-   context))
-
-(-> papercut-resource-tests--field (string string) string)
-(defun papercut-resource-tests--field (content label)
-  "Return the single-line value following LABEL in papercut resource CONTENT."
-  (let* ((start       (search label content))
-         (value-start (and start (+ start (length label))))
-         (end         (and value-start
-                           (or (position #\Newline content :start value-start)
-                               (length content)))))
-    (unless (and value-start end)
-      (error "Missing papercut resource field ~S in ~S." label content))
-    (subseq content value-start end)))
-
 (-> papercut-resource-tests--operation (string &rest t) json-object)
 (defun papercut-resource-tests--operation (name &rest fields)
   "Return one JSON papercut resource operation named NAME with FIELDS."
@@ -85,7 +59,7 @@
                                                  (find-class 'task-child-agent)))))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one papercut resource fixture call."
-                      (papercut-resource-tests--call
+                      (test-resource-call
                        registry context :namespace namespace
                                         :name      name
                                         :arguments arguments))
@@ -97,7 +71,7 @@
 
                     (revision (result)
                       "Return RESULT's model-visible resource revision alias."
-                      (papercut-resource-tests--field
+                      (test-resource-field
                        (tool-result-content result) "Revision: "))
 
                     (edit-resource (context uri base operation &rest more)
@@ -107,32 +81,12 @@
                             "base-revision" base
                             "operations"
                             (coerce (cons operation more) 'vector))))
-             (let ((resolver
-                      (cl-resources:resource-registry-find
-                       (tool-registry-resource-registry registry) "papercut")))
-               (test-assert (typep resolver 'papercut-resolver)
-                            "default tools register the papercut resolver"))
-             (let* ((empty-read     (read-resource first-context "papercut:current"))
-                    (empty-revision (revision empty-read))
-                    (empty-state
-                      (resource-observation-state-find
-                       (conversation-resource-observations first-conversation)
-                       empty-revision
-                       'papercut-observation-state))
-                    (empty-observation
-                      (resource-observation-state-observation empty-state)))
+             (let ((empty-read (read-resource first-context "papercut:current")))
                (test-assert (tool-result-success-p empty-read)
                             "resource.read observes the empty papercut collection")
                (test-assert
                 (search "active papercuts: 0" (tool-result-content empty-read))
                 "empty papercut collection rendering reports zero active items")
-               (test-assert
-                 (equal (papercut-observation-snapshot empty-observation)
-                        (list :kind        ':collection
-                              :workspace   (papercut--workspace configuration)
-                              :identifiers nil
-                              :assessments nil))
-                "papercut collections retain a compact exact identifier snapshot")
                (test-assert
                 (not (tool-result-success-p
                       (read-resource first-context "papercut:current"

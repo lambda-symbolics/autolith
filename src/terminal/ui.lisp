@@ -1403,11 +1403,6 @@ its parenthesis open, and are dropped once the name closes it itself."
         (decf remaining extra)))
     (values (aref budgets 0) (aref budgets 1) (aref budgets 2))))
 
-(-> terminal-ui--command-row-budget (terminal-ui) (integer 0))
-(defun terminal-ui--command-row-budget (ui)
-  "Return UI's allocated command activity rows."
-  (terminal-ui--activity-row-budgets ui))
-
 (-> terminal-ui--agent-row-budget (terminal-ui) (integer 0))
 (defun terminal-ui--agent-row-budget (ui)
   "Return UI's allocated child-agent activity rows."

@@ -23,7 +23,7 @@
                    "AUTOLITH_RELEASE_BASE_URL=https://example.invalid")))
       (release-script-tests--make-release source-root release-root)
       (release-script-tests--install-linux-host-tools commands)
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "curl" commands) (release-script-tests--fixture-curl))
       (release-script-tests--chmod "755" (merge-pathnames "curl" commands))
       (labels ((install (tag)
@@ -57,7 +57,7 @@
                  (let* ((valid-checksum (uiop:read-file-string checksum))
                         (digest         (subseq valid-checksum 0 64))
                         (filename       (file-namestring archive)))
-                   (release-script-tests--write-file
+                   (test-write-text
                     (merge-pathnames "tar" commands)
                     (format nil "#!/bin/sh~%touch ~A~%exec ~A \"$@\"~%"
                             (uiop:escape-shell-token (namestring extraction-marker))
@@ -70,18 +70,18 @@
                                           "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
                                   (format nil "~A  ../~A~%" digest filename)
                                   (concatenate 'string valid-checksum valid-checksum)))
-                     (release-script-tests--write-file checksum invalid)
+                     (test-write-text checksum invalid)
                      (reject))
                    (delete-file checksum)
                    (reject)
-                   (release-script-tests--write-file checksum valid-checksum)
+                   (test-write-text checksum valid-checksum)
                    (with-open-file (stream archive :direction ':output :if-exists ':append
                                                   :element-type '(unsigned-byte 8))
                      (write-byte 0 stream))
                    (reject)
                    (release-script-tests--write-checksum archive checksum)
                    (setf digest (subseq (uiop:read-file-string checksum) 0 64))
-                   (release-script-tests--write-file
+                   (test-write-text
                     checksum (format nil "~A *~A~%" (string-upcase digest) filename))
                    (multiple-value-bind (output diagnostics status) (install "v1.0.1")
                      (declare (ignore output))

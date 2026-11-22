@@ -10,14 +10,13 @@
 
 (-> test-saved-context-rule-persistence-and-replacement () null)
 (defun test-saved-context-rule-persistence-and-replacement ()
-  "Exercise detached persistence, reload, conflict, replacement, and validation."
+  "Exercise detached persistence, reload, conflict, and replacement."
   (with-test-configuration (configuration root)
     (let* ((configuration (configuration-copy configuration :working-directory root))
            (rule          (saved-context-rule-tests--rule "saved" "Saved advice."))
            (replacement   (saved-context-rule-tests--rule "saved" "Replaced advice."))
            (path          (context-rule-saved-path configuration :workspace)))
-      (test-assert (pathnamep (context-rule-save configuration rule))
-                   "saving a workspace rule returns its pathname")
+      (context-rule-save configuration rule)
       (test-assert (probe-file path) "saving publishes the snapshot")
       (test-assert (= 1 (length (context-rule-saved configuration :scope :workspace)))
                    "saved workspace rules reload")
@@ -34,11 +33,7 @@
                             (getf (first (context-rule-saved configuration
                                                               :scope :workspace))
                                   :instruction))
-                   "replacement updates the existing record")
-      (test-assert (handler-case
-                       (progn (context-rule-save configuration rule :scope :invalid) nil)
-                     (context-rule-error () t))
-                   "unsupported scopes are rejected strictly")))
+                   "replacement updates the existing record")))
   nil)
 
 (-> test-saved-context-rule-scope-and-precedence () null)

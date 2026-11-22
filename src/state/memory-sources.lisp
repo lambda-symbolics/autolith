@@ -35,18 +35,7 @@
 
 Quotes are compared in this form, so reindenting or rewrapping a cited passage
 does not invalidate the memory that cites it."
-  (string-trim
-   " "
-   (with-output-to-string (stream)
-     (loop with spacing-p = nil
-           for character across text
-           if (find character '(#\Space #\Tab #\Newline #\Return #\Page))
-             do (unless spacing-p
-                  (write-char #\Space stream)
-                  (setf spacing-p t))
-           else
-             do (write-char character stream)
-                (setf spacing-p nil)))))
+  (serapeum:trim-whitespace (serapeum:collapse-whitespace text)))
 
 (-> memory-source-quote-p (t) boolean)
 (defun memory-source-quote-p (value)
@@ -65,11 +54,16 @@ does not invalidate the memory that cites it."
 
 ;;;; -- Digests --
 
-(-> memory-source-text-digest (string) string)
-(defun memory-source-text-digest (text)
-  "Return the lowercase hexadecimal SHA-256 of TEXT's UTF-8 octets."
+(-> memory-source-text-digest (string &key (:babel-utf8-p boolean)) string)
+(defun memory-source-text-digest (text &key babel-utf8-p)
+  "Return the lowercase hexadecimal SHA-256 of TEXT's UTF-8 octets.
+
+BABEL-UTF8-P preserves the encoding of keys originally written with Babel."
   (ironclad:byte-array-to-hex-string
-   (ironclad:digest-sequence ':sha256 (utf8-string-to-octets text))))
+   (ironclad:digest-sequence ':sha256
+                            (if babel-utf8-p
+                                (babel:string-to-octets text :encoding ':utf-8)
+                                (utf8-string-to-octets text)))))
 
 (-> memory-content-digest (string string) string)
 (defun memory-content-digest (title content)
@@ -269,16 +263,15 @@ for each pass. A saturated context returns unverified limit observations."))
 (-> source-observation-file-status (pathname) t)
 (defun source-observation-file-status (pathname)
   "Return PATHNAME's identity, size and timestamps, or :MISSING."
-  (let ((status (handler-case
-                    (platform-path-status *platform* pathname :follow-links-p t)
-                  (platform-error ()
-                    nil))))
-    (if status
-        (list (platform-file-status-identity status)
-              (platform-file-status-size status)
-              (platform-file-status-modification-time status)
-              (platform-file-status-change-time status))
-        ':missing)))
+  (if-let ((status (handler-case
+                       (platform-path-status *platform* pathname :follow-links-p t)
+                     (platform-error ()
+                       nil))))
+      (list (platform-file-status-identity status)
+            (platform-file-status-size status)
+            (platform-file-status-modification-time status)
+            (platform-file-status-change-time status))
+      ':missing))
 
 (-> source-observation-context-file (source-observation-context pathname) source-observation)
 (defun source-observation-context-file (context pathname)

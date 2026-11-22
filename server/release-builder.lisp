@@ -113,27 +113,11 @@
 (-> release-host--call-with-lock (pathname function) t)
 (defun release-host--call-with-lock (state-root function)
   "Call FUNCTION while holding the release host's process-shared operation lock."
-  (let* ((pathname
-           (merge-pathnames "host-operation.lock"
-                            (uiop:ensure-directory-pathname state-root)))
-         (descriptor nil))
+  (let ((pathname (merge-pathnames
+                   "host-operation.lock"
+                   (uiop:ensure-directory-pathname state-root))))
     (ensure-directories-exist pathname)
-    (unwind-protect
-         (progn
-           (setf descriptor
-                 (sb-posix:open
-                  (namestring pathname)
-                  (logior sb-posix:o-creat sb-posix:o-rdwr)
-                  #o600))
-           (sb-posix:lockf descriptor sb-posix:f-lock 0)
-           (funcall function))
-      (when descriptor
-        (handler-case (sb-posix:lockf descriptor sb-posix:f-ulock 0)
-          (sb-posix:syscall-error ()
-            nil))
-        (handler-case (sb-posix:close descriptor)
-          (sb-posix:syscall-error ()
-            nil))))))
+    (call-with-file-lock pathname function)))
 
 (-> release-builder-configuration-create
     (&key (:source-root (option pathname))
@@ -153,20 +137,17 @@
    :source-root
    (uiop:ensure-directory-pathname
     (or source-root
-        (let ((configured (uiop:getenv "AUTOLITH_RELEASE_SOURCE_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_SOURCE_ROOT")
         (asdf:system-source-directory :autolith)))
    :state-root
    (uiop:ensure-directory-pathname
     (or state-root
-        (let ((configured (uiop:getenv "AUTOLITH_RELEASE_STATE_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_STATE_ROOT")
         #p"/var/lib/autolith-release-server/"))
    :public-root
    (uiop:ensure-directory-pathname
     (or public-root
-        (let ((configured (uiop:getenv "AUTOLITH_RELEASE_PUBLIC_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_PUBLIC_ROOT")
         #p"/srv/autolith-release-server/"))
    :repository        (or repository
                           (uiop:getenv "AUTOLITH_RELEASE_REPOSITORY")
@@ -189,17 +170,6 @@
 
 
 ;;;; -- Remote Tags --
-
-(-> release-builder--commit-valid-p (string) boolean)
-(defun release-builder--commit-valid-p (commit)
-  "Return true when COMMIT is a lowercase forty-character Git identity."
-  (and (= (length commit) 40)
-       (not
-        (null
-         (every (lambda (character)
-                  (or (digit-char-p character)
-                      (find character "abcdef")))
-                commit)))))
 
 (-> release-builder--parse-remote-tags (string) list)
 (defun release-builder--parse-remote-tags (output)
@@ -229,7 +199,7 @@ Lightweight tags only publish one line and keep that commit identity."
               (setf tag name)))
           (unless (and commit
                        tag
-                       (release-builder--commit-valid-p commit)
+                       (release-commit-valid-p commit)
                        (release-tag-valid-p tag))
             (error 'release-builder-error
                    :stage ':tag-discovery
@@ -280,7 +250,7 @@ semantic order so a temporary builder outage cannot skip a version."
             :source-root (release-builder-configuration-source-root configuration)
             :public-root (release-builder-configuration-public-root configuration)))
          (published (release-server-published-tags server-configuration))
-         (latest    (first (last published))))
+         (latest    (lastcar published)))
     (if latest
         (remove-if-not
          (lambda (source-tag)
@@ -304,15 +274,6 @@ semantic order so a temporary builder outage cannot skip a version."
    (format nil "checkouts/~A/" (release-source-tag-name source-tag))
    (release-builder-configuration-state-root configuration)))
 
-(-> release-builder--git-output (pathname list) string)
-(defun release-builder--git-output (directory arguments)
-  "Return trimmed output from one Git command in DIRECTORY."
-  (string-trim
-   '(#\Space #\Tab #\Newline #\Return)
-   (uiop:run-program (append (list "git" "-C" (namestring directory)) arguments)
-                     :output       ':string
-                     :error-output ':output)))
-
 (-> release-builder--checkout-valid-p
     (pathname release-source-tag)
     boolean)
@@ -320,11 +281,11 @@ semantic order so a temporary builder outage cannot skip a version."
   "Return true when CHECKOUT is clean and exactly matches SOURCE-TAG."
   (handler-case
       (and (uiop:directory-exists-p checkout)
-           (string= (release-builder--git-output checkout '("rev-parse" "HEAD"))
+           (string= (release-server--git-output checkout '("rev-parse" "HEAD"))
                     (release-source-tag-commit source-tag))
            (zerop
             (length
-             (release-builder--git-output
+             (release-server--git-output
               checkout '("status" "--porcelain" "--untracked-files=no")))))
     (error ()
       nil)))
@@ -340,7 +301,7 @@ its definition outside this image preserves the running server's system registry
               (string-trim
                '(#\Newline #\Return)
                (uiop:run-program
-                (list (active-image--sbcl-command)
+                (list (sbcl-command)
                       "--noinform" "--no-sysinit" "--no-userinit"
                       "--non-interactive"
                       "--eval" "(require :asdf)"
@@ -485,24 +446,10 @@ otherwise be reused for a different release tag."
 
 ;;;; -- GitHub Release Mirror --
 
-(-> release-builder--string-prefix-p (string string) boolean)
-(defun release-builder--string-prefix-p (prefix value)
-  "Return true when VALUE begins with PREFIX."
-  (and (>= (length value) (length prefix))
-       (string= prefix value :end2 (length prefix))
-       t))
-
-(-> release-builder--string-suffix-p (string string) boolean)
-(defun release-builder--string-suffix-p (suffix value)
-  "Return true when VALUE ends with SUFFIX."
-  (and (>= (length value) (length suffix))
-       (string= suffix value :start2 (- (length value) (length suffix)))
-       t))
-
 (-> release-builder--strip-git-suffix (string) string)
 (defun release-builder--strip-git-suffix (value)
   "Remove a trailing .git suffix from VALUE."
-  (if (release-builder--string-suffix-p ".git" value)
+  (if (uiop:string-suffix-p value ".git")
       (subseq value 0 (- (length value) 4))
       value))
 
@@ -524,16 +471,16 @@ otherwise be reused for a different release tag."
           (release-builder--strip-git-suffix
            (string-right-trim '(#\/) repository))))
     (cond
-      ((release-builder--string-prefix-p "https://github.com/" value)
+      ((uiop:string-prefix-p "https://github.com/" value)
        (release-builder--split-owner-repo
         (subseq value (length "https://github.com/"))))
-      ((release-builder--string-prefix-p "http://github.com/" value)
+      ((uiop:string-prefix-p "http://github.com/" value)
        (release-builder--split-owner-repo
         (subseq value (length "http://github.com/"))))
-      ((release-builder--string-prefix-p "git@github.com:" value)
+      ((uiop:string-prefix-p "git@github.com:" value)
        (release-builder--split-owner-repo
         (subseq value (length "git@github.com:"))))
-      ((release-builder--string-prefix-p "ssh://git@github.com/" value)
+      ((uiop:string-prefix-p "ssh://git@github.com/" value)
        (release-builder--split-owner-repo
         (subseq value (length "ssh://git@github.com/"))))
       (t
@@ -643,22 +590,6 @@ otherwise be reused for a different release tag."
               (finish-output)))))
       staging)))
 
-(-> release-builder--files-identical-p (pathname pathname) boolean)
-(defun release-builder--files-identical-p (left right)
-  "Return true when LEFT and RIGHT contain the same bytes."
-  (with-open-file (left-stream left
-                               :direction    ':input
-                               :element-type '(unsigned-byte 8))
-    (with-open-file (right-stream right
-                                  :direction    ':input
-                                  :element-type '(unsigned-byte 8))
-      (and (= (file-length left-stream) (file-length right-stream))
-           (loop for left-byte = (read-byte left-stream nil nil)
-                 for right-byte = (read-byte right-stream nil nil)
-                 always (eql left-byte right-byte)
-                 while left-byte)
-           t))))
-
 
 ;;;; -- Atomic Publication --
 
@@ -760,15 +691,13 @@ otherwise be reused for a different release tag."
                (cond
                  ((and (uiop:file-exists-p published-archive)
                        (uiop:file-exists-p published-checksum))
-                  (unless (and (release-builder--files-identical-p
-                                archive published-archive)
-                               (release-builder--files-identical-p
-                                checksum published-checksum))
-                    (error 'release-builder-error
-                           :stage ':publication
-                           :tag   tag
-                           :cause (format nil "~A already exists with different contents."
-                                          archive-name))))
+                  (unless (and (serapeum:file= archive published-archive)
+                               (serapeum:file= checksum published-checksum))
+                   (error 'release-builder-error
+                          :stage ':publication
+                          :tag   tag
+                          :cause (format nil "~A already exists with different contents."
+                                         archive-name))))
                  ((or (uiop:file-exists-p published-archive)
                       (uiop:file-exists-p published-checksum))
                   (error 'release-builder-error

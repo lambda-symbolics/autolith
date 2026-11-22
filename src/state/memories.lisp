@@ -139,11 +139,7 @@ names such as release-prod or config.toml keep their inner punctuation.")
 (-> memory--validate-tags (t) list)
 (defun memory--validate-tags (tags)
   "Return validated, case-insensitively unique memory TAGS."
-  (unless (handler-case
-              (let ((length (list-length tags)))
-                (and (integerp length) t))
-            (type-error ()
-              nil))
+  (unless (proper-list-p tags)
     (error 'memory-error
            :message    "Memory tags must be a proper, non-circular list of strings."
            :pathname   #P"memories.sexp"
@@ -562,13 +558,12 @@ relative to it; every other file path becomes absolute."
 (-> memory--short-identifier-matches (string list) list)
 (defun memory--short-identifier-matches (identifier memories)
   "Return every memory with the native identity or legacy alias IDENTIFIER."
-  (let ((normalized (memory--short-identifier-normalize identifier)))
-    (when normalized
-      (remove-if-not
-       (lambda (memory)
-         (string= normalized
-                  (identifier-normalize (memory-short-identifier memory))))
-       memories))))
+  (when-let ((normalized (memory--short-identifier-normalize identifier)))
+    (remove-if-not
+     (lambda (memory)
+       (string= normalized
+                (identifier-normalize (memory-short-identifier memory))))
+     memories)))
 
 (-> memory-resolve (configuration string) (values (option memory) keyword list))
 (defun memory-resolve (configuration identifier)
@@ -798,9 +793,7 @@ Punctuation surrounding a term is ignored."
                     (lambda (term)
                       (non-empty-string-p
                        (string-trim *memory-search-term-punctuation* term)))
-                    (uiop:split-string
-                     query
-                     :separator '(#\Space #\Tab #\Newline #\Return))))
+                    (serapeum:tokens query)))
            :test     #'string=
            :from-end t)))
     (subseq terms 0 (min *memory-search-term-limit* (length terms)))))
@@ -826,7 +819,7 @@ Punctuation surrounding a term is ignored."
          (matched
            (remove-if-not #'plusp term-scores :key #'rest)))
     (when matched
-      (let* ((phrase      (string-trim '(#\Space #\Tab #\Newline #\Return) query))
+      (let* ((phrase      (string-trim *line-whitespace* query))
              (all-terms-p (= (length matched) (length terms)))
              (phrase-title-p
                (search phrase (memory-title memory) :test #'char-equal))
@@ -880,8 +873,3 @@ Punctuation surrounding a term is ignored."
 
 
 ;;;; -- Presentation --
-
-(-> memory--timestamp-string (timestamp) string)
-(defun memory--timestamp-string (timestamp)
-  "Return TIMESTAMP as an ISO-8601 UTC string."
-  (format-utc-timestamp timestamp))

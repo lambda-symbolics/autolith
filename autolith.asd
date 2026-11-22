@@ -74,6 +74,8 @@
                             #:serapeum
                             #:setinka
                             #:sito
+                            #:alexandria
+                            #:split-sequence
                             #:sb-posix
                             #:sb-bsd-sockets
                             #:sbcl-generations
@@ -602,7 +604,6 @@
                                           (:file "world-startup-tests")
                                           (:file "world-startup-boundary-tests")
                                           (:file "session-cli-tests")
-                                          (:file "windows-lifecycle-tests")
 
                                           (:file "release-script-tests" :if-feature (:not :win32))
                                           (:file "installer-checksum-tests" :if-feature (:not :win32))

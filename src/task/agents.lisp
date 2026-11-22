@@ -490,9 +490,8 @@ the static field names."
 (-> task--site-agents-directory (configuration) (option pathname))
 (defun task--site-agents-directory (configuration)
   "Return the optional site child-agent directory for CONFIGURATION."
-  (let ((site-root (config :site-config-root configuration)))
-    (when site-root
-      (merge-pathnames "agents/" site-root))))
+  (when-let ((site-root (config :site-config-root configuration)))
+    (merge-pathnames "agents/" site-root)))
 
 (-> task--project-agents-directory (configuration) (option pathname))
 (defun task--project-agents-directory (configuration)

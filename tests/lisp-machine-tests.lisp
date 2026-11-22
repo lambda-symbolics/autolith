@@ -852,10 +852,10 @@
                        :load-pending-p nil))))
              (test-assert
               (and (eq reader-state ':input)
-                   (= (terminal-tests--substring-count
+                   (= (test-substring-count
                        prompt-start reader-output)
                       1)
-                   (= (terminal-tests--substring-count
+                   (= (test-substring-count
                        input-start reader-output)
                       1)
                    (< (search prompt-start reader-output)
@@ -929,20 +929,20 @@
                       "A" "B" "C" "D;1"
                       "A" "B" "C" "D;1"
                       "A" "B"))
-                   (= (terminal-tests--substring-count (marker "A") output) 4)
-                   (= (terminal-tests--substring-count (marker "B") output) 4)
-                   (= (terminal-tests--substring-count (marker "C") output) 3)
-                   (= (terminal-tests--substring-count (marker "D;0") output) 1)
-                   (= (terminal-tests--substring-count (marker "D;1") output) 2))
+                   (= (test-substring-count (marker "A") output) 4)
+                   (= (test-substring-count (marker "B") output) 4)
+                   (= (test-substring-count (marker "C") output) 3)
+                   (= (test-substring-count (marker "D;0") output) 1)
+                   (= (test-substring-count (marker "D;1") output) 2))
                   "foreground Lisp emits ordered success, failure, and cancellation blocks"))
                (let ((execution-count
-                       (terminal-tests--substring-count
+                       (test-substring-count
                         (marker "C") (recording-terminal-output terminal)))
                      (completion-count
                        (+
-                        (terminal-tests--substring-count
+                        (test-substring-count
                          (marker "D;0") (recording-terminal-output terminal))
-                        (terminal-tests--substring-count
+                        (test-substring-count
                          (marker "D;1") (recording-terminal-output terminal)))))
                  (setf (application-input-controller-active-p controller) t
                        (application-input-controller-active-work-interactive-p
@@ -954,13 +954,13 @@
                  (test-assert
                   (and
                    (= execution-count
-                      (terminal-tests--substring-count
+                      (test-substring-count
                        (marker "C") (recording-terminal-output terminal)))
                    (= completion-count
                       (+
-                       (terminal-tests--substring-count
+                       (test-substring-count
                         (marker "D;0") (recording-terminal-output terminal))
-                       (terminal-tests--substring-count
+                       (test-substring-count
                         (marker "D;1") (recording-terminal-output terminal)))))
                   "startup and internal work add no command marker block"))
                (terminal-ui-start-prompt-execution ui)
@@ -975,13 +975,13 @@
                  (test-assert
                   (and
                    (zerop
-                    (terminal-tests--substring-count (marker "A") output))
+                    (test-substring-count (marker "A") output))
                    (zerop
-                    (terminal-tests--substring-count (marker "B") output))
+                    (test-substring-count (marker "B") output))
                    (zerop
-                    (terminal-tests--substring-count (marker "C") output))
+                    (test-substring-count (marker "C") output))
                    (zerop
-                    (terminal-tests--substring-count (marker "D;0") output)))
+                    (test-substring-count (marker "D;0") output)))
                   "immediate active-turn Lisp does not nest another marker block"))
                (terminal-ui-finish-prompt-block ui 0)
                (terminal-ui-open-prompt-block ui)
@@ -992,9 +992,9 @@
                   (and (application-input-controller-stopping-p controller)
                        (markers-in-order-p output '("C" "D;0"))
                        (zerop
-                        (terminal-tests--substring-count (marker "A") output))
+                        (test-substring-count (marker "A") output))
                        (zerop
-                        (terminal-tests--substring-count (marker "B") output))
+                        (test-substring-count (marker "B") output))
                        (eq (terminal-ui-prompt-marker-state ui) ':closed))
                   "close completes its block without opening another prompt")))
           (ignore-errors (application-input-controller-stop controller))

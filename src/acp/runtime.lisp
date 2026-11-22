@@ -107,15 +107,14 @@ subsequent events after its bounded history snapshot."
               (type (json-get item "type")))
          (cond
            ((member type '("message" "reasoning") :test #'equal)
-            (let ((text (if (equal type "message")
-                            (response-item-assistant-text item)
-                            (response-item-reasoning-summary item))))
-              (when text
-                (lambda ()
-                  (funcall (if (equal type "message")
-                               #'agentcomms:acp-update-agent-message
-                               #'agentcomms:acp-update-agent-thought)
-                           (agentcomms:acp-text-content text))))))
+            (when-let ((text (if (equal type "message")
+                                 (response-item-assistant-text item)
+                                 (response-item-reasoning-summary item))))
+              (lambda ()
+                (funcall (if (equal type "message")
+                             #'agentcomms:acp-update-agent-message
+                             #'agentcomms:acp-update-agent-thought)
+                         (agentcomms:acp-text-content text)))))
            ((equal type "function_call")
             (lambda ()
               (let ((name      (function-call-canonical-name item))
@@ -140,8 +139,7 @@ subsequent events after its bounded history snapshot."
 (-> acp-replay--record-update (list integer) (option hash-table))
 (defun acp-replay--record-update (record turn-sequence)
   "Project one durable record into the canonical ACP transcript update."
-  (let ((producer (acp-replay--record-producer record turn-sequence)))
-    (when producer (funcall producer))))
+  (when-let ((producer (acp-replay--record-producer record turn-sequence))) (funcall producer)))
 
 (-> acp-replay--map-records
     (conversation function &key (:through-sequence (option integer))) (values null integer))
@@ -165,8 +163,7 @@ subsequent events after its bounded history snapshot."
   (acp-replay--map-records
    conversation
    (lambda (record turn-sequence)
-     (let ((update (acp-replay--record-update record turn-sequence)))
-       (when update (funcall function update))))
+     (when-let ((update (acp-replay--record-update record turn-sequence))) (funcall function update)))
    :through-sequence through-sequence))
 
 (-> acp-session-replay (acp-session &key (:through-sequence (option integer))) null)

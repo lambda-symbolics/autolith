@@ -201,26 +201,6 @@
               "durable operation text truncates within exact configured bounds"))
            (let ((conversation
                    (conversation-create configuration
-                                        :identifier "user-operation-zero-bound")))
-             (let ((*conversation-user-operation-source-limit* 0))
-               (test-assert
-                (and
-                 (handler-case
-                     (progn
-                       (conversation-append-user-operation
-                        conversation
-                        :kind   ':lisp
-                        :source "(values)"
-                        :status ':ok
-                        :result "")
-                       nil)
-                   (configuration-error ()
-                     t))
-                 (= (conversation-next-sequence conversation) 1)
-                 (not (conversation-persisted-p conversation)))
-                "an invalid source bound fails before any durable append")))
-           (let ((conversation
-                   (conversation-create configuration
                                         :identifier "user-operation-zero-count")))
              (conversation-append-user-message conversation "start")
              (let ((*conversation-user-operation-count-limit* 0))

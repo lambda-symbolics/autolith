@@ -5,16 +5,10 @@
 (defparameter *terminal-path-completion-limit* 32
   "The most workspace path candidates returned for one token.")
 
-(-> terminal-path--whitespace-p (character) boolean)
-(defun terminal-path--whitespace-p (character)
-  "Return true when CHARACTER is a whitespace token boundary."
-  (and (find character '(#\Space #\Tab #\Newline #\Return #\Page))
-       t))
-
 (-> terminal-path--boundary-p (character) boolean)
 (defun terminal-path--boundary-p (character)
   "Return true when CHARACTER ends an @ path token."
-  (or (terminal-path--whitespace-p character)
+  (or (serapeum:whitespacep character)
       (and (find character '(#\" #\' #\( #\)))
            t)))
 
@@ -34,14 +28,13 @@ token that starts with @ is returned."
                (terminal-path--boundary-p (char text cursor)))
       (return-from terminal-path-token (values nil nil nil)))
     (let* ((start
-             (let ((separator
-                     (position-if #'terminal-path--boundary-p
-                                  text
-                                  :from-end t
-                                  :end      cursor)))
-               (if separator
-                   (1+ separator)
-                   0)))
+             (if-let ((separator
+                        (position-if #'terminal-path--boundary-p
+                                     text
+                                     :from-end t
+                                     :end      cursor)))
+                 (1+ separator)
+                 0))
            (end
              (or (position-if #'terminal-path--boundary-p text :start cursor)
                  length))
@@ -83,7 +76,7 @@ token that starts with @ is returned."
   "Return PATHNAME's visible name, with a trailing slash for directories."
   (if directory-p
       (format nil "~A/"
-              (first (last (pathname-directory pathname))))
+              (lastcar (pathname-directory pathname)))
       (file-namestring pathname)))
 
 (-> terminal-path--hidden-name-p (string) boolean)

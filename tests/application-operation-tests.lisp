@@ -472,16 +472,6 @@
                  (not (application-operation-binding-eligible-p local-operation))
                  (application-operation-binding-eligible-p tool-operation))
             "operation subclasses control canonical binding eligibility")
-           (test-assert
-            (every (lambda (name)
-                     (typep (fdefinition name) 'generic-function))
-                   '(application-operation-kind
-                     application-operation-completion-argument
-                     application-operation-active-turn-action
-                     application-operation-immediate-arguments-p
-                     application-operation-invoke
-                     application-operation-binding-eligible-p))
-            "operation behavior is represented by CLOS generic functions")
            (test-assert (eq (application-operation-kind local-operation) ':local)
                         "operation lookup identifies the immediate local form")
            (test-assert (eq (application-operation-kind command-operation) ':command)

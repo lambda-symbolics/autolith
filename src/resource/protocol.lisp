@@ -163,11 +163,8 @@ observation preserves its alias and makes it the newest state in its family."
 (defun resource-snapshot-digest (key content)
   "Return a keyed full SipHash digest for exact UTF-8 CONTENT."
   (let ((mac (make-mac ':siphash key :digest-length 16)))
-    (update-mac mac
-                (utf8-string-to-octets content))
-    (with-output-to-string (stream)
-      (loop for octet across (produce-mac mac)
-            do (format stream "~2,'0X" octet)))))
+    (update-mac mac (utf8-string-to-octets content))
+    (string-upcase (ironclad:byte-array-to-hex-string (produce-mac mac)))))
 
 (-> resource-readable-snapshot-digest
     ((simple-array (unsigned-byte 8) (*)) list)

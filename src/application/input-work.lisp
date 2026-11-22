@@ -67,8 +67,7 @@
    :syntax                  (application-command-invocation-syntax invocation)
    :name                    (copy-seq (application-command-invocation-name invocation))
    :remainder               (copy-seq (application-command-invocation-remainder invocation))
-   :argument                (let ((argument (application-command-invocation-argument invocation)))
-                              (when argument (copy-seq argument)))
+   :argument                (when-let ((argument (application-command-invocation-argument invocation))) (copy-seq argument))
    :arguments               (input-work--copy-native-value
                              (application-command-invocation-arguments invocation))
    :supplied-argument-count (application-command-invocation-supplied-argument-count invocation)
@@ -109,8 +108,7 @@
           :syntax                         (application-command-invocation-syntax invocation)
           :name                           (copy-seq (application-command-invocation-name invocation))
           :remainder                      (copy-seq (application-command-invocation-remainder invocation))
-          :argument                       (let ((argument (application-command-invocation-argument invocation)))
-                                            (when argument (copy-seq argument)))
+          :argument                       (when-let ((argument (application-command-invocation-argument invocation))) (copy-seq argument))
           :arguments                      (input-work--copy-native-value
                                            (application-command-invocation-arguments invocation))
           :supplied-argument-count        (application-command-invocation-supplied-argument-count invocation)
@@ -147,8 +145,7 @@
          :syntax                  (getf properties :syntax)
          :name                    (copy-seq (getf properties :name))
          :remainder               (copy-seq (getf properties :remainder))
-         :argument                (let ((argument (getf properties :argument)))
-                                    (when argument (copy-seq argument)))
+         :argument                (when-let ((argument (getf properties :argument))) (copy-seq argument))
          :arguments               (input-work--copy-native-value arguments)
          :supplied-argument-count count
          :command                 command)))))
@@ -519,9 +516,8 @@
         (2
          (let ((snapshot-identifier (getf (rest form) :snapshot-identifier)))
            (when (non-empty-string-p snapshot-identifier)
-             (let ((state (input-state-from-payload (rest form))))
-               (when state
-                 (list* :snapshot-identifier (copy-seq snapshot-identifier) state))))))
+             (when-let ((state (input-state-from-payload (rest form))))
+               (list* :snapshot-identifier (copy-seq snapshot-identifier) state)))))
         (otherwise
          nil)))))
 

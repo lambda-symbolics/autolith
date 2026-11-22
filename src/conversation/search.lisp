@@ -33,19 +33,7 @@
 (-> conversation-search-terms (string) list)
 (defun conversation-search-terms (query)
   "Return QUERY's whitespace-separated terms in order."
-  (let ((terms nil)
-        (start nil))
-    (loop for index from 0 to (length query)
-          for character = (and (< index (length query)) (char query index))
-          do (if (and character
-                      (not (member character
-                                   '(#\Space #\Tab #\Newline #\Return #\Page))))
-                 (unless start
-                   (setf start index))
-                 (when start
-                   (push (subseq query start index) terms)
-                   (setf start nil))))
-    (nreverse terms)))
+  (serapeum:tokens query))
 
 (-> conversation-record-search-text (list) (option string))
 (defun conversation-record-search-text (record)
@@ -267,12 +255,11 @@ each block, so a fragment spanning two blocks is still found."
            (lambda (record)
              (let ((text (conversation-record-search-text record)))
                (when (and text (conversation-search-text-matches-p text terms))
-                 (let ((projected (conversation-replay-project-record record)))
-                   (when projected
-                     (push (make-instance 'conversation-search-match
-                                          :record projected
-                                          :text   text)
-                           segment-matches)))))))
+                 (when-let ((projected (conversation-replay-project-record record)))
+                   (push (make-instance 'conversation-search-match
+                                        :record projected
+                                        :text   text)
+                         segment-matches))))))
           (loop for match in segment-matches
                 while (< found limit)
                 do (push match matches)
@@ -354,7 +341,6 @@ are never projected."
    segment
    (lambda (record)
      (unless (eq (first record) ':conversation)
-       (let ((projected (conversation-replay-project-record record)))
-         (when projected
-           (funcall function projected))))))
+       (when-let ((projected (conversation-replay-project-record record)))
+         (funcall function projected)))))
   nil)

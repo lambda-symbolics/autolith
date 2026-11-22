@@ -22,17 +22,7 @@
 (-> workspace-name-identifier (string) string)
 (defun workspace-name-identifier (name)
   "Return the stable identifier for canonical workspace NAME, even when absent."
-  (let ((mac
-          (make-mac ':siphash
-                    *workspace-directory-identifier-key*
-                    :digest-length 16)))
-    (update-mac
-     mac
-     (utf8-string-to-octets name))
-    (let ((digest (produce-mac mac)))
-      (with-output-to-string (stream)
-        (loop for octet across digest
-              do (format stream "~2,'0X" octet))))))
+  (resource-snapshot-digest *workspace-directory-identifier-key* name))
 
 (-> workspace-directory-identifier ((or pathname string)) string)
 (defun workspace-directory-identifier (directory)

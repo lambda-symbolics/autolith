@@ -78,11 +78,10 @@
 (-> rlm--trace-content (configuration string) (option string))
 (defun rlm--trace-content (configuration identifier)
   "Return the complete persisted trace IDENTIFIER text, or NIL when absent."
-  (let ((segments (rlm--trace-segments configuration identifier)))
-    (when segments
-      (with-output-to-string (stream)
-        (dolist (segment segments)
-          (write-string (uiop:read-file-string segment) stream))))))
+  (when-let ((segments (rlm--trace-segments configuration identifier)))
+    (with-output-to-string (stream)
+      (dolist (segment segments)
+        (write-string (uiop:read-file-string segment) stream)))))
 
 (-> rlm--window-argument
     (hash-table string &key (:fallback (integer 1)) (:maximum (integer 1)))
@@ -255,7 +254,7 @@ requested window rather than the complete trace."
         (dolist (file (uiop:directory-files root "*.sexp"))
           (note (pathname-name file) file))
         (dolist (directory (uiop:subdirectories root))
-          (let ((identifier (first (last (pathname-directory directory)))))
+          (let ((identifier (lastcar (pathname-directory directory))))
             (when (stringp identifier)
               (dolist (chunk (uiop:directory-files directory "*.sexp"))
                 (note identifier chunk)))))))
@@ -336,14 +335,13 @@ requested window rather than the complete trace."
      (context tool-context) (arguments hash-table))
   "Return one bounded numbered window streamed from an inference trace log."
   (declare (ignore tool))
-  (let ((segments (rlm--trace-segments
-                   (tool-context-configuration context)
-                   (inference-trace-resource-identifier resource))))
-    (if segments
-        (tool-success (rlm--segment-window segments arguments))
-        (tool-failure
-         (format nil "No inference trace ~A exists."
-                 (inference-trace-resource-identifier resource))))))
+  (if-let ((segments (rlm--trace-segments
+                      (tool-context-configuration context)
+                      (inference-trace-resource-identifier resource))))
+      (tool-success (rlm--segment-window segments arguments))
+      (tool-failure
+       (format nil "No inference trace ~A exists."
+               (inference-trace-resource-identifier resource)))))
 
 
 ;;;; -- Context Object Resources --

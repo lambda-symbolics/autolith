@@ -948,10 +948,9 @@ never waits for work that holds it."
 (-> application-input-controller--note-turn (application-input-controller) null)
 (defun application-input-controller--note-turn (controller)
   "Tell a hosted channel's clients whether CONTROLLER still works, when that changed."
-  (let ((presentation (application-presentation
-                       (application-input-controller-application controller))))
-    (when presentation
-      (channel-presentation-note-turn presentation)))
+  (when-let ((presentation (application-presentation
+                            (application-input-controller-application controller))))
+    (channel-presentation-note-turn presentation))
   nil)
 
 (-> application-input-controller-turn-active-p
@@ -1349,10 +1348,9 @@ the ordinary FIFO queue."
        (sb-thread:condition-broadcast
         (application-input-controller-condition-variable controller))))
     (when resumed-p
-      (let ((ui (application-ui
-                 (application-input-controller-application controller))))
-        (when ui
-          (terminal-ui-set-notice ui nil))))
+      (when-let ((ui (application-ui
+                      (application-input-controller-application controller))))
+        (terminal-ui-set-notice ui nil)))
     (application-input-controller--publish-counts controller)
     ;; The person's own submission, and only that, is shared with the
     ;; participants elsewhere it reaches: a replayed or relayed message
@@ -2841,16 +2839,13 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                 (list ':array (map 'list #'canonical value)))
                (t
                 value))))
-    (ironclad:byte-array-to-hex-string
-     (ironclad:digest-sequence
-      ':sha256
-      (babel:string-to-octets
-       (with-standard-io-syntax
-         (let ((*print-pretty* nil))
-           (prin1-to-string
-            (list (tool-authorization-identity-fields tool)
-                  (canonical arguments)))))
-       :encoding ':utf-8)))))
+    (memory-source-text-digest
+     (with-standard-io-syntax
+       (let ((*print-pretty* nil))
+         (prin1-to-string
+          (list (tool-authorization-identity-fields tool)
+                (canonical arguments)))))
+     :babel-utf8-p t)))
 
 (-> application--pretty-tool-arguments (t) string)
 (defun application--pretty-tool-arguments (arguments)
@@ -3332,17 +3327,15 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (cond (pause-notice
-           (let ((ui (application-ui
-                      (application-input-controller-application controller))))
-             (when ui
-               (terminal-ui-set-notice
-                ui pause-notice
-                :duration-seconds *application-interrupted-queue-notice-seconds*))))
+           (when-let ((ui (application-ui
+                           (application-input-controller-application controller))))
+             (terminal-ui-set-notice
+              ui pause-notice
+              :duration-seconds *application-interrupted-queue-notice-seconds*)))
           (clear-notice-p
-           (let ((ui (application-ui
-                      (application-input-controller-application controller))))
-             (when ui
-               (terminal-ui-set-notice ui nil)))))
+           (when-let ((ui (application-ui
+                           (application-input-controller-application controller))))
+             (terminal-ui-set-notice ui nil))))
     (application-input-controller--publish-counts controller)
     (let ((ui
             (application-ui

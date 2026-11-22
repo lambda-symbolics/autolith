@@ -2,15 +2,6 @@
 
 ;;;; -- Executable Skill Product Tests --
 
-(-> executable-skill-tests--write (pathname string) pathname)
-(defun executable-skill-tests--write (pathname content)
-  "Write an isolated UTF-8 executable fixture."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname :direction ':output :if-exists ':supersede
-                          :if-does-not-exist ':create :external-format ':utf-8)
-    (write-string content stream))
-  pathname)
-
 (-> executable-skill-tests--manifest (&key (:output list) (:version string)) string)
 (defun executable-skill-tests--manifest (&key (output '(:type :object)) (version "1.0.0"))
   "Render valid native executable metadata for the disposable fixture."
@@ -65,13 +56,13 @@
          (asd           (merge-pathnames "executable-skill-fixture.asd" directory)))
     (unwind-protect
          (progn
-           (executable-skill-tests--write
+           (test-write-text
             (merge-pathnames "SKILL.sexp" directory)
             "(:autolith-skill :version 1 :name \"executable-fixture\" :description \"Executable transport fixture\" :instructions \"Loading prose grants no execution authority.\")")
-           (executable-skill-tests--write sidecar (executable-skill-tests--manifest))
-           (executable-skill-tests--write
+           (test-write-text sidecar (executable-skill-tests--manifest))
+           (test-write-text
             asd "(asdf:defsystem \"executable-skill-fixture\" :version \"1.0.0\" :components ((:file \"workflow\")))")
-           (executable-skill-tests--write
+           (test-write-text
             (merge-pathnames "workflow.lisp" directory)
             (format nil
                     "(in-package #:autolith)~%
@@ -96,7 +87,7 @@
   (getf (autolith:worker-tool-call \"resource.read\" \"{\\\"uri\\\":\\\"workspace:payload.txt\\\"}\") :success-p))~%
 (defun executable-skill-fixture-verify (&key context) (declare (ignore context)) nil)~%"
                     (namestring marker)))
-           (executable-skill-tests--write
+           (test-write-text
             (merge-pathnames "payload.txt" (config :working-directory configuration)) "skill-payload")
            (funcall function context asd sidecar marker
                     (lambda (value) (setf decision value))
@@ -196,7 +187,7 @@
               (test-assert (not (probe-file marker)) "identity rejection precedes code loading")
               (test-assert (getf (executable-skill-result-record result) :diagnostics)
                            "unavailable exact source retains structured diagnostics"))
-         (executable-skill-tests--write pathname source)
+         (test-write-text pathname source)
          (funcall set-decision ':full-access))))))
 
 (-> executable-skill-tests--transport (tool-context) null)
@@ -214,7 +205,7 @@
                                "#.(error \"reader evaluation\")"
                                "(:token \"fixture\" :record #100000000(0))"
                                "(:token \"fixture\" :record #1=(#1#))"))
-               (executable-skill-tests--write pathname source)
+               (test-write-text pathname source)
                (test-assert
                 (handler-case
                     (progn (executable-skill--read-result pathname "fixture" :directory-status status) nil)
@@ -224,7 +215,7 @@
                                            "0" (make-string 140 :initial-element #\)))
                               (format nil "(:token ~S :record (~{~D ~}))"
                                       "fixture" (make-list 262145 :initial-element 0))))
-               (executable-skill-tests--write pathname source)
+               (test-write-text pathname source)
                (test-assert
                 (handler-case
                     (progn (executable-skill--read-result pathname "fixture" :directory-status status) nil)
@@ -238,7 +229,7 @@
                        (list 'ls-compat.posix:open-regular-file
                              (lambda (path &rest arguments)
                                (rename-file directory saved-directory)
-                               (executable-skill-tests--write
+                               (test-write-text
                                 path "(:token \"fixture\" :record (:success-p t :value :substituted))")
                                (multiple-value-bind (stream file-status)
                                    (apply open-function path arguments)
@@ -255,7 +246,7 @@
                    (rename-file saved-directory directory)))
                (test-assert (and opened-stream (not (open-stream-p opened-stream)))
                             "rejected substituted file stream is closed"))
-             (executable-skill-tests--write pathname "(:token \"fixture\" :record (:success-p t :value :null))")
+             (test-write-text pathname "(:token \"fixture\" :record (:success-p t :value :null))")
              (let ((*executable-skill-result-byte-limit* 16))
                (test-assert
                 (handler-case
@@ -279,7 +270,7 @@
                     directory (merge-pathnames
                                 (format nil "executable-results/~A/" (subseq (sbcl-worker-name actual) 6))
                                (config :cache-root (tool-context-configuration context))))
-              (executable-skill-tests--write (merge-pathnames "result.sexp" directory) "(:partial")
+              (test-write-text (merge-pathnames "result.sexp" directory) "(:partial")
               (error 'job-aborted :identifier "fixture" :reason ':cancelled :message "Cancel fixture"))))
      (lambda ()
        (test-assert

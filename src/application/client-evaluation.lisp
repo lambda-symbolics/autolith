@@ -261,10 +261,9 @@ Include the request identifier, status, text, and bounded sections on success."
 (defun client-evaluator-close (evaluator)
   "Abandon EVALUATOR without waiting for Lisp code; sever its work and delivery references."
   (with-lock-held (*client-evaluator-lock*)
-    (let ((work (client-evaluator-work evaluator)))
-      (when work
-        (setf (client-evaluator-work-handoff work) nil
-              (client-evaluator-work-owner work) nil)))
+    (when-let ((work (client-evaluator-work evaluator)))
+      (setf (client-evaluator-work-handoff work) nil
+            (client-evaluator-work-owner work) nil))
     (setf (client-evaluator-work evaluator) nil
           (client-evaluator-delivery evaluator) nil
           (client-evaluator-closed-p evaluator) t))
@@ -287,16 +286,15 @@ Include the request identifier, status, text, and bounded sections on success."
   "Hand a bounded PACKET to EVALUATOR's delivery callback outside the admission lock.
 
 A closed owner, one without a callback, and one that WORK no longer belongs to get nothing."
-  (let ((delivery (with-lock-held (*client-evaluator-lock*)
-                    (when (and (not (client-evaluator-closed-p evaluator))
-                               (or (null work) (eq evaluator (client-evaluator-work-owner work))))
-                      (when work
-                        (setf (client-evaluator-work-handoff work) ':publishing))
-                      (client-evaluator-delivery evaluator)))))
-    (when delivery
-      (handler-case (funcall delivery packet)
-        (error ()
-          (client-evaluator-close evaluator)))))
+  (when-let ((delivery (with-lock-held (*client-evaluator-lock*)
+                         (when (and (not (client-evaluator-closed-p evaluator))
+                                    (or (null work) (eq evaluator (client-evaluator-work-owner work))))
+                           (when work
+                             (setf (client-evaluator-work-handoff work) ':publishing))
+                           (client-evaluator-delivery evaluator)))))
+    (handler-case (funcall delivery packet)
+      (error ()
+        (client-evaluator-close evaluator))))
   nil)
 
 (-> client-evaluator--finish (client-evaluator-work boolean) list)

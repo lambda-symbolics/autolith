@@ -181,7 +181,7 @@
       (format nil
               "assessment: ~(~A~)~%assessed: ~A~%assessment note: ~A"
               (papercut-assessment-verdict papercut)
-              (papercut-timestamp-string (papercut-assessed-at papercut))
+              (format-utc-timestamp (papercut-assessed-at papercut))
               (single-line-excerpt (papercut-assessment-note papercut) note-limit))
       "assessment: unassessed"))
 
@@ -192,7 +192,7 @@
           "id: ~A~%uri: ~A~%reported: ~A~%~A~%title: ~A~%excerpt: ~A"
           (papercut-identifier papercut)
           (resource-item-uri "papercut" (papercut-identifier papercut))
-          (papercut-timestamp-string (papercut-reported-at papercut))
+          (format-utc-timestamp (papercut-reported-at papercut))
           (papercut-resource--render-assessment
            papercut *papercut-resource-excerpt-limit*)
           (papercut-title papercut)
@@ -218,7 +218,7 @@
           "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%~A~%title: ~A~2%~A~@[~2%diagnostic (optional redacted export):~%~A~]"
           (papercut-identifier papercut)
           (resource-item-uri "papercut" (papercut-identifier papercut))
-          (papercut-timestamp-string (papercut-reported-at papercut))
+          (format-utc-timestamp (papercut-reported-at papercut))
           (papercut-workspace papercut)
           (or (papercut-source-conversation papercut) "unknown")
           (papercut-resource--render-assessment

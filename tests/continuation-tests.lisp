@@ -317,7 +317,7 @@
                 ':claim reference (continuation--authorities configuration conversation))))
         (test-assert (null (claim "travel to review"))
                      "a fact the conversation was never given is not offered")
-        (memory-resource-tests--call (make-default-tool-registry) context
+        (test-resource-call (make-default-tool-registry) context
                                      :namespace "resource" :name "read"
                                      :arguments (list "uri" "memory:facts"))
         (let ((asserted (claim "travel to review"))
@@ -337,7 +337,7 @@
                        "a retracted fact reports that it no longer applies")
           (test-assert (null (state derived))
                        "a fact derived from it can no longer be found")
-          (memory-resource-tests--call (make-default-tool-registry) context
+          (test-resource-call (make-default-tool-registry) context
                                        :namespace "resource" :name "read"
                                        :arguments (list "uri" (format nil "memory:claim/~A" travel)))
           (test-assert (member travel (funcall given) :test #'equal)

@@ -29,10 +29,7 @@
 (defun run-job-event--call-id (run-id call-id)
   "Pseudonymize bounded provider CALL-ID within RUN-ID without retaining a map."
   (when (and (stringp call-id) (<= 1 (length call-id) 4096))
-    (ironclad:byte-array-to-hex-string
-     (ironclad:digest-sequence
-      ':sha256
-      (utf8-string-to-octets (format nil "~A:~A" run-id call-id))))))
+    (memory-source-text-digest (format nil "~A:~A" run-id call-id))))
 
 (-> run-job-event--tool-name (tool-registry t) string)
 (defun run-job-event--tool-name (registry name)

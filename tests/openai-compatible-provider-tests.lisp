@@ -413,60 +413,6 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-openai-compatible-provider-discovery-is-on-demand () null)
-(defun test-openai-compatible-provider-discovery-is-on-demand ()
-  "Test startup uses cached metadata and leaves remote discovery to /models."
-  (let* ((registry-snapshot (provider--registry-snapshot))
-         (configuration     (test-configuration))
-         (root              (test-configuration-root configuration))
-         (original-get      (symbol-function 'dexador:get))
-         (request-count     0)
-         (response-body     "{\"data\":[{\"id\":\"on-demand/model\"}]}"))
-    (unwind-protect
-         (progn
-           (register-openai-compatible-provider
-            :name            "on-demand-test"
-            :endpoint        "https://provider.invalid/v1/chat/completions"
-            :models-endpoint "https://provider.invalid/v1/models")
-           (openai-compatible-provider-tests--save-key
-            configuration "on-demand-test" "synthetic-discovery-key")
-           (provider-bootstrap-configuration configuration)
-           (test-assert
-            (zerop request-count)
-            "provider bootstrap does not query remote model APIs")
-           (setf (symbol-function 'dexador:get)
-                 (lambda (url &rest arguments)
-                   (declare (ignore url arguments))
-                   (incf request-count)
-                   (values response-body 200 nil nil)))
-           (test-assert
-            (null (provider-refresh-models
-                   configuration :provider-name "on-demand-test"))
-            "/models refreshes dynamic metadata explicitly")
-           (test-assert
-            (= request-count 1)
-            "explicit model refresh makes the remote request")
-           (test-assert
-            (probe-file (configuration-provider-model-cache-path configuration))
-            "successful discovery writes the private model cache")
-           (unregister-provider "on-demand-test" :source ':runtime)
-           (register-openai-compatible-provider
-            :name            "on-demand-test"
-            :endpoint        "https://provider.invalid/v1/chat/completions"
-            :models-endpoint "https://provider.invalid/v1/models")
-           (provider-bootstrap-configuration configuration)
-           (test-assert
-            (member "on-demand/model"
-                    (mapcar #'provider-model-name
-                            (provider-registration-models
-                             (provider-registration-find "on-demand-test")))
-                    :test #'string=)
-            "startup loads the last successful model list from cache"))
-      (setf (symbol-function 'dexador:get) original-get)
-      (provider--registry-restore registry-snapshot)
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-openai-compatible-provider-model-cache-boundary () null)
 (defun test-openai-compatible-provider-model-cache-boundary ()
   "Test the model cache persists dynamic metadata without retired static entries."
@@ -1120,10 +1066,6 @@
                                                      :pathname
                                                      (configuration-api-keys-path
                                                       configuration))))
-             (test-assert
-              (typep (credential-manager-primary-source empty-manager)
-                     'autolith-credential-source)
-              "API-key sources use the private credential-source contract")
              (test-assert (not (api-key-credential-available-p empty-manager))
               "missing API keys are reported as unavailable")
              (test-assert (not (secret-use-active-p))

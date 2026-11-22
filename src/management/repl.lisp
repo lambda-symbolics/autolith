@@ -57,19 +57,17 @@
 (-> management-repl-stop (t) null)
 (defun management-repl-stop (owner)
   "Stop OWNER's management endpoint, signaling when its threads do not quiesce."
-  (let ((endpoint (management-repl-owner-endpoint owner)))
-    (when endpoint
-      (management-repl--call (lambda () (eval-endpoint-stop endpoint)))
-      (setf (management-repl-owner-endpoint owner) nil)))
+  (when-let ((endpoint (management-repl-owner-endpoint owner)))
+    (management-repl--call (lambda () (eval-endpoint-stop endpoint)))
+    (setf (management-repl-owner-endpoint owner) nil))
   nil)
 
 (-> management-repl-transfer (t t) null)
 (defun management-repl-transfer (old-owner new-owner)
   "Move the running management endpoint from OLD-OWNER to NEW-OWNER."
-  (let ((endpoint (management-repl-owner-endpoint old-owner)))
-    (when endpoint
-      (setf (management-repl-owner-endpoint new-owner) endpoint
-            (management-repl-owner-endpoint old-owner) nil)))
+  (when-let ((endpoint (management-repl-owner-endpoint old-owner)))
+    (setf (management-repl-owner-endpoint new-owner) endpoint
+          (management-repl-owner-endpoint old-owner) nil))
   nil)
 
 (-> management-repl-call-quiesced (t function) t)

@@ -37,11 +37,16 @@
              :test #'string=
              :key  #'agenda-item-identifier)))
 
-(-> application--agenda-resource-record
-    (application string string)
-    (values (option workspace-agenda) boolean))
-(defun application--agenda-resource-record (application uri revision)
-  "Return the exact observed agenda record for URI and REVISION, when retained."
+(-> application--call-with-observation-state
+    (application string string &key (:state-class symbol) (:observation-class symbol)
+                                     (:function function))
+    *)
+(defun application--call-with-observation-state
+    (application uri revision &key state-class observation-class function)
+  "Call FUNCTION with the retained state and observation while holding their lock.
+
+Return NIL and NIL when the application's conversation does not own a matching
+observation. Otherwise return FUNCTION's values."
   (block nil
     (unless (and (slot-boundp application 'conversation)
                  (non-empty-string-p uri)
@@ -52,26 +57,37 @@
         (return (values nil nil)))
       (with-recursive-lock-held
           ((conversation-resource-observation-lock conversation))
-        (let ((state
-                (resource-observation-state-find
-                 (conversation-resource-observations conversation)
-                 revision
-                 'agenda-observation-state)))
-          (unless state
-            (return (values nil nil)))
-          (let ((observation (resource-observation-state-observation state)))
-            (unless (and (typep observation 'agenda-observation)
-                         (string= uri (resource-observation-uri observation)))
-              (return (values nil nil)))
-            (let* ((snapshot (agenda-observation-snapshot observation))
-                   (form     (getf snapshot :record)))
-              (cond
-                ((null form)
-                 (values nil t))
-                ((agenda--record-form-p form *agenda-version*)
-                 (values (agenda--record-form->record form *agenda-version*) t))
-                (t
-                 (values nil nil))))))))))
+        (let* ((state       (resource-observation-state-find
+                             (conversation-resource-observations conversation)
+                             revision
+                             state-class))
+               (observation (and state (resource-observation-state-observation state))))
+          (if (and observation
+                   (typep observation observation-class)
+                   (string= uri (resource-observation-uri observation)))
+              (funcall function state observation)
+              (values nil nil)))))))
+
+(-> application--agenda-resource-record
+    (application string string)
+    (values (option workspace-agenda) boolean))
+(defun application--agenda-resource-record (application uri revision)
+  "Return the exact observed agenda record for URI and REVISION, when retained."
+  (application--call-with-observation-state
+   application uri revision
+   :state-class       'agenda-observation-state
+   :observation-class 'agenda-observation
+   :function          (lambda (state observation)
+                        (declare (ignore state))
+                        (let* ((snapshot (agenda-observation-snapshot observation))
+                               (form     (getf snapshot :record)))
+                          (cond
+                            ((null form)
+                             (values nil t))
+                            ((agenda--record-form-p form *agenda-version*)
+                             (values (agenda--record-form->record form *agenda-version*) t))
+                            (t
+                             (values nil nil)))))))
 
 (-> application--agenda-operation-change-documents
     (json-object (option workspace-agenda))
@@ -91,28 +107,26 @@
              (getf normalized :memory-identifiers))
             nil 1 t))
           (:update
-           (let ((item
-                   (application--agenda-record-item
-                    record (getf normalized :identifier))))
-             (if item
-                 (values
-                  (application--agenda-item->document item)
-                  (application--agenda-item-document
-                   (or (getf normalized :status) (agenda-item-status item))
-                   (or (getf normalized :text) (agenda-item-text item))
-                   (if (getf normalized :memory-identifiers-supplied-p)
-                       (getf normalized :memory-identifiers)
-                       (agenda-item-memory-identifiers item)))
-                  1 1 t)
-                 (values nil nil nil nil nil))))
+           (if-let ((item
+                      (application--agenda-record-item
+                       record (getf normalized :identifier))))
+               (values
+                (application--agenda-item->document item)
+                (application--agenda-item-document
+                 (or (getf normalized :status) (agenda-item-status item))
+                 (or (getf normalized :text) (agenda-item-text item))
+                 (if (getf normalized :memory-identifiers-supplied-p)
+                     (getf normalized :memory-identifiers)
+                     (agenda-item-memory-identifiers item)))
+                1 1 t)
+               (values nil nil nil nil nil)))
           (:remove
-           (let ((item
-                   (application--agenda-record-item
-                    record (getf normalized :identifier))))
-             (if item
-                 (values (application--agenda-item->document item)
-                         nil 1 nil t)
-                 (values nil nil nil nil nil))))
+           (if-let ((item
+                      (application--agenda-record-item
+                       record (getf normalized :identifier))))
+               (values (application--agenda-item->document item)
+                       nil 1 nil t)
+               (values nil nil nil nil nil)))
           (otherwise
            (values nil nil nil nil nil))))
     (error ()
@@ -157,28 +171,13 @@
     (values (option memory-observation) boolean))
 (defun application--memory-resource-observation (application uri revision)
   "Return the exact retained memory observation for URI and REVISION."
-  (block nil
-    (unless (and (slot-boundp application 'conversation)
-                 (non-empty-string-p uri)
-                 (non-empty-string-p revision))
-      (return (values nil nil)))
-    (let ((conversation (application-conversation application)))
-      (unless (typep conversation 'conversation)
-        (return (values nil nil)))
-      (with-recursive-lock-held
-          ((conversation-resource-observation-lock conversation))
-        (let ((state
-                (resource-observation-state-find
-                 (conversation-resource-observations conversation)
-                 revision
-                 'memory-observation-state)))
-          (unless state
-            (return (values nil nil)))
-          (let ((observation (resource-observation-state-observation state)))
-            (if (and (typep observation 'memory-observation)
-                     (string= uri (resource-observation-uri observation)))
-                (values observation t)
-                (values nil nil))))))))
+  (application--call-with-observation-state
+   application uri revision
+   :state-class       'memory-observation-state
+   :observation-class 'memory-observation
+   :function          (lambda (state observation)
+                        (declare (ignore state))
+                        (values observation t))))
 
 (-> application--memory-observation-item
     (memory-observation)
@@ -204,45 +203,42 @@
       (let ((normalized (memory-resource--normalize-operation operation)))
         (case (getf normalized :kind)
           (:remember
-           (let ((scope
-                   (and (eq (memory-observation-kind observation) ':collection)
-                        (cond
-                          ((string= (memory-observation-identifier observation)
-                                    "workspace")
-                           ':workspace)
-                          ((string= (memory-observation-identifier observation)
-                                    "global")
-                           ':global)
-                          (t
-                           nil)))))
-             (if scope
-                 (values
-                  nil
-                   (application--memory-document
-                    :title   (getf normalized :title)
-                    :content (getf normalized :content)
-                    :scope   scope
-                    :tags    (getf normalized :tags))
-                  nil 1 t)
-                 (values nil nil nil nil nil))))
+           (if-let ((scope
+                      (and (eq (memory-observation-kind observation) ':collection)
+                           (cond
+                             ((string= (memory-observation-identifier observation)
+                                       "workspace")
+                              ':workspace)
+                             ((string= (memory-observation-identifier observation)
+                                       "global")
+                              ':global)
+                             (t
+                              nil)))))
+               (values
+                nil
+                 (application--memory-document
+                  :title   (getf normalized :title)
+                  :content (getf normalized :content)
+                  :scope   scope
+                  :tags    (getf normalized :tags))
+                nil 1 t)
+               (values nil nil nil nil nil)))
           (:replace
-           (let ((memory (application--memory-observation-item observation)))
-             (if memory
-                 (values
-                  (application--memory->document memory)
-                  (application--memory-document
-                   :title   (getf normalized :title)
-                   :content (getf normalized :content)
-                   :scope   (or (getf normalized :scope) (memory-scope memory))
-                   :tags    (getf normalized :tags))
-                  1 1 t)
-                 (values nil nil nil nil nil))))
+           (if-let ((memory (application--memory-observation-item observation)))
+               (values
+                (application--memory->document memory)
+                (application--memory-document
+                 :title   (getf normalized :title)
+                 :content (getf normalized :content)
+                 :scope   (or (getf normalized :scope) (memory-scope memory))
+                 :tags    (getf normalized :tags))
+                1 1 t)
+               (values nil nil nil nil nil)))
           (:forget
-           (let ((memory (application--memory-observation-item observation)))
-             (if memory
-                 (values (application--memory->document memory)
-                         nil 1 nil t)
-                 (values nil nil nil nil nil))))
+           (if-let ((memory (application--memory-observation-item observation)))
+               (values (application--memory->document memory)
+                       nil 1 nil t)
+               (values nil nil nil nil nil)))
           (otherwise
            (values nil nil nil nil nil))))
     (error ()
@@ -300,7 +296,8 @@
             :change-rows-function
             (and observed-p
                  (application--single-resource-operation-p operations)
-                 (lambda (operation)
+                 (lambda (operation index)
+                   (declare (ignore index))
                    (application--agenda-operation-change-rows
                     operation record))))))
         ((uiop:string-prefix-p "memory:" uri)
@@ -312,7 +309,8 @@
             :change-rows-function
             (and observed-p
                  (application--single-resource-operation-p operations)
-                 (lambda (operation)
+                 (lambda (operation index)
+                   (declare (ignore index))
                    (application--memory-resource-operation-change-rows
                     operation observation))))))
         (t

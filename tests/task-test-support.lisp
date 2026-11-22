@@ -352,18 +352,6 @@
          :message "Task test was cancelled."
          :reason  ':test-cancel))
 
-(-> task-tests--write-text (pathname string) pathname)
-(defun task-tests--write-text (pathname contents)
-  "Write CONTENTS to PATHNAME and return PATHNAME."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :external-format   ':utf-8)
-    (write-string contents stream))
-  pathname)
-
 (-> task-tests--wait-until (function (real 0)) boolean)
 (defun task-tests--wait-until (predicate timeout-seconds)
   "Wait up to TIMEOUT-SECONDS for PREDICATE to become true."

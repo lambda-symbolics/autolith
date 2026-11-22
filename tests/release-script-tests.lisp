@@ -9,18 +9,6 @@
   "0123456789abcdef0123456789abcdef01234567"
   "The valid Git identity used by release boundary tests.")
 
-(-> release-script-tests--write-file (pathname string) pathname)
-(defun release-script-tests--write-file (pathname content)
-  "Write CONTENT to PATHNAME and return PATHNAME."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :external-format   ':utf-8)
-    (write-string content stream))
-  pathname)
-
 (-> test-build-sandbox-packaged-helpers () null)
 (defun test-build-sandbox-packaged-helpers ()
   "Build required helpers and export the selected Windows bundle to workers."
@@ -107,14 +95,14 @@
            (run-program    (symbol-function 'uiop:run-program))
            (make           (or (release-archive--command-pathname "gmake")
                                (release-archive--command-pathname "make"))))
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "sbcl.version" source) "2.6.6")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "sbcl-minimum.version" source) "2.6.4")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "sbcl-source.sha256" source) digest)
       (dolist (platform '("OpenBSD" "FreeBSD"))
-        (release-script-tests--write-file
+        (test-write-text
          runtime-config (format nil "LINKFLAGS = -Wl,-z,wxneeded~%"))
         (let ((build-flags nil)
               (installed-p nil))
@@ -216,7 +204,7 @@ can assert on the exact failure message through the second return value."
     pathname)
 (defun release-script-tests--record (pathname tag &key platform)
   "Write a fixture release record with TAG and optional PLATFORM to PATHNAME."
-  (release-script-tests--write-file
+  (test-write-text
    pathname
    (format nil "version=~A~%tag=~A~%commit=~A~@[~%platform=~A~]~%"
            *release-script-tests-version*
@@ -242,7 +230,7 @@ can assert on the exact failure message through the second return value."
          (bwrap     (merge-pathnames "bwrap" directory))
          (chmod     (merge-pathnames "chmod" directory))
          (move      (merge-pathnames "mv" directory)))
-    (release-script-tests--write-file
+    (test-write-text
      uname
      (format nil "#!/bin/sh
 case ${1:-} in
@@ -252,7 +240,7 @@ case ${1:-} in
 esac
 "
              architecture))
-    (release-script-tests--write-file
+    (test-write-text
      ldd
      (format nil "#!/bin/sh
 printf '~A\\n'
@@ -264,10 +252,10 @@ printf '~A\\n'
                 "musl libc")
                (:unknown
                 "unrecognized libc"))))
-    (release-script-tests--write-file bwrap "#!/bin/sh
+    (test-write-text bwrap "#!/bin/sh
 exit 0
 ")
-    (release-script-tests--write-file chmod "#!/bin/sh
+    (test-write-text chmod "#!/bin/sh
 recursive=
 if [ \"${1:-}\" = -R ]; then
   recursive=-R
@@ -284,7 +272,7 @@ else
   exec /bin/chmod \"$mode\" \"$@\"
 fi
 ")
-    (release-script-tests--write-file move "#!/bin/sh
+    (test-write-text move "#!/bin/sh
 force=
 no_target=false
 case ${1:-} in
@@ -347,7 +335,7 @@ fi
                  "runtime/bin/sbcl"
                  "libexec/cl-exec-sandbox-helper"
                  "libexec/cl-exec-sandbox-process-group"))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames relative release-root)
      ""))
   (let ((launcher (merge-pathnames "bin/autolith" release-root)))
@@ -473,7 +461,7 @@ fi
                                                  clifff-directory)))))
         (test-assert clifff-asd
                      "the Darwin fff fixture extracts the locked Clifff dependency")
-        (release-script-tests--write-file
+        (test-write-text
          (merge-pathnames ".qlot/setup.lisp" fixture)
          (format nil "(require :asdf)~%(asdf:load-asd ~S)~%"
                  (namestring clifff-asd)))))
@@ -484,17 +472,17 @@ fi
                     script)
     (uiop:copy-file (merge-pathnames "script/roots.lisp" source-root)
                     (merge-pathnames "roots.lisp" script-directory))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "commit" native-directory)
      (format nil "~A~%" commit))
-    (release-script-tests--write-file
+    (test-write-text
      xcrun
      "#!/bin/sh
 set -eu
 [ \"$1\" = --show-sdk-path ]
 printf '%s\\n' \"${AUTOLITH_TEST_SDK%/}\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      git
      "#!/bin/sh
 set -eu
@@ -502,7 +490,7 @@ case \"$*\" in
   *\"rev-parse HEAD\") printf '%s\\n' \"${AUTOLITH_TEST_FFF_COMMIT:?}\" ;;
 esac
 ")
-    (release-script-tests--write-file
+    (test-write-text
      cargo
      "#!/bin/sh
 set -eu
@@ -514,7 +502,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
       (release-script-tests--chmod "755" pathname))
     (multiple-value-bind (output error-output status)
         (release-script-tests--run
-         (list (lisp-worker-sbcl-command)
+         (list (sbcl-command)
                "--noinform"
                "--no-sysinit"
                "--no-userinit"
@@ -558,7 +546,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
   (let* ((home   (merge-pathnames "qlot-metadata-home/" root))
          (setup  (merge-pathnames "quicklisp/setup.lisp" home))
          (script (merge-pathnames "script/qlot-install.lisp" source-root)))
-    (release-script-tests--write-file
+    (test-write-text
      setup
      "(defpackage #:ql
   (:use #:cl)
@@ -613,7 +601,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (dolist (windows-p '(nil t))
       (multiple-value-bind (output error-output status)
           (release-script-tests--run
-           (list (lisp-worker-sbcl-command)
+           (list (sbcl-command)
                  "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
                  "--eval" "(require :asdf)"
                  "--eval" (format nil "(setf (symbol-function 'uiop:os-windows-p) (constantly ~S))"
@@ -646,18 +634,18 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (ensure-directories-exist bootstrap)
     (uiop:copy-file (merge-pathnames "script/bootstrap.lisp" source-root)
                     bootstrap)
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "runtime-requirement.lisp" script-directory)
      "(defun autolith-require-minimum-runtime (pathname)
   (declare (ignore pathname))
   nil)
 ")
     (dolist (relative '("build-sandbox.lisp" "build-fff.lisp"))
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames relative script-directory)
        "nil
 "))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "setup.lisp" quicklisp-directory)
      "(defpackage #:ql
   (:use #:cl)
@@ -682,7 +670,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
           nil))
   system)
 ")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "setup.lisp" qlot-directory)
      "(defpackage #:ql
   (:use #:cl)
@@ -714,12 +702,12 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
           nil))
   system)
 ")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "colorlisp.asd" fixture)
      "(asdf:defsystem #:colorlisp
   :components ((:file \"colorlisp\")))
 ")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "colorlisp.lisp" fixture)
      "(defpackage #:colorlisp
   (:use #:cl)
@@ -729,9 +717,9 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 (defun native-library-path ()
   nil)
 ")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "clifff.asd" fixture) "(asdf:defsystem #:clifff)")
-    (release-script-tests--write-file
+    (test-write-text
      fake-sbcl
      "#!/bin/sh
 set -eu
@@ -751,14 +739,14 @@ case \"$2\" in
 esac
 ")
     (release-script-tests--chmod "755" fake-sbcl)
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl.version" fixture)
      (format nil "~A~%" (lisp-implementation-version)))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture) "2.6.4")
     (flet ((run-bootstrap (fff-status)
              (release-script-tests--run
-              (list (lisp-worker-sbcl-command)
+              (list (sbcl-command)
                     "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
                     "--script" (namestring bootstrap))
               :environment
@@ -832,18 +820,18 @@ esac
     (uiop:copy-file (merge-pathnames "bin/autolith" source-root) launcher)
     (uiop:copy-file (merge-pathnames "script/launcher-cli.sh" source-root)
                     (merge-pathnames "launcher-cli.sh" script-directory))
-    (release-script-tests--write-file active-source "")
-    (release-script-tests--write-file recovery-source "")
-    (release-script-tests--write-file
+    (test-write-text active-source "")
+    (test-write-text recovery-source "")
+    (test-write-text
      (merge-pathnames "sbcl.version" fixture-root)
      (format nil "2.6.6~%"))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
      (format nil "~A  sbcl-2.6.6-source.tar.bz2~%"
              (make-string 64 :initial-element #\0)))
-    (release-script-tests--write-file
+    (test-write-text
      fake-sbcl
      "#!/bin/sh
 set -eu
@@ -874,7 +862,7 @@ if [ \"$mode\" = SOURCE ]; then
   esac
 fi
 ")
-    (release-script-tests--write-file
+    (test-write-text
      bootstrap
      "#!/bin/sh
 set -eu
@@ -928,7 +916,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
              (path-runtime     (merge-pathnames "sbcl" path-directory)))
         (labels ((install-runtime (pathname version)
                    "Install a launcher fixture reporting VERSION and its selected pathname."
-                   (release-script-tests--write-file
+                   (test-write-text
                     pathname
                     (format nil
                             "#!/bin/sh~%if [ \"${1-}\" = --version ]; then printf 'SBCL ~A\\n'; exit 0; fi~%printf 'SELECTED=%s\\n' \"$0\"~%exec ~A \"$@\"~%"
@@ -953,7 +941,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                        (when (probe-file managed-runtime)
                          (delete-file managed-runtime)))
                    (if recorded-p
-                       (release-script-tests--write-file
+                       (test-write-text
                         recorded-command (format nil "~A~%" (namestring recorded-runtime)))
                        (when (probe-file recorded-command)
                          (delete-file recorded-command)))
@@ -993,9 +981,9 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
              (missing-runtime       (merge-pathnames "missing-sbcl" fixture-root))
              (nonexecutable-runtime (merge-pathnames "nonexecutable-sbcl" fixture-root))
              (disappearing-runtime  (merge-pathnames "disappearing-sbcl" fixture-root)))
-        (release-script-tests--write-file
+        (test-write-text
          recorded-command (format nil "~A~%" (namestring fake-sbcl)))
-        (release-script-tests--write-file nonexecutable-runtime "")
+        (test-write-text nonexecutable-runtime "")
         (release-script-tests--chmod "644" nonexecutable-runtime)
         (flet ((run-with-runtime (runtime &rest arguments)
                  (release-script-tests--run
@@ -1088,8 +1076,8 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                              (format nil "XDG_CONFIG_HOME=~A" (namestring config-home))))))
         (flet ((populate ()
                  (dolist (pathname (append artifacts kept))
-                   (release-script-tests--write-file pathname "x"))
-                 (release-script-tests--write-file log "")))
+                   (test-write-text pathname "x"))
+                 (test-write-text log "")))
           (populate)
           (multiple-value-bind (output error-output status)
               (release-script-tests--run
@@ -1148,7 +1136,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
             (when (probe-file pathname)
               (delete-file pathname)))))
       (dolist (arguments '(("update") ("update" "extra")))
-        (release-script-tests--write-file log "")
+        (test-write-text log "")
         (multiple-value-bind (output error-output status)
             (release-script-tests--run
              (cons (namestring launcher) arguments)
@@ -1170,7 +1158,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
          (and (zerop status) (plusp (length output))
               (zerop (length (uiop:read-file-string log))))
          "update help exits without starting the source application"))
-      (release-script-tests--write-file log "")
+      (test-write-text log "")
       (let* ((command
                (format nil
                        "env ~{~A~^ ~} ~A fixture-argument"
@@ -1215,7 +1203,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
       (dolist (pathname (list active-core active-manifest))
         (when (probe-file pathname)
           (delete-file pathname)))
-      (release-script-tests--write-file log "")
+      (test-write-text log "")
       (let* ((command
                (format nil
                        "env ~{~A~^ ~} ~A fixture-argument"
@@ -1330,7 +1318,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
         (declare (ignore output error-output))
         (test-assert (not (eql status 0))
                      "the release launcher requires its private syntax library"))
-      (release-script-tests--write-file library ""))
+      (test-write-text library ""))
     (release-script-tests--record
      (merge-pathnames "RELEASE" release-root)
      "v0.12.0")
@@ -1406,7 +1394,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
         (declare (ignore output error-output))
         (test-assert (not (eql status 0))
                      "the Darwin release launcher requires its private syntax library"))
-      (release-script-tests--write-file library ""))
+      (test-write-text library ""))
     (release-script-tests--install-darwin-host-tools host-bin "x86_64")
     (release-script-tests--record
      (merge-pathnames "RELEASE" release-root)
@@ -1484,7 +1472,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
              (format nil "~A:~A"
                      (string-right-trim "/" (namestring fixture-bin))
                      (or (uiop:getenv "PATH") ""))))
-        (release-script-tests--write-file
+        (test-write-text
          uname
          "#!/bin/sh
 case ${1:-} in
@@ -1531,8 +1519,8 @@ esac
                  (list "shasum" "-a" "256" (file-namestring archive))
                  :directory fixture-root
                  :output    ':string)))
-          (release-script-tests--write-file checksum output)))
-    (release-script-tests--write-file
+          (test-write-text checksum output)))
+    (test-write-text
      curl (release-script-tests--fixture-curl))
     (release-script-tests--chmod "755" curl)
     (let* ((path (format nil "~A:~A"
@@ -1634,7 +1622,7 @@ esac
         (release-script-tests--run
          (list "chmod" "-R" "u+w" (namestring next-target))
          :output nil)
-        (release-script-tests--write-file
+        (test-write-text
          (merge-pathnames "RELEASE" next-target)
          (format nil "version=~A~%tag=~A~%commit=~A~%"
                  (subseq next-tag 1)
@@ -1677,11 +1665,11 @@ esac
          (uname     (merge-pathnames "uname" directory))
          (chmod     (merge-pathnames "chmod" directory))
          (move      (merge-pathnames "mv" directory)))
-    (release-script-tests--write-file
+    (test-write-text
      uname
      (format nil "#!/bin/sh~%case ${1:-} in~%  -s) printf 'Darwin\\n' ;;~%  -m) printf '~A\\n' ;;~%  *) exit 64 ;;~%esac~%"
              architecture))
-    (release-script-tests--write-file chmod "#!/bin/sh
+    (test-write-text chmod "#!/bin/sh
 recursive=
 if [ \"${1:-}\" = -R ]; then
   recursive=-R
@@ -1698,7 +1686,7 @@ else
   exec /bin/chmod \"$mode\" \"$@\"
 fi
 ")
-    (release-script-tests--write-file move "#!/bin/sh
+    (test-write-text move "#!/bin/sh
 force=
 if [ \"${1:-}\" = -f ]; then
   force=-f
@@ -1791,7 +1779,7 @@ fi
                  (list "shasum" "-a" "256" (file-namestring archive))
                  :directory fixture-root
                  :output    ':string)))
-          (release-script-tests--write-file checksum output)))
+          (test-write-text checksum output)))
     (if (release-archive--command-pathname "sha256sum")
         (release-script-tests--run
          (list "sha256sum" (file-namestring x86-archive))
@@ -1802,8 +1790,8 @@ fi
                  (list "shasum" "-a" "256" (file-namestring x86-archive))
                  :directory fixture-root
                  :output    ':string)))
-          (release-script-tests--write-file x86-checksum output)))
-    (release-script-tests--write-file
+          (test-write-text x86-checksum output)))
+    (test-write-text
      curl (release-script-tests--fixture-curl))
     (release-script-tests--chmod "755" curl)
     (let* ((path (format nil "~A:~A"
@@ -1910,7 +1898,7 @@ fi
      (list "ln" "-s" (namestring (merge-pathnames "current/bin/autolith"
                                                    install-root))
            (namestring command-link)))
-    (release-script-tests--write-file
+    (test-write-text
      inner-launcher
      "#!/bin/sh
 set -eu
@@ -1922,7 +1910,7 @@ printf 'INNER_ARGC=%s\\n' \"$#\" >> \"$AUTOLITH_TEST_LOG\"
 [ \"${AUTOLITH_SUPPRESS_UPDATE_OFFER:-}\" != 1 ] || exit 0
 exit 76
 ")
-    (release-script-tests--write-file
+    (test-write-text
      updated-launcher
      "#!/bin/sh
 set -eu
@@ -1930,7 +1918,7 @@ printf 'UPDATED_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
 printf 'UPDATED_ARG=<%s>\\n' \"$@\" >> \"$AUTOLITH_TEST_LOG\"
 printf 'UPDATED_ARGC=%s\\n' \"$#\" >> \"$AUTOLITH_TEST_LOG\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      bundled-installer
      "#!/bin/sh
 set -eu
@@ -1956,7 +1944,7 @@ temporary=$AUTOLITH_INSTALL_ROOT/.current.$$
 ln -s \"releases/$requested\" \"$temporary\"
 mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      curl
      "#!/bin/sh
 set -eu
@@ -1964,7 +1952,7 @@ printf 'DISCOVERY\\n' >> \"$AUTOLITH_TEST_LOG\"
 [ \"${AUTOLITH_TEST_DISCOVERY_STATUS:-0}\" = 0 ] || exit \"$AUTOLITH_TEST_DISCOVERY_STATUS\"
 printf 'https://example.invalid/releases/%s' \"$AUTOLITH_TEST_LATEST_TAG\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "runtime/bin/sbcl" release-root)
      "#!/bin/sh
 printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
@@ -1977,14 +1965,14 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
       (dolist (pathname (list (merge-pathnames "autolith-active.core" active-root)
                               (merge-pathnames "autolith-recovery.core"
                                                recovery-root)))
-        (release-script-tests--write-file pathname "core"))
-      (release-script-tests--write-file
+        (test-write-text pathname "core"))
+      (test-write-text
        (merge-pathnames "manifest.sexp" active-root)
        "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\n")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "manifest.sexp" recovery-root)
        "(:RECOVERY-IMAGE :VERSION 2)\n")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "autolith/release-images" data-home)
        (format nil "~A:x86_64-linux~%" tag)))
     (let* ((environment
@@ -2004,7 +1992,7 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
                  (sb-posix:unlink (namestring current))
                  (sb-posix:symlink (format nil "releases/~A" tag)
                                    (namestring current))
-                 (release-script-tests--write-file log ""))
+                 (test-write-text log ""))
 
                (run-command (arguments &key (latest-tag next-tag)
                                          (discovery-status 0) (install-status 0)
@@ -2059,7 +2047,7 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
           (run-command (cons "update" tail) :discovered-p nil))
         (run-command '("--immutable" "update")
                      :expected-status 64 :discovered-p nil)
-        (release-script-tests--write-file
+        (test-write-text
          image-marker (format nil "~A:x86_64-linux~%" tag))
         (dolist (arguments '(nil ("resume" "fixture-conversation")
                              ("resume" "--" "--recovery" "--from-source")
@@ -2163,7 +2151,7 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
     (uiop:run-program
      (list "ln" "-s" (namestring (merge-pathnames "current/bin/autolith" install-root))
            (namestring command-link)))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "libexec/autolith/bin/autolith" release-root)
      "#!/bin/sh
 printf 'INNER\\n' >> \"$AUTOLITH_TEST_LOG\"
@@ -2171,8 +2159,8 @@ printf 'INNER\\n' >> \"$AUTOLITH_TEST_LOG\"
     (release-script-tests--chmod
      "755" (merge-pathnames "libexec/autolith/bin/autolith" release-root))
     (dolist (pathname (append artifacts kept))
-      (release-script-tests--write-file pathname "x"))
-    (release-script-tests--write-file log "")
+      (test-write-text pathname "x"))
+    (test-write-text log "")
     (multiple-value-bind (output error-output status)
         (release-script-tests--run
          (list (namestring command-link) "uninstall")
@@ -2227,23 +2215,23 @@ printf 'INNER\\n' >> \"$AUTOLITH_TEST_LOG\"
      source-root release-root :platform platform)
     (uiop:ensure-all-directories-exist (list data-home fixture-bin))
     (release-script-tests--install-linux-host-tools fixture-bin :libc "musl")
-    (release-script-tests--write-file
+    (test-write-text
      curl (release-script-tests--fixture-curl))
     (release-script-tests--chmod "755" curl)
     (sb-posix:symlink
      (format nil "releases/~A-~A" tag platform)
      (namestring (merge-pathnames "current" install-root)))
-    (release-script-tests--write-file
+    (test-write-text
      inner-launcher
      "#!/bin/sh
 exit 76
 ")
-    (release-script-tests--write-file
+    (test-write-text
      updated-launcher
      "#!/bin/sh
 printf 'UPDATED_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      bundled-installer
      "#!/bin/sh
 set -eu
@@ -2268,14 +2256,14 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
       (dolist (pathname (list (merge-pathnames "autolith-active.core" active-root)
                               (merge-pathnames "autolith-recovery.core"
                                                recovery-root)))
-        (release-script-tests--write-file pathname "core"))
-      (release-script-tests--write-file
+        (test-write-text pathname "core"))
+      (test-write-text
        (merge-pathnames "manifest.sexp" active-root)
        "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\n")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "manifest.sexp" recovery-root)
        "(:RECOVERY-IMAGE :VERSION 2)\n")
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "autolith/release-images" data-home)
        (format nil "~A:~A~%" tag platform)))
     (release-script-tests--run
@@ -2328,12 +2316,12 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
      source-root release-root :platform "x86_64-linux")
     (uiop:ensure-all-directories-exist (list fixture-bin data-home))
     (release-script-tests--install-linux-host-tools fixture-bin)
-    (release-script-tests--write-file
+    (test-write-text
      inner-launcher
      "#!/bin/sh
 exit 0
 ")
-    (release-script-tests--write-file
+    (test-write-text
      runtime
      "#!/bin/sh
 set -eu
@@ -2424,7 +2412,7 @@ esac
                         target)))
     (release-script-tests--chmod "755" adapter-target)
     (sb-posix:symlink (namestring adapter-target) (namestring adapter))
-    (release-script-tests--write-file
+    (test-write-text
      fake-readlink
      "#!/bin/sh
 set -eu
@@ -2434,7 +2422,7 @@ esac
 exec /usr/bin/readlink \"$@\"
 ")
     (release-script-tests--chmod "755" fake-readlink)
-    (release-script-tests--write-file
+    (test-write-text
      fake-curl
      "#!/bin/sh
 set -eu
@@ -2448,13 +2436,13 @@ done
 [ -n \"$output\" ]
 printf 'fixture archive\n' > \"$output\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      fake-sha256sum
      "#!/bin/sh
 set -eu
 printf '%s  %s\n' \"${AUTOLITH_TEST_SHA256:?}\" \"$1\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      fake-tar
      "#!/bin/sh
 set -eu
@@ -2478,22 +2466,22 @@ printf '\"%s\"\n' \"$version\" > \"$destination/sbcl-$version/version.lisp-expr\
 ")
     (dolist (pathname (list fake-curl fake-sha256sum fake-tar))
       (release-script-tests--chmod "755" pathname))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl.version" fixture-root)
      (format nil "2.6.6~%"))
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
-    (release-script-tests--write-file
+    (test-write-text
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
      (format nil "~A  sbcl-2.6.6-source.tar.bz2~%~A  sbcl-2.6.7-source.tar.bz2~%"
              (make-string 64 :initial-element #\0)
              (make-string 64 :initial-element #\1)))
-    (release-script-tests--write-file script (format nil "(quit)~%"))
+    (test-write-text script (format nil "(quit)~%"))
     (flet ((fake-runtime (version)
              (let ((pathname
                      (merge-pathnames (format nil "sbcl-~A" version)
                                       fixture-root)))
-               (release-script-tests--write-file
+               (test-write-text
                 pathname
                 (format nil
                         "#!/bin/sh
@@ -2567,7 +2555,7 @@ esac
                      (when (probe-file managed-runtime)
                        (delete-file managed-runtime)))
                  (if recorded-p
-                     (release-script-tests--write-file
+                     (test-write-text
                       recorded-command (format nil "~A~%" (namestring runtime-four)))
                      (when (probe-file recorded-command)
                        (delete-file recorded-command)))
@@ -2634,10 +2622,10 @@ esac
              (runtime    (fake-runtime version))
              (matching   (merge-pathnames "inherited-source/" fixture-root))
              (mismatched (merge-pathnames "mismatched-source/" fixture-root)))
-        (release-script-tests--write-file
+        (test-write-text
          (merge-pathnames "version.lisp-expr" matching)
          (format nil "~S~%" version))
-        (release-script-tests--write-file
+        (test-write-text
          (merge-pathnames "version.lisp-expr" mismatched)
          (format nil "~S~%" "2.6.6"))
         (dolist (entry (list (list (namestring matching) t)
@@ -2660,7 +2648,7 @@ esac
               (merge-pathnames "autolith/runtimes/2.6.7/source.identity"
                                data-home)))
         (release-script-tests--chmod "600" identity)
-        (release-script-tests--write-file
+        (test-write-text
          identity
          (format nil "2.6.7 ~A~%" (make-string 64 :initial-element #\0)))
         (release-script-tests--chmod "444" identity)
@@ -2719,7 +2707,7 @@ esac
        "a missing minimum policy file is rejected")
       (dolist (minimum '("" "garbage" "2..4" "2.6" "2.6.4.1"))
         (let ((pathname (merge-pathnames "malformed-sbcl-minimum.version" fixture-root)))
-          (release-script-tests--write-file pathname minimum)
+          (test-write-text pathname minimum)
           (test-assert
            (handler-case
                (progn
@@ -2736,7 +2724,7 @@ esac
   "Install a uname fixture reporting OS and ARCHITECTURE."
   (let ((uname (merge-pathnames "uname"
                                 (uiop:ensure-directory-pathname directory))))
-    (release-script-tests--write-file
+    (test-write-text
      uname
      (format nil
              "#!/bin/sh
@@ -2763,7 +2751,7 @@ esac
                (list "shasum" "-a" "256" (file-namestring archive))
                :directory (uiop:pathname-directory-pathname archive)
                :output    ':string)))
-        (release-script-tests--write-file checksum output)))
+        (test-write-text checksum output)))
   checksum)
 
 (-> release-script-tests--write-release-archive
@@ -2820,7 +2808,7 @@ esac
     (release-script-tests--make-release source-root release-root)
     (uiop:ensure-all-directories-exist
      (list fixture-root fixture-bin install-root bin-directory))
-    (release-script-tests--write-file
+    (test-write-text
      curl (release-script-tests--fixture-curl))
     (release-script-tests--chmod "755" curl)
     (labels ((environment ()
@@ -3068,7 +3056,7 @@ esac
                          (format nil
                                  "the ~A release launcher requires its private syntax library"
                                  os)))
-          (release-script-tests--write-file library ""))
+          (test-write-text library ""))
         (let ((helper
                 (merge-pathnames "libexec/cl-exec-sandbox-process-group"
                                  release-root)))
@@ -3086,7 +3074,7 @@ esac
              (format nil
                      "the ~A release launcher requires its packaged process-group helper"
                      os)))
-          (release-script-tests--write-file helper "")
+          (test-write-text helper "")
           (release-script-tests--chmod "755" helper)))))
   nil)
 
@@ -3137,7 +3125,7 @@ esac
                  "-C" (namestring fixture-source) release-name)
            :output nil)
           (release-script-tests--write-checksum archive checksum)
-          (release-script-tests--write-file
+          (test-write-text
            curl (release-script-tests--fixture-curl))
           (release-script-tests--chmod "755" curl)
           (release-script-tests--run
@@ -3177,7 +3165,7 @@ esac
          (target-directory (uiop:ensure-directory-pathname target))
          (file             (merge-pathnames "file.txt" source-directory))
          (link             (merge-pathnames "link.txt" source-directory)))
-    (release-script-tests--write-file file "payload")
+    (test-write-text file "payload")
     (sb-posix:symlink "file.txt" (namestring link))
     (release-archive--copy source target)
     (test-assert
@@ -3195,7 +3183,7 @@ esac
   "Exercise GNU-format SHA-256 checksum publication."
   (let* ((file     (merge-pathnames "payload.bin" root))
          (checksum (merge-pathnames "payload.bin.sha256" root)))
-    (release-script-tests--write-file file "autolith")
+    (test-write-text file "autolith")
     (release-archive--checksum-file file checksum)
     (let* ((line   (string-trim '(#\Newline #\Return)
                                 (uiop:read-file-string checksum)))
@@ -3228,13 +3216,13 @@ esac
                                (string-right-trim "/" (namestring bin)))))
     (uiop:ensure-all-directories-exist (list bin installation))
     (release-script-tests--write-uname bin "FreeBSD" "amd64")
-    (release-script-tests--write-file
+    (test-write-text
      sbcl
      (format nil "#!/bin/sh~%case \" $* \" in~%  *lisp-implementation-version*) printf '%s' \"${AUTOLITH_TEST_SBCL_VERSION:-2.6.6}\"; exit 0 ;;~%esac~%printf '%s\\n' \"$*\" > \"${AUTOLITH_TEST_BOOTSTRAP_LOG:?}\"~%exit 0~%"))
-    (release-script-tests--write-file
+    (test-write-text
      curl
      (format nil "#!/bin/sh~%printf 'curl invoked\\n' > \"${AUTOLITH_TEST_CURL_LOG:?}\"~%exit 1~%"))
-    (release-script-tests--write-file
+    (test-write-text
      ldd
      "#!/bin/sh
 case ${AUTOLITH_TEST_LIBC:-glibc} in
@@ -3402,8 +3390,8 @@ esac
            (library-root     (merge-pathnames "sandbox-library/" root))
            (helper           (merge-pathnames "build/cl-exec-sandbox-helper" library-root))
            (process-group    (merge-pathnames "build/cl-exec-sandbox-process-group" library-root)))
-      (release-script-tests--write-file helper "fixture helper")
-      (release-script-tests--write-file process-group "fixture process-group helper")
+      (test-write-text helper "fixture helper")
+      (test-write-text process-group "fixture process-group helper")
       (test-call-with-function-replacements
        (list
         (list 'asdf:system-source-directory
@@ -3436,7 +3424,7 @@ esac
          (sha256 (merge-pathnames "sha256" bin))
          (saved  (or (uiop:getenv "PATH") "")))
     (uiop:ensure-all-directories-exist (list bin empty))
-    (release-script-tests--write-file sha256 "#!/bin/sh\nexit 0\n")
+    (test-write-text sha256 "#!/bin/sh\nexit 0\n")
     (release-script-tests--chmod "755" sha256)
     (unwind-protect
          (progn
@@ -3466,8 +3454,8 @@ esac
          (gnutar (merge-pathnames "gnutar" extra))
          (saved  (or (uiop:getenv "PATH") "")))
     (uiop:ensure-all-directories-exist (list bin extra empty))
-    (release-script-tests--write-file gtar "#!/bin/sh\nexit 0\n")
-    (release-script-tests--write-file gnutar "#!/bin/sh\nexit 0\n")
+    (test-write-text gtar "#!/bin/sh\nexit 0\n")
+    (test-write-text gnutar "#!/bin/sh\nexit 0\n")
     (release-script-tests--chmod "755" gtar)
     (release-script-tests--chmod "755" gnutar)
     (unwind-protect
@@ -3528,7 +3516,7 @@ esac
             (format nil "PATH=~A:~A"
                     (string-right-trim "/" (namestring fixture-bin))
                     (or (uiop:getenv "PATH") "")))))
-    (release-script-tests--write-file
+    (test-write-text
      runtime
      "#!/bin/sh
 set -eu
@@ -3544,12 +3532,12 @@ else
   printf '%s' \"${AUTOLITH_TEST_RUNTIME_VERSION:-2.6.6}\"
 fi
 ")
-    (release-script-tests--write-file
+    (test-write-text
      file-command
      "#!/bin/sh
 printf '%s\\n' \"${AUTOLITH_TEST_FILE_DESCRIPTION:-ELF 64-bit LSB pie executable, x86-64}\"
 ")
-    (release-script-tests--write-file
+    (test-write-text
      readelf-command
      "#!/bin/sh
 case $1 in
@@ -3600,7 +3588,7 @@ esac
                  (test-assert (not (zerop status)) description))))
       (let ((missing (archive-path "missing"))
             (unsupported
-              (release-script-tests--write-file
+              (test-write-text
                (archive-path "unsupported") "")))
         (assert-failure
          missing "Linux artifact validation rejects a missing archive")
@@ -3629,7 +3617,7 @@ esac
         (assert-failure
          valid "Linux artifact validation rejects a malformed runtime version"
          :extra-environment '("AUTOLITH_TEST_RUNTIME_VERSION=2.6")))
-      (release-script-tests--write-file
+      (test-write-text
        (merge-pathnames "rogue" fixture-root) "outside release root")
       (assert-failure
        (make-archive "extra-top-level" :extra-top-level "rogue")
@@ -3925,7 +3913,7 @@ esac
                    :core                     (namestring (merge-pathnames "recovery/autolith-recovery.core" stage))
                    :implementation "SBCL" :source '(:commit "fixture")))
            (command
-             (list (lisp-worker-sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
+             (list (sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
                    "--disable-debugger" "--script"
                    (namestring (asdf:system-relative-pathname
                                 :autolith "script/relocate-image-manifests.lisp"))
@@ -3934,7 +3922,7 @@ esac
                  "Replace PATHNAME with a readable fixture RECORD."
                  (when (probe-file pathname)
                    (delete-file pathname))
-                 (release-script-tests--write-file
+                 (test-write-text
                   pathname (with-standard-io-syntax (prin1-to-string record))))
 
                (run ()
@@ -3954,7 +3942,7 @@ esac
         (dolist (invalid (list "(:recovery-image :version 2) (:extra)"
                               "#.(error \"Reader evaluation is forbidden\")"))
           (write-record active active-record)
-          (release-script-tests--write-file recovery invalid)
+          (test-write-text recovery invalid)
           (test-assert (not (zerop (run))) "reject multiple forms and reader evaluation")
           (test-assert
            (equal active-record (read-one-form (uiop:read-file-string active) :read-eval nil))
@@ -4040,7 +4028,7 @@ esac
                                   ,(not windows-p))))
                    stream)))
         (multiple-value-bind (output error-output status)
-            (uiop:run-program (list (lisp-worker-sbcl-command) "--script"
+            (uiop:run-program (list (sbcl-command) "--script"
                                     (uiop:native-namestring probe))
                               :output              ':string
                               :error-output        ':output

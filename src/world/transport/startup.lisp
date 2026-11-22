@@ -253,9 +253,8 @@ before any shell is involved."
      (list "--immutable"))
    (when pristine-p
      (list "--pristine"))
-   (let ((site-config-root (config :site-config-root configuration)))
-     (when site-config-root
-       (list "--site-config-root" (namestring site-config-root))))
+   (when-let ((site-config-root (config :site-config-root configuration)))
+     (list "--site-config-root" (namestring site-config-root)))
    (list "--world-startup" (namestring handoff-pathname))))
 
 (-> world-startup--launch-for
@@ -485,10 +484,9 @@ race takes the endpoint that answers instead of waiting out its token."
 (defun world-startup-finish-startup (application)
   "Delete the consumed startup handoff after APPLICATION, or the world server, publishes its endpoint."
   (declare (ignore application))
-  (let ((pathname
-          (and *world-startup-record*
-               (or (getf (rest *world-startup-record*) :pending-pathname)
-                   (getf (rest *world-startup-record*) :pathname)))))
-    (when pathname
-      (image-daemon:handoff-ticket-delete pathname)))
+  (when-let ((pathname
+               (and *world-startup-record*
+                    (or (getf (rest *world-startup-record*) :pending-pathname)
+                        (getf (rest *world-startup-record*) :pathname)))))
+    (image-daemon:handoff-ticket-delete pathname))
   nil)

@@ -457,8 +457,8 @@ entry with supports_search_tool."
    (provider-tool-search-namespaces provider tool-namespaces)))
 
 (defmethod provider-wire-tool-name
-    ((provider codex-subscription-provider) (namespace string) (name string))
-  "Encode one Codex tool name with the shared grammar-safe wire codec."
+    ((provider responses-function-name-mixin) (namespace string) (name string))
+  "Encode one tool name with the shared grammar-safe wire codec."
   (declare (ignore provider))
   (provider-wire-function-name--encode namespace name))
 
@@ -500,8 +500,8 @@ it empty made the model search the same namespace again on every round."
      (call-next-method))))
 
 (defmethod provider-normalize-output-item
-    ((provider codex-subscription-provider) (item hash-table))
-  "Restore standard Codex Responses calls to their local namespace shape."
+    ((provider responses-function-name-mixin) (item hash-table))
+  "Restore encoded Responses calls to their local namespace shape."
   (call-next-method)
   (when (function-call-item-p item)
     (multiple-value-bind (namespace name)
@@ -548,9 +548,8 @@ NIL leaves the service default in place."))
     ((provider codex-subscription-provider) configuration)
   "Return Codex's enabled hosted tool declarations."
   (declare (ignore provider))
-  (let ((web-search-tool (provider-web-search-tool configuration)))
-    (when web-search-tool
-      (list web-search-tool))))
+  (when-let ((web-search-tool (provider-web-search-tool configuration)))
+    (list web-search-tool)))
 
 (defmethod provider-responses-instructions-placement
     ((provider codex-subscription-provider))

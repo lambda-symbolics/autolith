@@ -148,15 +148,15 @@
                   (:upload
                    (push (third request) bodies) t)))))
        (labels ((read-resource (uri)
-                  (papercut-resource-tests--call registry context
+                  (test-resource-call registry context
                                                  :namespace "resource"
                                                  :name      "read"
                                                  :arguments (list "uri" uri)))
 
                 (edit (uri operation)
-                  (let ((revision (papercut-resource-tests--field
+                  (let ((revision (test-resource-field
                                    (tool-result-content (read-resource uri)) "Revision: ")))
-                    (papercut-resource-tests--call registry context
+                    (test-resource-call registry context
                                                   :namespace "resource"
                                                   :name      "edit"
                                                   :arguments (list "uri" uri "base-revision" revision

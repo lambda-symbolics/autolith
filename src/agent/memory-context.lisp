@@ -134,14 +134,13 @@
 (-> memory-context--query (string) (option string))
 (defun memory-context--query (query)
   "Return retrieval-bearing terms from user QUERY, or NIL when none remain."
-  (let ((terms
-          (remove-if
-           (lambda (term)
-             (or (< (length term) 3)
-                 (member term *memory-context-stop-terms* :test #'string=)))
-           (memory--search-terms query))))
-    (when terms
-      (format nil "~{~A~^ ~}" terms))))
+  (when-let ((terms
+               (remove-if
+                (lambda (term)
+                  (or (< (length term) 3)
+                      (member term *memory-context-stop-terms* :test #'string=)))
+                (memory--search-terms query))))
+    (format nil "~{~A~^ ~}" terms)))
 
 (-> memory-context--match-line (memory-match memory-assessment) string)
 (defun memory-context--match-line (match assessment)
@@ -155,7 +154,7 @@ adds its status and the reason."
             "id" (memory-identifier memory)
             "score" (memory-match-score match)
             "scope" (string-downcase (symbol-name (memory-scope memory)))
-            "updated_at" (memory--timestamp-string (memory-updated-at memory))
+            "updated_at" (format-utc-timestamp (memory-updated-at memory))
             "title" (memory-title memory)
             "tags" (coerce (memory-tags memory) 'vector)
             "excerpt" (single-line-excerpt (memory-content memory)
@@ -281,16 +280,15 @@ still reported."
        :time     (knowledge-view-now view)
        :function (lambda (previous time first-p)
                    (declare (ignore time first-p))
-                   (let ((added (remove-if-not
-                                 (lambda (entry)
-                                   (and (member (getf entry :claim) claims :test #'string=)
-                                        (not (member (getf entry :claim) previous
-                                                     :key  (lambda (seen) (getf seen :claim))
-                                                     :test #'string=))))
-                                 (knowledge-view-snapshot view))))
-                     (if added
-                         (values (append previous added) nil)
-                         (values ':keep nil)))))))
+                   (if-let ((added (remove-if-not
+                                    (lambda (entry)
+                                      (and (member (getf entry :claim) claims :test #'string=)
+                                           (not (member (getf entry :claim) previous
+                                                        :key  (lambda (seen) (getf seen :claim))
+                                                        :test #'string=))))
+                                    (knowledge-view-snapshot view))))
+                       (values (append previous added) nil)
+                       (values ':keep nil))))))
   nil)
 
 (-> memory-context--recall-changes

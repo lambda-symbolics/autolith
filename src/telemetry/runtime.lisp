@@ -82,8 +82,8 @@
   (when (and *telemetry-run* (stringp identifier))
     (bt:with-lock-held ((telemetry-controller-lock (telemetry-run-controller *telemetry-run*)))
       (when (telemetry--live-p *telemetry-run*)
-        (or (gethash identifier (telemetry-run-repair-ids *telemetry-run*))
-            (setf (gethash identifier (telemetry-run-repair-ids *telemetry-run*)) (telemetry--id 16)))))))
+        (values (ensure-gethash identifier (telemetry-run-repair-ids *telemetry-run*)
+                                (telemetry--id 16)))))))
 
 (-> telemetry--live-p ((option telemetry-run)) boolean)
 (defun telemetry--live-p (run)
@@ -234,47 +234,44 @@ Attaching a disabled root does not change existing process consent."
 (defun telemetry-shutdown (&key (drain-p t))
   "Stop this controller, optionally giving final uploads one deadline to drain.
 Revocation and checkpoint quiescence always cancel immediately instead of draining."
-  (let ((controller *telemetry-controller*))
-    (when controller
-      (when drain-p
-        ; mallet:suppress no-ignore-errors -- draining final uploads must never block shutdown
-        (ignore-errors (telemetry--drain-uploads controller)))
-      (let (processes)
-        (bt:with-lock-held ((telemetry-controller-lock controller))
-          (setf (telemetry-controller-stopped controller) t
-                (telemetry-controller-enabled controller) nil
-                processes (telemetry--purge controller)))
-        (dolist (record processes)
-          (telemetry--retire-process record)))
-      (model-catalog-join controller)
-      (telemetry--join-uploader controller)
-      (dolist (configuration (telemetry-controller-roots controller))
-        (configuration-remove-listener configuration (telemetry-controller-listener controller)))
-      (setf *telemetry-controller* nil)))
+  (when-let ((controller *telemetry-controller*))
+    (when drain-p
+      ; mallet:suppress no-ignore-errors -- draining final uploads must never block shutdown
+      (ignore-errors (telemetry--drain-uploads controller)))
+    (let (processes)
+      (bt:with-lock-held ((telemetry-controller-lock controller))
+        (setf (telemetry-controller-stopped controller) t
+              (telemetry-controller-enabled controller) nil
+              processes (telemetry--purge controller)))
+      (dolist (record processes)
+        (telemetry--retire-process record)))
+    (model-catalog-join controller)
+    (telemetry--join-uploader controller)
+    (dolist (configuration (telemetry-controller-roots controller))
+      (configuration-remove-listener configuration (telemetry-controller-listener controller)))
+    (setf *telemetry-controller* nil))
   nil)
 
 (-> telemetry-quiesce () null)
 (defun telemetry-quiesce ()
   "Discard pending telemetry and synchronously stop children before a checkpoint."
-  (let ((controller *telemetry-controller*))
-    (when controller
-      (let (processes)
-        (bt:with-lock-held ((telemetry-controller-lock controller))
-          (setf (telemetry-controller-quiescent controller) t
-                processes (telemetry--purge controller)))
-        (dolist (record processes)
-          (telemetry--retire-process record)))
-      (model-catalog-join controller)
-      (telemetry--join-uploader controller)))
+  (when-let ((controller *telemetry-controller*))
+    (let (processes)
+      (bt:with-lock-held ((telemetry-controller-lock controller))
+        (setf (telemetry-controller-quiescent controller) t
+              processes (telemetry--purge controller)))
+      (dolist (record processes)
+        (telemetry--retire-process record)))
+    (model-catalog-join controller)
+    (telemetry--join-uploader controller))
   nil)
 
 (-> telemetry-detach () null)
 (defun telemetry-detach ()
   "Remove inherited process state in a checkpoint child, without killing parent children."
-  (let ((controller *telemetry-controller*))
-    (when controller
-      (dolist (configuration (telemetry-controller-roots controller))
-        (configuration-remove-listener configuration (telemetry-controller-listener controller)))))
+  (when-let ((controller *telemetry-controller*))
+    (dolist (configuration (telemetry-controller-roots controller))
+      (configuration-remove-listener configuration (telemetry-controller-listener controller))))
   (setf *telemetry-controller* nil *telemetry-run* nil)
   nil)
 
@@ -373,27 +370,26 @@ Pending runs and spans are discarded; the parent accepts fresh runs afterwards."
 (defun telemetry--begin-run (configuration &key launcher-p)
   "Create a consented root and return RUN and its opaque finish token as two values.
 Only the first top-level launcher scope can adopt the process trace context."
-  (let ((controller *telemetry-controller*))
-    (when controller
-      (telemetry--ensure-model-catalog controller)
-      (bt:with-lock-held ((telemetry-controller-lock controller))
-        (when (and (telemetry-controller-enabled controller)
-                   (not (telemetry-controller-quiescent controller))
-                   (not (telemetry-controller-closing controller))
-                   (or (member configuration (telemetry-controller-roots controller) :test #'eq)
-                       (eq (config :telemetry-enabled-p configuration) t))
-                   (< (length (telemetry-controller-runs controller)) 128))
-          (let* ((context  (and launcher-p (telemetry--claim-launch-context)))
-                 (trace-id (first context))
-                 (attempt  (or (second context) 1))
-                 (token    (list nil))
-                 (run      (telemetry--make-run :controller controller :owner token
-                                             :epoch (telemetry-controller-epoch controller)
-                                             :trace-id (or trace-id (telemetry--id 16)) :span-id (telemetry--id 8)
-                                             :attempt attempt :recovered (> attempt 1)
-                                             :start (telemetry--now) :active t)))
-            (push run (telemetry-controller-runs controller))
-            (values run token)))))))
+  (when-let ((controller *telemetry-controller*))
+    (telemetry--ensure-model-catalog controller)
+    (bt:with-lock-held ((telemetry-controller-lock controller))
+      (when (and (telemetry-controller-enabled controller)
+                 (not (telemetry-controller-quiescent controller))
+                 (not (telemetry-controller-closing controller))
+                 (or (member configuration (telemetry-controller-roots controller) :test #'eq)
+                     (eq (config :telemetry-enabled-p configuration) t))
+                 (< (length (telemetry-controller-runs controller)) 128))
+        (let* ((context  (and launcher-p (telemetry--claim-launch-context)))
+               (trace-id (first context))
+               (attempt  (or (second context) 1))
+               (token    (list nil))
+               (run      (telemetry--make-run :controller controller :owner token
+                                           :epoch (telemetry-controller-epoch controller)
+                                           :trace-id (or trace-id (telemetry--id 16)) :span-id (telemetry--id 8)
+                                           :attempt attempt :recovered (> attempt 1)
+                                           :start (telemetry--now) :active t)))
+          (push run (telemetry-controller-runs controller))
+          (values run token))))))
 
 (-> telemetry-call-with-run ((option configuration) function) t)
 (defun telemetry-call-with-run (configuration function)
@@ -787,14 +783,13 @@ Retain one identity per catalog tool until run end. Never replace another report
                 (setf identifier (first failure))
                 (unless (rest failure)
                   (setf (rest failure) report-id)
-                  (let ((span (find-if
-                               (lambda (span)
-                                 (and (equal (json-get span "traceId") (telemetry-run-trace-id run))
-                                      (equal (json-get span "spanId") identifier)))
-                               (telemetry-controller-queue controller))))
-                    (if span
-                        (telemetry--export-report-link span report-id)
-                        (setf exported-link-p t))))))))))
+                  (if-let ((span (find-if
+                                  (lambda (span)
+                                    (and (equal (json-get span "traceId") (telemetry-run-trace-id run))
+                                         (equal (json-get span "spanId") identifier)))
+                                  (telemetry-controller-queue controller))))
+                      (telemetry--export-report-link span report-id)
+                      (setf exported-link-p t)))))))))
     (values identifier exported-link-p)))
 
 (-> telemetry-note-repair

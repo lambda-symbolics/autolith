@@ -42,11 +42,7 @@
 
 Spacing and letter case do not matter, so a typed form need not match the
 shown spelling exactly."
-  (let ((typed (format nil "~{~A~^ ~}"
-                       (remove "" (uiop:split-string
-                                   (string-trim '(#\Space #\Tab #\Newline #\Return) text)
-                                   :separator '(#\Space #\Tab #\Newline #\Return))
-                               :test #'string=))))
+  (let ((typed (serapeum:trim-whitespace (serapeum:collapse-whitespace text))))
     (loop for value in (getf page :choices)
           for form in (terminal-ui-onboarding-choice-forms page)
           when (string-equal typed form)
@@ -272,7 +268,7 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
   (let* ((terminal   (terminal-ui-terminal ui))
          (width      (max 1 (terminal-columns terminal)))
          (height     (max 1 (terminal-rows terminal)))
-         (card-width (min 76 (max 1 (- width (if (> width 10) 4 0)))))
+         (card-width (clamp (- width (if (> width 10) 4 0)) 1 76))
          (left       (floor (- width card-width) 2))
          (exercise   (getf page :exercise))
          (spans      (terminal-ui-onboarding--body-spans page stage help-function :width card-width))
@@ -425,7 +421,7 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
           (unless (line-editor-move-vertical
                    editor (if (eq command ':up) -1 1)
                    :columns      (let ((width (terminal-columns (terminal-ui-terminal ui))))
-                                   (min 76 (max 1 (- width (if (> width 10) 4 0)))))
+                                   (clamp (- width (if (> width 10) 4 0)) 1 76))
                    :prompt-width (text-cell-width (terminal-ui-prompt ui)))
             (line-editor-handle-event editor (if (eq command ':up) ':history-previous ':history-next)))
           (line-editor-handle-event editor safe-event))
@@ -435,8 +431,7 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
 (-> terminal-ui-onboarding--exercise-submitted-p (terminal-ui string) boolean)
 (defun terminal-ui-onboarding--exercise-submitted-p (ui target)
   "Return true only when UI's demo editor equals TARGET on Enter."
-  (string= (string-trim '(#\Space #\Tab #\Newline #\Return)
-                         (line-editor-text (terminal-ui-editor ui)))
+  (string= (serapeum:trim-whitespace (line-editor-text (terminal-ui-editor ui)))
            target))
 
 (-> terminal-ui-onboarding--help-request (string) (values t boolean))
@@ -445,7 +440,7 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
 
 Accept the help command's literal Lisp arguments and its slash spelling. Disable
 reader dispatch and never evaluate input, including quoted topic arguments."
-  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) input)))
+  (let ((text (serapeum:trim-whitespace input)))
     (when (and (>= (length text) 5)
                (string-equal "/help" text :end2 5)
                (or (= (length text) 5) (find (char text 5) '(#\Space #\Tab))))
@@ -675,9 +670,8 @@ Never evaluate demo input."
                       ((and (consp event) (eq (first event) ':resize))
                        (terminal-ui-resize ui (second event) :rows (third event)))
                       ((and (consp event) (eq (first event) ':click))
-                       (let ((action (terminal-ui-onboarding--link-action
-                                      link-regions (second event) (third event))))
-                         (when action (terminal-ui-activate ui action))))
+                       (when-let ((action (terminal-ui-onboarding--link-action
+                                           link-regions (second event) (third event)))) (terminal-ui-activate ui action)))
                       ((and (eq (exercise) ':help) (eq event ':submit))
                        (submit-help))
                       ((and (eq (exercise) ':authentication) (eq event ':submit)

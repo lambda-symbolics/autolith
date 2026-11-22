@@ -67,13 +67,12 @@ process-global environment change participates in presentation discovery."
 (-> world-repository-current-groups (list (option string)) list)
 (defun world-repository-current-groups (groups current)
   "Put CURRENT's group first without performing discovery or changing GROUPS."
-  (let ((home (find-if (lambda (group)
-                         (find current (world-repository-group-channels group)
-                               :key #'channel-identifier :test #'equal))
-                       groups)))
-    (if home
-        (cons home (remove home groups))
-        groups)))
+  (if-let ((home (find-if (lambda (group)
+                            (find current (world-repository-group-channels group)
+                                  :key #'channel-identifier :test #'equal))
+                          groups)))
+      (cons home (remove home groups))
+      groups))
 
 (-> world-repository-workspace-groups (list (option string)) list)
 (defun world-repository-workspace-groups (channels current)
@@ -242,8 +241,7 @@ no evidence rather than assuming uniqueness from a truncated inventory."
           do (when (or (null source) (eq source ':ambiguous) (gethash directory seen))
                (return nil))
              (setf (gethash directory seen) t)
-             (let ((resolved (world-repository-resolve-directory source)))
-               (when resolved (return resolved)))
+             (when-let ((resolved (world-repository-resolve-directory source))) (return resolved))
              (let ((identities
                      (remove-duplicates
                       (loop for channel in channels

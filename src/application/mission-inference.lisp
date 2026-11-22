@@ -98,11 +98,10 @@
         (mission--record context))))
   ;; A ready completion may be waiting only for this reservation to settle.
   ;; Wake outside the mission locks: controller admission acquires them in reverse.
-  (let ((controller (application-input-controller (mission-context-application context))))
-    (when controller
-      (with-lock-held ((application-input-controller-lock controller))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller)))))
+  (when-let ((controller (application-input-controller (mission-context-application context))))
+    (with-lock-held ((application-input-controller-lock controller))
+      (sb-thread:condition-broadcast
+       (application-input-controller-condition-variable controller))))
   nil)
 
 (-> mission--account-inference

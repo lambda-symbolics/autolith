@@ -29,7 +29,7 @@
   (let ((form (run-job-tests--request-form :prompt "PRIVATE-TEST-PROMPT"
                                           :input   '(:value "PRIVATE-TEST-INPUT"))))
     (setf (getf (rest form) :id) "PRIVATE-TEST-CALLER-ID")
-    (task-tests--write-text path (run-job--write-data-sexp form :pretty-p t))))
+    (test-write-text path (run-job--write-data-sexp form :pretty-p t))))
 
 (-> run-job-streaming-tests--kinds (list) list)
 (defun run-job-streaming-tests--kinds (records)
@@ -121,7 +121,7 @@
            (output     (merge-pathnames "invalid-result.sexp" root))
            (stream     (make-string-output-stream))
            (executed-p nil))
-      (task-tests--write-text input "#.(error \"PRIVATE-TEST-READER\")")
+      (test-write-text input "#.(error \"PRIVATE-TEST-READER\")")
       (test-assert
        (= 64 (run-job-run input output ':auto :configuration configuration
                           :events ':sexp :event-output stream
@@ -302,7 +302,7 @@
                                  (format nil "XDG_STATE_HOME=~A" (merge-pathnames "state/" root))
                                  (format nil "XDG_CACHE_HOME=~A" (merge-pathnames "cache/" root)))
                            (test-active-core-environment))))
-        (task-tests--write-text input "#.(error \"PRIVATE-READER-EVALUATION\")")
+        (test-write-text input "#.(error \"PRIVATE-READER-EVALUATION\")")
         (dolist (mode '(nil "sexp" "json"))
           (let ((output (merge-pathnames (format nil "~A-result.sexp" (or mode "legacy")) root)))
             (multiple-value-bind (stdout stderr exit-code)
@@ -412,7 +412,7 @@
       (let* ((source-root (asdf:system-source-directory :autolith))
              (commands
                (list (list (namestring (merge-pathnames "bin/autolith" source-root)))
-                     (list (lisp-worker-sbcl-command)
+                     (list (sbcl-command)
                            "--noinform" "--no-sysinit" "--no-userinit" "--script"
                            (namestring (merge-pathnames "script/launcher.lisp" source-root)))))
              (environment

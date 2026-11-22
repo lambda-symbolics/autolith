@@ -127,20 +127,19 @@ normally, bounded by the shared budget."
 The ledger links every child trace to the root run even when the
 environment's Lisp discards the returned trace identifiers, so a run
 leaves a machine-readable invocation tree instead of orphaned frames."
-  (let ((ledger (rlm-endpoint--ledger endpoint)))
-    (when ledger
-      (handler-case
-          (funcall ledger
-                   (append record
-                           (list :calls-remaining
-                                 (rlm-budget-remaining-calls
-                                  (rlm-endpoint--budget endpoint))
-                                 :tokens-remaining
-                                 (rlm-budget-remaining-tokens
-                                  (rlm-endpoint--budget endpoint)))))
-        (error (condition)
-          (format *error-output*
-                  "~&The inference run ledger failed: ~A~%" condition)))))
+  (when-let ((ledger (rlm-endpoint--ledger endpoint)))
+    (handler-case
+        (funcall ledger
+                 (append record
+                         (list :calls-remaining
+                               (rlm-budget-remaining-calls
+                                (rlm-endpoint--budget endpoint))
+                               :tokens-remaining
+                               (rlm-budget-remaining-tokens
+                                (rlm-endpoint--budget endpoint)))))
+      (error (condition)
+        (format *error-output*
+                "~&The inference run ledger failed: ~A~%" condition))))
   nil)
 
 (-> rlm-endpoint--frame-set (rlm-endpoint &key (:create-p boolean)) rlm-frame-set)
@@ -221,10 +220,9 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
 (-> rlm-endpoint--close-frames (rlm-endpoint) null)
 (defun rlm-endpoint--close-frames (endpoint)
   "Cancel and stop ENDPOINT's background frames, if any."
-  (let ((frames (with-lock-held ((rlm-endpoint--lock endpoint))
-                  (rlm-endpoint--frames endpoint))))
-    (when frames
-      (rlm-frame-set-close frames)))
+  (when-let ((frames (with-lock-held ((rlm-endpoint--lock endpoint))
+                       (rlm-endpoint--frames endpoint))))
+    (rlm-frame-set-close frames))
   nil)
 
 (-> rlm-endpoint--operation-activity-callback
@@ -232,14 +230,13 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
     (option function))
 (defun rlm-endpoint--operation-activity-callback (endpoint operation)
   "Return ENDPOINT's revocable activity callback for proxied OPERATION."
-  (let ((callback (rlm-endpoint--activity-callback endpoint)))
-    (when callback
-      (lambda (activity)
-        (with-lock-held ((rlm-endpoint--activity-lock endpoint))
-          (when (rlm-endpoint--activity-enabled-p endpoint)
-            (rlm--note-activity
-             callback
-             (format nil "~(~A~) · ~A" operation activity))))))))
+  (when-let ((callback (rlm-endpoint--activity-callback endpoint)))
+    (lambda (activity)
+      (with-lock-held ((rlm-endpoint--activity-lock endpoint))
+        (when (rlm-endpoint--activity-enabled-p endpoint)
+          (rlm--note-activity
+           callback
+           (format nil "~(~A~) · ~A" operation activity)))))))
 
 (-> rlm-endpoint--dispatch (rlm-endpoint keyword list) list)
 (defun rlm-endpoint--dispatch (endpoint operation arguments)

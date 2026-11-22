@@ -35,6 +35,16 @@
   "Return true when TAG is a strict three-component release tag."
   (not (null (release-tag->version tag))))
 
+(-> release-commit-valid-p (t) boolean)
+(defun release-commit-valid-p (commit)
+  "Return true when COMMIT is a lowercase forty-character Git identity."
+  (and (stringp commit)
+       (= (length commit) 40)
+       (every (lambda (character)
+                (or (digit-char-p character)
+                    (find character "abcdef")))
+              commit)))
+
 (-> release-tag< (string string) boolean)
 (defun release-tag< (left right)
   "Return true when semantic release tag LEFT precedes RIGHT."
@@ -159,14 +169,9 @@ that carries a platform accepts only that platform's qualified name."
                         (installation--release-platform-p platform)))
                version
                tag
-               commit
                (release-tag-valid-p tag)
                (string= tag (format nil "v~A" version))
-               (= (length commit) 40)
-               (every (lambda (character)
-                        (or (digit-char-p character)
-                            (find character "abcdef")))
-                      commit)
+               (release-commit-valid-p commit)
                fields)))
     (error ()
       nil)))
@@ -196,7 +201,7 @@ that carries a platform accepts only that platform's qualified name."
            (platform
              (and fields (rest (assoc "platform" fields :test #'string=))))
            (release-directory-name
-             (and release-root (first (last (pathname-directory release-root)))))
+             (and release-root (lastcar (pathname-directory release-root))))
            (releases-root
              (and release-root
                   (uiop:pathname-parent-directory-pathname release-root)))

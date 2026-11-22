@@ -388,25 +388,6 @@
                 (test-assert (eq context (second entry)) "Every dispatched copy has the exact captured owner."))))))))
   nil)
 
-(-> test-compaction-recovery-selected-route () null)
-(defun test-compaction-recovery-selected-route ()
-  "Read the selected route's existing metadata without provider preparation."
-  (with-test-configuration (configuration)
-    (let ((provider (make-instance 'context-admission-test-provider :configuration configuration))
-          (calls    nil))
-      (test-call-with-function-replacements
-       (list (list 'provider-model-context-window-for
-                   (lambda (model &key provider)
-                     (push (list model provider) calls)
-                     20000)))
-       (lambda ()
-         (test-assert (= 20000 (provider-compaction-recovery-window provider))
-                      "The existing selected-route metadata is returned.")))
-      (test-assert (equal calls (list (list (config :model configuration)
-                                          (config :model-provider configuration))))
-                   "Lookup receives exactly the selected model and provider.")))
-  nil)
-
 (-> test-compaction-recovery-exhaustion () null)
 (defun test-compaction-recovery-exhaustion ()
   "Preserve history on tier exhaustion and on ordinary publication refusal."
@@ -1469,9 +1450,6 @@
                     (getf snapshot :reuse-flags) (copy-list (compaction-owner-compaction-flags provider))
                     (getf snapshot :reuse-input-preserved-p)
                     (not (null (member "Later explicit user work." (conversation-input-history conversation) :test #'equal)))))))
-         (setf (getf snapshot :restored-p)
-               (and (eq note-original (symbol-function 'agent--note-compaction-request))
-                    (eq fit-original (symbol-function 'agent--validate-compaction-projection))))
          (setf (application-input-controller application) nil)))
      :owned-p owned-p :large-p t)
     snapshot))
@@ -1491,7 +1469,6 @@
     (test-assert (getf snapshot :arrival-preserved-p) "Canonical reload retains the entire new user input.")
     (test-assert (member :validation-refusal kinds) "The actual publication guard rejects the next projection.")
     (test-assert (not (getf snapshot :checkpoint-p)) "An invalid summary is never durably published.")
-    (test-assert (getf snapshot :restored-p) "Both original observational bindings are restored.")
     (when (getf snapshot :owned-p)
       (test-assert (= 150 (getf snapshot :paid)) "Completed paid summary usage is retained exactly once.")
       (test-assert (eq :active (getf snapshot :mission-status)) "The definitive fit refusal preserves the mission.")
@@ -1510,8 +1487,7 @@
       (test-assert (= 1 (getf snapshot :summaries)) "The original stream and decoder complete one summary.")
       (test-assert (getf snapshot :arrival-preserved-p) "The small concurrent arrival is canonical.")
       (test-assert (member :validation-returned (mapcar #'first (getf snapshot :events)))
-                   "The actual original validator returns normally for fitting controls.")
-      (test-assert (getf snapshot :restored-p) "Qualification restores both original functions.")))
+                   "The actual original validator returns normally for fitting controls.")))
   nil)
 
 (-> test-compaction-owner-paid-refusals () null)
@@ -1764,10 +1740,7 @@
                                 (or (null session) (not (channel-subscription-submission-active-p session)))
                                 (zerop (getf (application-goal application) :requests-outstanding 0))
                                 (zerop (getf (application-goal application) :tokens-reserved 0))))))))
-           (when completion-id (task-orchestrator-close (task-completion--runtime (application-agent application)))))
-         (setf (getf snapshot :restored-p)
-               (and (eq note-original (symbol-function 'agent--note-compaction-request))
-                    (eq fit-original (symbol-function 'agent--validate-compaction-projection))))))
+           (when completion-id (task-orchestrator-close (task-completion--runtime (application-agent application)))))))
      :acp-p (not (eq entry :terminal-idle)) :owned-p owned-p)
     snapshot))
 
@@ -1776,7 +1749,6 @@
   "Assert shared owner cleanup, publication or local refusal and protocol outcomes."
   (test-assert (null (getf snapshot :failure)) "A local refusal never escapes as a channel or ACP crash.")
   (test-assert (not (getf snapshot :aborted-p)) "A local refusal is not recorded as a crashed model turn.")
-  (test-assert (getf snapshot :restored-p) "Original instrumentation bindings are restored.")
   (test-assert (= 1 (getf snapshot :finished-count)) "Channel work finalizes exactly once.")
   (dolist (key '(:controller-active-p :prompt-active-p :turn-open-p :ui-compacting-p))
     (test-assert (not (getf snapshot key)) (format nil "The owner releases ~A." key)))

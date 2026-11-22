@@ -532,8 +532,7 @@ under the progress lock before releasing it to other threads."
        (setf (task-progress-current-tool progress) tool
              (task-progress-current-tool-started-at progress) (and tool now))))
     (:tool-call-completed
-     (let ((tool (getf details :tool)))
-       (when tool (deque-push-back (task-progress-recent-tools progress) tool)))
+     (when-let ((tool (getf details :tool))) (deque-push-back (task-progress-recent-tools progress) tool))
      (setf (task-progress-current-tool progress) nil
            (task-progress-current-tool-started-at progress) nil)))
   (setf (task-progress-updated-at progress) now)
@@ -585,10 +584,9 @@ pool's own JOB-TERMINAL-P."
 A child admitted with a name keeps it; one named for it falls back to its
 identifier, which is generated to be readable for this reason. A caller-supplied
 name is bounded here, because only the identifier derived from it was."
-  (let ((name (job-name job)))
-    (if name
-        (subseq name 0 (min (length name) *task-identifier-maximum-characters*))
-        (job-identifier job))))
+  (if-let ((name (job-name job)))
+      (subseq name 0 (min (length name) *task-identifier-maximum-characters*))
+      (job-identifier job)))
 
 
 ;;;; -- Child Steering --
@@ -749,18 +747,16 @@ handed rather than storing a second copy."
 (-> task-job-agent-name (task-job) non-empty-string)
 (defun task-job-agent-name (job)
   "Return JOB's live or retained child role name."
-  (let ((definition (task-job-definition job)))
-    (if definition
-        (task-agent-definition-name definition)
-        (getf (task-job-definition-summary job) :name))))
+  (if-let ((definition (task-job-definition job)))
+      (task-agent-definition-name definition)
+      (getf (task-job-definition-summary job) :name)))
 
 (-> task-job-agent-source (task-job) keyword)
 (defun task-job-agent-source (job)
   "Return JOB's live or retained child role source."
-  (let ((definition (task-job-definition job)))
-    (if definition
-        (task-agent-definition-source definition)
-        (getf (task-job-definition-summary job) :source))))
+  (if-let ((definition (task-job-definition job)))
+      (task-agent-definition-source definition)
+      (getf (task-job-definition-summary job) :source)))
 
 (-> task-progress--snapshot-locked (task-progress integer) list)
 (defun task-progress--snapshot-locked (progress observed-at)

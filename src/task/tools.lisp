@@ -139,23 +139,22 @@
         (let ((definition
                 (task-find-agent-definition selectable-definitions name)))
           (unless definition
-            (let ((diagnostic
-                    (task-find-agent-diagnostic selectable-diagnostics name)))
-              (if diagnostic
-                  (error diagnostic)
-                  (error 'task-error
-                         :message
-                         (if selectable-names
-                             (format nil
-                                     "Unknown task agent ~S. Available agents: ~{~A~^, ~}."
-                                     name selectable-names)
-                             (format nil
-                                     "Unknown task agent ~S. No task agents are available."
-                                     name))
-                         :tool-name "child.spawn"))))
+            (if-let ((diagnostic
+                       (task-find-agent-diagnostic selectable-diagnostics name)))
+                (error diagnostic)
+                (error 'task-error
+                       :message
+                       (if selectable-names
+                           (format nil
+                                   "Unknown task agent ~S. Available agents: ~{~A~^, ~}."
+                                   name selectable-names)
+                           (format nil
+                                   "Unknown task agent ~S. No task agents are available."
+                                   name))
+                       :tool-name "child.spawn")))
           (task-agent-definition-validate-tools-available definition registry)
           (list :item item :definition definition :detached
-                 (eq (getf item :mode) ':detached)))))
+                (eq (getf item :mode) ':detached)))))
      items)))
 
 (-> task-tool-result
@@ -265,15 +264,6 @@ matches signal a TASK-ERROR naming the candidates."
                "conversation"))
    (config :data-root configuration)))
 
-(-> task--owner-component-p (t) boolean)
-(defun task--owner-component-p (value)
-  "Accept finite opaque task owner identifiers before constructing storage paths."
-  (and (stringp value) (<= 1 (length value) 128)
-       (every (lambda (character)
-                (find character "-_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                      :test #'char=)) value)
-       t))
-
 (-> task--safe-owner-path (configuration pathname) pathname)
 (defun task--safe-owner-path (configuration path)
   "Reject links and special-file ancestors within configured private storage."
@@ -295,7 +285,7 @@ matches signal a TASK-ERROR naming the candidates."
 (-> task--owner-conversation-identity (configuration t t) pathname)
 (defun task--owner-conversation-identity (configuration root owner)
   "Resolve exact OWNER storage under ROOT, without falling back from task to primary storage."
-  (unless (every #'task--owner-component-p (list root owner))
+  (unless (every #'shell-log--component-p (list root owner))
     (error 'task-error :message "Invalid task owner conversation identifier."))
   (task--safe-owner-path
    configuration
@@ -330,20 +320,19 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
                           (progn
                             (task--safe-owner-path configuration
                                                   (conversation-storage-directory-pathname identity))
-                            (let ((active (conversation-storage-active-pathname identity)))
-                              (when active
-                                (task--safe-owner-path configuration active)
-                                (let* ((header       (conversation--peek-segment-header active))
-                                       (conversation (conversation--from-header identity active header))
-                                       (found        (task--receipt-index (conversation-pending-input-identifiers conversation))))
-                                  (conversation--map-segment-records
-                                   identity active
-                                   (lambda (record)
-                                     (when (eq (first record) :message)
-                                       (let ((receipt (getf (rest record) :pending-input-identifier)))
-                                         (when (non-empty-string-p receipt)
-                                           (setf (gethash receipt found) t))))))
-                                  found))))
+                            (when-let ((active (conversation-storage-active-pathname identity)))
+                              (task--safe-owner-path configuration active)
+                              (let* ((header       (conversation--peek-segment-header active))
+                                     (conversation (conversation--from-header identity active header))
+                                     (found        (task--receipt-index (conversation-pending-input-identifiers conversation))))
+                                (conversation--map-segment-records
+                                 identity active
+                                 (lambda (record)
+                                   (when (eq (first record) :message)
+                                     (let ((receipt (getf (rest record) :pending-input-identifier)))
+                                       (when (non-empty-string-p receipt)
+                                         (setf (gethash receipt found) t))))))
+                                found)))
                         (error () nil))))
                 (when cache (setf (gethash key cache) result))
                 result))))
@@ -688,33 +677,32 @@ Only the current primary conversation's artifact root is searched."
 Live jobs take precedence. Durable lookup uses only VIEWER's primary artifact
 root. EXECUTION-ALIAS-P also accepts a live job's execution identifier. Missing
 jobs return three NIL values; each frontend owns its error and presentation."
-  (let ((job (if execution-alias-p
-                 (task-orchestrator-visible-job-named orchestrator viewer identifier)
-                 (find identifier (task-orchestrator-list-visible-jobs orchestrator viewer)
-                       :key #'session-job-identifier :test #'string=))))
-    (if job
-        (values (session-job-snapshot job) job nil)
-        (multiple-value-bind (result path)
-            (task--durable-job-result viewer identifier tool-name)
-          (values
-           (when result
-             (list :job-id       (or (getf result :id) identifier)
-                   :execution-id identifier
-                   :parent-id    (getf result :parent-id)
-                   :agent        (getf result :agent)
-                   :tool         (getf result :tool)
-                   :state        (case (getf result :status)
-                                   (:success
-                                    ':completed)
-                                   (:aborted
-                                    ':aborted)
-                                   (otherwise
-                                    ':failed))
-                   :detached     (and (getf result :detached) t)
-                   :progress     (list :duration-ms (getf result :duration-ms)
-                                       :usage       (getf result :usage))
-                   :result       result))
-           nil path)))))
+  (if-let ((job (if execution-alias-p
+                    (task-orchestrator-visible-job-named orchestrator viewer identifier)
+                    (find identifier (task-orchestrator-list-visible-jobs orchestrator viewer)
+                          :key #'session-job-identifier :test #'string=))))
+      (values (session-job-snapshot job) job nil)
+      (multiple-value-bind (result path)
+          (task--durable-job-result viewer identifier tool-name)
+        (values
+         (when result
+           (list :job-id       (or (getf result :id) identifier)
+                 :execution-id identifier
+                 :parent-id    (getf result :parent-id)
+                 :agent        (getf result :agent)
+                 :tool         (getf result :tool)
+                 :state        (case (getf result :status)
+                                 (:success
+                                  ':completed)
+                                 (:aborted
+                                  ':aborted)
+                                 (otherwise
+                                  ':failed))
+                 :detached     (and (getf result :detached) t)
+                 :progress     (list :duration-ms (getf result :duration-ms)
+                                     :usage       (getf result :usage))
+                 :result       result))
+         nil path))))
 
 (-> session-job-handoff-form (tool-execution-job agent keyword) (values list string))
 (defun session-job-handoff-form (job viewer reason)
@@ -846,88 +834,67 @@ poll a job whose completion will wake it."
   (let ((name (task-agent-definition-error-definition-name diagnostic)))
     (and name (funcall can-spawn-p name))))
 
-(-> task--agents-page (list integer integer) (values list string))
-(defun task--agents-page (entries offset limit)
-  "Return a bounded native page of ENTRIES starting at OFFSET."
+(-> task--bounded-page (list integer integer
+                         &key (:tag keyword) (:entry-key keyword) (:project function)
+                         (:tool-name string) (:message string))
+    (values list string))
+(defun task--bounded-page (entries offset limit &key tag entry-key (project #'identity)
+                                                  tool-name message)
+  "Return a native page and its text, stopping before the content bound."
   (let* ((total      (length entries))
          (end        (min total (+ offset limit)))
          (candidates (subseq entries (min offset total) end))
          (selected   nil))
-    (dolist (entry candidates)
-      (let* ((trial   (nconc (copy-list selected) (list entry)))
-             (next    (+ offset (length trial)))
-             (form
-               (list :task-agents
-                     :offset offset
-                     :count       (length trial)
-                     :total       total
-                     :next-offset (and (< next total) next)
-                     :entries     trial))
-             (content (task--write-readable-sexp form :pretty-p t)))
-        (if (<= (length content) *task-tool-content-limit*)
-            (setf selected trial)
-            (return))))
-    (when (and candidates (null selected))
-      (error 'task-error
-             :message
-             "One task agent discovery record exceeds the native result bound."
-             :tool-name "child.roles"))
-    (let* ((next (+ offset (length selected)))
-           (form
-             (list :task-agents
-                   :offset offset
-                   :count       (length selected)
-                   :total       total
-                   :next-offset (and (< next total) next)
-                   :entries     selected)))
-      (values form (task--write-readable-sexp form :pretty-p t)))))
+    (flet ((page-form (rows)
+             "Construct the page envelope for ROWS."
+             (let* ((count (length rows))
+                    (next  (+ offset count)))
+               (list tag :offset offset :count count :total total
+                     :next-offset (and (< next total) next) entry-key rows))))
+      (dolist (entry candidates)
+        (let* ((trial   (append selected (list (funcall project entry))))
+               (content (task--write-readable-sexp (page-form trial) :pretty-p t)))
+          (if (<= (length content) *task-tool-content-limit*)
+              (setf selected trial)
+              (return))))
+      (when (and candidates (null selected))
+        (error 'task-error :message message :tool-name tool-name))
+      (let ((form (page-form selected)))
+        (values form (task--write-readable-sexp form :pretty-p t))))))
+
+(-> task--agents-page (list integer integer) (values list string))
+(defun task--agents-page (entries offset limit)
+  "Return a bounded native page of ENTRIES starting at OFFSET."
+  (task--bounded-page entries offset limit
+                      :tag       ':task-agents
+                      :entry-key ':entries
+                      :tool-name "child.roles"
+                      :message   "One task agent discovery record exceeds the native result bound."))
+
+(-> task--job-list-summary (list) list)
+(defun task--job-list-summary (snapshot)
+  "Return the compact job-list summary of SNAPSHOT."
+  (append
+   (list :id   (getf snapshot :job-id)
+         :type (getf snapshot :type))
+   (when (getf snapshot :agent)
+     (list :agent (getf snapshot :agent)))
+   (when (getf snapshot :tool)
+     (list :tool    (getf snapshot :tool)
+           :summary (getf snapshot :summary)))
+   (list :state    (getf snapshot :state)
+         :detached (and (getf snapshot :detached) t)
+         :status   (getf (getf snapshot :result) :status))))
 
 (-> task--job-list-page (list integer integer) (values list string))
 (defun task--job-list-page (snapshots offset limit)
   "Return a content-aware native page of compact job summaries."
-  (let* ((total      (length snapshots))
-         (end        (min total (+ offset limit)))
-         (candidates (subseq snapshots (min offset total) end))
-         (selected   nil))
-    (dolist (snapshot candidates)
-      (let* ((summary
-               (append
-                (list :id   (getf snapshot :job-id)
-                      :type (getf snapshot :type))
-                (when (getf snapshot :agent)
-                  (list :agent (getf snapshot :agent)))
-                (when (getf snapshot :tool)
-                  (list :tool    (getf snapshot :tool)
-                        :summary (getf snapshot :summary)))
-                (list :state    (getf snapshot :state)
-                      :detached (and (getf snapshot :detached) t)
-                      :status   (getf (getf snapshot :result) :status))))
-             (trial   (nconc (copy-list selected) (list summary)))
-             (next    (+ offset (length trial)))
-             (form
-               (list :job-list
-                     :offset offset
-                     :count       (length trial)
-                     :total       total
-                     :next-offset (and (< next total) next)
-                     :jobs        trial))
-             (content (task--write-readable-sexp form :pretty-p t)))
-        (if (<= (length content) *task-tool-content-limit*)
-            (setf selected trial)
-            (return))))
-    (when (and candidates (null selected))
-      (error 'task-error
-             :message   "One job summary exceeds the native result bound."
-             :tool-name "job.list"))
-    (let* ((next (+ offset (length selected)))
-           (form
-             (list :job-list
-                   :offset offset
-                   :count       (length selected)
-                   :total       total
-                   :next-offset (and (< next total) next)
-                   :jobs        selected)))
-      (values form (task--write-readable-sexp form :pretty-p t)))))
+  (task--bounded-page snapshots offset limit
+                      :tag       ':job-list
+                      :entry-key ':jobs
+                      :project   #'task--job-list-summary
+                      :tool-name "job.list"
+                      :message   "One job summary exceeds the native result bound."))
 
 (defmethod tool-execute ((tool task-run-tool) (context tool-context) arguments)
   "Validate, admit, and detach one child agent."

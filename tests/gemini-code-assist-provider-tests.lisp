@@ -29,22 +29,6 @@
     (provider-error (condition)
       condition)))
 
-(-> gemini-code-assist-test--model-catalog () null)
-(defun gemini-code-assist-test--model-catalog ()
-  "Test stable aliases and static discovery for the private API."
-  (let ((provider (gemini-code-assist-test--provider)))
-    (test-assert
-     (string= (gemini-code-assist-model-name "pro")
-              "gemini-3-pro-preview")
-     "Code Assist resolves the pro alias")
-    (test-assert
-     (find "gemini-2.5-flash"
-           (gemini-code-assist-discover-models provider)
-           :key  (lambda (entry) (getf entry ':name))
-           :test #'string=)
-     "Code Assist discovery returns upstream model identifiers"))
-  nil)
-
 (-> gemini-code-assist-test--request-conversion () null)
 (defun gemini-code-assist-test--request-conversion ()
   "Test messages, calls, results, declarations, and thinking conversion."

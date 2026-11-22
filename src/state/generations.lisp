@@ -210,10 +210,7 @@ structured type and message survive the round trip."
 (defun generation-core-probe-runner-create ()
   "Create the subprocess runner that boots unpublished generation cores."
   (make-sbcl-core-probe-runner
-   :command (let ((configured (uiop:getenv "AUTOLITH_SBCL")))
-              (if (non-empty-string-p configured)
-                  configured
-                  "sbcl"))))
+   :command (sbcl-command)))
 
 (-> generation-load-manifest ((or pathname string) configuration) generation)
 (defun generation-load-manifest (pathname configuration)
@@ -263,12 +260,11 @@ structured type and message survive the round trip."
         (when invalid-selected-p
           (format stream "the selected checkpoint cannot start: ~A; "
                   (string-right-trim "." (princ-to-string (getf selected-health :reason)))))
-        (let ((fallback (getf summary :fallback)))
-          (if fallback
-              (format stream "(rollback) can start checkpoint ~A instead; "
-                      (generation-identifier fallback))
-              (write-string "no retained checkpoint can start, so (rollback) has nothing to go back to; "
-                            stream)))
+        (if-let ((fallback (getf summary :fallback)))
+            (format stream "(rollback) can start checkpoint ~A instead; "
+                    (generation-identifier fallback))
+            (write-string "no retained checkpoint can start, so (rollback) has nothing to go back to; "
+                          stream))
         (write-string "(checkpoint) saves one that can, and (checkpoint :allow-dirty t) saves it with uncommitted source changes"
                       stream)))))
 
@@ -338,8 +334,7 @@ between that process's exit and the boot of the saved core."
   (handler-case
       (sbcl-generations:generation-request-rollback
        (generation-store-for configuration)
-       (let ((generation (generation-find configuration identifier)))
-         (if generation (generation-identifier generation) identifier)))
+       (if-let ((generation (generation-find configuration identifier))) (generation-identifier generation) identifier))
     (sbcl-generations:rollback-requested (condition)
       (error 'rollback-requested
              :message
@@ -405,9 +400,8 @@ between that process's exit and the boot of the saved core."
   "Boot this retained generation as an image-scoped world server and terminal client.
 
 A supervised exact-heap restart rejoins its existing world endpoint namespace."
-  (let ((restart (world-server-restart-claim)))
-    (when restart
-      (uiop:quit (world-server-restart-resume restart))))
+  (when-let ((restart (world-server-restart-claim)))
+    (uiop:quit (world-server-restart-resume restart)))
   (unless *checkpoint-boot-generation*
     (error 'checkpoint-error
            :stage    ':boot

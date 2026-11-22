@@ -276,10 +276,10 @@ Conflicted facts come first, then the rest by predicate and text."
                (length (knowledge-view-snapshot view))))
       (changes
        (format nil "Changes since ~A:~%~{~A~%~}"
-               (memory--timestamp-string previous)
+               (format-utc-timestamp previous)
                (knowledge-change-lines changes)))
       (t
-       (format nil "Nothing changed since ~A." (memory--timestamp-string previous))))))
+       (format nil "Nothing changed since ~A." (format-utc-timestamp previous))))))
 
 (-> memory-knowledge--render-claim (knowledge-view string) string)
 (defun memory-knowledge--render-claim (view identifier)
@@ -333,20 +333,10 @@ Conflicted facts come first, then the rest by predicate and text."
                         (getf properties :predicates))
                 (mapcar (lambda (rule)
                           (format nil "~A: ~{~A~^ and ~} => ~A" (getf rule :id)
-                                  (mapcar #'memory-knowledge--pattern-text (getf rule :premises))
-                                  (memory-knowledge--pattern-text (getf rule :conclusion))))
+                                 (mapcar #'knowledge-pattern-text (getf rule :premises))
+                                 (knowledge-pattern-text (getf rule :conclusion))))
                         (getf properties :rules)))))
     (format stream "~%Use one with a recipe-use operation on memory:facts, then record its facts.")))
-
-(-> memory-knowledge--pattern-text (list) string)
-(defun memory-knowledge--pattern-text (pattern)
-  "Return a rule PATTERN as compact text."
-  (if (knowledge-negation-p pattern)
-      (format nil "not ~A" (memory-knowledge--pattern-text (second pattern)))
-      (format nil "~A(~{~A~^, ~})" (first pattern)
-              (mapcar (lambda (item)
-                        (if (knowledge-variable-p item) item (knowledge-term-display item)))
-                      (rest pattern)))))
 
 (-> memory-knowledge--render-rules (knowledge-base (option string)) string)
 (defun memory-knowledge--render-rules (base workspace)
@@ -361,10 +351,10 @@ Conflicted facts come first, then the rest by predicate and text."
           (format stream "~%~A v~D ~(~A~): ~:[proposed, awaiting admission~;~:*active version ~D~]~%  ~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A~@[~%  ~A~]~%"
                   (getf entry :id) (getf latest :version) (getf entry :scope)
                   (getf entry :active)
-                  (mapcar #'memory-knowledge--pattern-text (getf (rest rule) :premises))
+                  (mapcar #'knowledge-pattern-text (getf (rest rule) :premises))
                   (memory-knowledge--guard-texts rule)
                   (memory-knowledge--binding-texts rule)
-                  (memory-knowledge--pattern-text (getf (rest rule) :conclusion))
+                  (knowledge-pattern-text (getf (rest rule) :conclusion))
                   (getf (rest rule) :description))))
       (unless entries
         (format stream "~%No rules are defined.")))))
@@ -893,10 +883,10 @@ until the user admits it."
   "Return the command text a person approves to admit RULE."
   (format nil "rule.admit -- ~A v~D: ~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A"
           identifier version
-          (mapcar #'memory-knowledge--pattern-text (getf (rest rule) :premises))
+          (mapcar #'knowledge-pattern-text (getf (rest rule) :premises))
           (memory-knowledge--guard-texts rule)
           (memory-knowledge--binding-texts rule)
-          (memory-knowledge--pattern-text (getf (rest rule) :conclusion))))
+          (knowledge-pattern-text (getf (rest rule) :conclusion))))
 
 (-> memory-knowledge--guard-texts (list) list)
 (defun memory-knowledge--guard-texts (rule)

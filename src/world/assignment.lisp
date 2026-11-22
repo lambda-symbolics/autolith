@@ -60,11 +60,10 @@ without a world server keeps its task-scoped resource lifetime."
 (defun application-assignment-cancel (application &key (reason ':cancelled))
   "Cancel APPLICATION's pooled provider owner, never its parked serving thread.
 Return true when a pooled assignment owns execution, including during settlement."
-  (let ((job (application-assignment-job application)))
-    (when job
-      (when (job-cancel job :reason reason)
-        (session-job-note-cancellation job reason))
-      t)))
+  (when-let ((job (application-assignment-job application)))
+    (when (job-cancel job :reason reason)
+      (session-job-note-cancellation job reason))
+    t))
 
 (-> application-assignment-begin (application-input-controller) null)
 (defun application-assignment-begin (controller)
@@ -83,54 +82,53 @@ Return true when a pooled assignment owns execution, including during settlement
 The borrowed assignment registry belongs to the parent's task runtime and is
 never closed here. The worker, participant state and conversation lease retain
 one lifetime owner, APPLICATION, throughout the transition."
-  (let ((job (application-assignment-job application)))
-    (when job
-      (when stop-p
-        (application-assignment-cancel application :reason ':shutdown))
-      (job-await job :timeout-seconds (and stop-p *world-server-checkpoint-join-seconds*))
-      (unless (job-terminal-p job)
-        (error 'world-error :operation ':closing
-               :identifier             (conversation-identifier (application-conversation application))
-               :message                "The assignment has not ended; its host retains its resources and conversation lease."))
-      (let* ((controller  (application-input-controller application))
-             (stopping-p  (or stop-p
-                              (and controller
-                                   (application-input-controller-stopping-p controller))))
-             (registry    (if stopping-p
-                              (make-instance 'tool-registry)
-                              (application--create-tool-registry
-                               (application-configuration application)
-                               :conversation (application-conversation application))))
-             (installed-p nil))
-        (unwind-protect
-             (let ((agent (unless stopping-p
-                            (agent-create
-                             :configuration     (application-configuration application)
-                             :participant-state (application-participant-state application)
-                             :provider          (application-provider application)
-                             :conversation      (application-conversation application)
-                             :tool-registry     registry
-                             :worker            (application-worker application)))))
-               (application-disconnect-task-presentation application)
-               (setf (application-tool-registry application) registry)
-               (when agent
-                 (setf (application-agent application) agent))
-               (setf installed-p t
-                     (application-assignment-job application) nil)
-               (unless stopping-p
-                 (application-connect-task-presentation application))
-               (when controller
-                 (application-input-controller--finish-work controller))
-              (unless stopping-p
-                (let* ((server (application-world-server application))
-                       (host   (and server
-                                    (world-server--find-host
-                                     server (conversation-identifier (application-conversation application))))))
-                  (when (and host (not (world-host-attached-p host)))
-                    (setf (world-host-idle-grace-seconds host) *world-assignment-idle-grace-seconds*)))
-                (application-world-deliver application)))
-          (unless installed-p
-            (tool-registry-close-runtime-state registry))))))
+  (when-let ((job (application-assignment-job application)))
+    (when stop-p
+      (application-assignment-cancel application :reason ':shutdown))
+    (job-await job :timeout-seconds (and stop-p *world-server-checkpoint-join-seconds*))
+    (unless (job-terminal-p job)
+      (error 'world-error :operation ':closing
+             :identifier             (conversation-identifier (application-conversation application))
+             :message                "The assignment has not ended; its host retains its resources and conversation lease."))
+    (let* ((controller  (application-input-controller application))
+           (stopping-p  (or stop-p
+                            (and controller
+                                 (application-input-controller-stopping-p controller))))
+           (registry    (if stopping-p
+                            (make-instance 'tool-registry)
+                            (application--create-tool-registry
+                             (application-configuration application)
+                             :conversation (application-conversation application))))
+           (installed-p nil))
+      (unwind-protect
+           (let ((agent (unless stopping-p
+                          (agent-create
+                           :configuration     (application-configuration application)
+                           :participant-state (application-participant-state application)
+                           :provider          (application-provider application)
+                           :conversation      (application-conversation application)
+                           :tool-registry     registry
+                           :worker            (application-worker application)))))
+             (application-disconnect-task-presentation application)
+             (setf (application-tool-registry application) registry)
+             (when agent
+               (setf (application-agent application) agent))
+             (setf installed-p t
+                   (application-assignment-job application) nil)
+             (unless stopping-p
+               (application-connect-task-presentation application))
+             (when controller
+               (application-input-controller--finish-work controller))
+             (unless stopping-p
+               (let* ((server (application-world-server application))
+                      (host   (and server
+                                   (world-server--find-host
+                                    server (conversation-identifier (application-conversation application))))))
+                 (when (and host (not (world-host-attached-p host)))
+                   (setf (world-host-idle-grace-seconds host) *world-assignment-idle-grace-seconds*)))
+               (application-world-deliver application)))
+        (unless installed-p
+          (tool-registry-close-runtime-state registry)))))
   nil)
 
 (-> application-assignment-observer (application agent-observer task-job) agent-observer)

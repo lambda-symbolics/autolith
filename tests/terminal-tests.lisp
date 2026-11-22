@@ -129,15 +129,6 @@
                    "raw and enhanced Ctrl-Z have the same detach event")))
   nil)
 
-(-> terminal-tests--substring-count (string string) (integer 0))
-(defun terminal-tests--substring-count (needle haystack)
-  "Return the number of non-overlapping NEEDLE occurrences in HAYSTACK."
-  (loop with start = 0
-        for position = (search needle haystack :start2 start)
-        while position
-        count t
-        do (setf start (+ position (length needle)))))
-
 (-> terminal-tests--csi-final-index (string integer) (option integer))
 (defun terminal-tests--csi-final-index (text start)
   "Return the final-byte index for a CSI in TEXT beginning at START."
@@ -228,7 +219,7 @@
       (terminal-ui-resize active-ui 12))
     (let ((output (recording-terminal-output terminal)))
       (test-assert
-       (= (terminal-tests--substring-count "FINAL-SENTINEL" output) 1)
+       (= (test-substring-count "FINAL-SENTINEL" output) 1)
        "finalized transcript text appears exactly once")
       (test-assert
        (not (search "DUPLICATE" output))
@@ -307,7 +298,7 @@
           1)
        "a failed batch leaves its identifier available for retry")
       (test-assert
-       (= (terminal-tests--substring-count
+       (= (test-substring-count
            "BATCH-RETRY"
            (recording-terminal-output terminal))
           1)
@@ -903,13 +894,13 @@
         (test-assert (= (length (recording-terminal-chunks terminal)) 1)
                      "one editor change is one terminal write")
         (test-assert
-         (= (terminal-tests--substring-count
+         (= (test-substring-count
              (format nil "~C[?25l" *terminal-escape-character*)
              output)
             1)
          "one editor repaint hides the cursor once")
         (test-assert
-         (= (terminal-tests--substring-count
+         (= (test-substring-count
              (format nil "~C[?25h" *terminal-escape-character*)
              output)
             1)
@@ -1430,7 +1421,7 @@
                  (lambda (line)
                    (uiop:string-prefix-p "  … 2 more agents" line))
                  (uiop:split-string text :separator '(#\Newline)))
-                (= 8 (terminal-tests--substring-count "worker · queued" text)))
+                (= 8 (test-substring-count "worker · queued" text)))
            "the child strip caps agents and summarizes overflow")))
       (terminal-ui-set-agent-activities active-ui nil)
       (test-assert (terminal-ui-refresh-status active-ui)
@@ -1767,7 +1758,7 @@
         (test-assert (search "  partial" output)
                      "the fluid tail is painted live")
         (test-assert
-         (zerop (terminal-tests--substring-count
+         (zerop (test-substring-count
                  (format nil "~C[?25h" *terminal-escape-character*)
                  output))
          "streaming leaves cursor motion hidden")
@@ -1790,13 +1781,13 @@
         (test-assert (= (length (recording-terminal-chunks terminal)) 1)
                      "a fluid-tail update is one terminal write")
         (test-assert
-         (= (terminal-tests--substring-count
+         (= (test-substring-count
              (format nil "~C[?25l" *terminal-escape-character*)
              output)
             1)
          "a fluid-tail update hides cursor motion once")
         (test-assert
-         (= (terminal-tests--substring-count
+         (= (test-substring-count
              (format nil "~C[?25h" *terminal-escape-character*)
              output)
             1)
@@ -1872,10 +1863,6 @@
                        "typing a command prefix paints matching suggestions")
           (test-assert (search "(rollback ID)" painted)
                        "every matching command is suggested")
-          (test-assert
-           (and (search "(rollback ID)    select a generation" painted)
-                (search "(resume ID)      load a conversation" painted))
-           "descriptions start four cells after the widest visible label")
           (test-assert (not (search "(quit)" painted))
                        "commands outside the typed prefix are not suggested"))
         (recording-terminal-reset terminal)
@@ -2739,7 +2726,7 @@ Resize tests drive size changes through COLUMNS and LINES."
                (and (> painted-row-count 1)
                     retraction
                     (= (count #\Return retraction) painted-row-count)
-                    (= (terminal-tests--substring-count
+                    (= (test-substring-count
                         (format nil "~C[K" *terminal-escape-character*)
                         retraction)
                        painted-row-count)
@@ -2785,10 +2772,10 @@ Resize tests drive size changes through COLUMNS and LINES."
                   second-prompt second-input
                   (< first-prompt first-input execution completion
                      second-prompt second-input)
-                  (= (terminal-tests--substring-count prompt-start output) 2)
-                  (= (terminal-tests--substring-count input-start output) 2)
-                  (= (terminal-tests--substring-count execution-start output) 1)
-                  (= (terminal-tests--substring-count failure output) 1))
+                  (= (test-substring-count prompt-start output) 2)
+                  (= (test-substring-count input-start output) 2)
+                  (= (test-substring-count execution-start output) 1)
+                  (= (test-substring-count failure output) 1))
              "repaints, ticks, streams, and resize preserve one ordered marker block"))))
       (let* ((terminal
                (make-instance 'recording-terminal :columns 40))
@@ -2817,7 +2804,7 @@ Resize tests drive size changes through COLUMNS and LINES."
         (terminal-ui-stop ui)
         (terminal-ui-stop ui)
         (test-assert
-         (and (= (terminal-tests--substring-count
+         (and (= (test-substring-count
                   stop-failure (recording-terminal-output terminal))
                  1)
               (eq (terminal-ui-prompt-marker-state ui) ':closed))

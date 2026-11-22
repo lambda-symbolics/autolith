@@ -380,7 +380,7 @@
      (let* ((input  (merge-pathnames "unwind-input.sexp" (config :cache-root configuration)))
             (output (merge-pathnames "unwind-output.sexp" (config :cache-root configuration)))
             (bodies nil))
-       (task-tests--write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
+       (test-write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
        (test-telemetry-hooks--capture
         configuration
         (lambda ()
@@ -743,7 +743,7 @@
    (lambda (configuration)
      (let* ((input  (merge-pathnames "zero-request.sexp" (config :cache-root configuration)))
             (output (merge-pathnames "zero-request-result.sexp" (config :cache-root configuration))))
-       (task-tests--write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
+       (test-write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
        (dolist (category '(:provider-failure :process-failure))
          (let* ((bodies (test-telemetry-hooks--capture
                          configuration
@@ -815,7 +815,7 @@
             (input         (merge-pathnames "unknown-model.sexp" (config :cache-root configuration)))
             (output        (merge-pathnames "unknown-model-result.sexp" (config :cache-root configuration)))
             (exit-code     nil))
-       (task-tests--write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
+       (test-write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
        (let* ((bodies (test-telemetry-hooks--capture
                        configuration
                        (lambda ()

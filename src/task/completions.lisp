@@ -50,14 +50,13 @@
 (-> task-completion-mission-identifier (agent) (option non-empty-string))
 (defun task-completion-mission-identifier (agent)
   "Capture a durable exact mission identity before admitting asynchronous work."
-  (let ((context (mission--agent-context agent)))
-    (when context
-      (with-lock-held ((mission-context-lock context))
-        (let ((goal (mission-context-goal context)))
-          (unless (getf goal :completion-id)
-            (nconc goal (list :completion-id (make-identifier)))
-            (mission--record context))
-          (getf goal :completion-id))))))
+  (when-let ((context (mission--agent-context agent)))
+    (with-lock-held ((mission-context-lock context))
+      (let ((goal (mission-context-goal context)))
+        (unless (getf goal :completion-id)
+          (nconc goal (list :completion-id (make-identifier)))
+          (mission--record context))
+        (getf goal :completion-id)))))
 
 (-> task-completion--runtime (agent) (option task-orchestrator))
 (defun task-completion--runtime (agent)
@@ -70,9 +69,8 @@
 (-> task-completion--wake (task-completion-service) null)
 (defun task-completion--wake (service)
   "Signal the attached controller without holding a service or job lock."
-  (let ((wakeup (with-lock-held ((task-completion-service-wakeup-lock service))
-                  (task-completion-service-wakeup service))))
-    (when wakeup (funcall wakeup)))
+  (when-let ((wakeup (with-lock-held ((task-completion-service-wakeup-lock service))
+                       (task-completion-service-wakeup service)))) (funcall wakeup))
   nil)
 
 (-> task-completion--read (pathname) (option list))
@@ -97,36 +95,35 @@
 (-> task-completion--service (agent) (option task-completion-service))
 (defun task-completion--service (agent)
   "Find or restore the subscription for AGENT's exact owning conversation."
-  (let ((runtime (task-completion--runtime agent)))
-    (when runtime
-      (let ((owner (conversation-identifier (agent-conversation agent))))
-        (with-lock-held ((task-orchestrator-completion-lock runtime))
-          (or (gethash owner (task-orchestrator-completion-services runtime))
-              (let* ((root    (task--artifact-group-root
-                               (agent-configuration agent)
-                               (task-parent-root-conversation-identifier agent)))
-                     (path    (merge-pathnames (format nil "completion-~A.sexp" owner) root))
-                     (service (make-instance 'task-completion-service)))
-                (setf (task-completion-service-subscription service)
-                      (cl-jobpond:make-completion-subscription
-                       :capacity      *task-completion-capacity*
-                       :history-limit *task-completion-history-limit*
-                       :snapshot      (task-completion--read path)
-                       :store         (lambda (snapshot) (task-completion--write path snapshot))
-                       :snapshot-function
-                       (lambda (job snapshot)
-                         (task-completion--snapshot job snapshot :root root))
-                       :identity-function
-                       (lambda (job snapshot)
-                         (declare (ignore snapshot))
-                         (let ((identifier (session-job-execution-identifier job)))
-                           (unless (task-completion--delivered-p (agent-conversation agent) identifier)
-                             identifier)))
-                       :wakeup        (lambda (subscription)
-                                        (declare (ignore subscription))
-                                        (task-completion--wake service)))
-                      (gethash owner (task-orchestrator-completion-services runtime)) service)
-                service)))))))
+  (when-let ((runtime (task-completion--runtime agent)))
+    (let ((owner (conversation-identifier (agent-conversation agent))))
+      (with-lock-held ((task-orchestrator-completion-lock runtime))
+        (or (gethash owner (task-orchestrator-completion-services runtime))
+            (let* ((root    (task--artifact-group-root
+                             (agent-configuration agent)
+                             (task-parent-root-conversation-identifier agent)))
+                   (path    (merge-pathnames (format nil "completion-~A.sexp" owner) root))
+                   (service (make-instance 'task-completion-service)))
+              (setf (task-completion-service-subscription service)
+                    (cl-jobpond:make-completion-subscription
+                     :capacity      *task-completion-capacity*
+                     :history-limit *task-completion-history-limit*
+                     :snapshot      (task-completion--read path)
+                     :store         (lambda (snapshot) (task-completion--write path snapshot))
+                     :snapshot-function
+                     (lambda (job snapshot)
+                       (task-completion--snapshot job snapshot :root root))
+                     :identity-function
+                     (lambda (job snapshot)
+                       (declare (ignore snapshot))
+                       (let ((identifier (session-job-execution-identifier job)))
+                         (unless (task-completion--delivered-p (agent-conversation agent) identifier)
+                           identifier)))
+                     :wakeup        (lambda (subscription)
+                                      (declare (ignore subscription))
+                                      (task-completion--wake service)))
+                    (gethash owner (task-orchestrator-completion-services runtime)) service)
+              service))))))
 
 (-> task-completion--receipt (string) string)
 (defun task-completion--receipt (identifier)
@@ -245,14 +242,13 @@
 (-> task-completion--prune (task-completion-service conversation) null)
 (defun task-completion--prune (service conversation)
   "Forget settled mailbox records only after durable conversation delivery proof."
-  (let ((identifiers
-          (loop for message in (task-completion--messages service)
-                when (and (eq (getf message :state) ':acknowledged)
-                          (task-completion--delivered-p conversation (getf message :id)))
-                  collect (getf message :id))))
-    (when identifiers
-      (cl-jobpond:completion-subscription-forget
-       (task-completion-service-subscription service) :ids identifiers)))
+  (when-let ((identifiers
+               (loop for message in (task-completion--messages service)
+                     when (and (eq (getf message :state) ':acknowledged)
+                               (task-completion--delivered-p conversation (getf message :id)))
+                       collect (getf message :id))))
+    (cl-jobpond:completion-subscription-forget
+     (task-completion-service-subscription service) :ids identifiers))
   nil)
 
 (-> task-completion--reconcile-claims (task-completion-service conversation) null)
@@ -386,104 +382,90 @@ index, and only once delivered or gone; jobs noted since then stay."
                         entries))
          (kept         (mapcar (lambda (entry) (getf (getf entry :record) :execution-id))
                                outstanding)))
-    (with-lock-held ((task-orchestrator-artifact-lock runtime))
-      (let* ((current     (task-completion--index-read path))
-             (identifiers (union kept
-                                 (set-difference (getf current :execution-ids) settled
-                                                 :test #'equal)
-                                 :test #'equal)))
-        (unless (and (getf current :complete-p)
-                     (null (set-exclusive-or identifiers (getf current :execution-ids)
-                                             :test #'equal)))
-          (task-completion--index-write path :complete-p t :identifiers identifiers))))
+    (task-unfinished-work--index-settle runtime path :examined settled :kept kept)
     outstanding))
 
 (-> task-completion-restore (agent) null)
 (defun task-completion-restore (agent)
   "Reconstruct outstanding owned notifications without replaying job side effects."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (with-lock-held ((task-completion-service-delivery-lock service))
-        (unless (task-completion-service-restored-p service)
-          (let* ((conversation (agent-conversation agent))
-                 (owner        (conversation-identifier conversation))
-                 (subscription (task-completion-service-subscription service))
-                 (runtime      (task-completion--runtime agent))
-                 (complete-p   t))
-            (task-completion--reconcile-claims service conversation)
-            (let ((known (mapcar (lambda (message) (getf message :id))
-                                 (task-completion--messages service))))
-              (dolist (entry (task-completion--outstanding-entries agent runtime))
-                (let* ((record     (getf entry :record))
-                       (identifier (getf record :execution-id)))
-                  (when (and record (getf record :detached-p)
-                             (equal owner (getf record :completion-owner-conversation))
-                             (member (getf record :completion-policy) '(:notify :continue))
-                             (not (member identifier known :test #'equal))
-                             (not (task-completion--delivered-p conversation identifier)))
-                    (unless
-                        (task-completion--try-publish
-                         (lambda ()
-                           (let ((live (find identifier (task-orchestrator-list-jobs runtime)
-                                             :key #'session-job-execution-identifier :test #'equal)))
-                             (if live
-                                 (cl-jobpond:completion-subscription-watch subscription live)
-                                 (cl-jobpond:completion-subscription-replay
-                                  subscription
-                                  (task-completion--recover-snapshot
-                                   record :directory (uiop:pathname-directory-pathname (getf entry :path)))
-                                  :id identifier)))))
-                      (setf complete-p nil)
-                      (return))))))
-            (setf (task-completion-service-restored-p service) complete-p)
-            (with-lock-held ((task-completion-service-wakeup-lock service))
-              (setf (task-completion-service-deferred-p service) (not complete-p))))))))
+  (when-let ((service (task-completion--service agent)))
+    (with-lock-held ((task-completion-service-delivery-lock service))
+      (unless (task-completion-service-restored-p service)
+        (let* ((conversation (agent-conversation agent))
+               (owner        (conversation-identifier conversation))
+               (subscription (task-completion-service-subscription service))
+               (runtime      (task-completion--runtime agent))
+               (complete-p   t))
+          (task-completion--reconcile-claims service conversation)
+          (let ((known (mapcar (lambda (message) (getf message :id))
+                               (task-completion--messages service))))
+            (dolist (entry (task-completion--outstanding-entries agent runtime))
+              (let* ((record     (getf entry :record))
+                     (identifier (getf record :execution-id)))
+                (when (and record (getf record :detached-p)
+                           (equal owner (getf record :completion-owner-conversation))
+                           (member (getf record :completion-policy) '(:notify :continue))
+                           (not (member identifier known :test #'equal))
+                           (not (task-completion--delivered-p conversation identifier)))
+                  (unless
+                      (task-completion--try-publish
+                       (lambda ()
+                         (if-let ((live (find identifier (task-orchestrator-list-jobs runtime)
+                                              :key #'session-job-execution-identifier :test #'equal)))
+                             (cl-jobpond:completion-subscription-watch subscription live)
+                             (cl-jobpond:completion-subscription-replay
+                              subscription
+                              (task-completion--recover-snapshot
+                               record :directory (uiop:pathname-directory-pathname (getf entry :path)))
+                              :id identifier))))
+                    (setf complete-p nil)
+                    (return))))))
+          (setf (task-completion-service-restored-p service) complete-p)
+          (with-lock-held ((task-completion-service-wakeup-lock service))
+            (setf (task-completion-service-deferred-p service) (not complete-p)))))))
   nil)
 
 (-> task-completion-pending (agent &key (:continuation-only-p boolean)) list)
 (defun task-completion-pending (agent &key continuation-only-p)
   "Inspect undelivered owned notices; optional filtering selects continuation policy."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (let ((conversation (agent-conversation agent)))
-        (append
-         (with-lock-held ((task-completion-service-delivery-lock service))
-           (remove-if (lambda (notice)
-                        (or (task-completion--delivered-p conversation (getf notice :id))
-                            (and continuation-only-p
-                                 (not (eq (getf notice :completion-policy) ':continue)))))
-                      (copy-list (task-completion-service-cancellation-notices service))))
-         (loop for message in (task-completion--messages service)
-              for notice = (task-completion--notice message)
-              when (and (member (getf message :state) '(:queued :delivered :unknown))
-                        (not (task-completion--delivered-p conversation (getf message :id)))
-                        (or (not continuation-only-p)
-                            (eq (getf notice :completion-policy) ':continue)))
-                collect notice))))))
+  (when-let ((service (task-completion--service agent)))
+    (let ((conversation (agent-conversation agent)))
+      (append
+       (with-lock-held ((task-completion-service-delivery-lock service))
+         (remove-if (lambda (notice)
+                      (or (task-completion--delivered-p conversation (getf notice :id))
+                          (and continuation-only-p
+                               (not (eq (getf notice :completion-policy) ':continue)))))
+                    (copy-list (task-completion-service-cancellation-notices service))))
+       (loop for message in (task-completion--messages service)
+            for notice = (task-completion--notice message)
+            when (and (member (getf message :state) '(:queued :delivered :unknown))
+                      (not (task-completion--delivered-p conversation (getf message :id)))
+                      (or (not continuation-only-p)
+                          (eq (getf notice :completion-policy) ':continue)))
+              collect notice)))))
 
 (-> task-completion-next-time (agent) (option integer))
 (defun task-completion-next-time (agent)
   "Return the fixed universal-time deadline of the oldest pending continuation batch."
-  (let ((notices (task-completion-pending agent :continuation-only-p t)))
-    (when notices (reduce #'min notices :key (lambda (notice) (getf notice :ready-at))))))
+  (when-let ((notices (task-completion-pending agent :continuation-only-p t))) (reduce #'min notices :key (lambda (notice) (getf notice :ready-at)))))
 
 (-> task-completion-maintenance-needed-p (agent) boolean)
 (defun task-completion-maintenance-needed-p (agent)
   "Test bounded queue pressure without restoring jobs or invoking callbacks."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (let* ((snapshot   (cl-jobpond:completion-subscription-snapshot
-                          (task-completion-service-subscription service)))
-             (messages   (getf snapshot :messages))
-             (live-count (count-if (lambda (message)
-                                     (member (getf message :state) '(:queued :delivered :unknown)))
-                                   messages)))
-        (and (plusp live-count)
-             (or (>= live-count (getf snapshot :capacity))
-                 (>= (length messages) (getf snapshot :history-limit))
-                 (with-lock-held ((task-completion-service-wakeup-lock service))
-                   (task-completion-service-deferred-p service)))
-             t)))))
+  (when-let ((service (task-completion--service agent)))
+    (let* ((snapshot   (cl-jobpond:completion-subscription-snapshot
+                        (task-completion-service-subscription service)))
+           (messages   (getf snapshot :messages))
+           (live-count (count-if (lambda (message)
+                                   (member (getf message :state) '(:queued :delivered :unknown)))
+                                 messages)))
+      (and (plusp live-count)
+           (or (>= live-count (getf snapshot :capacity))
+               (>= (length messages) (getf snapshot :history-limit))
+               (with-lock-held ((task-completion-service-wakeup-lock service))
+                 (task-completion-service-deferred-p service)))
+           t))))
 
 (-> task-completion-deliver
     (agent &key (:identifiers list) (:call-with-delivery function)) list)
@@ -563,12 +545,11 @@ appended notices after it returns. Publication and wake callbacks run outside it
 (-> task-completion-connect (agent function) null)
 (defun task-completion-connect (agent wakeup)
   "Connect a short controller wakeup and restore pending delivery state."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (with-lock-held ((task-completion-service-wakeup-lock service))
-        (setf (task-completion-service-wakeup service) wakeup))
-      (task-completion-restore agent)
-      (when (task-completion-pending agent) (task-completion--wake service))))
+  (when-let ((service (task-completion--service agent)))
+    (with-lock-held ((task-completion-service-wakeup-lock service))
+      (setf (task-completion-service-wakeup service) wakeup))
+    (task-completion-restore agent)
+    (when (task-completion-pending agent) (task-completion--wake service)))
   nil)
 
 (-> task-completion-wakeup-connected-p (agent) boolean)
@@ -596,10 +577,9 @@ appended notices after it returns. Publication and wake callbacks run outside it
 (-> task-completion-disconnect (agent) null)
 (defun task-completion-disconnect (agent)
   "Disconnect controller wakeups without losing durable pending notifications."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (with-lock-held ((task-completion-service-wakeup-lock service))
-        (setf (task-completion-service-wakeup service) nil))))
+  (when-let ((service (task-completion--service agent)))
+    (with-lock-held ((task-completion-service-wakeup-lock service))
+      (setf (task-completion-service-wakeup service) nil)))
   nil)
 
 (-> task-completion-release (agent) null)
@@ -609,18 +589,17 @@ appended notices after it returns. Publication and wake callbacks run outside it
 The service's closures hold AGENT, so a finished child agent stays reachable
 until its entry leaves the orchestrator table. A later run of the same
 conversation restores a fresh service from its durable snapshot."
-  (let ((runtime (task-completion--runtime agent)))
-    (when runtime
-      (let ((owner   (conversation-identifier (agent-conversation agent)))
-            (service nil))
-        (with-lock-held ((task-orchestrator-completion-lock runtime))
-          (setf service (gethash owner (task-orchestrator-completion-services runtime)))
-          (remhash owner (task-orchestrator-completion-services runtime)))
-        (when service
-          (with-lock-held ((task-completion-service-wakeup-lock service))
-            (setf (task-completion-service-wakeup service) nil))
-          (cl-jobpond:completion-subscription-close
-           (task-completion-service-subscription service))))))
+  (when-let ((runtime (task-completion--runtime agent)))
+    (let ((owner   (conversation-identifier (agent-conversation agent)))
+          (service nil))
+      (with-lock-held ((task-orchestrator-completion-lock runtime))
+        (setf service (gethash owner (task-orchestrator-completion-services runtime)))
+        (remhash owner (task-orchestrator-completion-services runtime)))
+      (when service
+        (with-lock-held ((task-completion-service-wakeup-lock service))
+          (setf (task-completion-service-wakeup service) nil))
+        (cl-jobpond:completion-subscription-close
+         (task-completion-service-subscription service)))))
   nil)
 
 (-> task-completion-close (task-orchestrator) null)
@@ -657,17 +636,16 @@ seconds. Re-read on maintenance so reload affects outstanding cancellations.")
 (-> task-cancellation-scan-wait (agent) (option real))
 (defun task-cancellation-scan-wait (agent)
   "Bound native-state observation and reload latency without another worker."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (cond
-        ((with-lock-held ((task-completion-service-delivery-lock service))
-           (some (lambda (notice) (getf notice :presentation-pending-p))
-                 (task-completion-service-cancellation-notices service)))
-         0)
-        ((task-completion-awaited-jobs agent)
-         (max 0 (/ (- (task-completion-service-cancellation-scan-at service)
-                      (get-internal-real-time))
-                   internal-time-units-per-second)))))))
+  (when-let ((service (task-completion--service agent)))
+    (cond
+      ((with-lock-held ((task-completion-service-delivery-lock service))
+         (some (lambda (notice) (getf notice :presentation-pending-p))
+               (task-completion-service-cancellation-notices service)))
+       0)
+      ((task-completion-awaited-jobs agent)
+       (max 0 (/ (- (task-completion-service-cancellation-scan-at service)
+                    (get-internal-real-time))
+                 internal-time-units-per-second))))))
 
 (-> task-cancellation-present-pending (agent function) null)
 (defun task-cancellation-present-pending (agent present)
@@ -675,18 +653,17 @@ seconds. Re-read on maintenance so reload affects outstanding cancellations.")
 A successful PRESENT clears the terminal flag, independently of model receipts.
 Deferral or a nonlocal exit retains it; suppress interrupts only across the
 short output/flag pair, so interruption cannot lose or repeat successful output."
-  (let ((service (task-completion--service agent)))
-    (when service
-      (with-lock-held ((task-completion-service-delivery-lock service))
-        (dolist (notice (copy-list (task-completion-service-cancellation-notices service)))
-          (when (getf notice :presentation-pending-p)
-            (sb-sys:without-interrupts
-              (when (funcall present notice)
-                (setf (getf notice :presentation-pending-p) nil))))
-          (when (and (not (getf notice :presentation-pending-p))
-                     (task-completion--delivered-p (agent-conversation agent) (getf notice :id)))
-            (setf (task-completion-service-cancellation-notices service)
-                  (remove notice (task-completion-service-cancellation-notices service))))))))
+  (when-let ((service (task-completion--service agent)))
+    (with-lock-held ((task-completion-service-delivery-lock service))
+      (dolist (notice (copy-list (task-completion-service-cancellation-notices service)))
+        (when (getf notice :presentation-pending-p)
+          (sb-sys:without-interrupts
+            (when (funcall present notice)
+              (setf (getf notice :presentation-pending-p) nil))))
+        (when (and (not (getf notice :presentation-pending-p))
+                   (task-completion--delivered-p (agent-conversation agent) (getf notice :id)))
+          (setf (task-completion-service-cancellation-notices service)
+                (remove notice (task-completion-service-cancellation-notices service)))))))
   nil)
 
 (-> task-cancellation-maintain (agent &key (:now integer)) list)

@@ -94,7 +94,7 @@
                           (let* ((input  (merge-pathnames "job-input.sexp" (config :cache-root configuration)))
                                  (output (merge-pathnames "job-output.sexp" (config :cache-root configuration)))
                                  (events (make-string-output-stream)))
-                            (task-tests--write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
+                            (test-write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
                             (values (run-job-run input output ':full-access :configuration configuration
                                                 :events ':sexp :event-output events)
                                     (when (probe-file output) (run-job-read-file output))

@@ -40,15 +40,12 @@
 (-> context-rule--values (keyword t) list)
 (defun context-rule--values (field values)
   "Validate and detach bounded string metadata VALUES for FIELD."
-  (unless (handler-case
-              (and (listp values) (list-length values)
-                   (<= (length values) *context-rule-value-limit*)
-                   (every (lambda (value)
-                            (and (non-empty-string-p value)
-                                 (<= (length value) 1024)))
-                          values))
-            (type-error ()
-              nil))
+  (unless (and (proper-list-p values)
+               (<= (length values) *context-rule-value-limit*)
+               (every (lambda (value)
+                        (and (non-empty-string-p value)
+                             (<= (length value) 1024)))
+                      values))
     (context-rule--reject field "Rule trigger values must be a bounded proper list of nonempty strings."))
   (mapcar #'copy-seq values))
 

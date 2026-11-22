@@ -5,9 +5,8 @@
 (-> portable-tests--failure (function t) (option error))
 (defun portable-tests--failure (convert value)
   "Return the typed boundary failure from converting VALUE, or NIL."
-  (handler-case (progn (funcall convert value) nil)
-    (autolith-error (condition) condition)
-    (application-client-unavailable (condition) condition)))
+  (test-caught-error '(or autolith-error application-client-unavailable)
+                     (lambda () (funcall convert value))))
 
 (-> portable-tests--nested (integer) t)
 (defun portable-tests--nested (depth)

@@ -302,6 +302,5 @@ the same time, so memories derived from claims follow those claims."
 (-> memory-assessment-summary (memory-assessment) (option string))
 (defun memory-assessment-summary (assessment)
   "Return a short explanation of a stale or unverified ASSESSMENT, or NIL."
-  (let ((reasons (memory-assessment-reasons assessment)))
-    (when reasons
-      (format nil "~{~A~^; ~}" (mapcar #'memory-status-reason-text reasons)))))
+  (when-let ((reasons (memory-assessment-reasons assessment)))
+    (format nil "~{~A~^; ~}" (mapcar #'memory-status-reason-text reasons))))

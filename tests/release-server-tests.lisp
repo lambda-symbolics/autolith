@@ -2,18 +2,6 @@
 
 ;;;; -- Release Server Tests --
 
-(-> release-server-tests--write-file (pathname string) pathname)
-(defun release-server-tests--write-file (pathname content)
-  "Write test CONTENT to PATHNAME and return PATHNAME."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :external-format   ':utf-8)
-    (write-string content stream))
-  pathname)
-
 (-> release-server-tests--delete-tree (pathname) null)
 (defun release-server-tests--delete-tree (root)
   "Make ROOT writable, then delete it. Published release fixtures are read-only."
@@ -37,7 +25,7 @@
          (archive      (merge-pathnames archive-name directory))
          (checksum     (merge-pathnames (format nil "~A.sha256" archive-name)
                                         directory)))
-    (release-server-tests--write-file archive content)
+    (test-write-text archive content)
     (release-archive--checksum-file archive checksum)
     (values archive checksum)))
 
@@ -71,15 +59,15 @@
   (let* ((tag        (format nil "v~A" version))
          (deployment (merge-pathnames (format nil "~A/" tag) root)))
     (ensure-directories-exist (merge-pathnames ".keep" deployment))
-    (release-server-tests--write-file
+    (test-write-text
      (merge-pathnames "autolith.asd" deployment)
      (format nil
              "(asdf:defsystem #:autolith~%  :version (:read-file-line ~S))~%"
              "VERSION"))
-    (release-server-tests--write-file
+    (test-write-text
      (merge-pathnames "VERSION" deployment) (format nil "~A~%" version))
     (when updater-p
-      (release-server-tests--write-file
+      (test-write-text
        (merge-pathnames "server/release-updater.lisp" deployment)
        "(in-package #:autolith)"))
     (release-server-tests--git deployment '("init" "--quiet"))
@@ -199,7 +187,7 @@
                           (list (concatenate 'string valid valid) nil)
                           (list "malformed" nil)))
             (destructuring-bind (record accepted-p) entry
-              (release-server-tests--write-file checksum record)
+              (test-write-text checksum record)
               (let ((accepted
                       (handler-case
                           (progn
@@ -226,18 +214,18 @@
            (version-file (merge-pathnames "VERSION" checkout))
            (system       (asdf:find-system :autolith))
            (host-version (asdf:component-version system)))
-      (release-server-tests--write-file
+      (test-write-text
        definition "(asdf:defsystem #:autolith :version \"0.11.2\")")
       (test-assert (string= (release-builder--source-version checkout) "0.11.2")
                    "ASDF reads historical release metadata")
-      (release-server-tests--write-file
+      (test-write-text
        definition "(asdf:defsystem #:autolith :version (:read-file-line \"VERSION\"))")
       (dolist (version '("0.65.0" "0.65.1"))
-        (release-server-tests--write-file version-file (format nil "~A~%" version))
+        (test-write-text version-file (format nil "~A~%" version))
         (test-assert (string= (release-builder--source-version checkout) version)
                      "VERSION-only changes determine the candidate release version"))
       (dolist (version '("invalid" "" "1.2"))
-        (release-server-tests--write-file version-file version)
+        (test-write-text version-file version)
         (test-assert
          (handler-case
              (progn (release-builder--source-version checkout) nil)
@@ -277,7 +265,7 @@
                     (make-identifier))
             (uiop:temporary-directory)))))
     (ensure-directories-exist root)
-    (release-server-tests--write-file (merge-pathnames "file" root) "x")
+    (test-write-text (merge-pathnames "file" root) "x")
     (uiop:run-program (list "chmod" "-R" "a-w" (namestring root)))
     (release-server-tests--delete-tree root)
     (test-assert (not (uiop:directory-exists-p root))
@@ -302,20 +290,20 @@
             :port        18098)))
     (unwind-protect
          (progn
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames "script/install" source-root)
             (format nil "#!/bin/sh~%"))
            (dolist (tag '("v0.9.12" "v0.10.1"))
              (let* ((directory
                       (release-server--release-directory configuration tag))
                     (archive (release-server--archive-name tag)))
-               (release-server-tests--write-file
+               (test-write-text
                 (merge-pathnames archive directory)
                 "archive")
-               (release-server-tests--write-file
+               (test-write-text
                 (merge-pathnames (format nil "~A.sha256" archive) directory)
                 "checksum")))
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames
              (release-server--archive-name "v0.12.0")
              (release-server--release-directory configuration "v0.12.0"))
@@ -402,10 +390,10 @@
                                  "x86_64-darwin"
                                  "arm64-darwin"))
                (let ((archive (release-server--archive-name tag platform)))
-                 (release-server-tests--write-file
+                 (test-write-text
                   (merge-pathnames archive directory)
                   (format nil "~A-archive" platform))
-                 (release-server-tests--write-file
+                 (test-write-text
                   (merge-pathnames (format nil "~A.sha256" archive) directory)
                   (format nil "~A-checksum" platform))
                  (dolist (name (list archive (format nil "~A.sha256" archive)))
@@ -473,10 +461,10 @@
          (source-b (merge-pathnames "source-b/" root)))
     (unwind-protect
          (progn
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames "fixture.txt" source-a)
             "deterministic release identity")
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames "fixture.txt" source-b)
             "deterministic release identity")
            (sb-posix:utime
@@ -518,7 +506,7 @@
          (broken-link     (merge-pathnames "broken" dependency-root)))
     (unwind-protect
          (progn
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames "system.asd" target-root)
             "(asdf:defsystem #:fixture)")
            (ensure-directories-exist (merge-pathnames ".keep" dependency-root))
@@ -592,9 +580,9 @@
                   (directory
                     (release-server--release-directory server tag))
                   (archive (release-server--archive-name tag)))
-             (release-server-tests--write-file
+             (test-write-text
               (merge-pathnames archive directory) "archive")
-             (release-server-tests--write-file
+             (test-write-text
               (merge-pathnames (format nil "~A.sha256" archive) directory)
               "checksum"))
            (test-assert
@@ -602,7 +590,7 @@
                            (release-builder-pending-tags builder tags))
                    '("v0.11.1" "v0.12.0"))
             "a builder catches up every tag newer than its latest publication")
-           (release-server-tests--write-file
+           (test-write-text
             (merge-pathnames "autolith.asd" source-root)
             (format nil
                     "(asdf:defsystem #:autolith~%  :version \"0.11.2\"~%)~%"))
@@ -610,9 +598,6 @@
             (string= (release-builder--source-version source-root) "0.11.2")
             "builder source validation reads the declared ASDF version"))
         (release-server-tests--delete-tree root)))
-  (test-assert
-   (search "lambda-symbolics/autolith" *release-builder-default-repository*)
-   "the builder default repository is the live GitHub origin")
   (dolist (case '(("https://github.com/lambda-symbolics/autolith.git"
                    "lambda-symbolics" "autolith")
                   ("https://github.com/lambda-symbolics/autolith/"
@@ -695,7 +680,7 @@
                    (merge-pathnames
                     (release-server--archive-name tag "x86_64-linux")
                     staging)))
-             (release-server-tests--write-file linux "changed-linux")
+             (test-write-text linux "changed-linux")
              (release-archive--checksum-file
               linux
               (merge-pathnames
@@ -1087,7 +1072,7 @@
                  "no incoming pathname survives into candidate setup")))
              (test-assert setup-called-p
                           "final-path candidate setup is invoked")
-             (release-server-tests--write-file
+             (test-write-text
               (merge-pathnames "VERSION"
                                (merge-pathnames "v0.18.0/" remote-root))
               (format nil "0.18.1~%"))

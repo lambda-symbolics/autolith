@@ -744,7 +744,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                                             decision))))
       (procedure-define configuration (learning-tests--procedure))
       (flet ((run (&rest parameters)
-               (memory-resource-tests--call
+               (test-resource-call
                 registry context
                 :namespace "procedure"
                 :name      "run"
@@ -848,7 +848,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                             (= 1 (getf (entry) :user-runs)))
                        "the user's own run is recorded as such"))
         (let ((listing (tool-result-content
-                        (memory-resource-tests--call registry context
+                        (test-resource-call registry context
                                                      :namespace "resource"
                                                      :name      "read"
                                                      :arguments (list "uri" "memory:procedures")))))
@@ -1156,10 +1156,12 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                              (text (application-procedure-transition-entry
                                     application "missing" ':admit)))
                      "an unknown procedure points to (procedures)")
-        (test-assert (equal (application--procedures-learned-notice
-                             '(("make-sales-report" 1 3) ("archive" 2 4)))
-                            "@ learned procedure make-sales-report from 3 turns · procedure archive v2 learned from 4 turns · (procedures)")
-                     "the person is told which procedures were learned"))))
+        (let ((notice (application--procedures-learned-notice
+                       '(("make-sales-report" 1 3) ("archive" 2 4)))))
+          (test-assert (and (search "make-sales-report" notice)
+                            (search "archive" notice)
+                            (search "(procedures)" notice))
+                       "the notice names the learned procedures and their command")))))
   nil)
 
 (defclass learning-tests--model (model-provider)

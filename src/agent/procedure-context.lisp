@@ -90,55 +90,54 @@ Once one ran for this request, the model is told so instead of offered it again.
     (when (and (not (request-context-compaction-p request))
                (knowledge-active-p configuration)
                (non-empty-string-p text))
-      (let ((ran (procedure-context--ran-this-turn (request-context-conversation request))))
-        (if ran
-            (change-class
-             (make-context-contribution
-              :identifier        "procedure-offers"
-              :instruction
-              (format nil "Learned procedure~P ~{~A~^, ~} already ran for this request; the procedure.run result reports every call it made. Answer from it, or continue with ordinary calls where it stopped."
-                      (length ran) ran)
-              :priority          25
-              :lifetime          ':turn
-              :deduplication-key "procedure-offers")
-             'procedure-offer-contribution
-             :names ran
-             :ran-p t)
-            (let ((offers  (handler-case (procedure-offers configuration text)
-                             (knowledge-error ()
-                               nil)))
-                  (related nil))
-              (unless offers
-                (setf related (handler-case (procedure-related-offers configuration text)
-                                (knowledge-error ()
-                                  nil))))
-              (when related
-                (return-from procedure-offer-context
-                  (change-class
-                   (make-context-contribution
-                    :identifier        "procedure-offers"
-                    :instruction
-                    "Procedures Autolith learned from earlier turns may fit this request, though its wording matched none of their request patterns. If one does the work this request needs, call procedure.run with its id and the parameters it lists, taken from the request; otherwise work normally."
-                    :evidence          (format nil "~{~A~^~%~}"
-                                               (mapcar #'procedure-related-offer-line related))
-                    :priority          25
-                    :lifetime          ':turn
-                    :deduplication-key "procedure-offers")
-                   'procedure-offer-contribution
-                   :names     (mapcar (lambda (offer) (getf offer :id)) related)
-                   :related-p t)))
-              (when offers
+      (if-let ((ran (procedure-context--ran-this-turn (request-context-conversation request))))
+          (change-class
+           (make-context-contribution
+            :identifier        "procedure-offers"
+            :instruction
+            (format nil "Learned procedure~P ~{~A~^, ~} already ran for this request; the procedure.run result reports every call it made. Answer from it, or continue with ordinary calls where it stopped."
+                    (length ran) ran)
+            :priority          25
+            :lifetime          ':turn
+            :deduplication-key "procedure-offers")
+           'procedure-offer-contribution
+           :names ran
+           :ran-p t)
+          (let ((offers  (handler-case (procedure-offers configuration text)
+                           (knowledge-error ()
+                             nil)))
+                (related nil))
+            (unless offers
+              (setf related (handler-case (procedure-related-offers configuration text)
+                              (knowledge-error ()
+                                nil))))
+            (when related
+              (return-from procedure-offer-context
                 (change-class
                  (make-context-contribution
                   :identifier        "procedure-offers"
                   :instruction
-                  "A procedure Autolith learned from earlier turns fits this request. One procedure.run call with the arguments shown makes the same tool calls those turns made; check its report and answer from it. Work normally instead if the request needs something different."
-                  :evidence          (format nil "~{~A~^~%~}" (mapcar #'procedure-offer-line offers))
+                  "Procedures Autolith learned from earlier turns may fit this request, though its wording matched none of their request patterns. If one does the work this request needs, call procedure.run with its id and the parameters it lists, taken from the request; otherwise work normally."
+                  :evidence          (format nil "~{~A~^~%~}"
+                                             (mapcar #'procedure-related-offer-line related))
                   :priority          25
                   :lifetime          ':turn
                   :deduplication-key "procedure-offers")
                  'procedure-offer-contribution
-                 :names (mapcar (lambda (offer) (getf offer :id)) offers)))))))))
+                 :names     (mapcar (lambda (offer) (getf offer :id)) related)
+                 :related-p t)))
+            (when offers
+              (change-class
+               (make-context-contribution
+                :identifier        "procedure-offers"
+                :instruction
+                "A procedure Autolith learned from earlier turns fits this request. One procedure.run call with the arguments shown makes the same tool calls those turns made; check its report and answer from it. Work normally instead if the request needs something different."
+                :evidence          (format nil "~{~A~^~%~}" (mapcar #'procedure-offer-line offers))
+                :priority          25
+                :lifetime          ':turn
+                :deduplication-key "procedure-offers")
+               'procedure-offer-contribution
+               :names (mapcar (lambda (offer) (getf offer :id)) offers))))))))
 
 (register-context-contributor "procedure-offers" 'procedure-offer-context :source ':built-in)
 
@@ -151,12 +150,11 @@ failure while learning is not the turn's failure: nothing is reported."
   (let ((child-class (find-class 'task-child-agent nil)))
     (when (and (>= tool-calls 2)
                (not (and child-class (typep agent child-class))))
-      (let ((learned (handler-case (procedure-learn (agent-configuration agent))
-                       (error ()
-                         nil))))
-        (when learned
-          (agent-observer-status observer :procedures-learned
-                                 (list :procedures learned))))))
+      (when-let ((learned (handler-case (procedure-learn (agent-configuration agent))
+                            (error ()
+                              nil))))
+        (agent-observer-status observer :procedures-learned
+                               (list :procedures learned)))))
   nil)
 
 (-> agent-run-fitting-procedure
@@ -184,28 +182,27 @@ a child agent."
                registry
                (tool-registry-find registry "procedure" "run")
                (knowledge-active-p configuration))
-      (let ((offer (handler-case (procedure-automatic-offer configuration text)
-                     (knowledge-error ()
-                       nil))))
-        (when offer
-          (let* ((call  (json-object "type" "function_call"
-                                     "call_id" (format nil "autolith-procedure-~A" (make-identifier))
-                                     "namespace" "procedure"
-                                     "name" "run"
-                                     "arguments" (procedure-describe-call (getf offer :procedure)
-                                                                          (getf offer :bindings))))
-                 (plans (agent--tool-call-plans agent (list call)))
-                 (plan  (first plans)))
-            (conversation-reconcile-call-identifiers (agent-conversation agent) (list call))
-            (agent--append-provider-item agent call
-                                         :tool-label  (tool-display-name (getf plan :tool))
-                                         :persistence (getf plan :persistence))
-            (agent--execute-tool-calls agent plans
-                                       (make-instance 'provider-result
-                                                      :output-items (list call)
-                                                      :tool-calls   (list call))
-                                       :observer   observer
-                                       :tool-round 0))))))
+      (when-let ((offer (handler-case (procedure-automatic-offer configuration text)
+                          (knowledge-error ()
+                            nil))))
+        (let* ((call  (json-object "type" "function_call"
+                                   "call_id" (format nil "autolith-procedure-~A" (make-identifier))
+                                   "namespace" "procedure"
+                                   "name" "run"
+                                   "arguments" (procedure-describe-call (getf offer :procedure)
+                                                                        (getf offer :bindings))))
+               (plans (agent--tool-call-plans agent (list call)))
+               (plan  (first plans)))
+          (conversation-reconcile-call-identifiers (agent-conversation agent) (list call))
+          (agent--append-provider-item agent call
+                                       :tool-label  (tool-display-name (getf plan :tool))
+                                       :persistence (getf plan :persistence))
+          (agent--execute-tool-calls agent plans
+                                     (make-instance 'provider-result
+                                                    :output-items (list call)
+                                                    :tool-calls   (list call))
+                                     :observer   observer
+                                     :tool-round 0)))))
   nil)
 
 (-> procedure-context--ran-this-turn (conversation) list)

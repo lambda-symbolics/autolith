@@ -5,15 +5,7 @@
 (-> skill-tool-tests--write (pathname string string) pathname)
 (defun skill-tool-tests--write (root relative-path content)
   "Write CONTENT beneath ROOT at RELATIVE-PATH and return its pathname."
-  (let ((pathname (merge-pathnames relative-path root)))
-    (ensure-directories-exist pathname)
-    (with-open-file (stream pathname
-                            :direction         ':output
-                            :if-does-not-exist ':create
-                            :if-exists         ':supersede
-                            :external-format   ':utf-8)
-      (write-string content stream))
-    pathname))
+  (test-write-text (merge-pathnames relative-path root) content))
 
 (-> skill-tool-tests--call
     (tool-registry tool-context string)
@@ -115,14 +107,14 @@
            (uri          "skill-source:editable")
            (initial      (skill-tests--agent-definition "editable" "An editable skill." "First body.")))
       (labels ((read-source ()
-                 (workspace-resource-tests--call registry context :namespace "resource" :name "read"
+                 (test-resource-call registry context :namespace "resource" :name "read"
                                                   :arguments (list "uri" uri)))
 
                (revision (result)
-                 (workspace-resource-tests--field (tool-result-content result) "Revision: "))
+                 (test-resource-field (tool-result-content result) "Revision: "))
 
                (edit (base operation)
-                 (workspace-resource-tests--call registry context :namespace "resource" :name "edit"
+                 (test-resource-call registry context :namespace "resource" :name "edit"
                                                   :arguments (list "uri" uri "base-revision" base
                                                                    "operations" (vector operation))))
 
@@ -440,7 +432,7 @@
              (let ((output (recording-terminal-output terminal)))
                (test-assert
                 (and (null (search "◆ " output))
-                     (= (terminal-tests--substring-count "skill.load" output) 1))
+                     (= (test-substring-count "skill.load" output) 1))
                 "failed and malformed Skill results use one ordinary result"))))
       (ignore-errors (terminal-ui-stop ui))
       (platform-delete-directory-tree *platform* root

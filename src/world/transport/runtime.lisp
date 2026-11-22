@@ -131,11 +131,10 @@ conversation transaction can roll back before releasing either lease."
         (setf resumed-p (channel-endpoint-paused-p session)
               (channel-endpoint-paused-p session) nil))
       (when resumed-p
-        (let ((controller (application-input-controller application)))
-          (when controller
-            (with-lock-held ((application-input-controller-lock controller))
-              (sb-thread:condition-broadcast
-               (application-input-controller-condition-variable controller)))))))
+        (when-let ((controller (application-input-controller application)))
+          (with-lock-held ((application-input-controller-lock controller))
+            (sb-thread:condition-broadcast
+             (application-input-controller-condition-variable controller))))))
     (not (null resumed-p))))
 
 (-> application-world-terminal-pause (application &key (:reason keyword)) boolean)
@@ -156,13 +155,12 @@ conversation transaction can roll back before releasing either lease."
 (-> world-terminal--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
 (defun world-terminal--task-counts (application)
   "Return live children, active children, and all live jobs for APPLICATION."
-  (let ((orchestrator (application-task-presentation-orchestrator application)))
-    (if orchestrator
-        (with-lock-held ((task-orchestrator-lock orchestrator))
-          (values (task-orchestrator-live-count orchestrator)
-                  (task-orchestrator-active-count orchestrator)
-                  (task-orchestrator-session-live-count orchestrator)))
-        (values 0 0 0))))
+  (if-let ((orchestrator (application-task-presentation-orchestrator application)))
+      (with-lock-held ((task-orchestrator-lock orchestrator))
+        (values (task-orchestrator-live-count orchestrator)
+                (task-orchestrator-active-count orchestrator)
+                (task-orchestrator-session-live-count orchestrator)))
+      (values 0 0 0)))
 
 (-> application-terminal-attached-p (application) boolean)
 (defun application-terminal-attached-p (application)
@@ -257,10 +255,9 @@ conversation transaction can roll back before releasing either lease."
            :job-live-count      job-live-count
             :message-count      (conversation-message-count conversation)
             :mention-count
-            (let ((person (application-world-human-identifier application)))
-              (if person
-                  (gethash person (conversation-channel-mention-counts conversation) 0)
-                  0))
+            (if-let ((person (application-world-human-identifier application)))
+                (gethash person (conversation-channel-mention-counts conversation) 0)
+                0)
             :terminal-attached-p
             (application-terminal-attached-p application)
             :terminal-attachment
@@ -501,12 +498,11 @@ Any other message is rejected, as a request this process has no use for."
                    (eq (first response) ':ok))))
        (daemon-write-packet stream response)
        (when kill-request-p
-         (let ((controller
-                 (application-input-controller
-                  (channel-endpoint-application session))))
-           (when controller
-             (application-input-controller--request-exit
-              controller ':world-terminal-kill)))))))
+         (when-let ((controller
+                      (application-input-controller
+                       (channel-endpoint-application session))))
+           (application-input-controller--request-exit
+            controller ':world-terminal-kill))))))
   nil)
 
 (define-condition world-terminal-stop-error (error)

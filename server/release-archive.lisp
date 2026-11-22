@@ -22,17 +22,13 @@
 
 (-> release-archive--trimmed-file (pathname) string)
 (defun release-archive--trimmed-file (pathname)
-  "Read PATHNAME and remove surrounding ASCII whitespace."
-  (string-trim '(#\Space #\Tab #\Newline #\Return)
-               (uiop:read-file-string pathname)))
+  "Read PATHNAME and remove surrounding whitespace."
+  (serapeum:trim-whitespace (uiop:read-file-string pathname)))
 
 (-> release-archive--environment-pathname (string pathname) pathname)
 (defun release-archive--environment-pathname (name fallback)
-  "Return environment pathname NAME or FALLBACK when NAME is absent."
-  (let ((value (uiop:getenv name)))
-    (if (and value (plusp (length value)))
-        (pathname value)
-        fallback)))
+  "Return environment pathname NAME or FALLBACK when NAME is unset or empty."
+  (or (uiop:getenv-pathname name) fallback))
 
 (-> release-archive--run
     (list &key (:directory (option pathname)) (:output t) (:error-output t))
@@ -44,19 +40,6 @@
                     :directory    directory
                     :output       output
                     :error-output error-output))
-
-(-> release-archive--git-output (pathname list) string)
-(defun release-archive--git-output (source-root arguments)
-  "Return trimmed output from a Git command below SOURCE-ROOT."
-  (string-trim
-   '(#\Space #\Tab #\Newline #\Return)
-    (release-archive--run
-     (append (list "git"
-                   "-c" "safe.directory=*"
-                   "-C" (namestring source-root))
-             arguments)
-     :output       ':string
-     :error-output ':output)))
 
 (defparameter *release-archive-extra-command-directories*
   '("/usr/local/bin" "/usr/pkg/bin" "/opt/local/bin" "/bin" "/usr/bin")
@@ -95,16 +78,6 @@
 (defun release-archive--semantic-version-p (value)
   "Return true when VALUE is a three-component numeric version."
   (release-tag-valid-p (format nil "v~A" value)))
-
-(-> release-archive--commit-p (string) boolean)
-(defun release-archive--commit-p (value)
-  "Return true when VALUE is a lowercase forty-character Git identity."
-  (and (= (length value) 40)
-       (every (lambda (character)
-                (or (digit-char-p character)
-                    (find character "abcdef")))
-              value)
-       t))
 
 (-> release-archive--locked-sandbox-binary (pathname string string)
     (option pathname))
@@ -311,14 +284,14 @@ rather than failing, so existence needs the following stat first."
     source-root '("add" "--force" "--all")))
   (let* ((tree
            (string-trim
-            '(#\Space #\Tab #\Newline #\Return)
+            *line-whitespace*
             (release-archive--run
              (release-archive--identity-git-command source-root '("write-tree"))
              :output       ':string
              :error-output ':output)))
          (commit
            (string-trim
-            '(#\Space #\Tab #\Newline #\Return)
+            *line-whitespace*
             (release-archive--run
              (append
               (list "env"
@@ -335,7 +308,7 @@ rather than failing, so existence needs the following stat first."
                     "-m" (format nil "Autolith ~A source" tag)))
              :output       ':string
              :error-output ':output))))
-    (unless (release-archive--commit-p commit)
+    (unless (release-commit-valid-p commit)
       (error 'release-archive-error
              :stage ':source-identity
              :cause "Git did not create a valid packaged source commit."))
@@ -506,7 +479,7 @@ rather than failing, so existence needs the following stat first."
          (command   (release-archive--sha256-command))
          (output
            (string-trim
-            '(#\Space #\Tab #\Newline #\Return)
+            *line-whitespace*
             (cond
               ((string= command "sha256sum")
                (release-archive--run
@@ -631,9 +604,9 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                (release-archive--process-group-helper source-root))
              (version          (release-builder--source-version source-root))
              (tag              (format nil "v~A" version))
-             (commit           (release-archive--git-output source-root '("rev-parse" "HEAD")))
+             (commit           (release-server--git-output source-root '("rev-parse" "HEAD")))
              (commit-time
-               (release-archive--git-output
+               (release-server--git-output
                 source-root '("show" "-s" "--format=%ct" "HEAD"))))
         (release-archive--require-commands
          '("chmod" "cp" "find" "git" "gzip" "tar"))
@@ -691,7 +664,7 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
           (error 'release-archive-error
                  :stage ':source-validation
                  :cause "ASDF does not report one semantic release version."))
-        (unless (release-archive--commit-p commit)
+        (unless (release-commit-valid-p commit)
           (error 'release-archive-error
                  :stage ':source-validation
                  :cause "The source commit is malformed."))
@@ -795,7 +768,7 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  packaged-source tag commit-time)
                 (let ((actual-runtime-version
                         (string-trim
-                         '(#\Space #\Tab #\Newline #\Return)
+                         *line-whitespace*
                          (release-archive--run
                           (list "env" "-u" "SBCL_HOME"
                                 (namestring

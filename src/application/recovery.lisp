@@ -238,17 +238,16 @@ a relaying terminal publishes the capsule its detached session reports."
     (option list))
 (defun application--recovery-crash-capsule-record (configuration)
   "Return this recovered launcher's validated bounded crash capsule."
-  (let ((pathname
-          (application--recovery-crash-capsule-pathname configuration)))
-    (when pathname
-      (handler-case
-          (multiple-value-bind (record complete-p)
-              (snapshot-read pathname)
-            (and complete-p
-                 (application--crash-capsule-record-p record)
-                 record))
-        (error ()
-          nil)))))
+  (when-let ((pathname
+               (application--recovery-crash-capsule-pathname configuration)))
+    (handler-case
+        (multiple-value-bind (record complete-p)
+            (snapshot-read pathname)
+          (and complete-p
+               (application--crash-capsule-record-p record)
+               record))
+      (error ()
+        nil))))
 
 (-> application--recovery-session-state
     (configuration)

@@ -18,18 +18,13 @@
   (or (application--task-orchestrator application)
       (error 'application-client-unavailable :reason "The task runtime is unavailable.")))
 
-(-> application-client--job-viewer (application) agent)
-(defun application-client--job-viewer (application)
-  "Return the application agent that owns the visible job view."
-  (application-agent application))
-
 (-> application-client--find-job (application string string)
     (values (or session-job list) list))
 (defun application-client--find-job (application identifier tool-name)
   "Return the owned live job or durable record wrapper, and its canonical snapshot."
   (multiple-value-bind (snapshot job)
       (task-query-job (application-client--job-orchestrator application)
-                      (application-client--job-viewer application)
+                      (application-agent application)
                       :identifier identifier :tool-name tool-name :execution-alias-p nil)
     (unless snapshot
       (error 'task-error :message (format nil "No visible job named ~A exists." identifier)
@@ -89,7 +84,7 @@
       (error 'application-client-unavailable :reason "Invalid jobs page bounds."))
     (let* ((jobs  (task-orchestrator-list-visible-jobs
                    (application-client--job-orchestrator application)
-                   (application-client--job-viewer application)))
+                   (application-agent application)))
            (start (min offset (length jobs)))
            (end   (min (+ start limit) (length jobs))))
       (list :items       (mapcar (lambda (job)

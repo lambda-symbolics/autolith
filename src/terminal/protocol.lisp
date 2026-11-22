@@ -437,9 +437,7 @@ hide its side panel while such frames show, as during the boot screen."))
     "The command and child-agent values used by the newest live paint.")
    (clock-function
     :initarg       :clock-function
-    :initform      (lambda ()
-                     (/ (get-internal-real-time)
-                        (coerce internal-time-units-per-second 'double-float)))
+     :initform     #'internal-real-time-seconds
     :reader        terminal-ui-clock-function
     :type          function
     :documentation "The injected monotonic clock function returning seconds.")

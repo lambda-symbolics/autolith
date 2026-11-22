@@ -218,14 +218,13 @@ evaluates without interleaving the person's commands.")
                                                               :file file :tool-name "resource.read"))))))
                   (coerce (json-get snapshot key) 'list)))))
     (setf (gethash "buffer-count" snapshot) (length (json-get snapshot "buffers")))
-    (let ((selected (find-if (lambda (entry) (eq (json-get entry "selected") t))
-                             (coerce (json-get snapshot "windows") 'list))))
-      (when selected
-        (setf (gethash "region" snapshot)
-              (emacs-resource--call context "resource.read" *emacs-current-region-elisp*
-                                    (json-get selected "buffer")
-                                    (or (emacs-current--file selected) "")
-                                    (princ-to-string *emacs-current-region-characters*)))))
+    (when-let ((selected (find-if (lambda (entry) (eq (json-get entry "selected") t))
+                                  (coerce (json-get snapshot "windows") 'list))))
+      (setf (gethash "region" snapshot)
+            (emacs-resource--call context "resource.read" *emacs-current-region-elisp*
+                                  (json-get selected "buffer")
+                                  (or (emacs-current--file selected) "")
+                                  (princ-to-string *emacs-current-region-characters*))))
     (let ((content (emacs-current--render snapshot)))
       (make-instance 'resource-observation
                      :uri      (resource-uri resource)
@@ -415,8 +414,7 @@ evaluates without interleaving the person's commands.")
                                        (emacs-buffer-resource-name resource)
                                        (resource-observation-content base)
                                       content
-                                      (let ((file (emacs-buffer-observation-file base)))
-                                        (if file (uiop:native-namestring file) ""))))
+                                      (if-let ((file (emacs-buffer-observation-file base))) (uiop:native-namestring file) "")))
          (status (json-get reply "status")))
     (cond
       ((equal status "stale")

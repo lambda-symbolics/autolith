@@ -40,21 +40,6 @@
     :documentation "Whether this snapshot is a file, directory, or missing path."))
   (:documentation "An exact filesystem snapshot with backend-independent text lines."))
 
-(-> workspace-file-observation-stored-lines (workspace-file-observation) (option vector))
-(defun workspace-file-observation-stored-lines (observation)
-  "Return pre-split file lines supplied by a caller."
-  (text-resource-observation-stored-lines observation))
-
-(-> workspace-file-observation-line-ending (workspace-file-observation) string)
-(defun workspace-file-observation-line-ending (observation)
-  "Return the observed file's line ending."
-  (text-resource-observation-line-ending observation))
-
-(-> workspace-file-observation-final-newline-p (workspace-file-observation) boolean)
-(defun workspace-file-observation-final-newline-p (observation)
-  "Return whether the observed file ends in a line ending."
-  (text-resource-observation-final-newline-p observation))
-
 (defgeneric workspace-file-observation-lines (observation)
   (:documentation "Return OBSERVATION's logical lines for the current operation."))
 
@@ -264,9 +249,8 @@ Return NIL when NAME disappears during enumeration."
                    :tool-name "resource.read")))
       (setf truncated-p more-p)
       (dolist (name names)
-        (let ((row (workspace-file--directory-entry-row path name)))
-          (when row
-            (push (list name row) entries)))))
+        (when-let ((row (workspace-file--directory-entry-row path name)))
+          (push (list name row) entries))))
     (setf entries
           (sort entries
                 (lambda (left right)

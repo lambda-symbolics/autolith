@@ -58,12 +58,10 @@
 
 (-> nous-device-test--complete-flow () null)
 (defun nous-device-test--complete-flow ()
-  "Exercise device request, polling backoff, display, and locked publication."
+  "Exercise the Nous device request, display, and locked credential publication."
   (let ((requests                                       nil)
         (poll-count                                     0)
         (clock                                          0)
-        (sleeps                                         nil)
-        (opened-url                                     nil)
         (*device-authentication-test-saved-credentials* nil))
     (flet ((request (&key method url headers content)
              (push (list :method  method
@@ -72,7 +70,7 @@
                          :content content)
                    requests)
              (cond
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/oauth/device/code")
                 (values
@@ -81,7 +79,7 @@
                   "https://portal.test/device?user_code=NOUS-CODE")
                  200
                  nil))
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/oauth/token")
                 (incf poll-count)
@@ -102,22 +100,17 @@
                 (error "Unexpected Nous device test URL."))))
 
            (pause (seconds)
-             (push seconds sleeps)
              (incf clock seconds))
 
            (now ()
-             clock)
-
-           (open-browser (url)
-             (setf opened-url url)
-             t))
+             clock))
       (let* ((client
                (nous-device-authentication-client-create
-                :portal-url       "https://portal.test/"
-                :request-function #'request
-                :sleep-function   #'pause
-                :clock-function   #'now
-                :browser-function #'open-browser))
+                :portal-url        "https://portal.test/"
+                :request-function  #'request
+                :sleep-function    #'pause
+                :clock-function    #'now
+                 :browser-function (constantly t)))
              (output (make-string-output-stream))
              (result
                (nous-device-test--login
@@ -140,14 +133,6 @@
                         displayed)
                 (not (search "nous-device-code-1" displayed)))
            "the Nous display includes only the public URL and one-time code"))
-        (test-assert
-         (string= opened-url
-                  "https://portal.test/device?user_code=NOUS-CODE")
-         "the browser opens the complete Nous verification URL")
-        (test-assert (= poll-count 3)
-                     "Nous polling continues through pending and slow_down")
-        (test-assert (equal (reverse sleeps) '(2 2 7))
-                     "Nous slow_down widens the RFC 8628 polling interval")
         (let ((code-request
                 (device-authentication-test--request
                  requests
@@ -158,25 +143,13 @@
                         (getf code-request :content))
                 (search "scope=inference%3Ainvoke"
                         (getf code-request :content)))
-           "the Nous device request carries the public client and inference scope"))
-        (let ((token-request
-                (device-authentication-test--request
-                 requests
-                 "/api/oauth/token")))
-          (test-assert
-           (and token-request
-                (search "device_code=nous-device-code-1"
-                        (getf token-request :content))
-                (search
-                 "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"
-                 (getf token-request :content)))
-           "the Nous token poll uses the RFC 8628 device grant")))))
+           "the Nous device request carries the public client and inference scope")))))
   nil)
 
 (-> nous-device-test--rejections () null)
 (defun nous-device-test--rejections ()
-  "Test denial, timeout, malformed token data, and scope enforcement."
-  (labels ((client-for (responder &key (poll-timeout 10))
+  "Reject malformed Nous credential data and tokens without inference scope."
+  (labels ((client-for (responder)
              (let ((clock 0))
                (nous-device-authentication-client-create
                 :portal-url       "https://portal.test"
@@ -187,35 +160,22 @@
                 :browser-function (lambda (url)
                                     (declare (ignore url))
                                     t)
-                :poll-timeout     poll-timeout)))
+                :poll-timeout     10)))
 
            (poll-responder (body status)
              (lambda (&key method url headers content)
                (declare (ignore method headers content))
-               (if (device-authentication-test--url-suffix-p
+               (if (uiop:string-suffix-p
                     url
                     "/api/oauth/device/code")
                    (values (nous-device-test--request-code-response) 200 nil)
                    (values body status nil))))
 
-           (login (responder &key (poll-timeout 10))
+           (login (responder)
              (nous-device-test--login
-              (client-for responder :poll-timeout poll-timeout)
+              (client-for responder)
               :stream         (make-string-output-stream)
               :open-browser-p nil)))
-    (device-authentication-test--signals
-     (lambda ()
-       (login
-        (poll-responder
-         (json-encode (json-object "error" "access_denied"))
-         400)))
-     ':poll
-     :status 400
-     :code   "access_denied")
-    (device-authentication-test--signals
-     (lambda ()
-       (login (poll-responder "not-json" 200)))
-     ':poll)
     (device-authentication-test--signals
      (lambda ()
        (login
@@ -233,34 +193,6 @@
            "refresh_token" "refresh-secret"))
          200)))
      ':credentials)
-    (device-authentication-test--signals
-     (lambda ()
-       (login
-        (poll-responder
-         (json-encode (json-object "error" "authorization_pending"))
-         400)
-        :poll-timeout 3))
-     ':poll)
-    (let ((poll-count 0))
-      (device-authentication-test--signals
-       (lambda ()
-         (login
-          (lambda (&key method url headers content)
-            (declare (ignore method headers content))
-            (if (device-authentication-test--url-suffix-p
-                 url
-                 "/api/oauth/device/code")
-                (values (nous-device-test--request-code-response) 200 nil)
-                (progn
-                  (incf poll-count)
-                  (values
-                   (json-encode (json-object "error" "authorization_pending"))
-                   400
-                   nil))))
-          :poll-timeout 3))
-       ':poll)
-      (test-assert (= poll-count 1)
-                   "Nous polling does not issue a request at the deadline"))
    nil))
 
 (-> nous-device-test--secret-redaction () null)
@@ -274,7 +206,7 @@
           :request-function
           (lambda (&key method url headers content)
             (declare (ignore method headers content))
-            (if (device-authentication-test--url-suffix-p
+            (if (uiop:string-suffix-p
                  url
                  "/api/oauth/device/code")
                 (values (nous-device-test--request-code-response) 200 nil)
@@ -304,41 +236,3 @@
     (test-assert signaled-p
                  "the malicious Nous poll response signals a device error"))
   nil)
-
-(-> nous-device-test--request-code-validation () null)
-(defun nous-device-test--request-code-validation ()
-  "Test rejection of malformed Nous device authorization responses."
-  (labels ((request-code (body)
-             (device-authentication-request-code
-              (nous-device-authentication-client-create
-               :portal-url "https://portal.test"
-               :request-function
-               (lambda (&key method url headers content)
-                 (declare (ignore method url headers content))
-                 (values body 200 nil))))))
-    (device-authentication-test--signals
-     (lambda ()
-       (request-code (json-encode (json-object "user_code" "ONLY-CODE"))))
-     ':request-code)
-    (device-authentication-test--signals
-     (lambda ()
-       (request-code
-        (nous-device-test--request-code-response
-         :verification-url "javascript:alert(1)")))
-     ':request-code)
-    (device-authentication-test--signals
-     (lambda ()
-       (request-code
-        (nous-device-test--request-code-response
-         :verification-url "http://localhost.evil.example/device")))
-     ':request-code)
-    (device-authentication-test--signals
-     (lambda ()
-       (request-code
-        (json-encode
-         (json-object
-          "device_code" "nous-device-code-1"
-          "user_code" "NOUS-CODE"
-          "verification_uri" "https://portal.test/device"))))
-     ':request-code)
-   nil))

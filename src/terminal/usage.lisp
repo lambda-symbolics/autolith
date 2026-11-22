@@ -26,16 +26,11 @@
             (format nil "~:D B" value)
             (format nil "~,1F ~A (~:D B)" number (nth index units) value)))))
 
-(-> usage--line (stream list boolean) t)
-(defun usage--line (stream spans styled-p)
-  "Write SPANS as one optionally styled line."
-  (world-terminal--write-styled-line stream spans styled-p))
-
 (-> usage--paragraph (stream string &key (:columns integer) (:styled-p boolean) (:style t)) null)
 (defun usage--paragraph (stream text &key columns styled-p (style ':plain))
   "Write sanitized TEXT wrapped to COLUMNS."
   (dolist (line (wrap-text (usage--text text) columns))
-    (usage--line stream (list (terminal-span style line)) styled-p))
+    (world-terminal--write-styled-line stream (list (terminal-span style line)) styled-p))
   nil)
 
 (-> usage--field (stream string string &key (:columns integer) (:styled-p boolean) (:style t)) null)
@@ -44,8 +39,8 @@
   (let* ((label (concatenate 'string (usage--text label) ": "))
          (value (usage--text value)))
     (if (<= (text-cell-width (concatenate 'string label value)) columns)
-        (usage--line stream (list (terminal-span ':dim label)
-                                 (terminal-span style value)) styled-p)
+        (world-terminal--write-styled-line stream (list (terminal-span ':dim label)
+                                                   (terminal-span style value)) styled-p)
         (progn
           (usage--paragraph stream label :columns columns :styled-p styled-p :style ':dim)
           (usage--paragraph stream value :columns columns :styled-p styled-p :style style))))
@@ -60,7 +55,7 @@
            (label-width (loop for field in fields maximize (text-cell-width (first field))))
            (value-width (loop for field in fields maximize (text-cell-width (second field))))
            (cell-width  (+ label-width 2 value-width))
-           (count       (max 1 (min 3 (floor (+ columns 3) (+ cell-width 3))))))
+           (count       (clamp (floor (+ columns 3) (+ cell-width 3)) 1 3)))
       (if (> cell-width columns)
           (dolist (field fields)
             (usage--field stream (first field) (second field)
@@ -80,7 +75,7 @@
                                                    (if (and (< index (1- count)) (rest tail))
                                                        (termdown:fit-text (second field) value-width)
                                                        (second field))) spans))
-                     (usage--line stream (nreverse spans) styled-p))))))
+                     (world-terminal--write-styled-line stream (nreverse spans) styled-p))))))
   nil)
 
 (-> usage--bar (integer integer) string)
@@ -124,7 +119,7 @@
                                                (termdown:fit-text cell width
                                                                   :alignment (if (<= 1 index 3)
                                                                                  ':right ':left))) spans))
-                 (usage--line stream (nreverse spans) styled-p)))
+                 (world-terminal--write-styled-line stream (nreverse spans) styled-p)))
       t)))
 
 (-> usage--storage (stream list &key (:columns integer) (:styled-p boolean)) null)
@@ -158,7 +153,7 @@
                  (styled-p (world-terminal--status-output-styled-p stream))
                  (columns (world-terminal--status-output-columns stream)))
   "Print REPORT as a compact, colored operating-system usage summary."
-  (let ((columns (max 1 (min 104 columns))))
+  (let ((columns (clamp columns 1 104)))
     (flet ((paragraph (text &optional (style ':plain))
              (usage--paragraph stream text :columns columns :styled-p styled-p :style style))
 

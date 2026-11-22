@@ -222,10 +222,9 @@ channel identities separately from process IDs and retain missing measurements."
         (setf (usage-report-descendants-available-p report) available-p
               (usage-report-processes report) (length pids))
         (dolist (pid pids)
-          (let ((bytes (platform-process-resident-bytes *platform* pid)))
-            (if bytes
-                (progn (incf sum bytes) (incf measured))
-                (incf (usage-report-resident-missing report)))))
+          (if-let ((bytes (platform-process-resident-bytes *platform* pid)))
+              (progn (incf sum bytes) (incf measured))
+              (incf (usage-report-resident-missing report))))
         (when (or (plusp measured)
                   (and available-p roots-complete-p (null pids)))
           (setf (usage-report-resident-bytes report) sum)))))

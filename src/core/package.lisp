@@ -2,6 +2,9 @@
   (:documentation "Autolith, a small, live, self-modifying Common Lisp agent.")
   (:use #:cl)
   (:shadow #:open #:trace #:delete)
+  (:import-from #:alexandria
+    #:clamp #:ensure-gethash #:if-let #:lastcar #:proper-list-p #:when-let
+    #:read-file-into-byte-vector #:write-string-into-file)
   (:import-from #:cl-resources
                 #:resource
                 #:resource-uri
@@ -205,7 +208,6 @@
                 #:skill-metadata-source-format
                 #:skill-read-error)
   (:import-from #:cl-rfc8628
-                #:*unix-epoch-universal-time*
                 #:unix-time->universal-time
                 #:*device-authentication-redaction-marker*
                 #:*device-authentication-timeout*

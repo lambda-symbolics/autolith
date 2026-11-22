@@ -89,13 +89,12 @@
                 (make-mission-schedule-outcome :state ':failed :reason ':runner-failed))
                (t
                 (make-mission-schedule-outcome))))))
-    (let ((controller (application-input-controller application)))
-      (if controller
-          (application-input-controller-call-with-primary-steering controller #'run)
-          (run (lambda ()
-                 (application-world-steering-take application))
-               (lambda (identifier)
-                 (application-world-steering-ack application identifier)))))))
+    (if-let ((controller (application-input-controller application)))
+        (application-input-controller-call-with-primary-steering controller #'run)
+        (run (lambda ()
+               (application-world-steering-take application))
+             (lambda (identifier)
+               (application-world-steering-ack application identifier))))))
 
 (-> mission-schedule-service-create
     (application &key (:path (option pathname)) (:clock function)
@@ -173,9 +172,8 @@
 (-> application-mission-schedules-notify (application) null)
 (defun application-mission-schedules-notify (application)
   "Nudge a hosted scheduler after reconstruction, outside enclosing application/render locks."
-  (let ((service (with-lock-held (*mission-schedule-services-lock*)
-                   (gethash application *mission-schedule-services*))))
-    (when service (mission-schedule--notify service)))
+  (when-let ((service (with-lock-held (*mission-schedule-services-lock*)
+                        (gethash application *mission-schedule-services*)))) (mission-schedule--notify service))
   nil)
 
 (-> mission-schedule--notify (mission-schedule-service) null)

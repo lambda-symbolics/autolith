@@ -5,14 +5,7 @@
 (-> test-mcp-configuration--write (pathname string) pathname)
 (defun test-mcp-configuration--write (pathname contents)
   "Write native MCP test CONTENTS to PATHNAME."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create)
-    (write-string contents stream)
-    (finish-output stream))
-  pathname)
+  (test-write-text pathname contents :external-format ':default))
 
 (-> test-mcp-configuration--signals-p
     (configuration string)

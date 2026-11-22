@@ -17,21 +17,13 @@
   (setf *device-authentication-test-saved-credentials* credentials)
   credentials)
 
-(-> device-authentication-test--url-suffix-p (string string) boolean)
-(defun device-authentication-test--url-suffix-p (url suffix)
-  "Return true when URL ends with SUFFIX."
-  (and (>= (length url) (length suffix))
-       (if (string= url suffix :start1 (- (length url) (length suffix)))
-           t
-           nil)))
-
 (-> device-authentication-test--request (list string) (option list))
 (defun device-authentication-test--request (requests suffix)
   "Return the first recorded request whose URL ends in SUFFIX."
   (find-if
    (lambda (request)
      (let ((url (getf request :url)))
-       (device-authentication-test--url-suffix-p url suffix)))
+       (uiop:string-suffix-p url suffix)))
    requests))
 
 (-> device-authentication-test--signals

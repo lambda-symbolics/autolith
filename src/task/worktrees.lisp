@@ -143,10 +143,9 @@
 (-> task-worktree--admin-path-kind (pathname) (option keyword))
 (defun task-worktree--admin-path-kind (path)
   "Distinguish absent Git metadata from unsupported or unresolvable entries."
-  (let ((status (or (platform-path-status *platform* path :follow-links-p t)
-                    (platform-path-status *platform* path :follow-links-p nil))))
-    (when status
-      (platform-file-status-kind status))))
+  (when-let ((status (or (platform-path-status *platform* path :follow-links-p t)
+                         (platform-path-status *platform* path :follow-links-p nil))))
+    (platform-file-status-kind status)))
 
 (-> task-worktree--git-admin-roots (pathname) list)
 (defun task-worktree--git-admin-roots (source)
@@ -532,11 +531,11 @@ Legacy checkouts directly beneath checkouts/ never authorize deleting their pare
          (container-parent (uiop:pathname-parent-directory-pathname parent)))
     (cond
       ((and (equal parent root)
-            (stringp (first (last (pathname-directory checkout)))))
+            (stringp (lastcar (pathname-directory checkout))))
        checkout)
       ((and (equal container-parent root)
-            (stringp (first (last (pathname-directory parent))))
-            (equal (first (last (pathname-directory checkout))) "workspace"))
+            (stringp (lastcar (pathname-directory parent)))
+            (equal (lastcar (pathname-directory checkout)) "workspace"))
        parent)
       (t
        (task-worktree--error "Checkout is outside its dedicated task container." :code ':ownership)))))

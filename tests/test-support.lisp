@@ -277,9 +277,7 @@ changes are process-global, so concurrent tests require separate processes."
                "Install BINDINGS in this process's environment."
                (dolist (binding bindings)
                  (destructuring-bind (name value) binding
-                   (if value
-                       (platform-setenv name value)
-                       (platform-unsetenv name))))))
+                   (test-set-environment-value name value)))))
       (unwind-protect
            (progn
              (install bindings)
@@ -462,3 +460,75 @@ The terminal's original mode is restored on every exit."))
 
 (defgeneric test-fixture-terminal-echo-p (platform descriptor)
   (:documentation "Return true when DESCRIPTOR's terminal echoes its input."))
+
+
+;;;; -- Resource Fixtures --
+
+(-> test-resource-field (string string) string)
+(defun test-resource-field (content label)
+  "Return the single-line value following LABEL in resource CONTENT."
+  (let* ((start       (search label content))
+         (value-start (and start (+ start (length label))))
+         (end         (and value-start
+                           (or (position #\Newline content :start value-start)
+                               (length content)))))
+    (unless (and value-start end)
+      (error "Missing agenda resource field ~S in ~S." label content))
+    (subseq content value-start end)))
+
+(-> test-resource-call
+    (tool-registry tool-context &key (:namespace string) (:name string) (:arguments list))
+    tool-result)
+(defun test-resource-call
+    (registry context &key namespace name arguments)
+  "Execute NAMESPACE.NAME with the ARGUMENTS plist through REGISTRY and CONTEXT."
+  (tool-registry-execute-call
+   registry
+   (json-object "namespace" namespace
+                "name" name
+                "arguments" (json-encode (apply #'json-object arguments)))
+   context))
+
+(-> test-write-text (pathname string &key (:external-format t)) pathname)
+(defun test-write-text (pathname text &key (external-format ':utf-8))
+  "Create PATHNAME's parents, replace it with TEXT, and return PATHNAME."
+  (ensure-directories-exist pathname)
+  (write-string-into-file text pathname
+                                    :if-exists       ':supersede
+                                    :external-format external-format)
+  pathname)
+
+(-> test-substring-count (string string) (integer 0))
+(defun test-substring-count (needle haystack)
+  "Return the number of non-overlapping NEEDLE occurrences in HAYSTACK."
+  (loop with start = 0
+        for position = (search needle haystack :start2 start)
+        while position
+        count t
+        do (setf start (+ position (length needle)))))
+
+(-> test-caught-error (t function &key (:ignore-unexpected-p boolean)) (option error))
+(defun test-caught-error (type function &key ignore-unexpected-p)
+  "Return the matching error from FUNCTION, otherwise propagate unexpected errors."
+  (block nil
+    (handler-bind ((error (lambda (condition)
+                            (cond
+                              ((typep condition type)
+                               (return condition))
+                              (ignore-unexpected-p
+                               (return nil))))))
+      (funcall function))
+    nil))
+
+(-> test-signals-p (t function &key (:ignore-unexpected-p boolean)) boolean)
+(defun test-signals-p (type function &key ignore-unexpected-p)
+  "Return whether FUNCTION signalled an error matching TYPE."
+  (not (null (test-caught-error type function :ignore-unexpected-p ignore-unexpected-p))))
+
+(-> test-set-environment-value (string (option string)) null)
+(defun test-set-environment-value (name value)
+  "Set environment variable NAME to VALUE, or unset it for NIL."
+  (if value
+      (platform-setenv name value)
+      (platform-unsetenv name))
+  nil)

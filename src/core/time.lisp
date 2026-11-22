@@ -1,15 +1,5 @@
 (in-package #:autolith)
 
-;;;; -- Epoch Conversion --
-
-;;; cl-rfc8628 owns the epoch offset and the Unix-to-universal conversion.
-
-(-> universal-time->unix-time (integer) integer)
-(defun universal-time->unix-time (universal-time)
-  "Convert Common Lisp UNIVERSAL-TIME to integer Unix-time seconds."
-  (- universal-time *unix-epoch-universal-time*))
-
-
 ;;;; -- Timestamp Parsing and Formatting --
 
 (-> timestamp--digits (string integer integer) (option integer))

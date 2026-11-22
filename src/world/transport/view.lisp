@@ -85,8 +85,7 @@ side panel takes."))
 
 (defmethod terminal-input-ready-p ((terminal pane-terminal))
   "Return whether the screen's terminal has input."
-  (let ((service (pane-terminal-service-function terminal)))
-    (when service (funcall service)))
+  (when-let ((service (pane-terminal-service-function terminal))) (funcall service))
   (terminal-input-ready-p (world-terminal-screen-terminal (pane-terminal-screen terminal))))
 
 (defmethod terminal-read-event ((terminal pane-terminal))
@@ -95,16 +94,14 @@ side panel takes."))
 An event the screen consumed reads as :IGNORE. A panel's request to leave the
 channel goes to the request function and reads as :ESCAPE, which closes the
 modal reader so the view can act on it."
-  (let ((service (pane-terminal-service-function terminal)))
-    (when service (funcall service)))
+  (when-let ((service (pane-terminal-service-function terminal))) (funcall service))
   (let* ((screen (pane-terminal-screen terminal))
          (event  (world-terminal-screen-filter-event
                   screen (terminal-read-event (world-terminal-screen-terminal screen)))))
     (cond
       ((and (consp event) (eq (first event) ':switch))
-       (let ((function (pane-terminal-request-function terminal)))
-         (when function
-           (funcall function event)))
+       (when-let ((function (pane-terminal-request-function terminal)))
+         (funcall function event))
        ':escape)
       (t
        event))))
@@ -401,8 +398,7 @@ reader objects exceed the budget rather than escaping its bound."
       (channel-view--finish view (list ':attachment-lost :kind ':queue-overflow
                                       :message                 "The view fell behind its channel; reconnect to resynchronize."))
       (channel-subscription--mark-closed view)
-      (let ((connection (channel-subscription-connection view)))
-        (when connection (world-terminal-client--disconnect connection)))))
+      (when-let ((connection (channel-subscription-connection view))) (world-terminal-client--disconnect connection))))
   nil)
 
 (-> channel-view--drain-events (channel-view) null)

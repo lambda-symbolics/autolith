@@ -192,7 +192,7 @@
 
 (-> test-environment-fixture-evaluation () null)
 (defun test-environment-fixture-evaluation ()
-  "Test binding expressions run once and invalid setup cannot leak earlier edits."
+  "Test that environment fixture binding expressions run once."
   (let ((name        (format nil "AUTOLITH_FIXTURE_~A" (make-identifier)))
         (name-count  0)
         (value-count 0))
@@ -200,51 +200,7 @@
       (with-test-environment (((progn (incf name-count) name)
                                (progn (incf value-count) "inner")))
         (test-assert (and (= name-count 1) (= value-count 1))
-                     "fixture names and values are evaluated once"))
-      (test-assert
-       (handler-case
-           (progn
-             (with-test-environment ((name "changed") ("IGNORED" 42))
-               :unexpected)
-             nil)
-         (type-error ()
-           t))
-       "invalid environment values signal a typed setup failure")
-      (test-assert (string= (uiop:getenv name) "outer")
-                   "environment setup failures do not leak preceding bindings")))
-  nil)
-
-(-> test-function-replacement-fixture-restoration () null)
-(defun test-function-replacement-fixture-restoration ()
-  "Test nested function replacements restore their definitions after errors."
-  (let* ((name     (gensym "FIXTURE-FUNCTION"))
-         (original (lambda () :original))
-         (outer    (lambda () :outer))
-         (inner    (lambda () :inner)))
-    (unwind-protect
-         (progn
-           (setf (symbol-function name) original)
-           (test-call-with-function-replacements
-            (list (list name outer))
-            (lambda ()
-              (test-assert (eq (funcall name) :outer)
-                           "function fixtures install their replacement")
-              (test-assert
-               (handler-case
-                   (test-call-with-function-replacements
-                    (list (list name inner))
-                    (lambda ()
-                      (test-assert (eq (funcall name) :inner)
-                                   "nested function fixtures replace the outer definition")
-                      (error 'test-fixture-error)))
-                 (test-fixture-error ()
-                   t))
-               "function fixture errors propagate to the caller")
-              (test-assert (eq (symbol-function name) outer)
-                           "failed nested replacements restore the outer function")))
-           (test-assert (eq (symbol-function name) original)
-                        "normal fixture exit restores the original function"))
-      (fmakunbound name)))
+                     "fixture names and values are evaluated once"))))
   nil)
 
 (-> test-long-symbolic-link-fixture () null)

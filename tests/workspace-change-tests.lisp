@@ -45,8 +45,8 @@
           (created     (merge-pathnames "create.txt" root)))
      (unwind-protect
          (progn
-          (workspace-resource-tests--write-text replacement "before")
-          (workspace-resource-tests--write-text deleted "deleted")
+          (test-write-text replacement "before")
+          (test-write-text deleted "deleted")
           (platform-make-private *platform* replacement)
           (let ((private-p
                  (platform-file-status-private-p
@@ -94,8 +94,8 @@
           (second   (merge-pathnames "second.txt" root)))
      (unwind-protect
          (progn
-          (workspace-resource-tests--write-text first "first")
-          (workspace-resource-tests--write-text second "second")
+          (test-write-text first "first")
+          (test-write-text second "second")
           (let ((requests
                  (list
                   (workspace-change-tests--request context
@@ -106,7 +106,7 @@
              (workspace-change-tests--failure
               (lambda () (workspace-change-set-apply other requests)))
              "reject another conversation's revisions")
-            (workspace-resource-tests--write-text second "external")
+            (test-write-text second "external")
             (test-assert
              (typep
               (workspace-change-tests--failure
@@ -146,8 +146,8 @@
             (second  (merge-pathnames "second.txt" root)))
        (unwind-protect
            (progn
-            (workspace-resource-tests--write-text first "first")
-            (workspace-resource-tests--write-text second "second")
+            (test-write-text first "first")
+            (test-write-text second "second")
             (platform-make-private *platform* first)
             (let* ((requests
                     (list
@@ -198,8 +198,8 @@
           (second   (merge-pathnames "second.txt" root)))
      (unwind-protect
          (progn
-          (workspace-resource-tests--write-text first "first")
-          (workspace-resource-tests--write-text second "second")
+          (test-write-text first "first")
+          (test-write-text second "second")
           (let* ((requests
                   (list
                    (workspace-change-tests--request context
@@ -212,7 +212,7 @@
                          (lambda (temporary target)
                            (if (equal target second)
                                (progn
-                                (workspace-resource-tests--write-text first
+                                (test-write-text first
                                  "external")
                                 (error 'cl-resources:resource-protocol-error
                                        :uri "workspace:second.txt" :reason
@@ -233,7 +233,7 @@
               (test-assert
                (eq ':recovery-required (cl-resources:change-set-state set))
                "retain failed compensation")
-              (workspace-resource-tests--write-text first "first")
+              (test-write-text first "first")
               (cl-resources:change-set-recover set)
               (test-assert (eq ':aborted (cl-resources:change-set-state set))
                "complete explicit recovery")
@@ -254,7 +254,7 @@
            (path          (merge-pathnames "original.txt" root)))
       (unwind-protect
            (progn
-             (workspace-resource-tests--write-text path "original")
+             (test-write-text path "original")
              (let ((requests (list (workspace-change-tests--request
                                     context "workspace:original.txt" "replacement")))
                    (*workspace-file-resource-publish-function*
@@ -283,9 +283,9 @@
            (later         (merge-pathnames "later.txt" root)))
       (unwind-protect
            (progn
-             (workspace-resource-tests--write-text target "same")
-             (workspace-resource-tests--write-text donor "same")
-             (workspace-resource-tests--write-text later "later")
+             (test-write-text target "same")
+             (test-write-text donor "same")
+             (test-write-text later "later")
              (platform-make-read-only *platform* target)
              (platform-make-private *platform* donor)
              (let* ((original-permissions (platform-file-permissions *platform* target))
@@ -326,8 +326,8 @@
            (restore-source nil))
       (unwind-protect
            (progn
-             (workspace-resource-tests--write-text target "original")
-             (workspace-resource-tests--write-text later "later")
+             (test-write-text target "original")
+             (test-write-text later "later")
              (platform-make-read-only *platform* target)
              (let* ((original-permissions (platform-file-permissions *platform* target))
                     (requests             (list (workspace-change-tests--request context "workspace:target.txt" nil)

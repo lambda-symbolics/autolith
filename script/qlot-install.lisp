@@ -1,4 +1,5 @@
 (require :asdf)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 (defun qlot-install--windows-unsafe-pathname-p (pathname)
   "Return true when Windows cannot store PATHNAME because of its characters."
@@ -96,15 +97,7 @@ without following them."
   (unless (probe-file quicklisp-setup)
     (error "Autolith bootstrap needs Quicklisp at ~A" quicklisp-setup))
   (load quicklisp-setup)
-  (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-  (let ((profile-library-directory
-          (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-        (library-directories
-          (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-    (when (probe-file profile-library-directory)
-      (pushnew profile-library-directory
-               (symbol-value library-directories)
-               :test #'equal)))
+  (autolith-script-configure-cffi)
   (uiop:symbol-call '#:ql '#:quickload :qlot :silent t)
   (when (uiop:os-windows-p)
     (qlot-install--tolerate-windows-unsafe-tar-entries)

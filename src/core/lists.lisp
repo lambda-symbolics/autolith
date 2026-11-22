@@ -1,13 +1,9 @@
 (in-package #:autolith)
 
-;;;; -- Finite Lists --
+;;;; -- Property Lists --
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (-> proper-list-p (t &key (:nonempty-p boolean)) boolean)
-  (defun proper-list-p (value &key nonempty-p)
-    "Return true for a finite proper list, requiring an element when NONEMPTY-P."
-    (and (if nonempty-p (consp value) (listp value))
-         (handler-case
-             (integerp (list-length value))
-           (type-error ()
-            nil)))))
+(-> plist-key-present-p (list keyword) boolean)
+(defun plist-key-present-p (plist key)
+  "Return true when PLIST contains KEY in a key position, even for a NIL value."
+  (loop for tail on plist by (partial #'nthcdr 2)
+        thereis (eq (first tail) key)))

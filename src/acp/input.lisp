@@ -10,7 +10,7 @@
 (defun acp-input--submit (session params steer-p)
   "Submit the prose in PARAMS to SESSION's channel, steering a running turn when STEER-P."
   (let ((text (agentcomms:acp-field params "text" :type ':string :required-p t)))
-    (unless (non-empty-string-p (string-trim '(#\Space #\Tab #\Newline #\Return) text))
+    (unless (non-empty-string-p (string-trim *line-whitespace* text))
       (agentcomms:acp-invalid-params "Input text must not be blank."))
     (when (> (length text) 262144)
       (agentcomms:acp-invalid-params "Input text exceeds the character limit."))

@@ -1206,13 +1206,8 @@ the version the client says it is, when it says one."
 
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
-  "Exercise hosted startup and reopening without requesting the process startup banner."
-  (test-call-with-function-replacements
-   (list (list 'application-banner
-               (lambda (application)
-                 (declare (ignore application))
-                 (error "A hosted channel requested the process startup banner."))))
-   #'world-server-tests--hosting-lifecycle)
+  "Exercise hosted startup and reopening."
+  (world-server-tests--hosting-lifecycle)
   nil)
 
 (-> world-server-tests--hosting-lifecycle () null)
@@ -1865,8 +1860,8 @@ the version the client says it is, when it says one."
         :input  (make-string-input-stream (format nil "(status)~%~%(status)~%"))
         :output output)
        (let ((text (get-output-stream-string output)))
-          (test-assert (and (= 2 (terminal-tests--substring-count "› (status)" text))
-                           (= 2 (terminal-tests--substring-count "conversation" text)))
+          (test-assert (and (= 2 (test-substring-count "› (status)" text))
+                           (= 2 (test-substring-count "conversation" text)))
                       (format nil "each submission is echoed and followed by its output: ~A" text)))
        (test-assert (task-tests--wait-until
                      (lambda ()

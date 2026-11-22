@@ -14,8 +14,7 @@ are both supplied as absolute paths. Each call closes its native context.
 This function runs locally, independently of telemetry consent, and sends no data."
   (handler-case
       (progn
-        (let ((library (uiop:getenv "AUTOLITH_DEFINGERPRINTER_LIBRARY")))
-          (when library (defingerprinter:load-library library)))
+        (when-let ((library (uiop:getenv "AUTOLITH_DEFINGERPRINTER_LIBRARY"))) (defingerprinter:load-library library))
         (let ((redactor (defingerprinter:make-redactor
                          :model-directory model-directory :runtime-library runtime-library)))
           (unwind-protect
@@ -42,8 +41,7 @@ output at the 1,024-character ABI limit rather than returning truncated text."
                                        when (and (char= (char text index) #\Space)
                                                  (find (char text (1- index)) ".!?;"))
                                          return (1+ index))
-                                 (let ((space (position #\Space text :start start :end ceiling :from-end t)))
-                                   (when space (1+ space)))
+                                 (when-let ((space (position #\Space text :start start :end ceiling :from-end t))) (1+ space))
                                  (return-from complete (values nil ':unsupported-input))))
                do (multiple-value-bind (safe status)
                       (defingerprinter:redact redactor (subseq text start end) :language language)

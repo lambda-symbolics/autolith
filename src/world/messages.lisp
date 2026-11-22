@@ -165,8 +165,7 @@ The world server sets it while it runs, so a message wakes the agent it is for."
                                  :keyword-keys-p t)
        (eql (getf (rest form) :version) *world-inbox-version*)
        (let ((deliveries (getf (rest form) :deliveries)))
-         (and (listp deliveries)
-              (handler-case (list-length deliveries) (error () nil))
+         (and (proper-list-p deliveries)
               (every #'world-delivery--record-p deliveries)
               t))))
 
@@ -212,10 +211,9 @@ whether to write."
 (-> world-person-unread (configuration) (integer 0))
 (defun world-person-unread (configuration)
   "Return how many messages wait unread in the person's inbox, none before the inbox exists."
-  (let ((inbox (world-inbox-channel (world-load configuration))))
-    (if inbox
-        (length (world-inbox-deliveries configuration (channel-identifier inbox)))
-        0)))
+  (if-let ((inbox (world-inbox-channel (world-load configuration))))
+      (length (world-inbox-deliveries configuration (channel-identifier inbox)))
+      0))
 
 (-> world-inbox-append (configuration string list) null)
 (defun world-inbox-append (configuration channel-identifier deliveries)
@@ -323,8 +321,7 @@ whether to write."
        (eql (getf (rest form) :version) *world-outbox-version*)
        (non-empty-string-p (getf (rest form) :id))
        (let ((pending (getf (rest form) :pending)))
-         (and (listp pending)
-              (handler-case (list-length pending) (error () nil))
+         (and (proper-list-p pending)
               (every (lambda (entry)
                        (and (consp entry)
                             (non-empty-string-p (first entry))
@@ -684,23 +681,22 @@ count."
                      nil)))
         (reached nil))
     (dolist (channel-identifier channel-identifiers)
-      (let ((record (find channel-identifier records
-                          :key  (lambda (entry) (getf (rest (rest entry)) :session-id))
-                          :test #'equal)))
-        (when record
-          (handler-case
-              (progn
-                (image-daemon:daemon-message-call (rest record)
-                                                  :request-tag ':world-terminal-request
-                                                  :action      ':channel
-                                                  :id          channel-identifier
-                                                  :sender      channel-identifier
-                                                  :receiver    channel-identifier
-                                                  :payload     nil
-                                                  :timeout     2)
-                (push channel-identifier reached))
-            (error ()
-              nil)))))
+      (when-let ((record (find channel-identifier records
+                               :key  (lambda (entry) (getf (rest (rest entry)) :session-id))
+                               :test #'equal)))
+        (handler-case
+            (progn
+              (image-daemon:daemon-message-call (rest record)
+                                                :request-tag ':world-terminal-request
+                                                :action      ':channel
+                                                :id          channel-identifier
+                                                :sender      channel-identifier
+                                                :receiver    channel-identifier
+                                                :payload     nil
+                                                :timeout     2)
+              (push channel-identifier reached))
+          (error ()
+            nil))))
     (when (world-message--person-inbox-among-p configuration channel-identifiers)
       (application-world-notify-person configuration))
     (when *world-message-unserved-function*
@@ -769,23 +765,22 @@ The result is a plist of :id, :channels (channels whose delivery attempt complet
              (push (image-input-prepare
                     path (merge-pathnames "world/images/" (config :data-root configuration)))
                    attachments))
-           (let ((pairs (world-message-plan
-                         world
-                         :sender        participant
-                         :channel       target
-                         :text          text
-                         :images        (mapcar (lambda (attachment)
-                                                  (namestring (image-attachment-pathname attachment)))
-                                                (reverse attachments))
-                         :mentions      (remove-duplicates mentioned :test #'string= :from-end t)
-                         :identifier    identifier
-                         :now           now
-                         :post-p        post-p
-                         :subscribers-p subscribers-p
-                         :source        source)))
-             (when pairs
-               (world-outbox-write configuration identifier pairs)
-               (setf published-p t)))
+           (when-let ((pairs (world-message-plan
+                              world
+                              :sender        participant
+                              :channel       target
+                              :text          text
+                              :images        (mapcar (lambda (attachment)
+                                                       (namestring (image-attachment-pathname attachment)))
+                                                     (reverse attachments))
+                              :mentions      (remove-duplicates mentioned :test #'string= :from-end t)
+                              :identifier    identifier
+                              :now           now
+                              :post-p        post-p
+                              :subscribers-p subscribers-p
+                              :source        source)))
+             (world-outbox-write configuration identifier pairs)
+             (setf published-p t))
            (multiple-value-bind (delivered refused)
                (world-message--deliver configuration identifier)
              (list :id       identifier

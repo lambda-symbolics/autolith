@@ -75,7 +75,7 @@
 (-> knowledge-fixture--file (knowledge-fixture string string) pathname)
 (defun knowledge-fixture--file (fixture name content)
   "Write workspace file NAME with CONTENT in FIXTURE."
-  (memory-source-tests--write (merge-pathnames name (knowledge-fixture-workspace fixture)) content))
+  (test-write-text (merge-pathnames name (knowledge-fixture-workspace fixture)) content))
 
 (-> knowledge-fixture--say (knowledge-fixture string) null)
 (defun knowledge-fixture--say (fixture text)
@@ -87,21 +87,21 @@
 (defun knowledge-fixture--read (fixture uri &rest arguments)
   "Read URI through FIXTURE's tools and return the result text."
   (tool-result-content
-   (memory-resource-tests--call (knowledge-fixture-registry fixture)
-                                (knowledge-fixture-context fixture)
-                                :namespace "resource"
-                                :name      "read"
-                                :arguments (list* "uri" uri arguments))))
+   (test-resource-call (knowledge-fixture-registry fixture)
+                       (knowledge-fixture-context fixture)
+                       :namespace "resource"
+                       :name      "read"
+                       :arguments (list* "uri" uri arguments))))
 
 (-> knowledge-fixture--edit (knowledge-fixture &rest t) string)
 (defun knowledge-fixture--edit (fixture &rest operations)
   "Apply OPERATIONS to memory:facts through FIXTURE's tools, asserting they succeed."
-  (let ((result (memory-resource-tests--call
+  (let ((result (test-resource-call
                  (knowledge-fixture-registry fixture) (knowledge-fixture-context fixture)
                  :namespace "resource"
                  :name      "edit"
                  :arguments (list "uri" "memory:facts"
-                                  "base-revision" (memory-resource-tests--field
+                                  "base-revision" (test-resource-field
                                                    (knowledge-fixture--read fixture "memory:facts" "max-results" 1)
                                                    "Revision: ")
                                   "operations" (coerce operations 'vector)))))
@@ -251,7 +251,7 @@
                            (json-encode
                             (json-object "uri" "memory:facts"
                                          "base-revision"
-                                         (memory-resource-tests--field
+                                         (test-resource-field
                                           (knowledge-fixture--read fixture "memory:facts" "max-results" 1)
                                           "Revision: ")
                                          "operations" (vector operation))))

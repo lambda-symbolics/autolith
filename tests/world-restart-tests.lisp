@@ -250,7 +250,7 @@ skips the repository check."
    (list (list 'platform-session-launch-command
                (lambda (platform source-root)
                  (declare (ignore platform))
-                 (list (lisp-worker-sbcl-command) "--noinform"
+                 (list (sbcl-command) "--noinform"
                        "--no-userinit" "--no-sysinit" "--script"
                        (namestring (merge-pathnames "script/launcher.lisp" source-root))))))
    (lambda ()
@@ -496,7 +496,7 @@ skips the repository check."
           collect (list variable (namestring (merge-pathnames directory root))))
     (list (list "AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE"))
           (list "AUTOLITH_SOURCE_ROOT" (namestring (asdf:system-source-directory :autolith)))
-          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command))
+          (list "AUTOLITH_SBCL" (sbcl-command))
           (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
           (list "AUTOLITH_RECOVERED" nil)))
    function))

@@ -244,8 +244,7 @@ root's effective registration, even when its provider setting is empty."
 A :TEXT contract accepts any nonempty answer; a schema contract reads one JSON
 value from the text through the library's answer reader."
   (if (eq contract ':text)
-      (let ((trimmed (and text
-                          (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
+      (let ((trimmed (and text (serapeum:trim-whitespace text))))
         (if (non-empty-string-p trimmed)
             (values trimmed t nil)
             (values nil nil "The response contained no answer text.")))
@@ -349,15 +348,14 @@ With no activity CALLBACK, return a no-op provider callback."
             (lock        (make-lock "RLM stream progress")))
         (lambda (&optional event)
           (declare (ignore event))
-          (let ((report-p
-                  (with-lock-held (lock)
-                    (let ((now (funcall clock)))
-                      (when (or (null reported-at)
-                                (>= (- now reported-at) internal-time-units-per-second))
-                        (setf reported-at now)
-                        t)))))
-            (when report-p
-              (rlm--note-activity callback activity)))))))
+          (when-let ((report-p
+                       (with-lock-held (lock)
+                         (let ((now (funcall clock)))
+                           (when (or (null reported-at)
+                                     (>= (- now reported-at) internal-time-units-per-second))
+                             (setf reported-at now)
+                             t)))))
+            (rlm--note-activity callback activity))))))
 
 (-> rlm--run-direct-inference
     (string &key (:request string) (:contract t) (:budget rlm-budget)

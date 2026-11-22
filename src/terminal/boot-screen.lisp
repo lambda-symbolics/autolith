@@ -327,7 +327,7 @@ Keys arrive through the responsive reader, or directly while
 DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
   (let* ((terminal                    (terminal-ui-terminal ui))
          (*terminal-ui-boot-linger-p* t)
-         (detail                      (second (first (last *terminal-ui-boot-sequence-phases*))))
+         (detail                      (second (lastcar *terminal-ui-boot-sequence-phases*)))
          (elapsed                     0))
     (terminal-ui-boot-screen ui ':listener-ready detail)
     (loop

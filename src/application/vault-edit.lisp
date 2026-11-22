@@ -5,11 +5,10 @@
 (-> application-vault--represented-identifiers (application) list)
 (defun application-vault--represented-identifiers (application)
   "Return capture identities already represented by the live controller."
-  (let ((controller (application-input-controller application)))
-    (when controller
-      (with-lock-held ((application-input-controller-lock controller))
-        (remove nil (cons (application-input-controller-pending-snapshot-identifier controller)
-                          (copy-list (application-input-controller-vault-capture-identifiers controller))))))))
+  (when-let ((controller (application-input-controller application)))
+    (with-lock-held ((application-input-controller-lock controller))
+      (remove nil (cons (application-input-controller-pending-snapshot-identifier controller)
+                        (copy-list (application-input-controller-vault-capture-identifiers controller)))))))
 
 (-> application-vault--parked-captures (list list) list)
 (defun application-vault--parked-captures (captures represented)

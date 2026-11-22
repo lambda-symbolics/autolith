@@ -48,10 +48,9 @@ each drive their own environment."
                            *rlm-environment-pool*))
       (if entry
           (setf *rlm-environment-pool* (remove entry *rlm-environment-pool*))
-          (let ((retired (find key *rlm-environment-retired* :test #'rlm--environment-key=)))
-            (when retired
-              (setf retired-p t
-                    *rlm-environment-retired* (remove retired *rlm-environment-retired*))))))
+          (when-let ((retired (find key *rlm-environment-retired* :test #'rlm--environment-key=)))
+            (setf retired-p t
+                  *rlm-environment-retired* (remove retired *rlm-environment-retired*)))))
     (cond
       (retired-p
        (values nil ':retired))
@@ -80,7 +79,7 @@ each drive their own environment."
                   ':worker worker)
             *rlm-environment-pool*)
       (when (> (length *rlm-environment-pool*) *rlm-environment-pool-size*)
-        (setf evicted (first (last *rlm-environment-pool*))
+        (setf evicted (lastcar *rlm-environment-pool*)
               *rlm-environment-pool* (butlast *rlm-environment-pool*))
         (push (list (getf evicted ':digest) (getf evicted ':configuration))
               *rlm-environment-retired*)

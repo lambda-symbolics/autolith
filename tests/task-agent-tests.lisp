@@ -31,7 +31,7 @@
                           pathname))
               "one .sexp form creates a complete native role definition"))
            (let* ((pathname
-                    (task-tests--write-text
+                    (test-write-text
                      (merge-pathnames "block-comment.sexp" directory)
                      "#| leading |#(:name\"block-comment\"#| outer #| nested |# comment |#:description\"Commented role\":instructions #| value |#\"Accept standard block comments.\")"))
                   (definition
@@ -46,7 +46,7 @@
               "native role parsing accepts standard keyword, string, and block-comment adjacency"))
            (let* ((pathname  (merge-pathnames "incomplete.sexp" directory))
                   (condition (task-tests--agent-definition-error
-                              (task-tests--write-text pathname "(:name") :project)))
+                              (test-write-text pathname "(:name") :project)))
              (test-assert
               (and (typep (task-agent-definition-error-cause condition) 'sexp-config-error)
                    (typep (task-agent-definition-error-line condition) '(integer 1))
@@ -72,7 +72,7 @@
                          directory))
                       (condition
                         (task-tests--agent-definition-error
-                         (task-tests--write-text pathname contents)
+                         (test-write-text pathname contents)
                          :project)))
                  (test-assert
                   (and (typep condition 'task-agent-definition-error)
@@ -148,7 +148,7 @@
             (merge-pathnames "librarian.sexp" site-directory)
             (task-tests--role-form
              "librarian" "Site librarian" "Research using site policy."))
-           (task-tests--write-text
+           (test-write-text
             (merge-pathnames "sonic.sexp" project-directory)
             "(:name \"sonic\" :description \"Missing instructions\")")
            (task-tests--write-native-form
@@ -263,10 +263,10 @@
             (task-tests--role-form
              "denied" "A role outside the child policy."
              "This instruction must not matter."))
-           (task-tests--write-text
+           (test-write-text
             (merge-pathnames "blocked.sexp" project-directory)
             "(:name \"blocked\" :description \"Missing instructions\")")
-           (task-tests--write-text
+           (test-write-text
             hidden-broken-path
             "(:name \"hidden-broken\" :description \"Private malformed role\" :instructions 177771)")
            (task-tests--write-native-form

@@ -2,17 +2,6 @@
 
 ;;;; -- Recovery Input Vault Test Support --
 
-(-> recovery-input-vault-tests--octets (pathname) (simple-array (unsigned-byte 8) (*)))
-(defun recovery-input-vault-tests--octets (pathname)
-  "Return the exact octets stored at PATHNAME."
-  (with-open-file (stream pathname
-                          :direction    ':input
-                          :element-type '(unsigned-byte 8))
-    (let ((octets (make-array (file-length stream)
-                              :element-type '(unsigned-byte 8))))
-      (read-sequence octets stream)
-      octets)))
-
 (-> recovery-input-vault-tests--application
     (configuration string)
     application)
@@ -104,7 +93,7 @@
                    (= (getf (first captures) :captured-at) 123))
               "repeated import keeps the original capture rather than duplicating it"))
            (let ((conflicting-form (copy-tree pending-form))
-                 (vault-octets     (recovery-input-vault-tests--octets vault-pathname)))
+                 (vault-octets     (read-file-into-byte-vector vault-pathname)))
              (setf (getf (getf (rest conflicting-form) :active-work) :work)
                    '(:message "different active work"))
              (snapshot-write pending-pathname conflicting-form :mode #o600)
@@ -116,7 +105,7 @@
                           'recovery-input-vault-error)
                    (probe-file pending-pathname)
                    (equalp vault-octets
-                           (recovery-input-vault-tests--octets vault-pathname)))
+                           (read-file-into-byte-vector vault-pathname)))
               "a conflicting replay preserves both the pending snapshot and vault")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
@@ -253,9 +242,9 @@
                                    :external-format   ':utf-8)
              (write-string "(:recovery-input-vault :version 1" stream))
            (let ((pending-octets
-                   (recovery-input-vault-tests--octets pending-pathname))
+                   (read-file-into-byte-vector pending-pathname))
                  (vault-octets
-                   (recovery-input-vault-tests--octets vault-pathname)))
+                   (read-file-into-byte-vector vault-pathname)))
              (test-assert
               (not (application-recovery-input-vault-import application))
               "truncated vault state rejects recovery import")
@@ -266,10 +255,10 @@
                      (equal (recovery-input-vault-error-pathname failure)
                             vault-pathname)
                      (equalp pending-octets
-                             (recovery-input-vault-tests--octets
+                             (read-file-into-byte-vector
                               pending-pathname))
                      (equalp vault-octets
-                             (recovery-input-vault-tests--octets
+                             (read-file-into-byte-vector
                               vault-pathname)))
                 "corrupt vault failure leaves pending and vault bytes unchanged"))
              (let ((vault-form
@@ -294,7 +283,7 @@
                  (let ((form (copy-tree vault-form)))
                    (funcall mutate form)
                    (snapshot-write vault-pathname form :mode #o600)
-                   (let ((octets (recovery-input-vault-tests--octets vault-pathname)))
+                   (let ((octets (read-file-into-byte-vector vault-pathname)))
                      (test-assert
                       (not (application-recovery-input-vault-import application))
                       "invalid vault record schemas reject recovery import")
@@ -303,9 +292,9 @@
                         (and (typep failure 'recovery-input-vault-error)
                              (eq (recovery-input-vault-error-operation failure) ':validate-vault)
                              (equalp pending-octets
-                                     (recovery-input-vault-tests--octets pending-pathname))
+                                     (read-file-into-byte-vector pending-pathname))
                              (equalp octets
-                                     (recovery-input-vault-tests--octets vault-pathname)))
+                                     (read-file-into-byte-vector vault-pathname)))
                         "schema failures preserve both durable input files"))))))
              (test-assert
               (handler-case
@@ -343,7 +332,7 @@
                                    :external-format   ':utf-8)
              (write-string "(:pending-inputs :version" stream))
            (let ((legacy-octets
-                   (recovery-input-vault-tests--octets legacy-pathname)))
+                   (read-file-into-byte-vector legacy-pathname)))
              (test-assert
               (application-recovery-input-vault-import application)
               "unattributed corrupt global legacy input does not block recovery")
@@ -352,7 +341,7 @@
                    (probe-file legacy-pathname)
                    (not (probe-file vault-pathname))
                    (equalp legacy-octets
-                           (recovery-input-vault-tests--octets legacy-pathname)))
+                           (read-file-into-byte-vector legacy-pathname)))
               "unattributed corrupt global legacy bytes remain untouched")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
@@ -875,7 +864,7 @@
                                    :external-format   ':utf-8)
              (write-string "(:pending-inputs :version" stream))
            (setf legacy-octets
-                 (recovery-input-vault-tests--octets legacy-pathname))
+                 (read-file-into-byte-vector legacy-pathname))
            (terminal-ui-start ui)
            (setf controller
                  (application-input-controller-create
@@ -897,7 +886,7 @@
                  (probe-file other-vault)
                  (probe-file legacy-pathname)
                  (equalp legacy-octets
-                         (recovery-input-vault-tests--octets legacy-pathname))
+                         (read-file-into-byte-vector legacy-pathname))
                  (application-input-controller-pending-persistence-enabled-p
                   controller)
                  (null (application-recovery-input-vault-failure application)))
@@ -1322,9 +1311,9 @@
                                    :external-format   ':utf-8)
              (write-string "(:recovery-input-vault :version 1" stream))
            (setf pending-octets
-                 (recovery-input-vault-tests--octets pending-pathname)
+                 (read-file-into-byte-vector pending-pathname)
                  vault-octets
-                 (recovery-input-vault-tests--octets vault-pathname))
+                 (read-file-into-byte-vector vault-pathname))
            (test-call-with-function-replacements
             (list
              ;; Abort the expected Lisp debugger interaction so discard can follow.
@@ -1374,10 +1363,10 @@
                         (and (probe-file pending-pathname)
                              (probe-file vault-pathname)
                              (equalp pending-octets
-                                     (recovery-input-vault-tests--octets
+                                     (read-file-into-byte-vector
                                       pending-pathname))
                              (equalp vault-octets
-                                     (recovery-input-vault-tests--octets
+                                     (read-file-into-byte-vector
                                       vault-pathname))
                              t))
                   (submit "(vault-restore)")

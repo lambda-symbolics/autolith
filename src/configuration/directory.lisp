@@ -195,9 +195,8 @@ Anchors are ordered from the outermost directory to the nearest directory."
   "Atomically replace site, global, and inherited native MCP registrations."
   (with-extension-registry-transaction
     (let ((site-definitions
-            (let ((pathname (configuration-site-mcp-path configuration)))
-              (when pathname
-                (mcp-configuration-read-path pathname))))
+            (when-let ((pathname (configuration-site-mcp-path configuration)))
+              (mcp-configuration-read-path pathname)))
           (global-definitions    (mcp-configuration-read configuration))
           (directory-definitions (directory-configuration-read-mcp configuration)))
       (with-lock-held (*mcp-server-registry-lock*)

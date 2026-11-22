@@ -242,12 +242,11 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
                  ((:source-characters :body-source-characters)
                   (setf (getf wire key) (if (functionp value) (funcall value) value)))
                  (:entry-transform
-                  (let ((named (find-if (lambda (transform)
-                                          (and (fboundp (rest transform))
-                                               (eq value (fdefinition (rest transform)))))
-                                        *presentation-entry-transforms*)))
-                    (when named
-                      (setf (getf wire key) (first named)))))
+                  (when-let ((named (find-if (lambda (transform)
+                                               (and (fboundp (rest transform))
+                                                    (eq value (fdefinition (rest transform)))))
+                                             *presentation-entry-transforms*)))
+                    (setf (getf wire key) (first named))))
                  (:origin
                   (when value
                     (setf (getf wire key)
@@ -261,18 +260,17 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
                             entry))
             (source     (getf metadata :source-input))
             (tool-entry (getf metadata :tool-entry)))
-        (let ((key (cond ((presentation--source-input-p source)
-                          ':source-input)
-                         ((presentation--tool-entry-p tool-entry)
-                          ':tool-entry))))
-          (if key
-              (multiple-value-bind (description collapsed)
-                  (presentation--tool-entry->wire (getf metadata key) entry)
-                (setf (getf wire key) description)
-                (list identifier
-                      (if (eq key ':tool-entry) (presentation-entry->wire entry) collapsed)
-                      wire))
-              (list identifier (and entry (presentation-entry->wire entry)) wire)))))))
+        (if-let ((key (cond ((presentation--source-input-p source)
+                             ':source-input)
+                            ((presentation--tool-entry-p tool-entry)
+                             ':tool-entry))))
+            (multiple-value-bind (description collapsed)
+                (presentation--tool-entry->wire (getf metadata key) entry)
+              (setf (getf wire key) description)
+              (list identifier
+                    (if (eq key ':tool-entry) (presentation-entry->wire entry) collapsed)
+                    wire))
+            (list identifier (and entry (presentation-entry->wire entry)) wire))))))
 
 (-> presentation-wire->record (t) (option list))
 (defun presentation-wire->record (wire)
@@ -664,14 +662,13 @@ Only a page paints rows here, such as the memory manager or the onboarding
 tour: the transcript, the live rows and the composer are the clients' own to
 compose."
   (declare (ignore painter))
-  (let ((function (presentation-terminal-page-function terminal)))
-    (when function
-      (funcall function (list :open-p           t
-                              :rows             rows
-                              :cursor-row       cursor-row
-                              :cursor-column    cursor-column
-                              :cursor-visible-p (not (null cursor-visible-p))
-                              :whole-screen-p   (not (null whole-screen-p))))))
+  (when-let ((function (presentation-terminal-page-function terminal)))
+    (funcall function (list :open-p           t
+                            :rows             rows
+                            :cursor-row       cursor-row
+                            :cursor-column    cursor-column
+                            :cursor-visible-p (not (null cursor-visible-p))
+                            :whole-screen-p   (not (null whole-screen-p)))))
   nil)
 
 (defmethod terminal-screen-invalidate ((terminal presentation-terminal) painter)
@@ -690,9 +687,8 @@ compose."
 (-> channel-presentation--send (channel-presentation list) null)
 (defun channel-presentation--send (ui event)
   "Give EVENT to UI's publisher, when it has one."
-  (let ((function (channel-presentation-publish-function ui)))
-    (when function
-      (funcall function event)))
+  (when-let ((function (channel-presentation-publish-function ui)))
+    (funcall function event))
   nil)
 
 (-> channel-presentation--forget-cell (channel-presentation cons) null)
@@ -1331,12 +1327,13 @@ Only what was added since the last update travels; a source that changed
 otherwise is sent whole."
   (with-terminal-ui-locked (ui)
     (let* ((streams  (channel-presentation-streams ui))
-           (stream   (or (gethash identifier streams)
-                         (setf (gethash identifier streams)
-                               (list (list ':stream (incf (channel-presentation-stream-counter ui)))
-                                     nil nil))))
+           (stream   (values (ensure-gethash identifier streams
+                                             (list (list ':stream (incf (channel-presentation-stream-counter ui)))
+                                              nil nil))))
            (previous (second stream))
-           (delta-p  (and previous (string-prefix-p previous source)))
+           (delta-p  (and previous
+                          (<= (length previous) (length source))
+                          (string= previous source :end2 (length previous))))
            (shared   (list :identifier (first stream)
                            :header     (presentation-entry->wire header)
                            :mentions   mentions
@@ -1661,10 +1658,9 @@ method does not name."))
 (defmethod presentation-apply
     ((ui terminal-ui) (operation (eql :append)) &key identifier entry group &allow-other-keys)
   "Append one entry, once for its identifier."
-  (let ((entry (presentation-wire->entry entry)))
-    (when entry
-      (terminal-ui-append-finalized
-       ui (or identifier (list ':anonymous (make-identifier))) entry :group group)))
+  (when-let ((entry (presentation-wire->entry entry)))
+    (terminal-ui-append-finalized
+     ui (or identifier (list ':anonymous (make-identifier))) entry :group group))
   nil)
 
 (defmethod presentation-apply
@@ -1677,10 +1673,9 @@ method does not name."))
 (defmethod presentation-apply
     ((ui terminal-ui) (operation (eql :records)) &key presentations &allow-other-keys)
   "Present transcript records."
-  (let ((records (remove nil (mapcar #'presentation-wire->record
-                                     (and (listp presentations) presentations)))))
-    (when records
-      (terminal-ui-present-records ui records)))
+  (when-let ((records (remove nil (mapcar #'presentation-wire->record
+                                          (and (listp presentations) presentations)))))
+    (terminal-ui-present-records ui records))
   nil)
 
 (defmethod presentation-apply

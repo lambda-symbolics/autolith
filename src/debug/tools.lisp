@@ -239,9 +239,8 @@
              (progn
                (with-lock-held ((debug-session-manager-lock manager))
                  (setf (debug-session-entry-cancelled-p entry) t))
-               (let ((session (debug-session-entry-session entry)))
-                 (when session
-                   (daphne:session-close session (make-condition 'daphne:dap-cancelled :message "Debug session cancelled."))))
+               (when-let ((session (debug-session-entry-session entry)))
+                 (daphne:session-close session (make-condition 'daphne:dap-cancelled :message "Debug session cancelled.")))
                (unless (debug-session-entry-busy-p entry) (debug--remove manager entry))
                (json-object "cancelled" t))
              (let ((completed-p nil))
@@ -319,11 +318,10 @@
         (setf (gethash "lines" properties) (json-object "type" "array" "items" (json-object "type" "integer" "minimum" 1 "maximum" 100000000) "maxItems" 100))
         (push "lines" required)))
     (flet ((bounds (name &key minimum maximum default)
-             (let ((field (gethash name properties)))
-               (when field
-                 (setf (gethash "minimum" field) minimum
-                       (gethash "maximum" field) maximum
-                       (gethash "default" field) default)))))
+             (when-let ((field (gethash name properties)))
+               (setf (gethash "minimum" field) minimum
+                     (gethash "maximum" field) maximum
+                     (gethash "default" field) default))))
       (bounds "timeout" :minimum 1 :maximum 120 :default 10)
       (bounds "count" :minimum 1 :maximum 100 :default (if (eq operation ':variables) 50 20)))
     (when (eq operation ':evaluate)

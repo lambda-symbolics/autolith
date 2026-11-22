@@ -131,14 +131,14 @@
            (result       (make-instance 'tool-result :content "read succeeded" :success-p t)))
       (labels ((propose (operation)
                  "Edit memory:facts using OPERATION."
-                 (memory-resource-tests--call
+                 (test-resource-call
                   registry context
                   :namespace "resource"
                   :name      "edit"
                   :arguments (list "uri" "memory:facts"
-                                   "base-revision" (memory-resource-tests--field
+                                   "base-revision" (test-resource-field
                                                     (tool-result-content
-                                                     (memory-resource-tests--call
+                                                     (test-resource-call
                                                       registry context
                                                       :namespace "resource"
                                                       :name      "read"

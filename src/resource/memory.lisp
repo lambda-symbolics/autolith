@@ -379,8 +379,8 @@ evidence or dependents renders exactly as memories always have."
             "id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~%~A~@[sources:~%~{~A~}~]~@[premises:~%~{~A~}~]~@[relied on by: ~{~A~^, ~}~%~]~%~A"
             (memory-identifier memory)
             (memory-resource--scope-label memory)
-            (memory--timestamp-string (memory-created-at memory))
-            (memory--timestamp-string (memory-updated-at memory))
+            (format-utc-timestamp (memory-created-at memory))
+            (format-utc-timestamp (memory-updated-at memory))
             (if (memory-source-conversation memory)
                 (conversation-identifier-display
                  (memory-source-conversation memory))
@@ -406,8 +406,8 @@ evidence or dependents renders exactly as memories always have."
             (resource-item-uri "memory" (memory-identifier memory))
             (memory-identifier memory)
             (memory-resource--scope-label memory)
-            (memory--timestamp-string (memory-created-at memory))
-            (memory--timestamp-string (memory-updated-at memory))
+            (format-utc-timestamp (memory-created-at memory))
+            (format-utc-timestamp (memory-updated-at memory))
             (if (memory-source-conversation memory)
                 (conversation-identifier-display
                  (memory-source-conversation memory))

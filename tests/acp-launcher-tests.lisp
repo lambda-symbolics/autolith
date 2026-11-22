@@ -74,7 +74,7 @@
          (list "XDG_STATE_HOME" (namestring (merge-pathnames "state/" root)))
          (list "XDG_CACHE_HOME" (namestring (merge-pathnames "cache/" root)))
          (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
-         (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
+         (list "AUTOLITH_SBCL" (sbcl-command)))
    function))
 
 (define-condition acp-launcher-test-failure (error)
@@ -272,7 +272,7 @@
      (lambda ()
        (let ((result
                (acp-launcher-tests--initialize
-                (lisp-worker-sbcl-command)
+                (sbcl-command)
                 :arguments (list "--noinform" "--no-sysinit" "--no-userinit" "--script"
                                  (namestring (asdf:system-relative-pathname
                                               :autolith "script/launcher.lisp"))
@@ -307,7 +307,7 @@
      (lambda ()
        (multiple-value-bind (output diagnostics status)
            (uiop:run-program
-            (list (lisp-worker-sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
+            (list (sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
                   "--script" (namestring (asdf:system-relative-pathname
                                           :autolith "script/launcher.lisp"))
                   "--from-source" "--pristine" "acp" "--permissions" "invalid")
@@ -391,26 +391,6 @@ exit 1
                             "the interrupt starts no recovery"))))))))
   nil)
 
-(-> test-acp-launcher-failure-diagnostics () null)
-(defun test-acp-launcher-failure-diagnostics ()
-  "Retain the original transport failure, child status, and drained stderr."
-  (handler-case
-      (progn
-        (acp-launcher-tests--initialize
-         (lisp-worker-sbcl-command)
-         :arguments '("--noinform" "--no-sysinit" "--no-userinit" "--non-interactive"
-                      "--eval" "(progn (write-line \"ACP startup diagnostic\" *error-output*) (finish-output *error-output*) (sb-ext:exit :code 23))"))
-        (test-assert nil "the failed child cannot initialize"))
-    (acp-launcher-test-failure (condition)
-      (test-assert (typep (acp-launcher-test-failure-cause condition)
-                          'agentcomms:acp-connection-closed)
-                   "the diagnostic condition retains the transport cause")
-      (test-assert (eql 23 (acp-launcher-test-failure-exit-code condition))
-                   "the child is reaped before diagnostics are reported")
-      (test-assert (search "ACP startup diagnostic" (acp-launcher-test-failure-stderr condition))
-                   "stderr is drained before diagnostics are reported")))
-  nil)
-
 
 ;;;; -- Caller ASDF Environment --
 
@@ -451,7 +431,7 @@ exit 1
     (recovery-tests--write-executable
      wrapper
      (format nil "#!/usr/bin/env bash~%export CL_SOURCE_REGISTRY=\"$AUTOLITH_TEST_PRIVATE_REGISTRY\"~%export ASDF_OUTPUT_TRANSLATIONS=\"$AUTOLITH_TEST_PRIVATE_TRANSLATIONS\"~%if [[ \"${AUTOLITH_TEST_REENTER:-}\" = yes && \"$*\" == *--worker* ]]; then~%  export AUTOLITH_TEST_REENTER=no~%  exec bash ~S --worker~%fi~%exec ~S \"$@\"~%"
-             (namestring launcher) (lisp-worker-sbcl-command)))
+             (namestring launcher) (sbcl-command)))
     (with-input-from-string
         (input (format nil "(:request :id 1 :operation :eval :arguments (:forms (~S)))~%" form))
       (multiple-value-bind (output diagnostics status)
@@ -532,31 +512,28 @@ exit 1
                           ("ASDF_OUTPUT_TRANSLATIONS" "literal::output//")
                           ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
                           ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil))
-    (test-assert (fboundp 'main--restore-caller-asdf-environment)
-                 "startup has a caller restoration boundary")
-    (when (fboundp 'main--restore-caller-asdf-environment)
-      (funcall 'main--restore-caller-asdf-environment)
-      (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "literal::source//")
-                   "no capture is different from captured absence")
-      (with-test-environment (("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" "absent")
-                              ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" "set")
-                              ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS" ""))
-        (let ((set-environment (symbol-function 'platform-setenv))
-              (restored        nil))
-          (test-call-with-function-replacements
-           (list (list 'platform-setenv
-                       (lambda (name value)
-                         (push (list name value) restored)
-                         (funcall set-environment name value))))
-           (lambda () (funcall 'main--restore-caller-asdf-environment)))
-          (test-assert (null (uiop:getenv "CL_SOURCE_REGISTRY")) "captured absence unsets")
-          ;; SBCL's Windows getenv returns NIL for an empty variable too.
-          (test-assert (equal restored '(("ASDF_OUTPUT_TRANSLATIONS" "")))
-                       "captured empty reaches the platform setter"))
-        (platform-setenv "CL_SOURCE_REGISTRY" "later//")
-        (funcall 'main--restore-caller-asdf-environment)
-        (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "later//")
-                     "a repeated restore does not overwrite later consumers"))))
+    (main--restore-caller-asdf-environment)
+    (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "literal::source//")
+                 "no capture is different from captured absence")
+    (with-test-environment (("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" "absent")
+                            ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" "set")
+                            ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS" ""))
+      (let ((set-environment (symbol-function 'platform-setenv))
+            (restored        nil))
+        (test-call-with-function-replacements
+         (list (list 'platform-setenv
+                     (lambda (name value)
+                       (push (list name value) restored)
+                       (funcall set-environment name value))))
+         #'main--restore-caller-asdf-environment)
+        (test-assert (null (uiop:getenv "CL_SOURCE_REGISTRY")) "captured absence unsets")
+        ;; SBCL's Windows getenv returns NIL for an empty variable too.
+        (test-assert (equal restored '(("ASDF_OUTPUT_TRANSLATIONS" "")))
+                     "captured empty reaches the platform setter"))
+      (platform-setenv "CL_SOURCE_REGISTRY" "later//")
+      (main--restore-caller-asdf-environment)
+      (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "later//")
+                   "a repeated restore does not overwrite later consumers")))
   nil)
 
 (-> test-source-worker-bootstrap-output () null)

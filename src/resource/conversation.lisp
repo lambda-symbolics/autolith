@@ -121,7 +121,7 @@ and signal a TOOL-ERROR naming TOOL-NAME rather than return partial history."
               (write-part (conversation-resource--render-record record nil) stream))
             (unless (and more-p records)
               (return))
-            (setf start (1+ (getf (rest (first (last records))) :seq)))))))))
+            (setf start (1+ (getf (rest (lastcar records)) :seq)))))))))
 
 
 ;;;; -- Read Arguments and Rendering --
@@ -233,7 +233,7 @@ its end."
            (shown-texts  (if start-sequence
                              (subseq texts 0 shown-count)
                              (last texts shown-count)))
-           (newest       (getf (rest (first (last shown))) :seq)))
+           (newest       (getf (rest (lastcar shown)) :seq)))
       (with-output-to-string (stream)
         (if (null records)
             (format stream "Conversation ~A has no records~@[ from sequence ~D~]. ~A~%"

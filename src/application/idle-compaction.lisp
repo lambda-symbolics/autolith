@@ -144,13 +144,12 @@ Neither successful nor failed compaction can rearm this opportunity."
     (application-input-controller) (option real))
 (defun application-input-controller--idle-compaction-wait (controller)
   "Return the cache deadline delay, backing off while input or a draft blocks admission."
-  (let ((delay (application-idle-compaction-delay
-                (application-input-controller-application controller))))
-    (when delay
-      (if (and (zerop delay)
-               (not (application-input-controller--idle-compaction-ready-p controller)))
-          1
-          delay))))
+  (when-let ((delay (application-idle-compaction-delay
+                     (application-input-controller-application controller))))
+    (if (and (zerop delay)
+             (not (application-input-controller--idle-compaction-ready-p controller)))
+        1
+        delay)))
 
 (-> application-input-controller--run-idle-compaction
     (application-input-controller prompt-cache-episode) null)
@@ -188,9 +187,8 @@ Neither successful nor failed compaction can rearm this opportunity."
 (-> application-idle-compaction-wake (application) null)
 (defun application-idle-compaction-wake (application)
   "Recalculate the native idle deadline after a runtime setting change."
-  (let ((controller (application-input-controller application)))
-    (when controller
-      (with-lock-held ((application-input-controller-lock controller))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller)))))
+  (when-let ((controller (application-input-controller application)))
+    (with-lock-held ((application-input-controller-lock controller))
+      (sb-thread:condition-broadcast
+       (application-input-controller-condition-variable controller))))
   nil)

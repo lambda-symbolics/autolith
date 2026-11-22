@@ -548,11 +548,7 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
     (load setup)
     (when build-sandbox
       (load (merge-pathnames "script/build-sandbox.lisp" source-root)))
-    (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-    (let ((directory   (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-          (directories (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-      (when (probe-file directory)
-        (pushnew directory (symbol-value directories) :test #'equal)))
+    (autolith-script-configure-cffi)
     (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
     (check--load-test-system source-root)
     (when source-checks-p

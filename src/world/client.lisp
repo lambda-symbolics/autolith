@@ -297,19 +297,18 @@ after it until the form closes or the input ends."
   "Write one line about CONFIGURATION's world server on STREAM: its process, version and open channels.
 
 Nothing is written while no server runs."
-  (let ((entry (world-client-entry configuration)))
-    (when entry
-      (let ((status (getf (rest (world-terminal-query-record entry ':status)) :status)))
-        (world-terminal--write-styled-line
-         stream
-         (list (terminal-span ':notice "· world server PID ")
-               (terminal-span ':success (princ-to-string (getf (rest status) :pid)))
-               (terminal-span ':notice
-                              (format nil ", Autolith ~A, ~D open channel~:P~:[~;, stopping~]"
-                                      (getf (rest status) :autolith-version)
-                                      (length (getf (rest status) :channels))
-                                      (getf (rest status) :stopping-p))))
-         (world-terminal--status-output-styled-p stream)))))
+  (when-let ((entry (world-client-entry configuration)))
+    (let ((status (getf (rest (world-terminal-query-record entry ':status)) :status)))
+      (world-terminal--write-styled-line
+       stream
+       (list (terminal-span ':notice "· world server PID ")
+             (terminal-span ':success (princ-to-string (getf (rest status) :pid)))
+             (terminal-span ':notice
+                            (format nil ", Autolith ~A, ~D open channel~:P~:[~;, stopping~]"
+                                    (getf (rest status) :autolith-version)
+                                    (length (getf (rest status) :channels))
+                                    (getf (rest status) :stopping-p))))
+       (world-terminal--status-output-styled-p stream))))
   nil)
 
 (-> world-client--start-command () clingon:command)

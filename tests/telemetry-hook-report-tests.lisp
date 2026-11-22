@@ -259,7 +259,7 @@
                   (lambda ()
                     (test-assert
                      (tool-result-success-p
-                      (papercut-resource-tests--call
+                      (test-resource-call
                        registry context
                        :namespace "papercut"
                        :name      "report"

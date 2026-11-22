@@ -210,11 +210,10 @@ routes every request of the conversation to one provider from the first."
       (when (and effort model-supports-reasoning-p)
         (setf (gethash "reasoning" request)
               (json-object "effort" effort)))
-      (let ((preferences
-              (openrouter--provider-preferences
-               wire-model (provider-configuration provider))))
-        (when preferences
-          (setf (gethash "provider" request) preferences)))
+      (when-let ((preferences
+                   (openrouter--provider-preferences
+                    wire-model (provider-configuration provider))))
+        (setf (gethash "provider" request) preferences))
       (values request delivery))))
 
 (defmethod provider-authenticate

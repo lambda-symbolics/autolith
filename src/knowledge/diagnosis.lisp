@@ -268,13 +268,12 @@ predicate's schema, found with SCHEMA-FUNCTION; probe arguments take it as given
                      (cons (first pattern)
                            (loop for item in (rest pattern)
                                  for argument in (knowledge-schema-arguments schema)
-                                 collect (let ((binding (and (knowledge-variable-p item)
-                                                             (assoc item environment
-                                                                    :test #'string=))))
-                                           (if binding
-                                               (knowledge-term-from-input (rest binding)
-                                                                          (getf argument :type))
-                                               item))))))))
+                                 collect (if-let ((binding (and (knowledge-variable-p item)
+                                                                (assoc item environment
+                                                                       :test #'string=))))
+                                             (knowledge-term-from-input (rest binding)
+                                                                        (getf argument :type))
+                                             item)))))))
       (list* :diagnosis
              :hypotheses
              (mapcar (lambda (hypothesis)

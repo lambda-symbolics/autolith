@@ -11,7 +11,7 @@
                (identifier-select identifier effective
                                   :key (lambda (candidate)
                                          (getf (rest candidate) :id)))
-               (first (last effective)))))
+               (lastcar effective))))
     (unless record
       (error 'source-mutation-error
              :message

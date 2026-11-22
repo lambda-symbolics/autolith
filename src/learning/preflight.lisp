@@ -12,10 +12,9 @@
   "Substitute ENVIRONMENT throughout VALUE, following symbolic variable aliases."
   (cond
     ((knowledge-variable-p value)
-     (let ((binding (assoc value environment :test #'equal)))
-       (if binding
-           (procedure--preflight-resolve (rest binding) environment)
-           value)))
+     (if-let ((binding (assoc value environment :test #'equal)))
+         (procedure--preflight-resolve (rest binding) environment)
+         value))
     ((consp value)
      (cons (procedure--preflight-resolve (first value) environment)
            (procedure--preflight-resolve (rest value) environment)))
@@ -257,11 +256,10 @@ are conditional until the ordinary per-call check. Bound the entire proof search
                            (procedure--preflight-unify pattern conclusion bindings)
                          (when matched-p
                            (dolist (proof (solve (getf (rest rule) :premises) next))
-                             (let ((finished (finish-proof
-                                              (list (first proof)
-                                                    (cons pattern (second proof))
-                                                    (append (third proof) (list rule))))))
-                               (when finished (push finished answers)))))))))
+                             (when-let ((finished (finish-proof
+                                                   (list (first proof)
+                                                         (cons pattern (second proof))
+                                                         (append (third proof) (list rule)))))) (push finished answers))))))))
                  answers))
 
              (solve (remaining bindings)
@@ -312,8 +310,8 @@ are conditional until the ordinary per-call check. Bound the entire proof search
                (let ((value (procedure--preflight-resolve value environment)))
                  (if (and (knowledge-variable-p value)
                           (not (uiop:string-prefix-p "?future-" value)))
-                     (or (gethash value unknowns)
-                         (setf (gethash value unknowns) (procedure--preflight-variable)))
+                     (values (ensure-gethash value unknowns
+                                             (procedure--preflight-variable)))
                      value))))
       (dolist (effect (getf (rest contract) :effects))
         (push (list (knowledge--instantiate-pattern

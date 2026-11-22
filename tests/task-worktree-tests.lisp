@@ -2,15 +2,6 @@
 
 ;;;; -- Isolated Task Worktree Tests --
 
-(-> task-worktree-tests--write (pathname string) pathname)
-(defun task-worktree-tests--write (path text)
-  "Write one ordinary fixture file without involving resource revisions."
-  (ensure-directories-exist path)
-  (with-open-file (stream path :direction ':output :if-exists ':supersede
-                              :if-does-not-exist ':create :external-format ':utf-8)
-    (write-string text stream))
-  path)
-
 (-> task-worktree-tests--authorize (string pathname) keyword)
 (defun task-worktree-tests--authorize (command directory)
   "Grant direct execution only to this disposable fixture's injected runner."
@@ -64,7 +55,7 @@
              (task-worktree-tests--git configuration source '("init"))
              (task-worktree-tests--git configuration source '("config" "user.name" "Fixture"))
              (task-worktree-tests--git configuration source '("config" "user.email" "fixture@example.invalid"))
-             (task-worktree-tests--write (merge-pathnames "file" source) "baseline")
+             (test-write-text (merge-pathnames "file" source) "baseline")
              (task-worktree-tests--git configuration source '("add" "file"))
              (task-worktree-tests--git configuration source '("commit" "-m" "baseline"))
              (funcall function configuration source parent job
@@ -96,14 +87,14 @@
            (sandbox       (fdefinition 'platform-call-with-command-sandbox)))
       (ensure-directories-exist source)
       (ensure-directories-exist home)
-      (task-worktree-tests--write
+      (test-write-text
        (merge-pathnames "git/config" xdg)
        (format nil "[user]~%name = XDG Identity~%email = xdg@example.invalid~%"))
-      (task-worktree-tests--write (merge-pathnames "git/ignore" xdg)
-                                  (format nil "ignored.tmp~%"))
-      (task-worktree-tests--write (merge-pathnames "git/attributes" xdg)
-                                  (format nil "*.fixture fixture-attribute=xdg~%"))
-      (task-worktree-tests--write
+      (test-write-text (merge-pathnames "git/ignore" xdg)
+                       (format nil "ignored.tmp~%"))
+      (test-write-text (merge-pathnames "git/attributes" xdg)
+                       (format nil "*.fixture fixture-attribute=xdg~%"))
+      (test-write-text
        (merge-pathnames ".config/git/config" home)
        (format nil "[user]~%name = Default Identity~%"))
       (test-call-with-function-replacements
@@ -188,7 +179,7 @@
   (task-worktree-tests--fixture
    (lambda (configuration source parent job tool context)
      (declare (ignore parent))
-     (task-worktree-tests--write (merge-pathnames "file" source) "parent dirty")
+     (test-write-text (merge-pathnames "file" source) "parent dirty")
      (test-assert (handler-case (progn (task-worktree-configuration job configuration) nil)
                     (cl-worktree:dirty-workspace () t)) "Dirty source is rejected without mutation.")
      (setf (getf (task-job-item job) :isolation)
@@ -216,7 +207,7 @@
      (declare (ignore parent))
      (let* ((child (task-worktree-configuration job configuration))
             (path  (config :working-directory child)))
-       (task-worktree-tests--write (merge-pathnames "file" path) "child edits")
+       (test-write-text (merge-pathnames "file" path) "child edits")
        (let* ((result   (task-worktree-tests--publish job ':success))
               (id       (task-job-execution-identifier job))
               (artifact (task-worktree--read-artifact (getf result :worktree))))
@@ -324,7 +315,7 @@
      (declare (ignore source parent))
      (let* ((child (task-worktree-configuration job configuration))
             (path  (config :working-directory child)))
-       (task-worktree-tests--write (merge-pathnames "file" path) "interrupted edits")
+       (test-write-text (merge-pathnames "file" path) "interrupted edits")
        (let ((result (task-worktree-tests--publish job ':aborted)))
          (test-assert (eq ':aborted (getf result :status)) "Cancellation is not reclassified as success.")
          (test-assert (eq ':pending (getf result :worktree-artifact-state))
@@ -345,7 +336,7 @@
      (declare (ignore source parent))
      (let* ((child (task-worktree-configuration job configuration))
             (path  (config :working-directory child)))
-       (task-worktree-tests--write (merge-pathnames "untracked" path) "new file")
+       (test-write-text (merge-pathnames "untracked" path) "new file")
        (let ((result (task-worktree-tests--publish job ':success)))
          (test-assert (eq ':failed (getf result :status)) "Missing complete artifact downgrades child success.")
          (test-assert (getf result :worktree-error) "Extraction error is inspectable.")
@@ -484,7 +475,7 @@
            (task-worktree-normalize-options (json-object "artifactKind" "commit-range")))
      (let* ((child (task-worktree-configuration job configuration))
             (path  (config :working-directory child)))
-       (task-worktree-tests--write (merge-pathnames "file" path) "child commit")
+       (test-write-text (merge-pathnames "file" path) "child commit")
        (task-worktree-tests--git configuration path '("add" "file"))
        (task-worktree-tests--git configuration path '("commit" "-m" "child"))
        (let ((result (task-worktree-tests--publish job ':success))
@@ -494,7 +485,7 @@
          (test-assert (eq ':commit-range (cl-worktree:artifact-kind
                                              (task-worktree--read-artifact (getf result :worktree))))
                       "Selected artifact retains committed engineering changes.")
-         (task-worktree-tests--write (merge-pathnames "file" source) "parent commit")
+         (test-write-text (merge-pathnames "file" source) "parent commit")
          (task-worktree-tests--git configuration source '("add" "file"))
          (task-worktree-tests--git configuration source '("commit" "-m" "parent"))
          (let ((tip (task-worktree-tests--git configuration source '("rev-parse" "HEAD"))))
@@ -553,7 +544,7 @@
                                             :description "Run the sandbox fixture."))
               (unrelated      (merge-pathnames "unrelated-config" source)))
          (test-assert (probe-file (merge-pathnames "file" path)) "The owned checkout is created in the sandbox.")
-         (task-worktree-tests--write (merge-pathnames "file" path) "isolated commit")
+         (test-write-text (merge-pathnames "file" path) "isolated commit")
          (dolist (command '("git add file" "git -c user.name=Fixture -c user.email=fixture@example.invalid commit -m isolated"))
            (let ((result (tool-execute shell child-context (json-object "command" command))))
              (test-assert (and (tool-result-success-p result)

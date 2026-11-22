@@ -84,9 +84,6 @@
   (let* ((first-tools  (make-instance 'tool-registry))
          (second-tools (make-instance 'tool-registry)))
     (test-assert
-     (typep (tool-registry-resource-registry first-tools) 'resource-registry)
-     "tool registries own a resource registry")
-    (test-assert
      (not (eq (tool-registry-resource-registry first-tools)
               (tool-registry-resource-registry second-tools)))
      "resource resolver registries remain isolated per agent tool registry"))

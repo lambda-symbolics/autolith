@@ -41,7 +41,7 @@
                                                "arguments" (vector "?report" reference)))))
 
              (send ()
-               (memory-resource-tests--call registry context
+               (test-resource-call registry context
                                             :namespace "mail"
                                             :name      "send"
                                             :arguments (list "report" "q3"))))
@@ -118,7 +118,7 @@
       (knowledge-define-contract
        configuration :id "receipt-identifier" :tool "receipt.fetch"
        :observes (vector (json-object "predicate" "receipt.identifier" "arguments" #("$result.id"))))
-      (let* ((result     (memory-resource-tests--call registry context
+      (let* ((result     (test-resource-call registry context
                                                       :namespace "receipt"
                                                       :name      "fetch"))
              (diagnostic (json-decode (tool-result-content result))))
@@ -132,7 +132,7 @@
       (let ((original (change-class (tool-success (make-string 8000 :initial-element #\a))
                                     'mcp-content-result :sections '((:text 0 8000)))))
         (setf (contract-binding-tests--result tool) original)
-        (let* ((result    (memory-resource-tests--call registry context
+        (let* ((result    (test-resource-call registry context
                                                        :namespace "receipt"
                                                        :name      "fetch"))
                (content   (tool-result-content result))
@@ -152,7 +152,7 @@
                                       :content-blocks (list "before image" image "after image"))
                         'mcp-content-result :sections '((:text 0 12) (:text 12 23)))))
         (setf (contract-binding-tests--result tool) original)
-        (let* ((result  (memory-resource-tests--call registry context
+        (let* ((result  (test-resource-call registry context
                                                      :namespace "receipt"
                                                      :name      "fetch"))
                (details (tool-result-details result)))

@@ -297,7 +297,7 @@
                                   :arguments "{\"uri\":\"workspace:allowed.txt\"}"))))
          (ensure-directories-exist workspace)
          (setf (config :working-directory configuration) workspace)
-         (workspace-resource-tests--write-text (merge-pathnames "allowed.txt" workspace) "allowed content")
+         (test-write-text (merge-pathnames "allowed.txt" workspace) "allowed content")
          (multiple-value-bind (spans outputs body)
              (test-telemetry-hooks--tool-attempts configuration calls :observer observer)
            (test-assert (= (length spans) 5) "Every denied call and the following allowed call is exported.")

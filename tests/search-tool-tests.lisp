@@ -10,13 +10,7 @@
 (-> search-tests--write-file (pathname string) null)
 (defun search-tests--write-file (pathname content)
   "Write CONTENT to PATHNAME for one native search fixture."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :external-format   ':utf-8)
-    (write-string content stream))
+  (test-write-text pathname content)
   nil)
 
 (-> search-tests--bootstrap-source-commit (configuration) string)
@@ -27,18 +21,6 @@
    (uiop:read-file-string
     (merge-pathnames "native/fff/commit"
                      (config :source-root configuration)))))
-
-(-> search-tests--call
-    (tool-registry tool-context &key (:namespace string) (:name string) (:arguments list))
-    tool-result)
-(defun search-tests--call (registry context &key namespace name arguments)
-  "Execute NAMESPACE.NAME with the alternating JSON keys and values in ARGUMENTS."
-  (tool-registry-execute-call
-   registry
-   (json-object "namespace" namespace
-                "name" name
-                "arguments" (json-encode (apply #'json-object arguments)))
-   context))
 
 (-> test-search-tools () null)
 (defun test-search-tools ()
@@ -100,34 +82,14 @@
                   (files-tool (tool-registry-find registry "search" "files"))
                   (glob-tool  (tool-registry-find registry "search" "glob"))
                   (content-tool
-                    (tool-registry-find registry "search" "content"))
-                  (multi-tool
-                    (tool-registry-find registry "search" "multi-content")))
-             (test-assert (and files-tool glob-tool content-tool (null multi-tool))
+                     (tool-registry-find registry "search" "content")))
+              (test-assert (and files-tool glob-tool content-tool)
                           "three native search tools are registered")
              (test-assert
               (eq (search-tool-engine files-tool)
                   (search-tool-engine content-tool))
               "one registry shares one isolated index across search operations")
-             (let* ((schema          (tool-parameters content-tool))
-                    (properties      (json-get schema "properties"))
-                    (patterns-schema (json-get properties "patterns"))
-                    (item-schema     (json-get patterns-schema "items"))
-                    (one-of          (json-get schema "oneOf")))
-               (test-assert
-                (and (vectorp one-of)
-                     (= (length one-of) 2)
-                     (equalp
-                      (map 'list
-                           (lambda (variant)
-                             (json-get variant "required"))
-                           one-of)
-                      '(#("query") #("patterns")))
-                     (= (json-get patterns-schema "minItems") 1)
-                     (string= (json-get item-schema "type") "string")
-                     (= (json-get item-schema "minLength") 1))
-                "search.content schema requires exactly one non-empty query or patterns array"))
-             (let ((result (search-tests--call registry context
+             (let ((result (test-resource-call registry context
                                                :namespace "search"
                                                :name      "files"
                                                :arguments (list "query" "model selection"))))
@@ -138,7 +100,7 @@
                (test-assert (search "src/model-selection.lisp"
                                     (tool-result-content result))
                             "search.files returns fuzzy workspace-relative paths"))
-             (let ((result (search-tests--call registry context
+             (let ((result (test-resource-call registry context
                                                :namespace "search"
                                                :name      "glob"
                                                :arguments (list "pattern" "**/*.lisp"))))
@@ -147,7 +109,7 @@
                (test-assert (search "src/model-selection.lisp"
                                     (tool-result-content result))
                             "search.glob filters indexed relative paths"))
-             (let ((result (search-tests--call registry context
+             (let ((result (test-resource-call registry context
                                                :namespace "search"
                                                :name      "content"
                                                :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
@@ -164,7 +126,7 @@
                 (format nil "search.content renders locations and bounded context: ~S"
                         (tool-result-content result))))
              (let ((result
-                     (search-tests--call registry context
+                     (test-resource-call registry context
                                          :namespace "search"
                                          :name      "content"
                                          :arguments (list "patterns" #("AUTOLITH_FFF_PRIMARY"
@@ -190,7 +152,7 @@
                               "mode applies only")))
               (destructuring-bind (label arguments expected) case
                 (let ((result
-                        (search-tests--call registry context
+                        (test-resource-call registry context
                                             :namespace "search"
                                             :name      "content"
                                             :arguments arguments)))

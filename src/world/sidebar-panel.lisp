@@ -30,12 +30,11 @@
 A started sidebar's thread gathers; without one the panel gathers itself when
 a refresh is due."
   (if (world-sidebar-gatherer panel)
-      (let ((gathered (with-lock-held ((world-sidebar-lock panel))
-                        (shiftf (world-sidebar-gathered panel) nil))))
-        (when gathered
-          (if (eq (first gathered) ':failed)
-              (world-sidebar--mark-stale panel (second gathered))
-              (world-sidebar--accept panel (first gathered) (second gathered)))))
+      (when-let ((gathered (with-lock-held ((world-sidebar-lock panel))
+                             (shiftf (world-sidebar-gathered panel) nil))))
+        (if (eq (first gathered) ':failed)
+            (world-sidebar--mark-stale panel (second gathered))
+            (world-sidebar--accept panel (first gathered) (second gathered))))
       (let ((now  (funcall (world-sidebar-clock-function panel)))
             (last (world-sidebar-refreshed-at panel)))
         (if (and last
@@ -50,9 +49,8 @@ a refresh is due."
 
 (defmethod screen-panel-focus ((panel world-sidebar))
   "Start at the channel this terminal shows."
-  (let ((current (position-if #'sidebar-entry-current-p (world-sidebar-entries panel))))
-    (when current
-      (setf (world-sidebar-selected panel) current)))
+  (when-let ((current (position-if #'sidebar-entry-current-p (world-sidebar-entries panel))))
+    (setf (world-sidebar-selected panel) current))
   nil)
 
 
@@ -414,7 +412,7 @@ something they show changed."
   "Return PANEL's rows for TERMINAL and record which entry or button each row acts on."
   (let* ((footer-count  (min 1 height))
          (legend-count  (if (> height 1) 1 0))
-         (heading-count (min 2 (max 0 (- height footer-count legend-count))))
+         (heading-count (clamp (- height footer-count legend-count) 0 2))
          (limit         (max 0 (- height heading-count footer-count legend-count)))
          (buttons       (world-sidebar--buttons)))
     (setf (world-sidebar-viewport-height panel) limit)

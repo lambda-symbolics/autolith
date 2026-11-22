@@ -77,7 +77,7 @@ the exact source and runtime comparison needs no extra boot of the image."
 
 The process boots the current active core when one matches the source, which
 takes a fraction of a second, and otherwise loads the system from source."
-  (let* ((sbcl-command (active-image--sbcl-command))
+  (let* ((sbcl-command (sbcl-command))
          (source-root  (config :source-root configuration))
          (core         (active-image-current-core configuration)))
     (if core
@@ -92,14 +92,6 @@ takes a fraction of a second, and otherwise loads the system from source."
                "--script"
                (namestring (merge-pathnames "bin/autolith-active" source-root))
                arguments))))
-
-(-> active-image--sbcl-command () string)
-(defun active-image--sbcl-command ()
-  "Return the SBCL that boots active images: AUTOLITH_SBCL, or sbcl from PATH."
-  (let ((configured-command (uiop:getenv "AUTOLITH_SBCL")))
-    (if (non-empty-string-p configured-command)
-        configured-command
-        "sbcl")))
 
 (-> active-image--read-manifest (pathname) t)
 (defun active-image--read-manifest (pathname)
@@ -218,7 +210,7 @@ loads the system in a new SBCL, so the image holds nothing else from this heap."
                       (lambda (temporary)
                         (active-image--fresh-process-command source-root temporary))
                       :probe-runner     (make-sbcl-core-probe-runner
-                                         :command (active-image--sbcl-command))
+                                         :command (sbcl-command))
                       :probe-argument   *active-image-probe-argument*
                       :publish-function #'active-image--publish-core
                       :write-function   #'active-image--write-manifest)))))

@@ -151,14 +151,6 @@ open through JOIN and retain SBCL's timer-thread binding and error semantics."
 (win32--define win32--open-process "OpenProcess" win32-handle
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
 
-(defmethod platform-process-resident-bytes ((platform win32-platform) process-id)
-  "Observe the native working set of PROCESS-ID."
-  (ls-compat.posix:process-resident-bytes process-id))
-
-(defmethod platform-process-parent-snapshot ((platform win32-platform))
-  "Observe Toolhelp parent relationships and whether enumeration completed."
-  (ls-compat.posix:process-parent-snapshot))
-
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
 (win32--define win32--get-std-handle "GetStdHandle" win32-handle (which win32-dword))
@@ -344,10 +336,6 @@ Keep the separator on drive roots."
     (list (namestring sb-ext:*runtime-pathname*) "--noinform"
           "--no-userinit" "--no-sysinit" "--script" (namestring launcher))))
 
-(defmethod platform-process-alive-p ((platform win32-platform) process-id)
-  "Read through ls-compat whether PROCESS-ID is still active."
-  (process-alive-p process-id))
-
 (defmethod platform-process-group-alive-p ((platform win32-platform)
                                            process-group-id)
   "Refuse, since Windows has no process groups to probe."
@@ -473,20 +461,17 @@ state, and cache under the local one, each in its own subdirectory."
                       (or (win32--absolute-environment-directory "XDG_CONFIG_HOME")
                           (win32--known-folder "APPDATA"))))
     (:data
-     (let ((xdg (win32--absolute-environment-directory "XDG_DATA_HOME")))
-       (if xdg
-           (merge-pathnames "autolith/" xdg)
-           (merge-pathnames "autolith/data/" (win32--known-folder "LOCALAPPDATA")))))
+     (if-let ((xdg (win32--absolute-environment-directory "XDG_DATA_HOME")))
+         (merge-pathnames "autolith/" xdg)
+         (merge-pathnames "autolith/data/" (win32--known-folder "LOCALAPPDATA"))))
     (:state
-     (let ((xdg (win32--absolute-environment-directory "XDG_STATE_HOME")))
-       (if xdg
-           (merge-pathnames "autolith/" xdg)
-           (merge-pathnames "autolith/state/" (win32--known-folder "LOCALAPPDATA")))))
+     (if-let ((xdg (win32--absolute-environment-directory "XDG_STATE_HOME")))
+         (merge-pathnames "autolith/" xdg)
+         (merge-pathnames "autolith/state/" (win32--known-folder "LOCALAPPDATA"))))
     (:cache
-     (let ((xdg (win32--absolute-environment-directory "XDG_CACHE_HOME")))
-       (if xdg
-           (merge-pathnames "autolith/" xdg)
-           (merge-pathnames "autolith/cache/" (win32--known-folder "LOCALAPPDATA")))))))
+     (if-let ((xdg (win32--absolute-environment-directory "XDG_CACHE_HOME")))
+         (merge-pathnames "autolith/" xdg)
+         (merge-pathnames "autolith/cache/" (win32--known-folder "LOCALAPPDATA"))))))
 
 (-> win32--attributes (pathname) integer)
 (defun win32--attributes (pathname)
@@ -544,12 +529,6 @@ Autolith publishes read-only lives below a private root anyway."
                         (lambda ()
                           (setf (ls-compat.posix:file-permissions pathname) permissions))))
 
-(defmethod platform-delete-file ((platform win32-platform) pathname)
-  "Remove the exact native pathname through ls-compat."
-  (handler-case (ls-compat.posix:remove-file pathname)
-    (file-error (condition)
-      (platform--file-failure ':delete pathname condition))))
-
 (defmethod platform-copy-file-permissions ((platform win32-platform)
                                            source target)
   "Give TARGET the permissions SOURCE's access control list expresses."
@@ -564,31 +543,11 @@ Autolith publishes read-only lives below a private root anyway."
   (win32--call-metadata ':times
                         (lambda () (ls-compat.posix:set-file-times pathname universal-time))))
 
-(defmethod platform-replace-file ((platform win32-platform) source target)
-  "Rename SOURCE over TARGET through ls-compat."
-  (handler-case (ls-compat.posix:replace-file source target)
-    (file-error (condition)
-      (platform--file-failure ':replace target condition))))
-
 (defmethod platform-executable-file-p ((platform win32-platform) pathname)
   "Check whether PATHNAME is a regular file with a PATHEXT suffix."
   (handler-case (ls-compat.posix:executable-path-p pathname)
     (ls-compat.posix:file-operation-failed (condition)
       (platform--file-failure ':status pathname condition))))
-
-(defmethod platform-make-temporary-directory ((platform win32-platform)
-                                              parent prefix)
-  "Create a private temporary directory through ls-compat."
-  (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
-    (file-error (condition)
-      (platform--file-failure ':create parent condition))))
-
-(defmethod platform-delete-directory-tree ((platform win32-platform) pathname
-                                           &rest arguments
-                                           &key validate if-does-not-exist)
-  "Remove PATHNAME's tree through ls-compat with the caller's policy."
-  (declare (ignore platform validate if-does-not-exist))
-  (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
 
 
 ;;;; -- Terminal and Shell --

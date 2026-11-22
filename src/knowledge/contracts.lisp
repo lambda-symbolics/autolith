@@ -296,16 +296,15 @@ Refuse if a concurrent edit replaced the proposed definition."
   "Return ENVIRONMENT with JSON values read by the schema types of the PATTERNS using them."
   (mapcar
    (lambda (binding)
-     (let ((type (loop for pattern in patterns
-                       for atom = (knowledge-rule-premise-atom pattern)
-                       for schema = (funcall schema-function (first atom))
-                       for position = (and schema (position (first binding) (rest atom)
-                                                            :test #'equal))
-                       when position
-                         return (getf (nth position (knowledge-schema-arguments schema)) :type))))
-       (if type
-           (cons (first binding) (knowledge-term-from-input (rest binding) type))
-           binding)))
+     (if-let ((type (loop for pattern in patterns
+                          for atom = (knowledge-rule-premise-atom pattern)
+                          for schema = (funcall schema-function (first atom))
+                          for position = (and schema (position (first binding) (rest atom)
+                                                               :test #'equal))
+                          when position
+                            return (getf (nth position (knowledge-schema-arguments schema)) :type))))
+         (cons (first binding) (knowledge-term-from-input (rest binding) type))
+         binding))
    environment))
 
 (-> knowledge-contracts-for-call (configuration string hash-table) list)

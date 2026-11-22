@@ -41,11 +41,10 @@
 (-> skill-logical-turn-selection-names () list)
 (defun skill-logical-turn-selection-names ()
   "Return a stable copy of the active logical turn's selected Skill names."
-  (let ((state *skill-logical-turn-state*))
-    (if state
-        (with-lock-held ((skill-logical-turn-state-lock state))
-          (copy-list (skill-logical-turn-state-selection-names state)))
-        nil)))
+  (if-let ((state *skill-logical-turn-state*))
+      (with-lock-held ((skill-logical-turn-state-lock state))
+        (copy-list (skill-logical-turn-state-selection-names state)))
+      nil))
 
 (define-condition skill-selection-error (autolith-error)
   ((name
@@ -193,9 +192,8 @@ bundled, then the configured extra skill roots in their given order."
       (merge-pathnames "skills/"
                        (config :config-root configuration))
       (skill-shared-user-root)
-      (let ((site-root (config :site-config-root configuration)))
-        (when site-root
-          (merge-pathnames "skills/" site-root)))
+      (when-let ((site-root (config :site-config-root configuration)))
+        (merge-pathnames "skills/" site-root))
       (merge-pathnames "skills/"
                        (config :source-root configuration)))
      (config :extra-skill-roots configuration)))

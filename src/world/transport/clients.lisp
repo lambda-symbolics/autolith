@@ -128,12 +128,11 @@
 (-> world-terminal--client-geometry (application list) null)
 (defun world-terminal--client-geometry (application arguments)
   "Lay APPLICATION's presentation out for a client whose pane has ARGUMENTS' :ROWS and :COLUMNS."
-  (let ((presentation (application-presentation application)))
-    (when presentation
-      (channel-presentation-set-geometry presentation
-                                         :rows     (getf arguments :rows)
-                                         :columns  (getf arguments :columns)
-                                         :styled-p (getf arguments :styled-p t))))
+  (when-let ((presentation (application-presentation application)))
+    (channel-presentation-set-geometry presentation
+                                       :rows     (getf arguments :rows)
+                                       :columns  (getf arguments :columns)
+                                       :styled-p (getf arguments :styled-p t)))
   nil)
 
 
@@ -446,10 +445,9 @@ whatever would change the channel."
 (-> application-clients-publish-state (application) null)
 (defun application-clients-publish-state (application)
   "Send APPLICATION's channel state to its structured clients, as after a mode or setting change."
-  (let ((session (application-channel-endpoint application)))
-    (when session
-      (application-clients-publish application
-                                   (list :state :state (world-terminal-status-snapshot session)))))
+  (when-let ((session (application-channel-endpoint application)))
+    (application-clients-publish application
+                                 (list :state :state (world-terminal-status-snapshot session))))
   nil)
 
 

@@ -8,15 +8,6 @@
   (or (uiop:getenv "CLASTED_AST_GREP") *structural-program*
       (error "Set CLASTED_AST_GREP to a real ast-grep executable for structural integration tests.")))
 
-(-> structural-tests--write (pathname string) pathname)
-(defun structural-tests--write (path text)
-  "Write exact UTF-8 fixture text."
-  (ensure-directories-exist path)
-  (with-open-file (stream path :direction ':output :if-exists ':supersede
-                              :if-does-not-exist ':create :external-format ':utf-8)
-    (write-string text stream))
-  path)
-
 (-> structural-tests--fixture (function) t)
 (defun structural-tests--fixture (function)
   "Run FUNCTION against an isolated ordinary workspace with explicitly approved backend execution."
@@ -67,13 +58,6 @@
     (when replacement (setf (gethash "replacement" arguments) replacement))
     arguments))
 
-(-> structural-tests--rejected (function) boolean)
-(defun structural-tests--rejected (function)
-  "Recognize typed structural or ordinary resource failures."
-  (handler-case (progn (funcall function) nil)
-    (tool-error () t)
-    (cl-resources:resource-error () t)))
-
 (-> test-structural-runtime-capability () null)
 (defun test-structural-runtime-capability ()
   "Exercise optional registration, provider lookup, disabled runtime and required arguments."
@@ -109,7 +93,7 @@
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore registry))
-     (let* ((path      (structural-tests--write
+     (let* ((path      (test-write-text
                         (merge-pathnames "source.js" (config :working-directory configuration))
                         "const emoji = '😀'; foo(1); foo(2);"))
             (revision  (structural-tests--revision context "workspace:source.js"))
@@ -136,7 +120,7 @@
                         "published changed source")
            (test-assert (equal (json-get proposal "preview") published)
                         "published exact preview"))
-         (test-assert (structural-tests--rejected
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                        (lambda () (structural--execute
                                    (tool-registry-find (tool-context-registry context) "structural" "apply")
                                    context (json-object "proposal" identifier)))) "successful proposal consumed"))
@@ -150,21 +134,21 @@
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore commands))
-     (let* ((path       (structural-tests--write (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
+     (let* ((path       (test-write-text (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
             (revision   (structural-tests--revision context "workspace:source.js"))
             (proposal   (structural-tests--call context "rewrite" (structural-tests--arguments revision :replacement "bar($A)")))
             (identifier (json-get proposal "proposal"))
             (apply-tool (tool-registry-find registry "structural" "apply"))
             (other      (make-instance 'tool-context :configuration configuration :registry registry :worker nil
                                        :conversation (conversation-create configuration :identifier "other"))))
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute apply-tool other (json-object "proposal" identifier))))
                     "proposal scoped to originating conversation")
-       (structural-tests--write path "changed(1);")
-       (test-assert (structural-tests--rejected
+       (test-write-text path "changed(1);")
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute apply-tool context (json-object "proposal" identifier)))) "stale apply rejected")
        (test-assert (equal "changed(1);" (uiop:read-file-string path)) "stale apply publishes nothing")
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute (tool-registry-find registry "structural" "query") context
                                               (structural-tests--arguments revision)))) "stale query rejected")
        (test-assert (equal identifier (json-get (structural-tests--call context "inspect" (json-object "proposal" identifier)) "proposal"))
@@ -173,7 +157,7 @@
               (new-revision                   (structural-tests--revision context "workspace:source.js"))
               (new                            (structural-tests--call context "rewrite"
                                                                      (structural-tests--arguments new-revision :pattern "changed($A)" :replacement "next($A)"))))
-         (test-assert (structural-tests--rejected
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                        (lambda () (tool-execute (tool-registry-find registry "structural" "inspect") context
                                                 (json-object "proposal" identifier)))) "oldest proposal evicted")
          (test-assert (equal (json-get new "proposal")
@@ -187,7 +171,7 @@
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore commands))
-     (let* ((path      (structural-tests--write (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
+     (let* ((path      (test-write-text (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
             (revision  (structural-tests--revision context "workspace:source.js"))
             (arguments (structural-tests--arguments revision :replacement "bar($A)"))
             (query     (tool-registry-find registry "structural" "query")))
@@ -213,9 +197,9 @@
             (eq ':cancelled (structural-workspace-error-code condition)))) "cancelled backend retains no proposal")
        (structural-register-tools registry :program (structural-tests--program))
        (let ((*structural-maximum-bytes* 2))
-         (test-assert (structural-tests--rejected (lambda () (tool-execute query context arguments))) "bounded source snapshot"))
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error) (lambda () (tool-execute query context arguments))) "bounded source snapshot"))
        (structural-register-tools registry :program (uiop:native-namestring (merge-pathnames "missing-ast-grep" (config :working-directory configuration))))
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute (tool-registry-find registry "structural" "query") context arguments))) "missing executable rejected")
        (test-assert (equal "foo(1);" (uiop:read-file-string path)) "failed operations publish no source"))))
   nil)
@@ -226,14 +210,14 @@
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore commands))
-     (let* ((path       (structural-tests--write (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
+     (let* ((path       (test-write-text (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
             (revision   (structural-tests--revision context "workspace:source.js"))
             (proposal   (structural-tests--call context "rewrite"
                                                  (structural-tests--arguments revision :pattern "missing($A)" :replacement "bar($A)")))
             (identifier (json-get proposal "proposal"))
             (apply-tool (tool-registry-find registry "structural" "apply"))
             (entry      (structural--find (structural-tool-state apply-tool) context identifier)))
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (structural--apply (structural-tool-state apply-tool) context entry :cancelled-p (lambda () t))))
                     "publication cancellation rejected before staging")
        (test-assert (equal "foo(1);" (uiop:read-file-string path)) "cancelled apply writes nothing")
@@ -242,8 +226,8 @@
        (let* ((new    (structural-tests--call context "rewrite"
                                              (structural-tests--arguments revision :pattern "missing($A)" :replacement "bar($A)")))
               (new-id (json-get new "proposal")))
-         (structural-tests--write path "changed(1);")
-         (test-assert (structural-tests--rejected
+         (test-write-text path "changed(1);")
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                        (lambda () (tool-execute apply-tool context (json-object "proposal" new-id))))
                       "no-match apply checks stale original too")))))
   nil)
@@ -257,7 +241,7 @@
      (let* ((root          (config :working-directory configuration))
             (workspace     (merge-pathnames "workspace/" root))
             (configuration (configuration-copy configuration :working-directory workspace :source-root workspace))
-            (source        (structural-tests--write (merge-pathnames "external.js" root) "foo(1);"))
+            (source        (test-write-text (merge-pathnames "external.js" root) "foo(1);"))
             (uri           (concatenate 'string "workspace:" (workspace-file--encode-identifier (uiop:native-namestring source))))
             (phase         ':allow)
             (requests      nil)
@@ -280,10 +264,10 @@
               (apply-tool (tool-registry-find registry "structural" "apply")))
          (setf (gethash "uri" arguments) uri
                phase ':deny-read)
-         (test-assert (structural-tests--rejected (lambda () (tool-execute query context arguments)))
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error) (lambda () (tool-execute query context arguments)))
                       "external source needs ordinary read approval")
          (setf phase ':deny-program)
-         (test-assert (structural-tests--rejected (lambda () (tool-execute query context arguments)))
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error) (lambda () (tool-execute query context arguments)))
                       "external executable path needs structural path approval")
          (test-assert (not (some (lambda (command) (search "--stdin" command)) requests))
                       "path denials happen before backend invocation")
@@ -292,13 +276,13 @@
                       "approved external source and program queried")
          (setf (gethash "replacement" arguments) "bar($A)"
                phase ':deny-edit)
-         (test-assert (structural-tests--rejected (lambda () (tool-execute rewrite context arguments)))
+         (test-assert (test-signals-p '(or tool-error cl-resources:resource-error) (lambda () (tool-execute rewrite context arguments)))
                       "preview staging needs ordinary edit approval")
          (setf phase ':allow)
          (let* ((proposal   (structural-tests--call context "rewrite" arguments))
                 (identifier (json-get proposal "proposal")))
            (setf phase ':deny-edit)
-           (test-assert (structural-tests--rejected
+           (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                          (lambda () (tool-execute apply-tool context (json-object "proposal" identifier))))
                         "publication reauthorizes external edit path")
            (test-assert (equal "foo(1);" (uiop:read-file-string source)) "denied preview and apply publish nothing")
@@ -319,7 +303,7 @@
      (declare (ignore commands))
      (let* ((*workspace-file-resource-maximum-observations* 2)
             (root                                           (config :working-directory configuration))
-            (source                                         (structural-tests--write (merge-pathnames "source.js" root) "foo(1);"))
+            (source                                         (test-write-text (merge-pathnames "source.js" root) "foo(1);"))
             (revision                                       (structural-tests--revision context "workspace:source.js"))
             (proposal                                       (structural-tests--call context "rewrite"
                                                                                      (structural-tests--arguments revision :replacement "bar($A)")))
@@ -337,15 +321,15 @@
            (setf semantic-identifier
                  (lsp-semantic--store semantic-state context
                                       (lsp-semantic-tests--proposal context semantic-client semantic-edit)))
-           (test-assert (lsp-semantic-tests--rejected
+           (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                          (lambda () (lsp-semantic--find semantic-state context
                                                        :identifier old-identifier :kind ':proposal)))
                         "semantic choices enforce their independent entry budget")))
        (dotimes (index 3)
          (let ((name (format nil "unrelated-~D.js" index)))
-           (structural-tests--write (merge-pathnames name root) "other();")
+           (test-write-text (merge-pathnames name root) "other();")
            (structural-tests--revision context (concatenate 'string "workspace:" name))))
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute (tool-registry-find registry "structural" "query") context
                                               (structural-tests--arguments revision))))
                     "original read alias was actually evicted")
@@ -355,7 +339,7 @@
        (structural-tests--call context "apply" (json-object "proposal" identifier))
        (test-assert (equal "bar(1);" (uiop:read-file-string source))
                     "unchanged baseline publishes after read alias eviction")
-       (test-assert (structural-tests--rejected
+       (test-assert (test-signals-p '(or tool-error cl-resources:resource-error)
                      (lambda () (tool-execute apply-tool context (json-object "proposal" identifier))))
                     "publication consumes exactly once")
        (test-assert (equal semantic-identifier
@@ -371,7 +355,7 @@
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore commands))
-     (let* ((source        (structural-tests--write
+     (let* ((source        (test-write-text
                             (merge-pathnames "source.js" (config :working-directory configuration)) "foo(1);"))
             (revision      (structural-tests--revision context "workspace:source.js"))
             (arguments     (structural-tests--arguments revision :pattern "missing($A)" :replacement "bar($A)"))

@@ -37,13 +37,8 @@ differ in shape or type."
          (hole-parameters nil))
     (multiple-value-bind (pattern holes) (procedure--input-pattern input)
       (labels ((parameter-name (key)
-                 (let ((base (procedure--parameter-base-name key)))
-                   (loop for index from 1
-                         for name = (if (= index 1) base (format nil "~A-~D" base index))
-                         unless (find name parameters
-                                      :key  (lambda (parameter) (getf parameter :name))
-                                      :test #'string=)
-                           return name)))
+                 (procedure--unique-name (procedure--parameter-base-name key) parameters
+                                         :property ':name))
 
                (add-parameter (key values)
                  (let ((name (parameter-name key))
@@ -166,10 +161,9 @@ differ in shape or type."
                                                   (if (stringp element)
                                                       element
                                                       (destructuring-bind (index prefix suffix) element
-                                                        (let ((name (rest (assoc index hole-parameters))))
-                                                          (if name
-                                                              (list :param name prefix suffix)
-                                                              (list :any prefix suffix))))))
+                                                        (if-let ((name (rest (assoc index hole-parameters))))
+                                                            (list :param name prefix suffix)
+                                                            (list :any prefix suffix)))))
                                                 pattern))
                        :steps      steps)))
           (and (<= (length parameters) *procedure-parameter-limit*)
@@ -230,11 +224,10 @@ EVALUATION records the checked examples and counterexample count."
       (let ((skeleton (action-trace-skeleton trace)))
         (when (and (rest skeleton)
                    (notany (lambda (tool) (procedure--own-tool-p tool)) skeleton))
-          (let ((group (assoc skeleton groups :test #'equal)))
-            (if group
-                (when (< (length (rest group)) *procedure-example-limit*)
-                  (setf (rest group) (append (rest group) (list trace))))
-                (push (list skeleton trace) groups))))))
+          (if-let ((group (assoc skeleton groups :test #'equal)))
+              (when (< (length (rest group)) *procedure-example-limit*)
+                (setf (rest group) (append (rest group) (list trace))))
+              (push (list skeleton trace) groups)))))
     (loop for (nil . examples) in (reverse groups)
           for procedure = (and (>= (length examples) *procedure-minimum-examples*)
                                (procedure--validated examples))
@@ -318,13 +311,16 @@ recorded version. Nothing is learned when knowledge is off."
   (mapcar (lambda (step) (getf step :tool))
           (getf (rest (getf (procedure-entry-version entry) :procedure)) :steps)))
 
-(-> procedure--unique-name (string list) string)
-(defun procedure--unique-name (name entries)
-  "Return NAME, numbered when one of ENTRIES already uses it."
-  (loop for index from 1
-        for candidate = (if (= index 1) name (format nil "~A-~D" name index))
-        unless (find candidate entries :key (lambda (entry) (getf entry :id)) :test #'string=)
-          return candidate))
+(-> procedure--unique-name (string list &key (:property keyword)) string)
+(defun procedure--unique-name (name entries &key (property ':id))
+  "Return NAME, numbered when one of ENTRIES already uses it in PROPERTY."
+  ;; At most LENGTH ENTRIES candidates can collide. Leave room for the full
+  ;; base and the decimal suffix of the next candidate.
+  (prezdivka:unique-base-name
+   name
+   (lambda (candidate)
+     (find candidate entries :key (lambda (entry) (getf entry property)) :test #'string=))
+   :maximum-length (+ (max 1 (length name)) 1 (length (format nil "~D" (1+ (length entries)))))))
 
 (-> procedure--baseline (list) list)
 (defun procedure--baseline (examples)
@@ -522,20 +518,11 @@ counts share no pattern."
                                 (write-char (char-downcase character) stream))
                                (t
                                 (write-char #\- stream))))))
-         (trimmed (string-trim "-" (procedure--collapse-hyphens words))))
+         (trimmed (serapeum:string-join
+                   (split-sequence:split-sequence #\- words :remove-empty-subseqs t) "-")))
     (if (and (plusp (length trimmed)) (alpha-char-p (char trimmed 0)))
         trimmed
         (format nil "value~@[-~A~]" (and (plusp (length trimmed)) trimmed)))))
-
-(-> procedure--collapse-hyphens (string) string)
-(defun procedure--collapse-hyphens (text)
-  "Return TEXT with each run of hyphens reduced to one."
-  (with-output-to-string (stream)
-    (loop for character across text
-          for previous = nil then current
-          for current = character
-          unless (and (char= character #\-) (eql previous #\-))
-            do (write-char character stream))))
 
 (-> procedure--name (list list) string)
 (defun procedure--name (pattern tools)

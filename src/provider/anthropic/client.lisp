@@ -327,7 +327,7 @@ text is never persisted. Cache markers may move within the four-breakpoint budge
   "Return a digest of BLOCK's signed thinking identity, without retaining its text."
   (when (and (json-object-p block) (equal (json-get block "type") "thinking")
              (non-empty-string-p (json-get block "signature")))
-    (context-anchors--digest (json-get block "signature"))))
+    (memory-source-text-digest (json-get block "signature"))))
 
 (-> anthropic--request-signatures (json-object) list)
 (defun anthropic--request-signatures (request)

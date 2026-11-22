@@ -12,9 +12,7 @@
 (-> lsp-semantic-tests--write (configuration string string) pathname)
 (defun lsp-semantic-tests--write (configuration name text)
   "Write exact UTF-8 fixture text inside the configured workspace."
-  (let ((path (merge-pathnames name (config :working-directory configuration))))
-    (workspace-resource-tests--write-text path text)
-    path))
+  (test-write-text (merge-pathnames name (config :working-directory configuration)) text))
 
 (-> lsp-semantic-tests--context
     (configuration tool-registry string &key (:authorization (option function))) tool-context)
@@ -38,14 +36,6 @@
   (json-object "range" (json-object "start" (json-object "line" 0 "character" start)
                                      "end" (json-object "line" 0 "character" end))
                "newText" text))
-
-(-> lsp-semantic-tests--rejected (function) boolean)
-(defun lsp-semantic-tests--rejected (thunk)
-  "Return true when THUNK signals a typed resource, tool or LSP failure."
-  (handler-case (progn (funcall thunk) nil)
-    (lsp-error () t)
-    (cl-resources:resource-error () t)
-    (tool-error () t)))
 
 (-> test-lsp-semantic-ordered-resources () null)
 (defun test-lsp-semantic-ordered-resources ()
@@ -114,7 +104,7 @@
                             (json-object "kind" "create" "uri" "https://example.org/file")
                             (json-object "kind" "create" "uri" "file://host/file")))
                (test-assert
-                (lsp-semantic-tests--rejected
+                (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                  (lambda () (lsp-semantic-tests--proposal
                              context client (json-object "documentChanges" (vector operation)))))
                 "invalid resource precondition fails before mutation"))
@@ -131,7 +121,7 @@
                (setf (aref operations 1)
                      (json-object "kind" "text" "uri" source-uri "edits"
                                   (vector (json-object "startOffset" 0 "endOffset" 99 "newText" "bad"))))
-               (test-assert (lsp-semantic-tests--rejected
+               (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                              (lambda () (lsp-semantic--apply context entry #())))
                             "materialization rejects a late invalid operation")
                (test-assert (and (equal "source" (uiop:read-file-string source))
@@ -172,10 +162,10 @@
         (unwind-protect
              (progn
                (let ((entry (proposal)))
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--apply context entry #()))) "confirmation required")
                  (test-assert (equal "before" (uiop:read-file-string path)) "approval failure writes nothing")
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--apply context entry #("confirm")))) "caller assertion does not bypass permission")
                  (test-assert (some (lambda (command)
                                      (and (search (lsp-semantic-entry-identifier entry) command)
@@ -183,17 +173,17 @@
                               "confirmation command includes proposal and annotation identities")
                  (setf confirmation-allowed t)
                  (incf (cl-lsp:lsp-document-version document))
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--apply context entry #("confirm")))) "version drift rejected"))
                (let ((entry (proposal)))
                  (lsp-semantic-tests--write configuration "a.txt" "external")
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--apply context entry #("confirm")))) "disk drift rejected")
                  (test-assert (equal "external" (uiop:read-file-string path)) "stale failure preserves external change"))
                (lsp-semantic-tests--write configuration "a.txt" "before")
                (let ((entry (proposal)))
                  (setf (lsp-client-transport client) (list :new))
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--apply context entry #("confirm")))) "restart invalidates proposal"))
                (lsp-semantic--apply context (proposal) #("confirm"))
                (test-assert (equal "after" (uiop:read-file-string path)) "explicit approval publishes"))
@@ -216,14 +206,14 @@
            (id                             (lsp-semantic--store state first one)))
       (unwind-protect
            (progn
-             (test-assert (lsp-semantic-tests--rejected
+             (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                            (lambda () (lsp-semantic--find state second :identifier id :kind ':proposal))) "foreign conversation cannot use ID")
              (lsp-semantic--store state first two)
-             (test-assert (lsp-semantic-tests--rejected
+             (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                            (lambda () (lsp-semantic--find state first :identifier id :kind ':proposal))) "oldest proposal evicted")
              (test-assert (eq two (lsp-semantic--find state first :identifier (lsp-semantic-entry-identifier two) :kind ':proposal)) "latest retained")
              (let ((*lsp-semantic-maximum-characters* 1))
-               (test-assert (lsp-semantic-tests--rejected
+               (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                              (lambda () (lsp-semantic--store state first two))) "oversized choices rejected")))
         (tool-registry-close-runtime-state registry))))
   nil)
@@ -261,8 +251,8 @@
                (setf (gethash (cl-lsp:lsp-path-uri path) changes)
                      (vector (lsp-semantic-tests--text-edit 0 3 "again"))))
              (let ((entry (lsp-semantic-tests--proposal context client (json-object "changes" changes))))
-               (workspace-resource-tests--write-text (first paths) "external")
-               (test-assert (lsp-semantic-tests--rejected (lambda () (lsp-semantic--apply context entry #())))
+               (test-write-text (first paths) "external")
+               (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error) (lambda () (lsp-semantic--apply context entry #())))
                             "a changed proposal-owned snapshot rejects the complete change set")
                (test-assert (and (equal "external" (uiop:read-file-string (first paths)))
                                  (every (lambda (path) (equal "new" (uiop:read-file-string path))) (rest paths)))
@@ -293,7 +283,7 @@
              (dolist (limits '((1 128) (128 4)))
                (let ((*lsp-semantic-maximum-snapshots-per-entry* (first limits))
                      (*lsp-semantic-maximum-snapshot-bytes*      (second limits)))
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic-tests--proposal context client combined)))
                               "proposal capture rejects a resource-count or UTF-8 byte overflow")))
              (dolist (limits '((2 128) (128 8)))
@@ -302,7 +292,7 @@
                       (state                                 (make-instance 'lsp-semantic-state))
                       (entries                               (mapcar (lambda (edit) (lsp-semantic-tests--proposal context client edit)) edits)))
                  (dolist (entry entries) (lsp-semantic--store state context entry))
-                 (test-assert (lsp-semantic-tests--rejected
+                 (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                                (lambda () (lsp-semantic--find state context
                                                              :identifier (lsp-semantic-entry-identifier (first entries))
                                                              :kind       ':proposal)))
@@ -345,7 +335,7 @@
       (setf (gethash uri (cl-lsp:lsp-client-documents client)) document)
       (lsp-register-tools registry)
       (labels ((call (&rest arguments)
-                 (workspace-resource-tests--call registry context
+                 (test-resource-call registry context
                                                  :namespace "lsp"
                                                  :name      "semantic"
                                                  :arguments arguments))
@@ -426,7 +416,7 @@
            (edit           (json-object "changes" (json-object uri (vector (lsp-semantic-tests--text-edit 0 3 "new")))))
            (authorizations 0)
            (allowed        nil))
-      (workspace-resource-tests--write-text outside "old")
+      (test-write-text outside "old")
       (unwind-protect
            (test-call-with-function-replacements
             (list (list 'workspace-tool-authorize-outside-path
@@ -435,13 +425,13 @@
                           (incf authorizations)
                           allowed)))
             (lambda ()
-              (test-assert (lsp-semantic-tests--rejected
+              (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                             (lambda () (lsp-semantic-tests--proposal context client edit))) "outside read denied before proposal")
               (test-assert (plusp authorizations) "ordinary path authority consulted")
               (setf allowed t)
               (let ((entry (lsp-semantic-tests--proposal context client edit)))
                 (setf allowed nil)
-                (test-assert (lsp-semantic-tests--rejected
+                (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                               (lambda () (lsp-semantic--apply context entry #()))) "outside write reauthorized")
                 (test-assert (equal "old" (uiop:read-file-string outside)) "denied application preserves content")
                 (setf allowed t)
@@ -455,22 +445,9 @@
                                                (json-object uri (vector (lsp-semantic-tests--text-edit 0 3 "bad"))
                                                             second-uri (vector (lsp-semantic-tests--text-edit 0 3 "bad")))))))
                 (lsp-semantic-tests--write configuration "second.txt" "external")
-                (test-assert (lsp-semantic-tests--rejected
+                (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                               (lambda () (lsp-semantic--apply context entry #()))) "one stale member rejects the complete proposal")
-                (test-assert (equal "new" (uiop:read-file-string outside)) "multi-resource validation precedes all writes"))
-              (test-assert (lsp-semantic-tests--rejected
-                            (lambda () (cl-lsp:lsp-normalize-workspace-edit edit :position-encoding "utf-8"))) "unsupported encoding rejected")
-              (let ((snapshot (lambda (uri) (declare (ignore uri)) (values "new" 2 ':file))))
-                (test-assert (lsp-semantic-tests--rejected
-                              (lambda () (cl-lsp:lsp-normalize-workspace-edit
-                                          (json-object "documentChanges"
-                                                       (vector (json-object "textDocument" (json-object "uri" uri "version" 1)
-                                                                            "edits" (vector (lsp-semantic-tests--text-edit 0 3 "x")))))
-                                          :snapshot snapshot))) "explicit stale document version rejected")
-                (test-assert (lsp-semantic-tests--rejected
-                              (lambda () (cl-lsp:lsp-normalize-workspace-edit
-                                          (json-object "changes" (json-object uri (vector (lsp-semantic-tests--text-edit 0 99 "x"))))
-                                          :snapshot snapshot))) "invalid UTF-16 range rejected"))))
+                (test-assert (equal "new" (uiop:read-file-string outside)) "multi-resource validation precedes all writes"))))
         (tool-registry-close-runtime-state registry))))
   nil)
 
@@ -493,14 +470,14 @@
              (test-assert (= 1 (length (gethash (tool-context-conversation first)
                                                 (edit-proposal-store-entries state-a))))
                           "same-store direct admission is idempotent")
-             (test-assert (lsp-semantic-tests--rejected
+             (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                            (lambda () (lsp-semantic--store state-b second entry)))
                           "cross-store admission rejects an already-owned proposal")
              (test-assert (null (gethash (tool-context-conversation second)
                                          (edit-proposal-store-entries state-b)))
                           "conflicting admission leaves the losing store unchanged")
              (lsp-semantic--apply first entry #())
-             (test-assert (lsp-semantic-tests--rejected
+             (test-assert (test-signals-p '(or lsp-error cl-resources:resource-error tool-error)
                            (lambda () (lsp-semantic--store state-a first entry)))
                           "consumed proposals cannot be re-admitted")
              (test-assert (null (gethash (tool-context-conversation first)

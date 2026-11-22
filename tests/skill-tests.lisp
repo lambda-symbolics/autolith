@@ -5,15 +5,7 @@
 (-> skill-tests--write (pathname string string) pathname)
 (defun skill-tests--write (root relative content)
   "Write CONTENT beneath ROOT at RELATIVE and return the resulting pathname."
-  (let ((pathname (merge-pathnames relative root)))
-    (ensure-directories-exist pathname)
-    (with-open-file (stream pathname
-                            :direction         ':output
-                            :if-exists         ':supersede
-                            :if-does-not-exist ':create
-                            :external-format   ':utf-8)
-      (write-string content stream))
-    pathname))
+  (test-write-text (merge-pathnames relative root) content))
 
 (-> skill-tests--definition
     (string string string &key (:version t))

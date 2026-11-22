@@ -81,12 +81,11 @@ same boundary, independently of adapter startup approval."
     (unless (hash-table-p value)
       (debug--fail ':invalid-arguments "Configuration must decode to a JSON object."))
     (dolist (key '("program" "cwd"))
-      (let ((path (json-get value key)))
-        (when path
-          (unless (non-empty-string-p path)
-            (debug--fail ':invalid-arguments "Configuration program and cwd must be path strings."))
-          (setf (gethash key value)
-                (uiop:native-namestring (workspace-tool-path context path :tool-name "debug"))))))
+      (when-let ((path (json-get value key)))
+        (unless (non-empty-string-p path)
+          (debug--fail ':invalid-arguments "Configuration program and cwd must be path strings."))
+        (setf (gethash key value)
+              (uiop:native-namestring (workspace-tool-path context path :tool-name "debug")))))
     (debug--bounded-json value)
     value))
 
@@ -127,8 +126,7 @@ same boundary, independently of adapter startup approval."
 (-> debug--remove (debug-session-manager debug-session-entry) null)
 (defun debug--remove (manager entry)
   "Close and reap ENTRY before releasing capacity."
-  (let ((session (debug-session-entry-session entry)))
-    (when session (daphne:session-close session)))
+  (when-let ((session (debug-session-entry-session entry))) (daphne:session-close session))
   (with-lock-held ((debug-session-manager-lock manager))
     (remhash (debug-session-entry-identifier entry) (debug-session-manager-entries manager)))
   nil)

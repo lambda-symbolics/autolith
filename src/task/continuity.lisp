@@ -542,7 +542,7 @@ require a new human decision rather than an automatic second attempt."
   (let* ((job           (task-child-agent-job agent))
          (configuration (agent-configuration agent))
          (execution     (session-job-execution-identifier job)))
-    (unless (task--owner-component-p execution)
+    (unless (shell-log--component-p execution)
       (task-continuity--fail "Invalid overflow producer identity." :code ':authority))
     (task--safe-owner-path
      configuration

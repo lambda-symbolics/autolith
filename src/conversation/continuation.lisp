@@ -312,11 +312,10 @@ An entry that is :RETAINED-P stays after the checkpoint and is left out."
     (dolist (entry evidence (nreverse ranges))
       (destructuring-bind (&key conversation sequence retained-p &allow-other-keys) entry
         (unless retained-p
-          (let ((range (assoc conversation ranges :test #'equal)))
-            (if range
-                (setf (second range) (min sequence (second range))
-                      (third range)  (max sequence (third range)))
-                (push (list conversation sequence sequence) ranges))))))))
+          (if-let ((range (assoc conversation ranges :test #'equal)))
+              (setf (second range) (min sequence (second range))
+                    (third range)  (max sequence (third range)))
+              (push (list conversation sequence sequence) ranges)))))))
 
 (-> continuation--note (hash-table) list)
 (defun continuation--note (object)

@@ -75,7 +75,7 @@
            (test-call-with-function-replacements
             (list (list 'sbcl-worker-start #'identity))
             (lambda ()
-              (lisp-worker-pool-start pool "compiler" identifier)))
+               (lisp-worker-manager-start pool "compiler" identifier)))
            (test-assert
             (search "compiler  stopped  image instrumented-compiler"
                     (lisp-worker-manager-render pool))
@@ -176,11 +176,11 @@
     (unwind-protect
          (progn
            (platform-setenv "AUTOLITH_SBCL" "/tmp/autolith-test-sbcl")
-           (test-assert (string= (lisp-worker-sbcl-command)
+           (test-assert (string= (sbcl-command)
                                  "/tmp/autolith-test-sbcl")
                         "the disposable worker honors the configured SBCL")
            (platform-setenv "AUTOLITH_SBCL" "")
-           (test-assert (string= (lisp-worker-sbcl-command) "sbcl")
+           (test-assert (string= (sbcl-command) "sbcl")
                         "the disposable worker falls back to PATH"))
       (if previous-command
           (platform-setenv "AUTOLITH_SBCL" previous-command)
@@ -284,8 +284,8 @@
          (root          (test-configuration-root configuration))
          (pool          (lisp-worker-pool-create configuration)))
     (unwind-protect
-         (let* ((alpha (lisp-worker-pool-start pool "alpha" "pristine"))
-                (beta  (lisp-worker-pool-start pool "beta" "pristine")))
+         (let* ((alpha (lisp-worker-manager-start pool "alpha" "pristine"))
+                (beta  (lisp-worker-manager-start pool "beta" "pristine")))
            (lisp-worker-request alpha :eval '(:forms ("(defparameter *pool-value* 41)")))
            (let ((alpha-result
                    (lisp-worker-request alpha :eval '(:forms ("(1+ *pool-value*)"))))
@@ -346,7 +346,7 @@
              (ensure-directories-exist workspace)
              (setf moved-configuration
                    (configuration-copy configuration :working-directory workspace))
-             (lisp-worker-pool-change-working-directory pool moved-configuration)
+             (lisp-worker-manager-change-working-directory pool moved-configuration)
              (let ((marker
                      (lisp-worker-request alpha :eval
                                           '(:forms ("(1+ *pool-value*)"))))
@@ -367,7 +367,7 @@
                 (search (namestring workspace)
                         (first (getf (rest default-directory) :values)))
                 "moving a REPL changes its pathname defaults"))
-             (let* ((gamma (lisp-worker-pool-start pool "gamma" "pristine"))
+             (let* ((gamma (lisp-worker-manager-start pool "gamma" "pristine"))
                     (gamma-directory
                       (lisp-worker-request
                        gamma :eval '(:forms ("(namestring (uiop:getcwd))")))))
@@ -375,7 +375,7 @@
                 (search (namestring workspace)
                         (first (getf (rest gamma-directory) :values)))
                 "new REPLs start in the moved pool workspace"))
-             (lisp-worker-pool-change-working-directory pool configuration))
+             (lisp-worker-manager-change-working-directory pool configuration))
            (let ((invalid-configuration
                    (configuration-copy
                     configuration
@@ -383,7 +383,7 @@
              (test-assert
               (handler-case
                   (progn
-                    (lisp-worker-pool-change-working-directory
+                    (lisp-worker-manager-change-working-directory
                      pool invalid-configuration)
                     nil)
                 (worker-error ()
@@ -399,16 +399,16 @@
                             "a failed REPL workspace change preserves heap state")))
            (handler-case
                (progn
-                 (lisp-worker-pool-start pool "alpha" "another-image")
+                 (lisp-worker-manager-start pool "alpha" "another-image")
                  (test-assert nil
                               "an existing REPL never switches images implicitly"))
              (worker-error ()
                (test-assert t
                             "an existing REPL never switches images implicitly")))
-           (lisp-worker-pool-reset pool "alpha" "pristine")
+           (lisp-worker-manager-reset pool "alpha" "pristine")
            (let ((result
                    (lisp-worker-request
-                    (lisp-worker-pool-worker pool "alpha")
+                    (lisp-worker-manager-worker pool "alpha")
                     :eval
                     '(:forms ("(boundp '*pool-value*)")))))
              (test-assert (equal (getf (rest result) :values) '("NIL"))
@@ -510,12 +510,12 @@
                       (string= (json-get property "type") "string")))))
       (unwind-protect
            (progn
-             (setf alpha (lisp-worker-pool-start pool "alpha" "pristine")
-                   beta (lisp-worker-pool-start pool "beta" "pristine")
+             (setf alpha (lisp-worker-manager-start pool "alpha" "pristine")
+                   beta (lisp-worker-manager-start pool "beta" "pristine")
                    cancel-worker
-                   (lisp-worker-pool-start pool "cancel" "pristine")
+                   (lisp-worker-manager-start pool "cancel" "pristine")
                    scratch-worker
-                   (lisp-worker-pool-start pool "scratch-async" "pristine"))
+                   (lisp-worker-manager-start pool "scratch-async" "pristine"))
              (test-assert
               (every #'async-schema-p
                      '("eval" "load-system" "run-tests" "scratchpad-run"))
@@ -669,7 +669,7 @@
                      (search "42" (tool-result-content result))
                      (sbcl-worker-running-p cancel-worker)
                      (eq cancel-worker
-                         (lisp-worker-pool-worker pool "cancel")))
+                          (lisp-worker-manager-worker pool "cancel")))
                 "the cancelled named REPL restarts safely for its next request"))
              (let ((load-result
                      (let ((*tool-execution-blocking-grace-seconds* 5))
@@ -733,16 +733,16 @@
                         '(":NEW")))
                   "lisp.run-tests replaces stale registration from a canonical ASD file")))
              (let* ((read-result
-                      (workspace-resource-tests--call
+                      (test-resource-call
                        registry context
                        :namespace "resource"
                        :name      "read"
                        :arguments (list "uri" "scratchpad:async-program.lisp")))
                     (revision
-                      (workspace-resource-tests--field
+                      (test-resource-field
                        (tool-result-content read-result) "Revision: "))
                     (write-result
-                      (workspace-resource-tests--call
+                      (test-resource-call
                        registry context
                        :namespace "resource"
                        :name      "edit"
@@ -905,9 +905,7 @@
               (lambda ()
                 (exercise "busy" "reset" nil)
                 (exercise "busy" "stop" nil))))
-           (let ((worker
-                   (lisp-worker-pool-start
-                    pool "busy" "pristine")))
+           (let ((worker (lisp-worker-manager-start pool "busy" "pristine")))
              (test-call-with-function-replacements
               (list
                (list 'lisp-worker-manager-worker
@@ -957,7 +955,7 @@
                                        :conversation  other)))
     (labels ((call-resource (authority name &rest arguments)
                "Execute resource.NAME with ARGUMENTS under AUTHORITY."
-               (workspace-resource-tests--call
+               (test-resource-call
                 registry authority :namespace "resource"
                                    :name      name
                                    :arguments arguments))
@@ -968,7 +966,7 @@
 
              (observation-field (result label)
                "Return LABEL from successful resource RESULT."
-               (workspace-resource-tests--field
+               (test-resource-field
                 (tool-result-content result) label))
 
              (edit-resource (authority result &rest operations)
@@ -988,17 +986,10 @@
                  "replace-empty" "content" content))))
       (unwind-protect
            (progn
-             (lisp-worker-pool-start pool "scratch" "pristine")
+             (lisp-worker-manager-start pool "scratch" "pristine")
              (test-assert
-              (and (tool-registry-find registry "lisp" "scratchpad-run")
-                   (every
-                    #'null
-                    (mapcar
-                     (lambda (name)
-                       (tool-registry-find registry "lisp" name))
-                     '("scratchpad-list" "scratchpad-read" "scratchpad-write"
-                       "scratchpad-edit" "scratchpad-delete"))))
-              "scratchpad resources replace the five flat Lisp file tools")
+              (tool-registry-find registry "lisp" "scratchpad-run")
+              "lisp.scratchpad-run is registered")
              (let* ((other-root (read-resource other-context "scratchpad:."))
                     (replacement
                       (edit-resource
@@ -1094,7 +1085,7 @@
                 "lisp.scratchpad-run loads a resource-created file"))
              (let ((result
                      (lisp-worker-request
-                      (lisp-worker-pool-worker pool "scratch")
+                      (lisp-worker-manager-worker pool "scratch")
                       :eval
                       '(:forms ("*scratchpad-value*")))))
                (test-assert

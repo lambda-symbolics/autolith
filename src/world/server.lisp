@@ -388,15 +388,14 @@ instead of starting a second server."
 (-> world-server--endpoint-failed (world-server world-endpoint serious-condition) null)
 (defun world-server--endpoint-failed (server runtime condition)
   "Coalesce RUNTIME's failure and ask its owner to recover after this thread exits."
-  (let ((enqueue-p
-          (with-lock-held ((world-server-lock server))
-            (unless (world-endpoint-failure runtime)
-              (setf (world-endpoint-failure-thread runtime) (current-thread)
-                    (world-endpoint-failure runtime) condition)
-              t))))
-    (when enqueue-p
-      (world-server--enqueue server
-                             (lambda () (world-server--recover-endpoint server runtime)))))
+  (when-let ((enqueue-p
+               (with-lock-held ((world-server-lock server))
+                 (unless (world-endpoint-failure runtime)
+                   (setf (world-endpoint-failure-thread runtime) (current-thread)
+                         (world-endpoint-failure runtime) condition)
+                   t))))
+    (world-server--enqueue server
+                           (lambda () (world-server--recover-endpoint server runtime))))
   nil)
 
 (-> world-server--recover-endpoint (world-server world-endpoint) null)
@@ -472,36 +471,34 @@ Return the launcher status a hosted session asked for, or NIL."
          (sweep
           (lambda ()
             (setf due (+ (get-internal-real-time) interval))
-            (let ((runtime (world-server-runtime server)))
-              (when runtime (world-server--recover-endpoint server runtime)))
+            (when-let ((runtime (world-server-runtime server))) (world-server--recover-endpoint server runtime))
             (world-server--retire-unhealthy-hosts server)
             (world-server--unload-cold-hosts server))))
     (loop
-     (let ((job
-            (with-lock-held (lock)
-              (loop
-               (let ((left (- due (get-internal-real-time))))
-                 (cond
-                  ((world-server-jobs server)
-                   (return (pop (world-server-jobs server))))
-                  ((and (world-server-stopping-p server)
-                        (null (world-server-hosts server))
-                        (notany
-                         (lambda (startup)
-                           (member (world-startup-phase startup)
-                                   '(:reserved :building)))
-                         (world-server-startups server)))
-                   (return nil))
-                  ((<= left 0)
-                   (return sweep))
-                  (t
-                   (condition-wait (world-server-condition-variable server)
-                                   lock :timeout
-                                   (/ left
-                                      internal-time-units-per-second)))))))))
-       (if job
-           (funcall job)
-           (return (world-server-exit-status server)))))))
+     (if-let ((job
+               (with-lock-held (lock)
+                 (loop
+                  (let ((left (- due (get-internal-real-time))))
+                    (cond
+                     ((world-server-jobs server)
+                      (return (pop (world-server-jobs server))))
+                     ((and (world-server-stopping-p server)
+                           (null (world-server-hosts server))
+                           (notany
+                            (lambda (startup)
+                              (member (world-startup-phase startup)
+                                      '(:reserved :building)))
+                            (world-server-startups server)))
+                      (return nil))
+                     ((<= left 0)
+                      (return sweep))
+                     (t
+                      (condition-wait (world-server-condition-variable server)
+                                      lock :timeout
+                                      (/ left
+                                         internal-time-units-per-second)))))))))
+         (funcall job)
+         (return (world-server-exit-status server))))))
 
 (-> world-server-wake-channel (world-server string) null)
 (defun world-server-wake-channel (server identifier)
@@ -647,16 +644,14 @@ REASON, when given, is what each attached terminal is told before it lets go."
     (let ((thread (world-host-thread host)))
       (when (and thread (not (eq thread (current-thread))))
         (join-thread thread))))
-  (let ((runtime (world-server-runtime server)))
-    (when runtime
-      (setf (world-server-runtime server) nil)
-      (image-daemon:daemon-runtime-stop runtime)))
+  (when-let ((runtime (world-server-runtime server)))
+    (setf (world-server-runtime server) nil)
+    (image-daemon:daemon-runtime-stop runtime))
   (handler-case (management-repl-stop server) (error nil nil))
   (handler-case (slynk-stop) (error nil nil))
   (handler-case (rlm-environment-pool-flush) (error nil nil))
   (telemetry--call-safely #'telemetry-shutdown)
-  (let ((lease (shiftf (world-server-lease server) nil)))
-    (when lease (handler-case (lease-release lease) (error nil nil))))
+  (when-let ((lease (shiftf (world-server-lease server) nil))) (handler-case (lease-release lease) (error nil nil)))
   nil)(-> world-server--hosts (world-server) list)
 (defun world-server--hosts (server)
   "Return a snapshot of SERVER's hosts, newest first."
@@ -842,12 +837,11 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
 (-> world-server-person-unread-changed (world-server) null)
 (defun world-server-person-unread-changed (server)
   "Count the messages waiting in the person's inbox again and show the count in every channel SERVER serves."
-  (let ((unread (handler-case (world-person-unread (world-server-configuration server))
-                  (autolith-error ()
-                    nil))))
-    (when unread
-      (dolist (host (world-server--hosts server))
-        (application-world-show-person-unread (world-host-application host) unread))))
+  (when-let ((unread (handler-case (world-person-unread (world-server-configuration server))
+                       (autolith-error ()
+                         nil))))
+    (dolist (host (world-server--hosts server))
+      (application-world-show-person-unread (world-host-application host) unread)))
   nil)
 
 (defvar *world-server-open-deadline* nil
@@ -924,14 +918,13 @@ instead says so."
 (defun world-server--cancel-startup (server channel)
   "Cancel an explicitly closed construction without abandoning its eventual cleanup."
   (with-lock-held ((world-server-lock server))
-    (let ((startup (find-if (lambda (candidate)
-                              (and (equal (world-startup-key candidate) (list ':channel channel))
-                                   (world-server--startup-active-p candidate)))
-                            (world-server-startups server))))
-      (when startup
-        (setf (world-startup-cancelled-p startup) t)
-        (sb-thread:condition-broadcast (world-server-condition-variable server))
-        (world-startup-identifier startup)))))
+    (when-let ((startup (find-if (lambda (candidate)
+                                   (and (equal (world-startup-key candidate) (list ':channel channel))
+                                        (world-server--startup-active-p candidate)))
+                                 (world-server-startups server))))
+      (setf (world-startup-cancelled-p startup) t)
+      (sb-thread:condition-broadcast (world-server-condition-variable server))
+      (world-startup-identifier startup))))
 
 (-> world-server-close (world-server t &key (:unattached-only-p boolean)) list)
 (defun world-server-close (server channel &key unattached-only-p)
@@ -945,11 +938,10 @@ started must not end one another terminal attached to since."
            :operation            ':close))
   (let ((host (world-server--find-host server channel)))
     (unless host
-      (let ((startup (world-server--cancel-startup server channel)))
-        (when startup
-          (return-from world-server-close
-            (list :ok :operation ':close :session-id channel :closed-p t
-                  :startup startup :pending-p t))))
+      (when-let ((startup (world-server--cancel-startup server channel)))
+        (return-from world-server-close
+          (list :ok :operation ':close :session-id channel :closed-p t
+                :startup startup :pending-p t)))
       (error 'world-error :message
              (format nil "Channel ~A is not open in this world server."
                      (conversation-identifier-display channel))
@@ -966,15 +958,14 @@ started must not end one another terminal attached to since."
               ((null session)
                (close-host))
               (t
-               (let ((committed-p
-                      (with-lock-held ((image-daemon:daemon-runtime-lock
-                                        session))
-                        (unless (world-host-attached-p host)
-                          (setf (channel-endpoint-closing-p session) t)))))
-                 (if committed-p
-                     (close-host)
-                     (list :ok :operation ':close :session-id
-                           (world-host-channel host) :closed-p nil)))))))))
+               (if-let ((committed-p
+                         (with-lock-held ((image-daemon:daemon-runtime-lock
+                                           session))
+                           (unless (world-host-attached-p host)
+                             (setf (channel-endpoint-closing-p session) t)))))
+                   (close-host)
+                   (list :ok :operation ':close :session-id
+                         (world-host-channel host) :closed-p nil))))))))
 
 (-> world-server-quiesce (world-server list) list)
 (defun world-server-quiesce (server channels)
@@ -1170,10 +1161,9 @@ host to publish its endpoint."
                :operation ':open))
       (let ((workspace (world-workspace-name directory)))
          (when (and (getf arguments :latest-p) (not (getf arguments :new-p)))
-           (let ((latest (world-channel-latest-top-level configuration workspace)))
-             (when latest
-               (return-from world-server--host-for
-                 (world-server--host-for server (list* :channel latest arguments))))))
+           (when-let ((latest (world-channel-latest-top-level configuration workspace)))
+             (return-from world-server--host-for
+               (world-server--host-for server (list* :channel latest arguments)))))
         (multiple-value-bind (host started-p skipped)
             (if (getf arguments :new-p)
                 (values nil nil nil)
@@ -1517,13 +1507,12 @@ running keeps the mode it started under."
                    (find-if
                     (lambda (candidate)
                       (and (equal key (world-startup-key candidate))
-                           (let ((host (world-startup-host candidate)))
-                             (if host
-                                 (and (world-host-reserved-p host)
-                                      (or conversation-id
-                                          (world-server--workspace-host-suitable-p
-                                           host arguments)))
-                                 (world-server--startup-active-p candidate)))))
+                           (if-let ((host (world-startup-host candidate)))
+                               (and (world-host-reserved-p host)
+                                    (or conversation-id
+                                        (world-server--workspace-host-suitable-p
+                                         host arguments)))
+                               (world-server--startup-active-p candidate))))
                     (world-server-startups server)))
            (unless startup
              (setf startup
@@ -1599,12 +1588,11 @@ forgotten again when no thread could start."
                               (list :rows    (getf arguments :rows)
                                     :columns (getf arguments :columns))
                               :tool-registry-function
-                              (let ((servers (getf arguments :mcp-servers)))
-                                (when servers
-                                   (lambda (configuration conversation)
-                                     (acp-mcp-create-tool-registry
-                                      configuration (coerce servers 'list)
-                                      :conversation conversation))))))
+                              (when-let ((servers (getf arguments :mcp-servers)))
+                                (lambda (configuration conversation)
+                                  (acp-mcp-create-tool-registry
+                                   configuration (coerce servers 'list)
+                                   :conversation conversation)))))
          (host   (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))
@@ -2231,10 +2219,9 @@ notice directly if it never paused, as when a checkpoint fails early."
           (world-server-holding-p server) nil)
     (sb-thread:condition-broadcast (world-server-condition-variable server)))
   (dolist (host (world-server--hosts server))
-    (let ((controller
-           (application-input-controller (world-host-application host))))
-      (when controller
-        (with-lock-held ((application-input-controller-lock controller))
-          (sb-thread:condition-broadcast
-           (application-input-controller-condition-variable controller))))))
+    (when-let ((controller
+                (application-input-controller (world-host-application host))))
+      (with-lock-held ((application-input-controller-lock controller))
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller)))))
   nil)

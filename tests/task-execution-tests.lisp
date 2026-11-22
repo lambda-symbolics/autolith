@@ -388,7 +388,7 @@
             (and execution
                  (task-tests--wait-until (lambda () (probe-file marker)) 90))
             "a child asynchronous Lisp evaluation starts before cleanup")
-           (setf worker (lisp-worker-pool-worker worker-pool "child-cleanup"))
+           (setf worker (lisp-worker-manager-worker worker-pool "child-cleanup"))
            (test-assert
             (member execution
                     (task-job-cancel-execution-descendants job ':parent-finished)

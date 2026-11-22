@@ -49,16 +49,16 @@
   "Render a bounded argument summary before sanitizing or measuring display cells."
   (let ((text (cond
                 ((stringp value)
-                 (subseq value 0 (min (length value) 192)))
+                 (take 192 value))
                 ((hash-table-p value)
                  (format nil "{~D fields}" (hash-table-count value)))
                 ((and (vectorp value) (plusp (length value)) (every #'stringp value))
                  (let ((joined (format nil "~{~A~^ ~}"
                                        (map 'list
                                             (lambda (item)
-                                              (subseq item 0 (min (length item) 192)))
-                                            (subseq value 0 (min 4 (length value)))))))
-                   (subseq joined 0 (min (length joined) 192))))
+                                              (take 192 item))
+                                            (take 4 value)))))
+                   (take 192 joined)))
                 ((vectorp value)
                  (format nil "[~D items]" (length value)))
                 ((and (integerp value) (> (integer-length value) 64))
@@ -182,10 +182,9 @@
         (when (integerp (getf (rest record) :seq))
           (setf (acp-session-turn-sequence session) (getf (rest record) :seq)))
         (acp-session--record session record))
-      (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
-        (when update
-          (with-lock-held ((channel-subscription-lock session))
-            (acp-session--send session update)))))
+      (when-let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
+        (with-lock-held ((channel-subscription-lock session))
+          (acp-session--send session update))))
   nil)
 
 (-> acp-session--dispatch-event (acp-session list) null)

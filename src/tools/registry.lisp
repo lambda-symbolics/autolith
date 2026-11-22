@@ -79,9 +79,9 @@
   (declare (ignore tool))
   "forms")
 
-(defclass lisp-load-system-tool (lisp-tool)
+(defclass lisp-system-tool (lisp-tool)
   ()
-  (:documentation "Load one ASDF or Quicklisp system in the worker."))
+  (:documentation "Load an ASDF system or run its tests in the worker."))
 
 (defclass lisp-describe-tool (lisp-tool)
   ()
@@ -94,10 +94,6 @@
 (defclass lisp-apropos-tool (lisp-tool)
   ()
   (:documentation "List defined active-image names matching a query."))
-
-(defclass lisp-run-tests-tool (lisp-tool)
-  ()
-  (:documentation "Run an ASDF system's tests in the worker."))
 
 (defclass lisp-reset-tool (lisp-tool)
   ()
@@ -912,9 +908,7 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
 (-> resource-tool--detail-text (string) string)
 (defun resource-tool--detail-text (text)
   "Bound a producer-supplied resource result label for presentation."
-  (if (> (length text) 160)
-      (concatenate 'string (subseq text 0 159) "…")
-      text))
+  (text--bounded-ellipsis text 160 :ellipsis "…"))
 
 (-> resource-tool--stale-edit-details (string) list)
 (defun resource-tool--stale-edit-details (revision)

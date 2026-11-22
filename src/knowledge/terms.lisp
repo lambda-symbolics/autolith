@@ -52,16 +52,10 @@ only to itself.")
 (-> knowledge-unit-factor (string) rational)
 (defun knowledge-unit-factor (unit)
   "Return the factor converting UNIT to its dimension's base unit."
-  (let ((entry (assoc unit *knowledge-units* :test #'string=)))
-    (if entry (third entry) 1)))
+  (if-let ((entry (assoc unit *knowledge-units* :test #'string=))) (third entry) 1))
 
 
 ;;;; -- Time Parsing --
-
-(-> knowledge--date-parts (string) (values (option integer) (option integer) (option integer)))
-(defun knowledge--date-parts (text)
-  "Return the year, month, and day of TEXT's leading YYYY-MM-DD, or NIL."
-  (timestamp--date-parts text))
 
 (-> knowledge-parse-instant (string) (option integer))
 (defun knowledge-parse-instant (text)
@@ -70,22 +64,17 @@ only to itself.")
 Accept optional seconds and colonless offsets through 14:59; require a zone."
   (parse-utc-timestamp text :profile ':knowledge))
 
-(-> knowledge-format-instant (integer) string)
-(defun knowledge-format-instant (universal-time)
-  "Return UNIVERSAL-TIME as canonical ISO-8601 UTC text."
-  (format-utc-timestamp universal-time))
-
 (-> knowledge-parse-date (string) (option string))
 (defun knowledge-parse-date (text)
   "Return canonical YYYY-MM-DD when TEXT is exactly a valid date, or NIL."
   (and (= (length text) 10)
-       (knowledge--date-parts text)
+       (timestamp--date-parts text)
        text))
 
 (-> knowledge-date-universal-time (string) integer)
 (defun knowledge-date-universal-time (date)
   "Return the universal time at the start of canonical DATE in UTC."
-  (multiple-value-bind (year month day) (knowledge--date-parts date)
+  (multiple-value-bind (year month day) (timestamp--date-parts date)
     (encode-universal-time 0 0 0 day month year 0)))
 
 (-> knowledge-parse-duration (t) (option integer))
@@ -175,7 +164,7 @@ Strings report :STRING; whether a string is an entity is the schema's choice."
     ((and (eq (first term) :instant) (= (length term) 2)
           (stringp (second term))
           (let ((time (knowledge-parse-instant (second term))))
-            (and time (string= (knowledge-format-instant time) (second term)))))
+            (and time (string= (format-utc-timestamp time) (second term)))))
      ':instant)
     ((and (eq (first term) :date) (= (length term) 2)
           (stringp (second term))
@@ -214,7 +203,7 @@ Strings report :STRING; whether a string is an entity is the schema's choice."
 (-> knowledge-make-instant (integer) list)
 (defun knowledge-make-instant (universal-time)
   "Return the canonical instant term for UNIVERSAL-TIME."
-  (list :instant (knowledge-format-instant universal-time)))
+  (list :instant (format-utc-timestamp universal-time)))
 
 (-> knowledge--number (t) (option rational))
 (defun knowledge--number (value)

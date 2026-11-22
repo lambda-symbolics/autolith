@@ -60,12 +60,8 @@
 (-> context-rule-saved--workspace-key (configuration) string)
 (defun context-rule-saved--workspace-key (configuration)
   "Return the stable digest key for CONFIGURATION's canonical workspace."
-  (ironclad:byte-array-to-hex-string
-   (ironclad:digest-sequence
-     ':sha256
-     (babel:string-to-octets
-      (context-rule-saved--canonical-workspace configuration)
-      :encoding ':utf-8))))
+  (memory-source-text-digest (context-rule-saved--canonical-workspace configuration)
+                             :babel-utf8-p t))
 
 (-> context-rule-saved-path (configuration keyword) pathname)
 (defun context-rule-saved-path (configuration scope)

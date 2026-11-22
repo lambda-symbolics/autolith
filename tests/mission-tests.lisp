@@ -5,9 +5,7 @@
 (-> mission-test--write-file (pathname string) null)
 (defun mission-test--write-file (path text)
   "Write a complete relevant-state fixture file."
-  (with-open-file (stream path :direction :output :if-exists ':supersede
-                              :if-does-not-exist ':create)
-    (write-string text stream))
+  (test-write-text path text :external-format ':default)
   nil)
 
 (-> mission-test--application (configuration &key (:results list) (:worker t)) application)

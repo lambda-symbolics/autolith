@@ -385,8 +385,8 @@ are checked again against actual results by the ordinary call dispatch."
           (produced nil))
       (labels ((result-variable (index path)
                  (let ((key (list index path)))
-                   (or (gethash key unknowns)
-                       (setf (gethash key unknowns) (procedure--preflight-variable))))))
+                   (values (ensure-gethash key unknowns
+                                           (procedure--preflight-variable))))))
         (loop for step in (getf (rest procedure) :steps)
               for index from 0
               for arguments = (procedure--preflight-arguments
@@ -466,6 +466,4 @@ are checked again against actual results by the ordinary call dispatch."
 (defun procedure--excerpt (text limit)
   "Return TEXT on one line, cut to LIMIT characters."
   (let ((line (sanitize-text (if (stringp text) text "") :single-line-p t)))
-    (if (> (length line) limit)
-        (concatenate 'string (subseq line 0 (1- limit)) "…")
-        line)))
+    (text--bounded-ellipsis line limit :ellipsis "…" :prefix-limit (1- limit))))

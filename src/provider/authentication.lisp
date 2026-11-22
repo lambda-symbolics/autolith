@@ -68,17 +68,16 @@ authenticate runtime shutdown."
 (-> jwt-account-id (string) (option string))
 (defun jwt-account-id (token)
   "Return the ChatGPT account identifier carried by TOKEN, if any."
-  (let ((payload (jwt-payload token)))
-    (when payload
-      (or (json-get payload "chatgpt_account_id")
-          (let ((auth (json-get payload "https://api.openai.com/auth")))
-            (and (json-object-p auth)
-                 (json-get auth "chatgpt_account_id")))
-          (let ((organizations (json-get payload "organizations")))
-            (when (and (vectorp organizations)
-                       (plusp (length organizations))
-                       (json-object-p (aref organizations 0)))
-              (json-get (aref organizations 0) "id")))))))
+  (when-let ((payload (jwt-payload token)))
+    (or (json-get payload "chatgpt_account_id")
+        (let ((auth (json-get payload "https://api.openai.com/auth")))
+          (and (json-object-p auth)
+               (json-get auth "chatgpt_account_id")))
+        (let ((organizations (json-get payload "organizations")))
+          (when (and (vectorp organizations)
+                     (plusp (length organizations))
+                     (json-object-p (aref organizations 0)))
+            (json-get (aref organizations 0) "id"))))))
 
 
 ;;;; -- OAuth Wire Helpers --

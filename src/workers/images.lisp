@@ -37,7 +37,7 @@ handshake before reading requests.")
                 :output       ':string
                 :error-output ':output))
              (commit
-               (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
+               (serapeum:trim-whitespace output)))
         (and (non-empty-string-p commit) commit))
     (error ()
       nil)))
@@ -49,7 +49,7 @@ handshake before reading requests.")
 Each pristine start recomputes its command, so a worker boots the active core
 only while that core still matches the source."
   (sbcl-worker-environment-create
-   :sbcl-command                     (lisp-worker-sbcl-command)
+   :sbcl-command                     (sbcl-command)
    :pristine-command                 (lambda ()
                                        (active-image-process-command configuration '("--worker")))
    :working-directory                (config :working-directory configuration)

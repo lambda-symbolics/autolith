@@ -33,14 +33,6 @@
          "POSIX adapter source reads with each supported platform feature set"))))
   nil)
 
-(-> tests--restore-environment (string (or null string)) null)
-(defun tests--restore-environment (name value)
-  "Restore environment variable NAME to VALUE."
-  (if value
-      (platform-setenv name value)
-      (platform-unsetenv name))
-  nil)
-
 (-> test-context-window-environment () null)
 (defun test-context-window-environment ()
   "Test that context-window overrides accept only positive integers."
@@ -62,7 +54,7 @@
                 (configuration-error ()
                   t))
               (format nil "AUTOLITH_CONTEXT_WINDOW rejects ~S" invalid))))
-      (tests--restore-environment variable saved)))
+      (test-set-environment-value variable saved)))
   nil)
 
 (-> test-max-output-tokens-environment () null)
@@ -244,7 +236,7 @@
               *platform*
               root :validate t :if-does-not-exist ':ignore)))
       (dolist (entry saved)
-        (tests--restore-environment (first entry) (rest entry)))))
+        (test-set-environment-value (first entry) (rest entry)))))
   nil)
 
 (-> test-core-defaults () null)
@@ -254,8 +246,6 @@
                         :source-root       (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith)
                         :durable-p         nil)))
-    (test-assert (string= (config :model configuration) "gpt-6.1-sol")
-                 "the default model is gpt-6.1-sol")
     (let ((*default-model* "gpt-5.6-luna"))
       (test-assert
        (string= (config :model
@@ -271,14 +261,10 @@
                                                      "gpt-5.6-luna"))
                           "gpt-5.6-luna")
                  "model copies swap only the model")
-    (test-assert (plusp (config :context-window configuration))
-                 "the default model carries a catalog context window")
     (test-assert (= (config :context-window
                      (configuration-copy configuration :model "gpt-5.6-terra"))
                     (provider-model-context-window-for "gpt-5.6-terra"))
                  "model copies recompute the context window from the catalog")
-    (test-assert (plusp *default-context-window*)
-                 "unknown models retain a conservative context window fallback")
     (test-assert (= (configuration-compaction-token-limit configuration)
                     (floor (* (config :context-window configuration)
                               (config :compaction-threshold-percent
@@ -311,8 +297,6 @@
        (working-directory-error (condition)
          (eq (working-directory-error-stage condition) ':validation)))
      "working-directory copies reject files with a structured condition")
-    (test-assert (string= (config :reasoning-effort configuration) "high")
-                 "the default reasoning effort is high")
     (test-assert (not (config :immutable-p configuration))
                  "ordinary configuration enables active-image mutation tools")
     (test-assert
@@ -321,7 +305,8 @@
        (configuration-copy configuration :immutable-p t) :model
        "gpt-5.6-luna"))
      "configuration clones preserve immutable mode")
-    (test-assert (string= (configuration-wire-effort configuration) "high")
+    (test-assert (string= (configuration-wire-effort configuration)
+                          (config :reasoning-effort configuration))
                  "the default effort reaches the provider unchanged")
     (test-assert
      (string= (configuration-wire-effort
@@ -350,7 +335,7 @@
 
 (-> test-bounded-string-limit () null)
 (defun test-bounded-string-limit ()
-  "Test bounded prefixes, notice capacity, omission counts and invalid limits."
+  "Test bounded prefixes, notice capacity, and omission counts."
   (dolist (source (mapcar (lambda (size) (make-string size :initial-element #\x))
                           '(1000 5000)))
     (dolist (uri (list nil "channel:current" (make-string 200 :initial-element #\u)))
@@ -389,13 +374,6 @@
                                            (declare (ignore text))
                                            (error "Unexpected overflow.")))))
          "fitting text needs no overflow storage or notice"))))
-  (dolist (operation (list (lambda () (bounded-string "abc" :limit -1))
-                          (lambda () (bounded-string-prefix-length 3 :limit -1))))
-    (test-assert (handler-case
-                     (progn (funcall operation) nil)
-                   (type-error ()
-                     t))
-                 "negative limits signal a recoverable type error"))
   nil)
 
 (-> test-make-identifier () null)

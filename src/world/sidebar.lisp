@@ -338,13 +338,12 @@
 (-> world-sidebar-stop (world-sidebar) null)
 (defun world-sidebar-stop (sidebar)
   "Stop SIDEBAR's gathering thread and wait for it; the panel gathers itself again afterwards."
-  (let ((thread (world-sidebar-gatherer sidebar)))
-    (when thread
-      (with-lock-held ((world-sidebar-lock sidebar))
-        (setf (world-sidebar-stopping-p sidebar) t)
-        (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar)))
-      (sb-thread:join-thread thread :default nil)
-      (setf (world-sidebar-gatherer sidebar) nil)))
+  (when-let ((thread (world-sidebar-gatherer sidebar)))
+    (with-lock-held ((world-sidebar-lock sidebar))
+      (setf (world-sidebar-stopping-p sidebar) t)
+      (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar)))
+    (sb-thread:join-thread thread :default nil)
+    (setf (world-sidebar-gatherer sidebar) nil))
   nil)
 
 (-> world-sidebar--gather-loop (world-sidebar) null)
@@ -756,10 +755,9 @@ A newly hosted channel without durable history sorts by its creation time."
 (-> world-sidebar--statuses (world-sidebar) (values list boolean))
 (defun world-sidebar--statuses (sidebar)
   "Return live statuses and whether the endpoint answered; signal query failures."
-  (let ((entry (world-client-entry (world-sidebar-configuration sidebar))))
-    (if entry
-        (values (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels)) t)
-        (values nil nil))))
+  (if-let ((entry (world-client-entry (world-sidebar-configuration sidebar))))
+      (values (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels)) t)
+      (values nil nil)))
 
 (-> world-sidebar--pending (configuration) list)
 (defun world-sidebar--pending (configuration)

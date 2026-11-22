@@ -161,7 +161,7 @@ single floats, and every source node needs at least one octet."
 (-> data-transfer--safe-path-p (t) boolean)
 (defun data-transfer--safe-path-p (path)
   "Return true for a nonempty proper relative component list."
-  (and (listp path) (integerp (list-length path)) path
+  (and (consp path) (proper-list-p path)
        (every #'data-transfer--native-component-p path) t))
 
 (-> data-transfer--path (pathname list) pathname)
@@ -200,9 +200,8 @@ incomplete rollbacks become typed transfer failures."
       (files-publish
        writes
        :check (lambda (pathname)
-                (let ((root (rest (assoc (namestring pathname) roots :test #'string=))))
-                  (when root
-                    (data-transfer--check-path root pathname)))))
+                (when-let ((root (rest (assoc (namestring pathname) roots :test #'string=))))
+                  (data-transfer--check-path root pathname))))
     (publication-rollback-failed (condition)
       (error 'data-transfer-rollback-error
              :pathname nil
@@ -238,11 +237,6 @@ incomplete rollbacks become typed transfer failures."
                         (platform-error ()
                           nil))
                       path)))))
-
-(-> data-transfer--workspace-identifier (string) string)
-(defun data-transfer--workspace-identifier (directory)
-  "Hash a canonical stored workspace key even when its directory is absent."
-  (workspace-name-identifier directory))
 
 (-> data-transfer--report (pathname list) list)
 (defun data-transfer--report (pathname archive)

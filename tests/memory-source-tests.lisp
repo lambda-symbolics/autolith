@@ -2,18 +2,6 @@
 
 ;;;; -- Sourced Memory Tests --
 
-(-> memory-source-tests--write (pathname string) pathname)
-(defun memory-source-tests--write (pathname content)
-  "Replace PATHNAME with exact UTF-8 CONTENT and return PATHNAME."
-  (ensure-directories-exist pathname)
-  (with-open-file (stream pathname
-                          :direction         ':output
-                          :if-exists         ':supersede
-                          :if-does-not-exist ':create
-                          :external-format   ':utf-8)
-    (write-string content stream))
-  pathname)
-
 (-> memory-source-tests--workspace (configuration pathname)
     (values configuration pathname))
 (defun memory-source-tests--workspace (configuration root)
@@ -39,7 +27,7 @@
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
-      (let* ((notes    (memory-source-tests--write
+      (let* ((notes    (test-write-text
                         (merge-pathnames "docs/notes.txt" workspace)
                         (format nil "Deploy with~%    make release-prod~%after tagging.")))
              (observed (memory-source-observe-file
@@ -270,7 +258,7 @@
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
-      (let* ((path     (memory-source-tests--write
+      (let* ((path     (test-write-text
                         (merge-pathnames "shared.txt" workspace) "The server listens on port 8080."))
              (source   (memory-source-observe-file path :quote "listens on port 8080" :time 1))
              (memory   (memory-remember configuration :title "Port" :content "Port 8080."
@@ -295,7 +283,7 @@
              (setf reads 0)
              (let ((assessor (memory-assessor-create configuration)))
                (when (zerop pass)
-                 (memory-source-tests--write path "Changed surrounding prose; listens on port 8080."))
+                 (test-write-text path "Changed surrounding prose; listens on port 8080."))
                (test-assert (eq (memory-assessment-status (memory-assess assessor memory)) ':current)
                             "prose uses the pass observation after a file changes")
                (test-assert (= reads 1) "cold and warm view checks share one read with prose")
@@ -333,7 +321,7 @@
                (test-assert (= reads 1) "failed reads are shared between structured and prose checks")))))
         (let ((sources (source-observation-context-create :file-limit 1 :character-limit 100)))
           (let ((first (source-observation-context-file sources path)))
-            (memory-source-tests--write path "Different content in a later pass.")
+            (test-write-text path "Different content in a later pass.")
             (test-assert (eq first (source-observation-context-file sources path))
                          "an admitted observation is never replaced in its pass")
             (test-assert (not (equal (source-observation-digest first)
@@ -373,10 +361,10 @@
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
-      (let* ((config-file (memory-source-tests--write
+      (let* ((config-file (test-write-text
                            (merge-pathnames "config.toml" workspace)
                            (format nil "[server]~%port = 8080~%host = \"local\"~%")))
-             (readme      (memory-source-tests--write
+             (readme      (test-write-text
                            (merge-pathnames "README" workspace)
                            (format nil "The server listens on port 8080.~%")))
              (quoted      (memory-source-tests--cite configuration config-file
@@ -415,7 +403,7 @@
         (dolist (memory (list quoted whole alternatives statement mixed plain))
           (test-assert (eq (memory-source-tests--status configuration memory) ':current)
                        (format nil "~A starts current" (memory-title memory))))
-        (memory-source-tests--write
+        (test-write-text
          config-file (format nil "# edited~%[server]~%port   =   8080~%host = \"remote\"~%"))
         (test-assert (eq (memory-source-tests--status configuration quoted) ':current)
                      "an unrelated edit keeps a quoted passage's memory current")
@@ -432,7 +420,7 @@
                              (memory-source-tests--status configuration whole))
                             '(:stale (:file-changed)))
                      "retagging a memory does not reobserve its changed file")
-        (memory-source-tests--write config-file (format nil "[server]~%port = 9090~%"))
+        (test-write-text config-file (format nil "[server]~%port = 9090~%"))
         (test-assert (equal (multiple-value-list
                              (memory-source-tests--status configuration quoted))
                             '(:stale (:file-changed)))
@@ -482,7 +470,7 @@
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
-      (let* ((schedule  (memory-source-tests--write
+      (let* ((schedule  (test-write-text
                          (merge-pathnames "schedule.txt" workspace)
                          (format nil "Review at 13:00 in room 4.~%")))
              (meeting   (memory-source-tests--cite configuration schedule
@@ -498,7 +486,7 @@
                                          :premises (list (memory-identifier departure)))))
         (test-assert (eq (memory-source-tests--status configuration reminder) ':current)
                      "a chain of derived memories starts current")
-        (memory-source-tests--write schedule (format nil "Review at 14:00 in room 4.~%"))
+        (test-write-text schedule (format nil "Review at 14:00 in room 4.~%"))
         (test-assert (equal (multiple-value-list
                              (memory-source-tests--status configuration departure))
                             '(:stale (:premise-stale)))
@@ -507,7 +495,7 @@
                              (memory-source-tests--status configuration reminder))
                             '(:stale (:premise-stale)))
                      "staleness propagates through the whole chain")
-        (memory-source-tests--write schedule (format nil "Review at 13:00 in room 5.~%"))
+        (test-write-text schedule (format nil "Review at 13:00 in room 5.~%"))
         (test-assert (eq (memory-source-tests--status configuration reminder) ':current)
                      "restoring the cited passage restores the whole chain")
         (memory-remember configuration
@@ -571,7 +559,7 @@
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
       (let* ((conversation (conversation-create configuration))
-             (notes        (memory-source-tests--write
+             (notes        (test-write-text
                             (merge-pathnames "NOTES.md" workspace)
                             (format nil "Deploy with make release-prod after tagging.~%"))))
         (memory-remember configuration
@@ -591,7 +579,7 @@
                          :content "Deploy with make release-prod."
                          :sources (list (memory-source-observe-file
                                          notes :quote "make release-prod" :time 1)))
-        (memory-source-tests--write notes (format nil "Deploy with make ship.~%"))
+        (test-write-text notes (format nil "Deploy with make ship.~%"))
         (multiple-value-bind (advice events)
             (memory-source-tests--recall configuration conversation)
           (test-assert (search "\"status\":\"stale\",\"because\":\"NOTES.md changed\""
@@ -662,7 +650,7 @@
                              (memory-source-tests--text
                               (application-memories-entry application)))
                      "an empty listing says how memories come to exist")
-        (let* ((notes       (memory-source-tests--write
+        (let* ((notes       (test-write-text
                              (merge-pathnames "NOTES.md" workspace)
                              (format nil "Deploy with make release-prod after tagging.~%")))
                (identifiers (list "abcd1111-0000-4000-8000-000000000000"
@@ -712,7 +700,7 @@
                                          (string= (memory-identifier selected)
                                                   (memory-identifier match)))
                                     "ambiguity guidance supplies references that select each memory"))))))))
-          (memory-source-tests--write notes (format nil "Deploy with make ship.~%"))
+          (test-write-text notes (format nil "Deploy with make ship.~%"))
           (let ((listing (memory-source-tests--text
                           (application-memories-entry application))))
             (test-assert (search "memories  3 · 2 stale" listing)
@@ -795,7 +783,7 @@
     (with-test-configuration (target target-root)
       (let* ((source      (test-data-transfer--workspace
                            base (merge-pathnames "project/" root)))
-             (notes       (memory-source-tests--write
+             (notes       (test-write-text
                            (merge-pathnames "project/NOTES.md" root)
                            (format nil "Deploy with make release-prod after tagging.~%")))
              (policy      (memory-remember source :scope ':global
@@ -821,8 +809,8 @@
                               :memories)
                         3)
                      "the export includes the premise chain and nothing unrelated")
-        (memory-source-tests--write (merge-pathnames "NOTES.md" destination)
-                                    (format nil "Deploy with make release-prod after tagging.~%"))
+        (test-write-text (merge-pathnames "NOTES.md" destination)
+                         (format nil "Deploy with make release-prod after tagging.~%"))
         (data-import path :workspace (namestring destination) :configuration target)
         (let ((relocated (test-data-transfer--workspace target destination)))
           (test-assert (eq (memory-source-tests--status relocated plan) ':current)

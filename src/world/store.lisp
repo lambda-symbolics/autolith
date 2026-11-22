@@ -227,13 +227,13 @@ becomes one hyphen, with no hyphen at either end."
                                            (write-char #\- stream)
                                            (setf hyphen-p t)))))))))
     (if (world-handle-p base)
-        (subseq base 0 (min (length base) *world-handle-limit*))
+        (take *world-handle-limit* base)
         fallback)))
 
 (-> world-workspace-leaf (string) string)
 (defun world-workspace-leaf (workspace)
   "Return the last directory name of WORKSPACE, or WORKSPACE itself."
-  (let ((name (first (last (pathname-directory (uiop:ensure-directory-pathname workspace))))))
+  (let ((name (lastcar (pathname-directory (uiop:ensure-directory-pathname workspace)))))
     (if (stringp name)
         name
         workspace)))
@@ -260,10 +260,9 @@ becomes one hyphen, with no hyphen at either end."
 (-> world--identifier-list-p (t) boolean)
 (defun world--identifier-list-p (value)
   "Return true when VALUE is a proper list of unique identifiers."
-  (and (listp value)
-       (handler-case (list-length value) (error () nil))
+  (and (proper-list-p value)
        (every #'non-empty-string-p value)
-       (= (length value) (length (remove-duplicates value :test #'string=)))))
+       (alexandria:setp value :test #'string=)))
 
 (-> world--portable-value-p (t) boolean)
 (defun world--portable-value-p (value)
@@ -640,9 +639,8 @@ whether it was compacted."
 
 The caller holds *WORLD-LOCK*."
   (let ((key (namestring (configuration-world-path configuration))))
-    (or (gethash key *world-followers*)
-        (setf (gethash key *world-followers*)
-              (sexp-store:log-follower-create (world--store configuration)
+    (values (ensure-gethash key *world-followers*
+                            (sexp-store:log-follower-create (world--store configuration)
                                               :copier #'world--copy)))))
 
 (-> world-load (configuration) world)
@@ -954,16 +952,14 @@ ambiguous or unresolved explicit addresses still signal an error."
 CHANNELS arrive newest first, which orders the groups and their members."
   (let ((groups nil))
     (dolist (channel channels)
-      (let ((group (assoc (channel-workspace channel) groups :test #'string=)))
-        (if group
-            (setf (rest group) (append (rest group) (list channel)))
-            (setf groups (append groups (list (list (channel-workspace channel) channel)))))))
-    (let ((home (find-if (lambda (group)
-                           (find current (rest group) :key #'channel-identifier :test #'equal))
-                         groups)))
-      (if home
-          (cons home (remove home groups))
-          groups))))
+      (if-let ((group (assoc (channel-workspace channel) groups :test #'string=)))
+          (setf (rest group) (append (rest group) (list channel)))
+          (setf groups (append groups (list (list (channel-workspace channel) channel))))))
+    (if-let ((home (find-if (lambda (group)
+                              (find current (rest group) :key #'channel-identifier :test #'equal))
+                            groups)))
+        (cons home (remove home groups))
+        groups)))
 
 (-> world-channel-forest (list) list)
 (defun world-channel-forest (members)
@@ -1323,9 +1319,8 @@ channel ID and records the legacy ID as its alias."
           (world--participant-table world))
          (maphash (lambda (identifier channel)
                     (declare (ignore identifier))
-                    (let ((owner (gethash (channel-owner channel) identifiers)))
-                      (when owner
-                        (push (world--channel-record (world--copy-channel channel :owner owner)) records))))
+                    (when-let ((owner (gethash (channel-owner channel) identifiers)))
+                      (push (world--channel-record (world--copy-channel channel :owner owner)) records)))
                   (world--channel-table world)))
        (values (nconc retired records) nil))))
   nil)
@@ -1337,31 +1332,30 @@ channel ID and records the legacy ID as its alias."
       (world--transact
        configuration
        (lambda (world)
-         (let ((existing (world-inbox-channel world)))
-           (if existing
-               (values nil existing)
-               (let* ((person       (world-human-participant world))
-                      (owner        (if person (participant-identifier person) "user"))
-                      (workspace    (namestring (user-homedir-pathname)))
-                      (conversation (conversation-create configuration :inbox-p t
-                                                         :origin-directory workspace :created-at now))
-                      (identifier   (conversation-identifier conversation))
-                      (inbox        (make-instance 'channel :identifier identifier :owner owner
-                                                    :workspace workspace :title *world-inbox-designator*
-                                                    :inbox-p t :created-at now :updated-at now)))
-                 (when (and (null person) (world-participant-find world owner))
-                   (error 'world-error :operation ':register-inbox :identifier owner
-                          :message "The person identifier belongs to another participant."))
-                 (conversation-append-record conversation
-                                             (list :title :value *world-inbox-designator* :source ':initial))
-                 (values (list (world--channel-record inbox)
-                               (world--participant-record
-                                (if person
-                                    (world--copy-participant person :residence identifier
-                                                             :updated-at       (max now (participant-updated-at person)))
-                                    (make-instance 'participant :identifier owner :kind ':human :name "user"
-                                                   :residence identifier :created-at now :updated-at now))))
-                         inbox))))))))
+         (if-let ((existing (world-inbox-channel world)))
+             (values nil existing)
+             (let* ((person       (world-human-participant world))
+                    (owner        (if person (participant-identifier person) "user"))
+                    (workspace    (namestring (user-homedir-pathname)))
+                    (conversation (conversation-create configuration :inbox-p t
+                                                       :origin-directory workspace :created-at now))
+                    (identifier   (conversation-identifier conversation))
+                    (inbox        (make-instance 'channel :identifier identifier :owner owner
+                                                  :workspace workspace :title *world-inbox-designator*
+                                                  :inbox-p t :created-at now :updated-at now)))
+               (when (and (null person) (world-participant-find world owner))
+                 (error 'world-error :operation ':register-inbox :identifier owner
+                        :message "The person identifier belongs to another participant."))
+               (conversation-append-record conversation
+                                           (list :title :value *world-inbox-designator* :source ':initial))
+               (values (list (world--channel-record inbox)
+                             (world--participant-record
+                              (if person
+                                  (world--copy-participant person :residence identifier
+                                                           :updated-at       (max now (participant-updated-at person)))
+                                  (make-instance 'participant :identifier owner :kind ':human :name "user"
+                                                 :residence identifier :created-at now :updated-at now))))
+                       inbox)))))))
 
 (-> world-channel-register
     (configuration string &key (:workspace string) (:parent (option string)) (:title (option string))

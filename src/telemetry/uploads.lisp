@@ -51,10 +51,9 @@
          (request
            (bt:with-lock-held ((telemetry-controller-lock controller))
              (when (telemetry--live-p context)
-               (let ((body (telemetry--take-upload-body controller)))
-                 (when body
-                   (list :upload (config :telemetry-endpoint (telemetry-controller-owner controller))
-                         body)))))))
+               (when-let ((body (telemetry--take-upload-body controller)))
+                 (list :upload (config :telemetry-endpoint (telemetry-controller-owner controller))
+                       body))))))
     (when request
       ; mallet:suppress no-ignore-errors -- a failed upload is discarded without retrying it
       (ignore-errors (telemetry--process context request))))

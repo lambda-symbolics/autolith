@@ -152,8 +152,7 @@
 (-> test-data-transfer--fails-p (function &optional symbol) boolean)
 (defun test-data-transfer--fails-p (function &optional (type 'data-transfer-error))
   "Return true only when FUNCTION signals the expected typed transfer failure."
-  (handler-case (progn (funcall function) nil)
-    (error (condition) (typep condition type))))
+  (test-signals-p type function :ignore-unexpected-p t))
 
 (-> test-data-transfer--extend-session (list) list)
 (defun test-data-transfer--extend-session (session)

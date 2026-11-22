@@ -151,10 +151,9 @@ settlement settles it on the next delivery instead of showing it twice."
     (world-inbox-settle (application-configuration application) channel
                         (mapcar #'world-delivery-identifier notices))
     (world-message-resume (application-configuration application))
-    (let ((server (application-world-server application)))
-      (if server
-          (world-server-person-unread-changed server)
-          (application-world-show-person-unread application 0))))
+    (if-let ((server (application-world-server application)))
+        (world-server-person-unread-changed server)
+        (application-world-show-person-unread application 0)))
   nil)
 
 (-> application-world-notify-person (configuration) null)
@@ -170,9 +169,8 @@ again."
     (if server
         (world-server-person-unread-changed server)
         (handler-case
-            (let ((entry (world-client-entry configuration)))
-              (when entry
-                (world-terminal-query-record entry ':person-unread)))
+            (when-let ((entry (world-client-entry configuration)))
+              (world-terminal-query-record entry ':person-unread))
           (autolith-error ()
             ;; A checkpointing or stopping server counts again on the next attach.
             nil))))
@@ -182,10 +180,9 @@ again."
 (defun application-world-show-person-unread (application unread)
   "Show UNREAD, the messages waiting in the person's inbox, on APPLICATION's modeline."
   (setf (application-world-inbox-unread application) unread)
-  (let ((ui (and (slot-boundp application 'ui)
-                 (application-ui application))))
-    (when ui
-      (terminal-ui-set-idle-status-details ui (application--status-details application))))
+  (when-let ((ui (and (slot-boundp application 'ui)
+                      (application-ui application))))
+    (terminal-ui-set-idle-status-details ui (application--status-details application)))
   nil)
 
 (-> application-world-steering-take (application) list)
@@ -194,13 +191,12 @@ again."
 
 Each message is taken once; a message already queued as a turn is taken as
 well, since the steer persists first and the queued turn then skips."
-  (let ((channel (application-world--served-channel application)))
-    (if channel
-        (world-inbox-steering-take (application-configuration application)
-                                   :channel      channel
-                                   :conversation (application-conversation application)
-                                   :taken        (application-world-deliveries application))
-        nil)))
+  (if-let ((channel (application-world--served-channel application)))
+      (world-inbox-steering-take (application-configuration application)
+                                 :channel      channel
+                                 :conversation (application-conversation application)
+                                 :taken        (application-world-deliveries application))
+      nil))
 
 (-> application-world-steering-ack (application string) boolean)
 (defun application-world-steering-ack (application identifier)
@@ -291,9 +287,8 @@ the name is autolith."
 (-> world-mention--role (world string) (option keyword))
 (defun world-mention--role (world name)
   "Return the transcript style of participant NAME in WORLD, if present."
-  (let ((participant (world-message-participant world name)))
-    (when participant
-      (if (eq (participant-kind participant) ':human) ':user ':legend-accent))))
+  (when-let ((participant (world-message-participant world name)))
+    (if (eq (participant-kind participant) ':human) ':user ':legend-accent)))
 
 (-> world-mention--split-span (world cons) list)
 (defun world-mention--split-span (world span)
@@ -316,8 +311,7 @@ as well, so a literal backslash cannot hide the end of an escaped designator."
                "Remember NAME's portable style once without changing the rendered text."
                (unless (gethash name seen)
                  (setf (gethash name seen) t)
-                 (let ((role (funcall resolve name)))
-                   (when role (push (list name role) mentions))))
+                 (when-let ((role (funcall resolve name))) (push (list name role) mentions)))
                nil))
         (loop for at = (position #\@ source) then (position #\@ source :start end)
               while at
@@ -495,17 +489,16 @@ cannot be read counts as present: the world never blocks a session."
 (-> application-world-agent-settings-update (application list) null)
 (defun application-world-agent-settings-update (application settings)
   "Persist SETTINGS, the model, provider and effort for APPLICATION's channel."
-  (let ((channel (application-world--served-channel application)))
-    (when channel
-      (handler-case
-          (let* ((configuration (application-configuration application))
-                 (agent         (find ':agent (world-channel-residents (world-load configuration) channel)
-                                      :key #'participant-kind)))
-            (when (and agent (not (equal (participant-settings agent) settings)))
-              (world-participant-update configuration (participant-identifier agent)
-                                        :settings settings)))
-        (autolith-error ()
-          nil))))
+  (when-let ((channel (application-world--served-channel application)))
+    (handler-case
+        (let* ((configuration (application-configuration application))
+               (agent         (find ':agent (world-channel-residents (world-load configuration) channel)
+                                    :key #'participant-kind)))
+          (when (and agent (not (equal (participant-settings agent) settings)))
+            (world-participant-update configuration (participant-identifier agent)
+                                      :settings settings)))
+      (autolith-error ()
+        nil)))
   nil)
 
 (-> application-world-before-turn (application keyword) null)
@@ -542,11 +535,10 @@ cannot be read counts as present: the world never blocks a session."
     (when (and server (member status '(:provider-request-started :provider-request-completed
                                        :tool-call-started :tool-call-completed)))
       (with-lock-held ((application-task-presentation-lock application))
-        (let ((progress (application-world-turn-progress application)))
-          (when progress
-            (with-lock-held ((task-progress-lock progress))
-              (task-progress--note-status-locked progress :status status :details details
-                                                        :now (get-internal-real-time))))))
+        (when-let ((progress (application-world-turn-progress application)))
+          (with-lock-held ((task-progress-lock progress))
+            (task-progress--note-status-locked progress :status status :details details
+                                                      :now (get-internal-real-time)))))
       (world-server-note-child-activities server)))
   nil)
 
@@ -554,10 +546,9 @@ cannot be read counts as present: the world never blocks a session."
 (defun application-world-child-progress (application)
   "Snapshot a hosted turn's request count and bounded chronological tool trace."
   (with-lock-held ((application-task-presentation-lock application))
-    (let ((progress (application-world-turn-progress application)))
-      (when progress
-        (with-lock-held ((task-progress-lock progress))
-          (task-progress--snapshot-locked progress (get-internal-real-time)))))))
+    (when-let ((progress (application-world-turn-progress application)))
+      (with-lock-held ((task-progress-lock progress))
+        (task-progress--snapshot-locked progress (get-internal-real-time))))))
 
 (-> application-world--agent-turn-active-p (application) boolean)
 (defun application-world--agent-turn-active-p (application)

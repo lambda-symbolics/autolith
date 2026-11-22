@@ -160,14 +160,13 @@ Once assigned to a retention store, a proposal cannot change stores."
                    (edit-proposal-call-with-observations
                     context proposal
                     (lambda ()
-                      (let ((requests (edit-proposal-requests context proposal)))
-                        (if requests
-                            (with-recursive-lock-held (*workspace-file-mutation-lock*)
-                              (edit-proposal-validate context proposal)
-                              (workspace-change-set-apply context requests))
-                            (progn
-                              (edit-proposal-validate context proposal)
-                              nil))))))))
+                      (if-let ((requests (edit-proposal-requests context proposal)))
+                          (with-recursive-lock-held (*workspace-file-mutation-lock*)
+                            (edit-proposal-validate context proposal)
+                            (workspace-change-set-apply context requests))
+                          (progn
+                            (edit-proposal-validate context proposal)
+                            nil)))))))
            (with-lock-held ((edit-proposal-store-lock store))
              (setf (edit-proposal-consumed-p proposal) t
                    (gethash (tool-context-conversation context) (edit-proposal-store-entries store))

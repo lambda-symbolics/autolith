@@ -592,7 +592,7 @@ Require a clean process first; this is not recovery for a real shutdown failure.
     (declare (ignore configuration))
     (let ((path (merge-pathnames "result.sexp" root)))
       (dolist (content '("(:version 1" "nil nil" "#.(error \"reader evaluation\")"))
-        (workspace-resource-tests--write-text path content)
+        (test-write-text path content)
         (test-assert
          (handler-case
              (progn (test-check--call "CHECK--READ-SINGLE-FORM" path) nil)

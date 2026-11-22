@@ -135,18 +135,16 @@
                         (application-client-history--durable-identifier-p
                          (getf fields :identifier) conversation)))
           append
-          (let ((local (if (eq operation ':records)
-                           (let ((records
-                                   (remove-if
-                                    (lambda (record)
-                                      (application-client-history--durable-identifier-p
-                                       (first record) conversation))
-                                    (getf fields :presentations))))
-                             (when records
-                               (list :ui :operation ':records :presentations records)))
-                           event)))
-            (when local
-              (list (list (or (second boundary) 0) local))))))
+          (when-let ((local (if (eq operation ':records)
+                                (when-let ((records
+                                             (remove-if
+                                              (lambda (record)
+                                                (application-client-history--durable-identifier-p
+                                                 (first record) conversation))
+                                              (getf fields :presentations))))
+                                  (list :ui :operation ':records :presentations records))
+                                event)))
+            (list (list (or (second boundary) 0) local)))))
 
 (-> application-client-history--merge (list list &key (:floor integer) (:before integer)) list)
 (defun application-client-history--merge (events local &key floor before)

@@ -70,16 +70,15 @@ The plist counts :REQUESTS, recalled :FACTS and :CHANGES, model
     (conversation-map-records
      conversation
      (lambda (record)
-       (let ((knowledge (and (eq (first record) :provider)
-                             (getf (getf (rest record) :metadata) :knowledge))))
-         (when knowledge
-           (incf requests)
-           (incf facts (getf knowledge :facts 0))
-           (incf changes (getf knowledge :changes 0))
-           (incf tool-calls (getf knowledge :tool-calls 0))
-           (incf characters (+ (getf knowledge :fact-characters 0)
-                               (getf knowledge :change-characters 0)))
-           (incf tokens (or (conversation--usage-total (getf knowledge :usage)) 0))))))
+       (when-let ((knowledge (and (eq (first record) :provider)
+                                  (getf (getf (rest record) :metadata) :knowledge))))
+         (incf requests)
+         (incf facts (getf knowledge :facts 0))
+         (incf changes (getf knowledge :changes 0))
+         (incf tool-calls (getf knowledge :tool-calls 0))
+         (incf characters (+ (getf knowledge :fact-characters 0)
+                             (getf knowledge :change-characters 0)))
+         (incf tokens (or (conversation--usage-total (getf knowledge :usage)) 0)))))
     (list :requests requests :facts facts :changes changes :tool-calls tool-calls
           :estimated-recall-tokens (ceiling characters *knowledge-usage-characters-per-token*)
           :request-tokens          tokens)))

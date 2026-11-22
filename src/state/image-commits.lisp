@@ -204,7 +204,7 @@
                  "-m" title "--" relative-directory))
           (let ((commit
                   (string-trim
-                   '(#\Space #\Tab #\Newline #\Return)
+                   *line-whitespace*
                    (image-history--git-command
                     configuration
                     '("rev-parse" "HEAD")))))
@@ -420,11 +420,6 @@
                   (and (= version 2) history-commit))))
       (values nil nil))))
 
-(-> image-commit--pointer-identifier (configuration) (option string))
-(defun image-commit--pointer-identifier (configuration)
-  "Return the atomically selected private image commit identifier, if valid."
-  (image-commit--pointer-state configuration))
-
 (-> image-commit-current (configuration) (option image-commit))
 (defun image-commit-current (configuration)
   "Return the private commit represented by the running image."
@@ -488,10 +483,9 @@ whose source does not read keeps its recorded target; replay never skips it."
   "Return how many current private commit entries this image skipped at replay.
 
 The next commit leaves them out, so dropping them is a change worth committing."
-  (let ((current (image-commit-current configuration)))
-    (if current
-        (count-if #'image-commit--entry-skipped-p (image-commit-entries current))
-        0)))
+  (if-let ((current (image-commit-current configuration)))
+      (count-if #'image-commit--entry-skipped-p (image-commit-entries current))
+      0))
 
 (-> image-commit--entry-definition-target (list) (option string))
 (defun image-commit--entry-definition-target (entry)
@@ -830,22 +824,21 @@ A definition entry that already records its tracked base keeps it."
 (-> image-commit-surface-verify () null)
 (defun image-commit-surface-verify ()
   "Signal an error if required core functions or classes are missing."
-  (let ((missing
-          (append
-           (loop for name in *image-commit-surface-functions*
-                 unless (fboundp name)
-                   collect name)
-           (loop for name in *image-commit-surface-classes*
-                 unless (find-class name nil)
-                   collect name))))
-    (when missing
-      (error 'image-commit-error
-             :message
-             (format nil "The replayed image is missing core definitions: ~{~(~A~)~^, ~}."
-                     missing)
-             :tool-name "self.commit"
-             :pathname  nil
-             :stage     ':surface-battery)))
+  (when-let ((missing
+               (append
+                (loop for name in *image-commit-surface-functions*
+                      unless (fboundp name)
+                        collect name)
+                (loop for name in *image-commit-surface-classes*
+                      unless (find-class name nil)
+                        collect name))))
+    (error 'image-commit-error
+           :message
+           (format nil "The replayed image is missing core definitions: ~{~(~A~)~^, ~}."
+                   missing)
+           :tool-name "self.commit"
+           :pathname  nil
+           :stage     ':surface-battery))
   nil)
 
 (-> image-commit-replay-probe-main (string string) null)

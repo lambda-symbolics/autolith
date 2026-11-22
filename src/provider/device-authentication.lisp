@@ -267,9 +267,9 @@
          (refresh-token (json-get document "refresh_token"))
          (account-id
            (or (and (stringp id-token)
-                    (device-authentication--jwt-account-id id-token))
+                    (jwt-account-id id-token))
                (and (stringp access-token)
-                    (device-authentication--jwt-account-id access-token)))))
+                    (jwt-account-id access-token)))))
     (unless (and (non-empty-string-p id-token)
                  (non-empty-string-p access-token)
                  (non-empty-string-p refresh-token)
@@ -285,11 +285,6 @@
                    :expires-at    (or (jwt-expiration access-token)
                                       (jwt-expiration id-token))
                    :source-path   source-path)))
-
-(-> device-authentication--jwt-account-id (string) (option string))
-(defun device-authentication--jwt-account-id (token)
-  "Return the account identifier carried by TOKEN's unverified JWT payload."
-  (jwt-account-id token))
 
 
 ;;;; -- cl-rfc8628 Host Wiring --

@@ -34,12 +34,6 @@
           :choices           (and command (copy-list (application-command-static-options command)))
           :aliases           (and command (copy-list (application-command-aliases command))))))
 
-(-> application-client-catalog--command-invocation
-    (application-command list) application-command-invocation)
-(defun application-client-catalog--command-invocation (command arguments)
-  "Build a command invocation from native Lisp ARGUMENTS."
-  (application-operation--command-invocation command arguments))
-
 (-> application-client-operations (application) list)
 (defun application-client-operations (application)
   "Return the registered operation catalog as native values."
@@ -60,7 +54,7 @@
                        (string-downcase (symbol-name operation-name)))))
          (operation (application-client-operation-find application name))
          (decoded   (if (typep operation 'application-command-operation)
-                        (application-client-catalog--command-invocation
+                        (application-operation--command-invocation
                          (application-operation-backend operation) arguments)
                         arguments)))
       (multiple-value-bind (result delivery)

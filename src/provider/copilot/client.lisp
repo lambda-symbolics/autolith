@@ -88,7 +88,8 @@
   (:documentation "Copilot bearer-authenticated Messages account adapter."))
 
 (defclass copilot-responses-provider
-    (copilot-provider-mixin session-preserving-provider-mixin responses-api-provider) ()
+    (copilot-provider-mixin session-preserving-provider-mixin
+     responses-function-name-mixin responses-api-provider) ()
   (:documentation "Copilot Responses account adapter without ChatGPT extensions."))
 
 (define-condition copilot-request-error (provider-error)
@@ -165,24 +166,6 @@
   (copilot-provider--make configuration (copilot-credential-manager-create configuration)
                           (make-identifier)))
 
-(defmethod provider-wire-tool-name
-    ((provider copilot-responses-provider) (namespace string) (name string))
-  "Encode local names for Copilot's grammar-safe Responses function names."
-  (declare (ignore provider))
-  (provider-wire-function-name--encode namespace name))
-
-(defmethod provider-normalize-output-item
-    ((provider copilot-responses-provider) (item hash-table))
-  "Restore a completed Responses tool call to its local namespace for replay."
-  (call-next-method)
-  (when (function-call-item-p item)
-    (multiple-value-bind (namespace name)
-        (provider-wire-function-name--decode (json-get item "name"))
-      (when (and namespace name)
-        (setf (gethash "namespace" item) namespace
-              (gethash "name" item) name))))
-  item)
-
 (defmethod provider-responses-wire-effort ((provider copilot-responses-provider) configuration)
   "Send a reasoning effort only when the selected model advertises support."
   (declare (ignore provider))
@@ -255,7 +238,7 @@
 (defun copilot--request-headers
     (credentials conversation request &key (protocol ':chat-completions) session-token)
   "Add account credentials and distinguish user input from agent continuations."
-  (let* ((last-item (first (last (conversation-input-items-for-family conversation ':copilot))))
+  (let* ((last-item (lastcar (conversation-input-items-for-family conversation ':copilot)))
          (initiator (if (or (null last-item) (equal (json-get last-item "role") "user"))
                         "user" "agent")))
     (append (copilot-stream-headers

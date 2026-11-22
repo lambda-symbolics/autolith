@@ -11,11 +11,6 @@
   (when value
     (namestring (uiop:ensure-directory-pathname value))))
 
-(-> application-client--conversation-preview (conversation) (option string))
-(defun application-client--conversation-preview (conversation)
-  "Return the durable picker preview when available."
-  (conversation-picker-preview conversation))
-
 (-> application-client--conversation-live-p (application string) boolean)
 (defun application-client--conversation-live-p (application identifier)
   "Probe the authoritative primary lease, including owners in other processes."
@@ -35,7 +30,7 @@
           :created-at       (conversation-created-at conversation)
           :last-activity-at (conversation-last-activity-at conversation)
           :user-turn-count  (conversation-user-turn-count conversation)
-          :preview          (application-client--conversation-preview conversation)
+          :preview          (conversation-picker-preview conversation)
           :live-p           (application-client--conversation-live-p
                              application (conversation-identifier conversation)))))
 

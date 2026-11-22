@@ -359,9 +359,9 @@
               (configuration-project-adaptation-offers-path configuration))
              (project-adaptation-notes-create project-root)
              (test-assert
-              (search (format nil "documentation, not~%executable Lisp")
-                      (uiop:read-file-string notes))
-              "the generated ledger explains its non-executable boundary")
+               (string= *project-adaptation-notes-template*
+                        (uiop:read-file-string notes))
+               "new project notes contain the complete ledger template")
              (with-open-file (stream notes
                                      :direction       ':output
                                      :if-exists       ':supersede

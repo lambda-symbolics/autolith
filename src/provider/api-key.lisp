@@ -471,7 +471,7 @@ never retains the resulting credential after this call."
                          bootstrap))))
             (key
               (string-trim
-               '(#\Space #\Tab #\Newline #\Return)
+               *line-whitespace*
                (or (api-key-read-hidden
                     label
                     :input                 input

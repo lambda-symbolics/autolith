@@ -151,8 +151,7 @@ service accepts."))
                         :stream (or stream *standard-output*))))
          (setf api-key
                (and api-key
-                    (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                 api-key)))
+                    (string-trim *line-whitespace* api-key)))
          (unless (non-empty-string-p api-key)
            (error 'credentials-unavailable
                   :message

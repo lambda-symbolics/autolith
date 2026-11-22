@@ -2522,7 +2522,7 @@
             :name       "credential-rotation"
             :transport
             `(:type :stdio
-              :command ,(lisp-worker-sbcl-command)
+              :command ,(sbcl-command)
               :arguments
               ("--noinform"
                "--no-sysinit"
@@ -3108,8 +3108,8 @@
                         mapped-environment
                         :test #'string=)
                 "explicit MCP environment bindings override inherited XDG filtering")))
-        (tests--restore-environment xdg-name saved-xdg)
-        (tests--restore-environment source-name saved-source))))
+        (test-set-environment-value xdg-name saved-xdg)
+        (test-set-environment-value source-name saved-source))))
   nil)
 
 (-> test-mcp-result-text-bound () null)

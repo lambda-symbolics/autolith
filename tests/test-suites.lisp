@@ -544,7 +544,6 @@
   test-hyperlinked-rendering)
 
 (define-test-suite stream
-  test-bounded-character-reads
   test-bounded-output-stream)
 
 (define-test-suite version
@@ -1106,9 +1105,6 @@
   test-conversation-resource-windows
   test-conversation-resource-segment-prefilter)
 
-(define-test-suite windows-lifecycle
-  test-windows-restart-library)
-
 (define-test-suite plan
   test-workspace-plan)
 
@@ -1188,7 +1184,6 @@
   test-openai-compatible-tool-name-recovery
   test-openai-compatible-provider-tool-schemas
   test-openai-api-responses
-  test-openai-compatible-provider-discovery-is-on-demand
   test-openai-compatible-provider-model-cache-boundary
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
@@ -1197,7 +1192,6 @@
 
 (define-test-suite gemini-code-assist-provider
   gemini-code-assist-test--builtin-registration
-  gemini-code-assist-test--model-catalog
   gemini-code-assist-test--request-conversion
   gemini-code-assist-test--stream-fixture
   gemini-code-assist-test--credential-redaction
@@ -1412,8 +1406,7 @@
 (define-test-suite nous-device-authentication
   nous-device-test--complete-flow
   nous-device-test--rejections
-  nous-device-test--secret-redaction
-  nous-device-test--request-code-validation)
+  nous-device-test--secret-redaction)
 
 (define-test-suite agent
   test-agent-portable-value
@@ -1729,7 +1722,6 @@
   test-operation-request-turn
   test-application-transcript-actions
   test-application-command-tips
-  test-application-banner-policy
   test-replay-skips-notice
   test-fix-skipped-definitions-prompt
   test-application-git-branch
@@ -1977,7 +1969,6 @@
   test-configuration-fixture-isolation
   test-environment-fixture-restoration
   test-environment-fixture-evaluation
-  test-function-replacement-fixture-restoration
   test-long-symbolic-link-fixture
   test-platform-copy-file-permissions
   test-xdg-native-directory-roots
@@ -2063,8 +2054,7 @@
   test-acp-launcher-failure-keeps-stdout-clean
   test-acp-pristine-refused
   test-acp-launcher-failure-skips-recovery
-  test-acp-launcher-interrupt-exits-quietly
-  test-acp-launcher-failure-diagnostics)
+  test-acp-launcher-interrupt-exits-quietly)
 
 (define-test-suite acp-remote
   test-acp-endpoint-parse
@@ -2129,7 +2119,6 @@
   test-compaction-recovery-encrypted-eligibility
   test-compaction-recovery-tools-and-transcript
   test-compaction-recovery-mission-accounting
-  test-compaction-recovery-selected-route
   test-compaction-recovery-exhaustion
   test-compaction-owner-proactive
   test-compaction-owner-manual

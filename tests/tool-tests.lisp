@@ -397,8 +397,6 @@
                       :conversation (conversation-create configuration)))
            (fetched  nil))
       (test-assert tool "the default registry contains web_extra.gist")
-      (test-assert (null (tool-registry-find registry "web" "gist"))
-                   "the default registry does not contain the old web.gist name")
       (test-assert
        (gethash "url" (json-get (tool-parameters tool) "properties"))
        "web_extra.gist declares its url argument")

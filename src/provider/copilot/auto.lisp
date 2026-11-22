@@ -59,7 +59,7 @@
             (error 'configuration-error :message "Copilot Auto returned invalid JSON."))
           (let ((expires-at (json-get document "expires_at")))
             (when (and (integerp expires-at)
-                       (<= expires-at (- (get-universal-time) 2208988800)))
+                       (<= (unix-time->universal-time expires-at) (get-universal-time)))
               (error 'configuration-error :message "Copilot Auto returned an expired session.")))
           document))
     (http-request-failed (condition)

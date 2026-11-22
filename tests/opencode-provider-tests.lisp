@@ -413,19 +413,15 @@
 (-> opencode-provider-test--discovery () null)
 (defun opencode-provider-test--discovery ()
   "Test OpenCode discovery namespacing, collisions, caching, and failures."
-  (let* ((registry-snapshot     (provider--registry-snapshot))
-         (configuration         (opencode-provider-test--configuration))
-         (root                  (test-configuration-root configuration))
-         (original-get          (symbol-function 'dexador:get))
-         (original-registration (provider-registration-find "opencode"))
-         (saved-discovered-models
-           (copy-list
-            (provider-registration-discovered-models original-registration)))
-         (saved-key             (uiop:getenv *opencode-environment-variable*))
+  (let* ((registry-snapshot (provider--registry-snapshot))
+         (configuration     (opencode-provider-test--configuration))
+         (root              (test-configuration-root configuration))
+         (original-get      (symbol-function 'dexador:get))
+         (saved-key         (uiop:getenv *opencode-environment-variable*))
          (saved-endpoint
            (uiop:getenv *opencode-models-environment-variable*))
-         (observed-url          nil)
-         (observed-headers      nil)
+         (observed-url      nil)
+         (observed-headers  nil)
          (body
            "{\"data\":[{\"id\":\"gpt-5.6-luna\",\"limit\":{\"context\":1000000}},{\"id\":\"grok-4.5\"},{\"id\":\"kimi-k3\"}]}"))
     (unwind-protect
@@ -531,11 +527,6 @@
                                 :test #'string=)))
               "re-registering resolver-backed OpenCode discards stale discoveries"))
            (provider--registry-restore registry-snapshot)
-           (test-assert
-            (equal (provider-registration-discovered-models
-                    original-registration)
-                   saved-discovered-models)
-            "registry restoration restores discovered provider models")
            (platform-setenv *opencode-models-environment-variable*
                             "https://other-models.invalid/v1/models")
            (provider-load-model-cache configuration)

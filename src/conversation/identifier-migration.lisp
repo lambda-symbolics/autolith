@@ -206,30 +206,12 @@
                        (not (eq (getf (rest existing-record) :status)
                                 :complete)))))))))
 
-(-> conversation-identifier-migration--replace-all
-    (string string string)
-    string)
-(defun conversation-identifier-migration--replace-all (text old new)
-  "Return TEXT with every exact OLD occurrence replaced by NEW."
-  (let ((position (search old text :test #'char=)))
-    (if (null position)
-        text
-        (with-output-to-string (stream)
-          (loop with start = 0
-                for match = (search old text :start2 start :test #'char=)
-                while match
-                do (write-string text stream :start start :end match)
-                   (write-string new stream)
-                   (setf start (+ match (length old)))
-                finally (write-string text stream :start start))))))
-
 (-> conversation-identifier-migration--rewrite-string (string list) string)
 (defun conversation-identifier-migration--rewrite-string (value entries)
   "Replace every legacy identifier in VALUE according to ENTRIES."
   (reduce
    (lambda (text entry)
-     (conversation-identifier-migration--replace-all
-      text (getf entry :old) (getf entry :new)))
+     (serapeum:string-replace-all (getf entry :old) text (getf entry :new)))
    entries
    :initial-value value))
 

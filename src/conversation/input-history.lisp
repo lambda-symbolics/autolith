@@ -35,9 +35,8 @@ a nonlocal exit."
                (conversation--map-storage-records
                 (conversation-pathname conversation)
                 (lambda (record)
-                  (let ((input (conversation-input-history--record-input record)))
-                    (when input
-                      (funcall function input)))))))))))
+                  (when-let ((input (conversation-input-history--record-input record)))
+                    (funcall function input))))))))))
   nil)
 
 (-> conversation-input-history-page
@@ -155,11 +154,10 @@ each validated input; its caller must discard tentative results if validation fa
         (conversation-pathname conversation)
         (lambda (record)
           (conversation-maintenance-check)
-          (let ((input (conversation-input-history--record-input record)))
-            (when input
-              (setf sequence (getf (rest record) :seq))
-              (funcall emit (list :input :seq sequence :source input))
-              (when input-function (funcall input-function input)))))))
+          (when-let ((input (conversation-input-history--record-input record)))
+            (setf sequence (getf (rest record) :seq))
+            (funcall emit (list :input :seq sequence :source input))
+            (when input-function (funcall input-function input))))))
      :call-with-publication
      (lambda (publish)
        (funcall (or call-with-publication #'funcall)

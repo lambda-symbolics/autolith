@@ -34,15 +34,7 @@
   (finish-output)
   (load project-setup)
   (load (merge-pathnames "script/build-sandbox.lisp" source-root))
-  (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-  (let ((profile-library-directory
-          (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-        (library-directories
-          (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-    (when (probe-file profile-library-directory)
-      (pushnew profile-library-directory
-               (symbol-value library-directories)
-               :test #'equal)))
+  (autolith-script-configure-cffi)
   (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
   (asdf:load-system :autolith)
   (cond

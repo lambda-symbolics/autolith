@@ -154,9 +154,8 @@ existing regular capture in the exact manifest, never another artifact's URI."
            (shell-log--validated-reference configuration reference :require-present-p require-present-p))
          references))
       (:file
-       (let ((reference (shell-log--file-evidence-reference
-                         configuration evidence :require-present-p require-present-p)))
-         (when reference (list reference)))))))
+       (when-let ((reference (shell-log--file-evidence-reference
+                              configuration evidence :require-present-p require-present-p))) (list reference))))))
 
 (-> shell-log-validate-evidence-records (configuration knowledge-base list) null)
 (defun shell-log-validate-evidence-records (configuration base records)

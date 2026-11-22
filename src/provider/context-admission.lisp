@@ -46,29 +46,27 @@ may use provider token counts when available; the default is not a tokenizer."))
 (-> provider-context--soft-header (model-provider vector) (option list))
 (defun provider-context--soft-header (provider tools)
   "Fingerprint prompt policy and tools when the provider owns a configuration."
-  (let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
-                            (provider-configuration provider))))
-    (when configuration
-      (provider-cache-prefix--entry
-       (vector (symbol-name (class-name (class-of provider)))
-               (config :model configuration) (config :model-provider configuration)
-                (config :reasoning-effort configuration) (config :provider-endpoint configuration)
-               (system-prompt configuration) tools)))))
+  (when-let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
+                                 (provider-configuration provider))))
+    (provider-cache-prefix--entry
+     (vector (symbol-name (class-name (class-of provider)))
+             (config :model configuration) (config :model-provider configuration)
+              (config :reasoning-effort configuration) (config :provider-endpoint configuration)
+             (system-prompt configuration) tools))))
 
 (-> provider-context--header-components (model-provider vector) list)
 (defun provider-context--header-components (provider tools)
   "Separate stable accounting policy from replaceable prompt and tool text."
-  (let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
-                            (provider-configuration provider))))
-    (when configuration
-      (let ((prompt (system-prompt configuration)))
-        (list :policy      (provider-cache-prefix--entry
-                            (vector (symbol-name (class-name (class-of provider)))
-                                    (config :model configuration) (config :model-provider configuration)
-                                    (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
-              :prompt      (provider-cache-prefix--entry prompt)
-              :tool-header (provider-cache-prefix--entry tools)
-              :header-text (list prompt (json-encode tools)))))))
+  (when-let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
+                                 (provider-configuration provider))))
+    (let ((prompt (system-prompt configuration)))
+      (list :policy      (provider-cache-prefix--entry
+                          (vector (symbol-name (class-name (class-of provider)))
+                                  (config :model configuration) (config :model-provider configuration)
+                                  (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
+            :prompt      (provider-cache-prefix--entry prompt)
+            :tool-header (provider-cache-prefix--entry tools)
+            :header-text (list prompt (json-encode tools))))))
 
 (-> provider-context--header-charge (list list) (integer 0))
 (defun provider-context--header-charge (sample components)
@@ -319,10 +317,9 @@ that prefix. Count every new item and take no credit for removed reasoning."
   "Require every added entry to be a distinct ordered response item, excluding concurrent input."
   (loop with remaining = output
         for entry in entries
-        always (let ((tail (member entry remaining :test #'equal)))
-                 (when tail
-                   (setf remaining (rest tail))
-                   t))))
+        always (when-let ((tail (member entry remaining :test #'equal)))
+                 (setf remaining (rest tail))
+                 t)))
 
 (-> provider-context--wire-fields-compatible-p (list list) boolean)
 (defun provider-context--wire-fields-compatible-p (encoded observed)

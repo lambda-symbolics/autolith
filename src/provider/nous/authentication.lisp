@@ -78,11 +78,6 @@
         t
         nil)))
 
-(-> nous-authentication--access-token-account-id (string) (option string))
-(defun nous-authentication--access-token-account-id (access-token)
-  "Return the stable subject carried by a valid Nous access JWT."
-  (jwt-subject access-token))
-
 (-> nous-authentication--validate-stored-credentials
     (nous-credential-manager oauth-credentials)
     oauth-credentials)
@@ -90,7 +85,7 @@
   "Validate stored Nous CREDENTIALS before returning them to request scope."
   (let* ((access-token (oauth-credentials-access-token credentials))
          (token-account
-           (nous-authentication--access-token-account-id access-token)))
+           (jwt-subject access-token)))
     (unless (and (jwt-payload access-token)
                  (nous-authentication--access-token-scope-p
                   access-token
@@ -179,10 +174,9 @@ filesystem lock before each exchange."
 (defmethod credential-manager-refresh-request
     ((manager nous-credential-manager) &key url headers content)
   "POST through the injected request function when one replaces the transport."
-  (let ((function (nous-credential-manager-refresh-request-function manager)))
-    (if function
-        (funcall function :method ':post :url url :headers headers :content content)
-        (call-next-method))))
+  (if-let ((function (nous-credential-manager-refresh-request-function manager)))
+      (funcall function :method ':post :url url :headers headers :content content)
+      (call-next-method)))
 
 (defmethod credential-manager-validate-refresh-response
     ((manager nous-credential-manager) (document hash-table) (credentials oauth-credentials))
@@ -201,7 +195,7 @@ filesystem lock before each exchange."
              :message  "The refreshed Nous access token lacks the inference:invoke scope."
              :status   nil
              :response nil))
-    (unless (non-empty-string-p (nous-authentication--access-token-account-id access-token))
+    (unless (non-empty-string-p (jwt-subject access-token))
       (error 'token-refresh-failed
              :message  "The refreshed Nous access token omitted its subject."
              :status   nil

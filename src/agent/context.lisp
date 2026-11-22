@@ -456,16 +456,15 @@ stays cached across midnight; this separate block carries the change instead."
   "Return concatenated textual content from one provider message ITEM."
   (let ((content (json-get item "content")))
     (when (vectorp content)
-      (let ((parts
-              (loop for part across content
-                    when (and (json-object-p part)
-                              (member (json-get part "type")
-                                      '("input_text" "output_text")
-                                      :test #'string=)
-                              (stringp (json-get part "text")))
-                      collect (json-get part "text"))))
-        (when parts
-          (format nil "~{~A~}" parts))))))
+      (when-let ((parts
+                   (loop for part across content
+                         when (and (json-object-p part)
+                                   (member (json-get part "type")
+                                           '("input_text" "output_text")
+                                           :test #'string=)
+                                   (stringp (json-get part "text")))
+                           collect (json-get part "text"))))
+        (format nil "~{~A~}" parts)))))
 
 (-> request-context-latest-user-text (request-context) (option string))
 (defun request-context-latest-user-text (context)
@@ -516,9 +515,8 @@ stays cached across midnight; this separate block carries the change instead."
 (defun context-delivery-notify (delivery callback)
   "Send CALLBACK presentation events for contributions actually selected in DELIVERY."
   (dolist (contribution (context-delivery-contributions delivery))
-    (let ((event (context-contribution-provider-event contribution)))
-      (when event
-        (funcall callback event))))
+    (when-let ((event (context-contribution-provider-event contribution)))
+      (funcall callback event)))
   nil)
 
 (-> context--normalize-result (t string keyword) list)
@@ -530,14 +528,9 @@ stays cached across midnight; this separate block carries the change instead."
              nil)
             ((typep result 'context-contribution)
              (list result))
-            ((handler-case
-                 (let ((length (list-length result)))
-                   (and (integerp length)
-                        (every (lambda (value)
-                                 (typep value 'context-contribution))
-                               result)))
-               (type-error ()
-                 nil))
+            ((and (proper-list-p result)
+                  (every (lambda (value) (typep value 'context-contribution))
+                         result))
              result)
             (t
              (error 'configuration-error

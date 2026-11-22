@@ -94,21 +94,20 @@
             (error 'configuration-error
                    :message (format nil "Invalid release server port ~S." value))))))
 
+(-> release-server--git-run (pathname list &key (:output t)) *)
+(defun release-server--git-run (directory arguments &key (output ':string))
+  "Run Git ARGUMENTS in DIRECTORY, trusting only that canonical directory."
+  (let ((canonical (namestring (platform-truename *platform* (uiop:ensure-directory-pathname directory)))))
+    (uiop:run-program
+     (append (list "git" "-c" (format nil "safe.directory=~A" canonical) "-C" canonical)
+             arguments)
+     :output       output
+     :error-output (if (eq output ':interactive) ':interactive ':output))))
+
 (-> release-server--git-output (pathname list) string)
 (defun release-server--git-output (directory arguments)
   "Return trimmed output from Git ARGUMENTS in DIRECTORY."
-  (let ((canonical
-          (namestring
-           (truename (uiop:ensure-directory-pathname directory)))))
-    (string-trim
-     '(#\Space #\Tab #\Newline #\Return)
-     (uiop:run-program
-      (append
-       (list "git" "-c" (format nil "safe.directory=~A" canonical)
-             "-C" canonical)
-       arguments)
-      :output       ':string
-      :error-output ':output))))
+  (string-trim *line-whitespace* (release-server--git-run directory arguments)))
 
 (-> release-server--source-identity
     (pathname)
@@ -153,9 +152,7 @@
   (let* ((configured-source-root
            (uiop:ensure-directory-pathname
             (or source-root
-                (let ((configured
-                        (uiop:getenv "AUTOLITH_RELEASE_SOURCE_ROOT")))
-                  (and configured (pathname configured)))
+                (uiop:getenv-pathname "AUTOLITH_RELEASE_SOURCE_ROOT")
                 (asdf:system-source-directory :autolith))))
          (resolved-source-root
            (or (handler-case (truename configured-source-root)
@@ -170,9 +167,7 @@
        :public-root
        (uiop:ensure-directory-pathname
         (or public-root
-            (let ((configured
-                    (uiop:getenv "AUTOLITH_RELEASE_PUBLIC_ROOT")))
-              (and configured (pathname configured)))
+            (uiop:getenv-pathname "AUTOLITH_RELEASE_PUBLIC_ROOT")
             #p"/srv/autolith-release-server/"))
        :address       (or address
                           (uiop:getenv "AUTOLITH_RELEASE_LISTEN_ADDRESS")
@@ -242,7 +237,7 @@
     (sort
      (loop for directory in (uiop:subdirectories releases-root)
            for components = (pathname-directory directory)
-           for tag = (and components (first (last components)))
+           for tag = (and components (lastcar components))
            when (and (stringp tag)
                      (release-server--release-complete-p configuration tag))
              collect tag)
@@ -283,18 +278,17 @@
   (let ((remainder (subseq path (length "/releases/"))))
     (cond
       ((string= remainder "latest")
-       (let ((tag (release-server-latest-tag configuration)))
-         (if tag
-             (release-server--response
-              302
-              "text/plain; charset=utf-8"
-              (format nil "~A~%" tag)
-              :headers (list (cons "Location" (format nil "/releases/~A" tag))
-                             (cons "Cache-Control" "no-store")))
-             (release-server--response
-              503
-              "text/plain; charset=utf-8"
-              (format nil "no release is available~%")))))
+       (if-let ((tag (release-server-latest-tag configuration)))
+           (release-server--response
+            302
+            "text/plain; charset=utf-8"
+            (format nil "~A~%" tag)
+            :headers (list (cons "Location" (format nil "/releases/~A" tag))
+                           (cons "Cache-Control" "no-store")))
+           (release-server--response
+            503
+            "text/plain; charset=utf-8"
+            (format nil "no release is available~%"))))
       ((or (zerop (length remainder))
            (find #\/ remainder)
            (not (release-tag-valid-p remainder)))

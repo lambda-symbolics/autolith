@@ -49,20 +49,12 @@
 (-> conversation-title--collapse-whitespace (string) string)
 (defun conversation-title--collapse-whitespace (text)
   "Return TEXT with control characters removed and whitespace collapsed."
-  (with-output-to-string (stream)
-    (loop with pending-space-p = nil
-          with wrote-p = nil
-          for character across text
-          do (cond
-               ((member character '(#\Space #\Tab #\Newline #\Return))
-                (when wrote-p
-                  (setf pending-space-p t)))
-               ((graphic-char-p character)
-                (when pending-space-p
-                  (write-char #\Space stream))
-                (write-char character stream)
-                (setf pending-space-p nil
-                      wrote-p t))))))
+  (serapeum:trim-whitespace
+   (serapeum:collapse-whitespace
+    (remove-if-not (lambda (character)
+                     (or (graphic-char-p character)
+                         (serapeum:whitespacep character)))
+                   text))))
 
 (-> conversation-title--truncate (non-empty-string) non-empty-string)
 (defun conversation-title--truncate (title)
@@ -108,11 +100,7 @@
   (let* ((collapsed  (conversation-title--collapse-whitespace text))
          (lowercase  (string-downcase collapsed))
          (normalized (conversation-title-normalize text))
-         (words
-           (remove ""
-                   (uiop:split-string collapsed
-                                      :separator '(#\Space #\Tab #\Newline #\Return))
-                   :test #'string=)))
+         (words      (serapeum:tokens collapsed)))
     (when (and normalized
                (<= (length collapsed) *conversation-title-maximum-characters*)
                (<= *conversation-title-generation-minimum-words*
@@ -1385,14 +1373,7 @@ The revision is durable source coordination, not a regenerable search payload."
 (-> conversation-picker-search--messages-p (t) boolean)
 (defun conversation-picker-search--messages-p (value)
   "Return true when VALUE is a finite proper list of strings."
-  (handler-case
-      (not
-       (null
-        (and (listp value)
-             (or (null value) (list-length value))
-             (every #'stringp value))))
-    (type-error ()
-      nil)))
+  (and (proper-list-p value) (every #'stringp value)))
 
 (-> conversation-picker-search-index-record
     (conversation-picker-search-index)
@@ -1436,16 +1417,15 @@ The revision is durable source coordination, not a regenerable search payload."
     (option conversation-picker-search-index))
 (defun conversation-picker-search-read (pathname)
   "Return current searchable text whose count agrees with the picker metadata."
-  (let ((metadata (conversation-picker-metadata-read pathname)))
-    (when metadata
-      (sexp-store:sidecar-read
-       (conversation-picker-search-pathname pathname)
-       :decode       #'conversation-picker-search-index-from-record
-       :source-token (lambda () (conversation-picker-search-revision-read pathname))
-       :value-token  #'conversation-picker-search-index-source-revision
-       :validate     (lambda (index)
-                       (= (conversation-picker-search-index-message-count index)
-                          (conversation-picker-metadata-search-message-count metadata)))))))
+  (when-let ((metadata (conversation-picker-metadata-read pathname)))
+    (sexp-store:sidecar-read
+     (conversation-picker-search-pathname pathname)
+     :decode       #'conversation-picker-search-index-from-record
+     :source-token (lambda () (conversation-picker-search-revision-read pathname))
+     :value-token  #'conversation-picker-search-index-source-revision
+     :validate     (lambda (index)
+                     (= (conversation-picker-search-index-message-count index)
+                        (conversation-picker-metadata-search-message-count metadata))))))
 
 (-> conversation-picker-search-write
     (pathname conversation-picker-search-index)
@@ -1680,9 +1660,8 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-input-history--publish conversation sequenced)
       (conversation-picker-metadata-publish conversation)
-      (let ((listener (conversation-record-listener conversation)))
-        (when listener
-          (funcall listener sequenced)))
+      (when-let ((listener (conversation-record-listener conversation)))
+        (funcall listener sequenced))
       sequenced)))
 
 (-> conversation--bounded-turn-abort-text (t string integer) non-empty-string)
@@ -1786,7 +1765,7 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
   (handler-case
       (multiple-value-bind (forms incomplete-tail-p)
           (log-read (conversation-log-pathname conversation))
-        (let ((record (and forms (first (last forms)))))
+        (let ((record (and forms (lastcar forms))))
           (and (not incomplete-tail-p)
                (listp record)
                (eq (first record) ':title)
@@ -1845,26 +1824,25 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
                conversation
                (list :title :value normalized :source source))
             (error (condition)
-              (let ((published-record
-                      (conversation--published-title-record conversation
-                                                            :sequence sequence
-                                                            :title    normalized
-                                                            :source   source)))
-                (if published-record
-                    (progn
-                      (setf (conversation-next-sequence conversation) (1+ sequence)
-                            (conversation-incomplete-tail-p conversation) nil)
-                      (conversation--note-activity conversation published-record)
-                      ; mallet:suppress no-ignore-errors -- the picker cache refresh is best-effort once the title is durable
-                      (ignore-errors
-                        (call-with-file-lock
-                         (conversation-picker-source-lock-pathname
-                          (conversation-pathname conversation))
-                         (lambda () (conversation-picker-metadata-publish conversation)))))
-                    (progn
-                      (setf (conversation-title conversation) current-title
-                            (conversation-title-source conversation) current-source)
-                      (error condition)))))))))
+              (if-let ((published-record
+                         (conversation--published-title-record conversation
+                                                               :sequence sequence
+                                                               :title    normalized
+                                                               :source   source)))
+                  (progn
+                    (setf (conversation-next-sequence conversation) (1+ sequence)
+                          (conversation-incomplete-tail-p conversation) nil)
+                    (conversation--note-activity conversation published-record)
+                    ; mallet:suppress no-ignore-errors -- the picker cache refresh is best-effort once the title is durable
+                    (ignore-errors
+                      (call-with-file-lock
+                       (conversation-picker-source-lock-pathname
+                        (conversation-pathname conversation))
+                       (lambda () (conversation-picker-metadata-publish conversation)))))
+                  (progn
+                    (setf (conversation-title conversation) current-title
+                          (conversation-title-source conversation) current-source)
+                    (error condition))))))))
     normalized))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
@@ -2036,14 +2014,13 @@ already owns its metadata and is installed without an additional remap."
                      (null phase)
                      (and (stringp phase) (string= phase "final_answer")))
                  (vectorp content))
-        (let ((parts
-                (loop for part across content
-                      for copy = (conversation--inherited-reference-text-part part)
-                      when copy collect copy)))
-          (when parts
-            (json-object "type" "message"
-                         "role" (json-get item "role")
-                         "content" (coerce parts 'vector))))))))
+        (when-let ((parts
+                     (loop for part across content
+                           for copy = (conversation--inherited-reference-text-part part)
+                           when copy collect copy)))
+          (json-object "type" "message"
+                       "role" (json-get item "role")
+                       "content" (coerce parts 'vector)))))))
 
 (-> conversation--inherited-reference-boundary-item () json-object)
 (defun conversation--inherited-reference-boundary-item ()
@@ -2105,19 +2082,18 @@ copied."
       (loop for index downfrom (1- (length items)) to 0
             for item = (aref items index)
             unless (gethash item ephemeral-items)
-              do (let ((message
-                         (conversation--inherited-reference-message item)))
-                   (when message
-                     (let ((candidate-bytes
-                             (+ wire-bytes
-                                1
-                                (length
-                                 (utf8-string-to-octets
-                                  (json-encode message))))))
-                       (if (<= candidate-bytes maximum-wire-bytes)
-                           (setf wire-bytes candidate-bytes
-                                 selected (cons message selected))
-                           (return))))))
+              do (when-let ((message
+                              (conversation--inherited-reference-message item)))
+                   (let ((candidate-bytes
+                           (+ wire-bytes
+                              1
+                              (length
+                               (utf8-string-to-octets
+                                (json-encode message))))))
+                     (if (<= candidate-bytes maximum-wire-bytes)
+                         (setf wire-bytes candidate-bytes
+                               selected (cons message selected))
+                         (return)))))
       selected)))
 
 (-> conversation-append-inherited-reference
@@ -2146,23 +2122,22 @@ copied."
 (-> conversation-clear-ephemeral-input-items (conversation) null)
 (defun conversation-clear-ephemeral-input-items (conversation)
   "Remove all request-local provider items and their owned image artifacts."
-  (let ((entries (conversation-ephemeral-input-entries conversation)))
-    (when entries
-      (let ((ephemeral-items (make-hash-table :test #'eq)))
-        (dolist (entry entries)
-          (setf (gethash (getf entry :item) ephemeral-items) t))
-        (setf (conversation-input-items conversation)
-              (remove-if
-               (lambda (item)
-                 (gethash item ephemeral-items))
-               (conversation-input-items conversation))
-              (conversation-ephemeral-input-entries conversation) nil))
+  (when-let ((entries (conversation-ephemeral-input-entries conversation)))
+    (let ((ephemeral-items (make-hash-table :test #'eq)))
       (dolist (entry entries)
-        (dolist (attachment (getf entry :attachments))
-          ; mallet:suppress no-ignore-errors -- best-effort removal of discarded ephemeral image artifacts
-          (ignore-errors
-            (when (probe-file (image-attachment-pathname attachment))
-              (delete-file (image-attachment-pathname attachment))))))))
+        (setf (gethash (getf entry :item) ephemeral-items) t))
+      (setf (conversation-input-items conversation)
+            (remove-if
+             (lambda (item)
+               (gethash item ephemeral-items))
+             (conversation-input-items conversation))
+            (conversation-ephemeral-input-entries conversation) nil))
+    (dolist (entry entries)
+      (dolist (attachment (getf entry :attachments))
+        ; mallet:suppress no-ignore-errors -- best-effort removal of discarded ephemeral image artifacts
+        (ignore-errors
+          (when (probe-file (image-attachment-pathname attachment))
+            (delete-file (image-attachment-pathname attachment)))))))
   nil)
 
 (-> conversation-image-artifact-root (conversation) pathname)
@@ -2507,12 +2482,11 @@ transcript show automatic INPUT as a short notice."
                  (and (equal (getf origin :conversation) (conversation-identifier conversation))
                       (eql (getf origin :sequence) sequence)))))
       (setf projected-p (not (null (find-if #'receipt-p items))))
-      (let ((existing (find-if (lambda (candidate)
-                                 (and (receipt-p candidate)
-                                      (equal (json-encode candidate) wire)))
-                               items)))
-        (when existing
-          (setf item existing)))
+      (when-let ((existing (find-if (lambda (candidate)
+                                      (and (receipt-p candidate)
+                                           (equal (json-encode candidate) wire)))
+                                    items)))
+        (setf item existing))
       (unless (or fresh-p projected-p)
         (when (find-if (lambda (candidate)
                         (and (null (gethash candidate records))
@@ -3054,9 +3028,8 @@ output for one identifier, so it fails instead of poisoning replay."
 (-> conversation-append-provider-metadata (conversation list) list)
 (defun conversation-append-provider-metadata (conversation metadata)
   "Persist portable provider METADATA that is not part of request history."
-  (let ((total (conversation--usage-total (getf metadata :usage))))
-    (when total
-      (setf (conversation-last-total-tokens conversation) total)))
+  (when-let ((total (conversation--usage-total (getf metadata :usage))))
+    (setf (conversation-last-total-tokens conversation) total))
   (let ((record (conversation-append-record
                  conversation
                  (list :provider :metadata metadata))))
@@ -3321,11 +3294,10 @@ test one."
                       (let ((candidate (getf (rest record) :value)))
                         (when (conversation-title-valid-p candidate)
                           (setf title candidate)))))
-                   (let ((record-preview
-                           (conversation--record-preview record)))
-                     (when record-preview
-                       (incf search-message-count)
-                       (setf preview record-preview)))))
+                   (when-let ((record-preview
+                                (conversation--record-preview record)))
+                     (incf search-message-count)
+                     (setf preview record-preview))))
               (when (plusp record-count)
                 (multiple-value-bind
                     (final-segment final-size final-write-date)
@@ -3384,10 +3356,9 @@ test one."
                 (conversation--map-storage-records
                  pathname
                  (lambda (record)
-                   (let ((message (conversation--record-preview record)))
-                     (when message
-                       (incf message-count)
-                       (push message messages)))))
+                   (when-let ((message (conversation--record-preview record)))
+                     (incf message-count)
+                     (push message messages))))
               (declare (ignore incomplete-tail-p))
               (when (plusp record-count)
                 (multiple-value-bind
@@ -3496,12 +3467,6 @@ later picker searches read it without scanning the log."
      (conversation--record-error
       conversation properties "A persisted tool content block is invalid."))))
 
-(-> conversation--property-present-p (list keyword) boolean)
-(defun conversation--property-present-p (properties indicator)
-  "Return true when property list PROPERTIES contains INDICATOR."
-  (loop for tail on properties by (partial #'nthcdr 2)
-        thereis (eq (first tail) indicator)))
-
 (-> conversation--record-images (conversation list) list)
 (defun conversation--record-images (conversation descriptors)
   "Restore and remember image DESCRIPTORS for CONVERSATION."
@@ -3581,7 +3546,7 @@ Compaction and context adoption replace the measured history."
          (2
            (and (= (length sample)
                    (+ 26 (if (getf sample :wire-history-p) 2 0)
-                      (if (conversation--property-present-p sample :header-text) 2 0)))
+                      (if (plist-key-present-p sample :header-text) 2 0)))
                 (member (getf sample :wire-history-p) '(nil t))
                (every (lambda (key) (get-properties sample (list key)))
                       '(:format :soft-header :policy :prompt :tool-header
@@ -3590,7 +3555,7 @@ Compaction and context adoption replace the measured history."
                (every #'conversation--context-fingerprint-p
                       (list (getf sample :policy) (getf sample :prompt)
                             (getf sample :tool-header)))
-               (or (not (conversation--property-present-p sample :header-text))
+               (or (not (plist-key-present-p sample :header-text))
                    (conversation--context-header-text-p
                         (getf sample :header-text)
                         (getf sample :prompt) (getf sample :tool-header))))))
@@ -3620,7 +3585,7 @@ Both component fingerprints must match. Numeric evidence always comes from SAMPL
 malformed current evidence returns NIL. Legacy format-one samples are unchanged."
   (when (conversation-context-usage-sample-p sample)
     (if (and (= 2 (getf sample :format))
-             (not (conversation--property-present-p sample :header-text))
+             (not (plist-key-present-p sample :header-text))
              (conversation-context-usage-sample-p previous)
              (= 2 (getf previous :format))
              (getf previous :header-text)
@@ -3646,10 +3611,9 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
                (eq (getf properties :role) ':user)
                (not (getf properties :automatic-p))
                (stringp content))
-      (let ((title (conversation-title-derive content)))
-        (when title
-          (setf (conversation-title conversation) title
-                (conversation-title-source conversation) ':initial))))
+      (when-let ((title (conversation-title-derive content)))
+        (setf (conversation-title conversation) title
+              (conversation-title-source conversation) ':initial)))
     (when images
       (let ((attachments (conversation--record-images conversation images)))
         (unless (stringp content)
@@ -3680,7 +3644,7 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
     ((kind (eql :tool-result)) conversation properties)
   "Project a multimodal or image tool result into a provider function-call output item."
   (cond
-    ((conversation--property-present-p properties :content-blocks)
+    ((plist-key-present-p properties :content-blocks)
      (let ((call-id     (getf properties :call-id))
            (descriptors (getf properties :content-blocks)))
        (unless (consp descriptors)
@@ -3702,7 +3666,7 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
               conversation descriptor properties))
            descriptors)))
         (cons kind properties))))
-    ((conversation--property-present-p properties :images)
+    ((plist-key-present-p properties :images)
      (let ((call-id     (getf properties :call-id))
            (descriptors (getf properties :images)))
        (unless (consp descriptors)
@@ -3766,10 +3730,9 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
 (defmethod conversation--project-record
     ((kind (eql :provider)) conversation properties)
   "Remember the latest provider usage total and completed response."
-  (let ((total (conversation--usage-total
-                (getf (getf properties :metadata) :usage))))
-    (when total
-      (setf (conversation-last-total-tokens conversation) total)))
+  (when-let ((total (conversation--usage-total
+                     (getf (getf properties :metadata) :usage))))
+    (setf (conversation-last-total-tokens conversation) total))
   (conversation-note-response-record conversation properties))
 
 (defmethod conversation--project-record
@@ -3840,12 +3803,9 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
          (properties            (rest record))
          (sequence              (getf properties :seq))
          (wire-json             (getf properties :wire-json))
-         (content-blocks-p
-           (conversation--property-present-p properties :content-blocks))
-         (images-p
-           (conversation--property-present-p properties :images))
-         (wire-json-p
-           (conversation--property-present-p properties :wire-json))
+         (content-blocks-p      (plist-key-present-p properties :content-blocks))
+         (images-p              (plist-key-present-p properties :images))
+         (wire-json-p           (plist-key-present-p properties :wire-json))
          (picker-search-message (conversation--record-preview record)))
     (when (eq kind :tool-result)
       (when (> (count t (list content-blocks-p images-p wire-json-p)) 1)
@@ -3909,25 +3869,19 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
 (-> conversation--header-string-list-p (t) boolean)
 (defun conversation--header-string-list-p (value)
   "Return true when VALUE is a finite proper list of unique nonempty strings."
-  (handler-case
-      (and (listp value)
-           (or (null value) (list-length value))
-           (let ((seen (make-hash-table :test #'equal)))
-             (every (lambda (identifier)
-                      (and (non-empty-string-p identifier)
-                           (not (gethash identifier seen))
-                           (setf (gethash identifier seen) t)))
-                    value))
-           t)
-    (error ()
-      nil)))
+  (and (proper-list-p value)
+       (let ((seen (make-hash-table :test #'equal)))
+         (every (lambda (identifier)
+                  (and (non-empty-string-p identifier)
+                       (not (gethash identifier seen))
+                       (setf (gethash identifier seen) t)))
+                value))))
 
 (-> conversation--header-record-list-p (t keyword) boolean)
 (defun conversation--header-record-list-p (value kind)
   "Return true when VALUE is a finite proper list of KIND records."
   (handler-case
-      (and (listp value)
-           (or (null value) (list-length value))
+      (and (proper-list-p value)
            (every (lambda (record)
                     (and (conversation--record-form-p record)
                          (eq (first record) kind)))
@@ -4193,7 +4147,7 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
            (error 'conversation-invariant-error
                   :message "The conversation header is missing or unsupported."
                   :pathname identity :sequence nil))
-         (setf (conversation-log-pathname conversation) (first (last pathnames))
+         (setf (conversation-log-pathname conversation) (lastcar pathnames)
                (conversation-incomplete-tail-p conversation) incomplete-p)
          conversation)))))
 
@@ -4202,7 +4156,7 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
   "Load PATHNAME from its newest self-contained chunk or legacy segments."
   (let* ((identity  (conversation-storage-identity-pathname pathname))
          (pathnames (conversation-storage-pathnames identity))
-         (active    (first (last pathnames))))
+         (active    (lastcar pathnames)))
     (unless active
       (error 'conversation-invariant-error
              :message  "The conversation does not contain a durable segment."
@@ -4312,10 +4266,10 @@ with durable storage are listed."
   (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
     (when (uiop:directory-exists-p tasks)
       (loop for group in (uiop:subdirectories tasks)
-            for root = (first (last (pathname-directory group)))
+            for root = (lastcar (pathname-directory group))
             when (stringp root)
               append (loop for execution in (uiop:subdirectories group)
-                           for name = (first (last (pathname-directory execution)))
+                           for name = (lastcar (pathname-directory execution))
                            for identity = (and (stringp name)
                                                (merge-pathnames
                                                 (make-pathname :name name :type "sexp")
@@ -4330,11 +4284,10 @@ with durable storage are listed."
 
 A missing or stale cache is rebuilt once from durable records. Subsequent
 resume-picker reads use the compact sidecar instead of replaying the log."
-  (let ((metadata (conversation-picker-metadata-find pathname)))
-    (if metadata
-        (values (conversation-picker-metadata-working-seconds metadata)
-                (conversation-picker-metadata-user-turn-count metadata))
-        (values 0 0))))
+  (if-let ((metadata (conversation-picker-metadata-find pathname)))
+      (values (conversation-picker-metadata-working-seconds metadata)
+              (conversation-picker-metadata-user-turn-count metadata))
+      (values 0 0)))
 
 (defparameter *conversation-delete-directory-tree-function*
   (lambda (pathname &rest arguments)

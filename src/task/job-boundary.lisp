@@ -218,11 +218,6 @@
                 prompt
                 (run-job--write-data-sexp input :pretty-p t)))))
 
-(-> run-job--timestamp (integer) string)
-(defun run-job--timestamp (time)
-  "Return universal TIME in UTC RFC 3339 form."
-  (format-utc-timestamp time))
-
 (-> run-job--usage (list) list)
 (defun run-job--usage (result)
   "Return stable aggregate usage fields from one child RESULT."
@@ -262,8 +257,8 @@
                                            :limit *run-job-failure-message-limit*))))
    (when trace-id (list :trace-id trace-id))
    (list :usage       (or usage '(:input-tokens 0 :output-tokens 0 :provider-requests 0))
-         :started-at  (run-job--timestamp started-at)
-         :finished-at (run-job--timestamp finished-at))))
+         :started-at  (format-utc-timestamp started-at)
+         :finished-at (format-utc-timestamp finished-at))))
 
 (-> run-job-write-result-atomically ((or pathname string) list) pathname)
 (defun run-job-write-result-atomically (pathname result)
@@ -323,13 +318,12 @@
             (task-find-agent-definition definitions
                                         (run-job-request-role request))))
       (unless definition
-        (let ((diagnostic
-                (task-find-agent-diagnostic diagnostics
-                                            (run-job-request-role request))))
-          (if diagnostic
-              (error diagnostic)
-              (run-job--error ':unknown-role "Unknown task role ~S."
-                              (run-job-request-role request)))))
+        (if-let ((diagnostic
+                   (task-find-agent-diagnostic diagnostics
+                                               (run-job-request-role request))))
+            (error diagnostic)
+            (run-job--error ':unknown-role "Unknown task role ~S."
+                            (run-job-request-role request))))
       definition)))
 
 (-> run-job--close-application ((option application)) null)

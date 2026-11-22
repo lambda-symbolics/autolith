@@ -257,10 +257,8 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
 (-> gemini-code-assist--environment-project () (option string))
 (defun gemini-code-assist--environment-project ()
   "Return the configured Google Cloud project ID, if any."
-  (or (let ((value (uiop:getenv "GOOGLE_CLOUD_PROJECT")))
-        (and (non-empty-string-p value) value))
-      (let ((value (uiop:getenv "GOOGLE_CLOUD_PROJECT_ID")))
-        (and (non-empty-string-p value) value))))
+  (or (configuration-environment-value "GOOGLE_CLOUD_PROJECT")
+      (configuration-environment-value "GOOGLE_CLOUD_PROJECT_ID")))
 
 (-> gemini-code-assist--numeric-string-p (string) boolean)
 (defun gemini-code-assist--numeric-string-p (value)

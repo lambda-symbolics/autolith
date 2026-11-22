@@ -126,7 +126,7 @@ outside the workspace."
 (defun lsp-tool--render (value &optional (limit *lsp-tool-result-limit*))
   "Return complete JSON within the shared 8000-character tool-success bound.
 Bound data before serialization and retain a result and truncation note when space permits."
-  (let ((limit (max 4 (min 8000 limit))))
+  (let ((limit (clamp limit 4 8000)))
     (loop for size = 8000 then (floor size 2)
           do (multiple-value-bind (copy truncated-p)
                  (lsp-tool--bounded-value value :string-limit size
@@ -295,9 +295,7 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
                (format nil "~{~A~^, ~}, and ~D more"
                        (subseq names 0 4)
                        (- (length names) 4)))))
-    (if (> (length summary) 200)
-        (concatenate 'string (subseq summary 0 197) "...")
-        summary)))
+    (text--bounded-ellipsis summary 200)))
 
 (-> lsp-context-contribution (request-context) (option context-contribution))
 (defun lsp-context-contribution (context)

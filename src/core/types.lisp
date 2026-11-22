@@ -26,14 +26,23 @@
   "The lifetime of one tool call and its correlated provider result."
   '(member :durable :next-response))
 
+(defparameter *line-whitespace*
+  (remove-if-not (lambda (character)
+                   (member character '(#\Space #\Tab #\Newline #\Return)))
+                 serapeum:whitespace)
+  "Characters used to trim text at line-oriented protocol boundaries.")
+
 (-> non-empty-string-p (t) boolean)
 (defun non-empty-string-p (value)
   "Return true when VALUE is a string containing a non-whitespace character."
   (and (stringp value)
-       (not (every (lambda (character)
-                     (find character
-                           '(#\Space #\Tab #\Newline #\Return #\Page)))
-                   value))))
+       ;; Retain the persisted string contract for VT and NBSP.
+       (or (not (serapeum:blankp value))
+           (and (position-if (lambda (character)
+                              (or (char= character #\Vt)
+                                  (char= character (code-char #xa0))))
+                            value)
+                t))))
 
 (deftype non-empty-string ()
   "A string containing at least one non-whitespace character."

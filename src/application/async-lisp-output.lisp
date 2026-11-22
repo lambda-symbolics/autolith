@@ -97,7 +97,7 @@
     (application-async-lisp-output-stream boolean) (option string))
 (defun application-async-lisp-output-stream--take-pending (stream force-p)
   "Drain pending output when due or FORCE-P; caller holds the capture lock."
-  (let ((now (/ (get-internal-real-time) (float internal-time-units-per-second 1.0d0))))
+  (let ((now (internal-real-time-seconds)))
     (when (and (plusp (deque-count (application-async-lisp-output-stream-pending stream)))
                (or force-p (>= (- now (application-async-lisp-output-stream-last-display-time stream))
                                *application-async-lisp-output-display-interval*)))
@@ -178,7 +178,7 @@
               :limit capacity))
            (text     (bounded-output-stream-text stream)))
       (concatenate 'string
-                   (subseq text 0 (min (length text) (- capacity (length marker))))
+                   (take (- capacity (length marker)) text)
                    marker))))
 
 (-> application-async-lisp-output-flush (application-async-lisp-output-stream) null)

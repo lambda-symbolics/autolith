@@ -77,12 +77,6 @@
   "Return a terminal payload whose authoritative artifact was published."
   '(:status :succeeded :output "result.sexp" :published-p t))
 
-(-> run-job-event-tests--rejected-p (function) boolean)
-(defun run-job-event-tests--rejected-p (function)
-  "Return whether a data-only reader or validator rejected the test input."
-  (handler-case (progn (funcall function) nil)
-    ((or run-job-event-error sexp-config-error type-error) () t)))
-
 (-> test-run-job-event-wire-roundtrip () null)
 (defun test-run-job-event-wire-roundtrip ()
   "Round-trip Unicode and Lisp string escaping through complete-form readers."
@@ -108,7 +102,7 @@
 (-> test-run-job-event-reader-safety () null)
 (defun test-run-job-event-reader-safety ()
   "Reject invalid event fields and mutable producer payloads before enqueue."
-  (test-assert (run-job-event-tests--rejected-p
+  (test-assert (test-signals-p '(or run-job-event-error sexp-config-error type-error)
                 (lambda () (run-job-event-read-string "(:autolith-event")))
                "event reads expose a parse failure")
   (let* ((emitter (run-job-event-emitter-create "run-reject" (make-broadcast-stream)))
@@ -125,11 +119,11 @@
              (test-assert (structlisp:deque-empty-p (run-job-event-emitter-queue emitter))
                           "rejected producer data is never enqueued")))
       (run-job-event-emitter-finish emitter '(:status :failed :published-p nil))))
-  (test-assert (run-job-event-tests--rejected-p
+  (test-assert (test-signals-p '(or run-job-event-error sexp-config-error type-error)
                 (lambda () (run-job-event--data-validate
                             ':run-finished '(:status :succeeded :published-p nil))))
                "unpublished artifacts cannot be announced as success")
-  (test-assert (run-job-event-tests--rejected-p
+  (test-assert (test-signals-p '(or run-job-event-error sexp-config-error type-error)
                 (lambda () (run-job-event-read-string (make-string 16385 :initial-element #\Space))))
                "wire input is bounded before parsing")
   nil)

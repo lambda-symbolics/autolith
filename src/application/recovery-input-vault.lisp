@@ -937,9 +937,8 @@ The caller must hold CONTROLLER's lock."
                        (first entry)
                        (application-recovery-input-vault--preview
                         (rest entry)))))
-    (let ((failure (application-recovery-input-vault-failure application)))
-      (when failure
-        (format stream "~%Storage warning: ~A~%" failure)))))
+    (when-let ((failure (application-recovery-input-vault-failure application)))
+      (format stream "~%Storage warning: ~A~%" failure))))
 
 (-> application-recovery-input-vault--context-p (application) boolean)
 (defun application-recovery-input-vault--context-p (application)

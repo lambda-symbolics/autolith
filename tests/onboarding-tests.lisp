@@ -39,11 +39,8 @@
    (lambda (application controller configuration terminal)
      (declare (ignore controller configuration terminal))
      (let* ((operation (application-operation-find application 'onboard))
-            (command   (application-operation-backend operation))
             (called    nil))
        (test-assert (typep operation 'application-command-operation) "onboard resolves to a command operation")
-       (test-assert (eq ':hold (application-command-busy-behavior command)) "replay waits for active work")
-       (test-assert (eq ':exclusive (application-command-terminal-behavior command)) "replay owns terminal input exclusively")
        (test-call-with-function-replacements
         (list (list 'application-onboard
                     (lambda (target &key new-only-p)

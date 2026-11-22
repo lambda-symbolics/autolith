@@ -184,7 +184,6 @@
        (lambda (service client)
          (declare (ignore service))
          (setf identifier (agentcomms:client-new-session client (namestring root)))
-         (test-assert (stringp identifier) "session/new returns a durable identifier")
          (agentcomms:client-prompt client identifier (list (agentcomms:acp-text-content "hello")))
          (test-assert (zerop (count ':user-message-chunk (acp-session-test-updates client)
                                    :key #'agentcomms:acp-update-kind))

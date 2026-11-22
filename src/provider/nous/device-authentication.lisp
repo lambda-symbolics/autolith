@@ -45,7 +45,7 @@
   (declare (ignore client))
   (let ((access-token (json-get document "access_token")))
     (and (stringp access-token)
-         (nous-authentication--access-token-account-id access-token))))
+         (jwt-subject access-token))))
 
 (defmethod rfc8628-device-authentication-publish-credentials
     ((client nous-device-authentication-client)

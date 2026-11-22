@@ -145,7 +145,7 @@
 (-> task--trim (string) string)
 (defun task--trim (text)
   "Return TEXT without surrounding horizontal or line whitespace."
-  (string-trim '(#\Space #\Tab #\Newline #\Return) text))
+  (serapeum:trim-whitespace text))
 
 (-> task--split-lines (string) list)
 (defun task--split-lines (text)
@@ -157,12 +157,6 @@
                  (subseq text start (or end (length text))))
         while end
         do (setf start (1+ end))))
-
-(-> task--plist-key-present-p (list keyword) boolean)
-(defun task--plist-key-present-p (plist key)
-  "Return true when proper PLIST contains KEY in a key position."
-  (loop for tail on plist by (partial #'nthcdr 2)
-        thereis (eq (first tail) key)))
 
 (-> task--plist-alist
     (t list &key (:pathname (option pathname))

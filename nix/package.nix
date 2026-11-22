@@ -638,6 +638,8 @@ let
       orgTemplater
       quri
       serapeum
+      alexandria
+      split-sequence
       trivial-gray-streams
       clColorist
       clinedi

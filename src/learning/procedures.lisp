@@ -184,10 +184,9 @@ steps' decoded results that :FROM templates must agree with."
       (:param
        (procedure--bind bindings (second template) value))
       (:text
-       (let ((middle (procedure--text-middle value (second template) (fourth template))))
-         (if middle
-             (procedure--bind bindings (third template) middle)
-             (values bindings nil))))
+       (if-let ((middle (procedure--text-middle value (second template) (fourth template))))
+           (procedure--bind bindings (third template) middle)
+           (values bindings nil)))
       (:from
        (multiple-value-bind (expected present-p)
            (if (< (second template) (length outputs))
@@ -325,18 +324,7 @@ compared without regard to case; bound values must suit their parameters."
 (-> procedure-words (string) list)
 (defun procedure-words (text)
   "Return TEXT's whitespace-separated words."
-  (let ((words nil)
-        (start nil))
-    (loop for index from 0 to (length text)
-          for character = (and (< index (length text)) (char text index))
-          do (if (and character
-                   (not (find character '(#\Space #\Tab #\Newline #\Return #\Page))))
-                 (unless start
-                   (setf start index))
-                 (when start
-                   (push (subseq text start index) words)
-                   (setf start nil))))
-    (nreverse words)))
+  (serapeum:tokens text))
 
 (-> procedure-parameter (list string) (option list))
 (defun procedure-parameter (procedure name)

@@ -277,23 +277,22 @@
 (-> workspace-prepared-change--release (workspace-prepared-change) null)
 (defun workspace-prepared-change--release (change)
   "Release owned undo storage without modifying permissions through a restored hard link."
-  (let ((backup (workspace-prepared-change-backup change)))
-    (when backup
-      (let* ((path          (workspace-file-resource-pathname
-                             (cl-resources:prepared-change-resource change)))
-             (backup-status (platform-path-status *platform* backup))
-             (target-status (and (workspace-prepared-change-restored-p change)
-                                 (platform-path-status *platform* path)))
-             (aliased-p     (and backup-status target-status
-                                 (equal (platform-file-status-identity backup-status)
-                                        (platform-file-status-identity target-status)))))
-        (unwind-protect
-             (when backup-status
-               (platform-delete-file *platform* backup))
-          (when aliased-p
-            (setf (platform-file-permissions *platform* path)
-                  (workspace-prepared-change-original-permissions change))))
-        (setf (workspace-prepared-change-backup change) nil))))
+  (when-let ((backup (workspace-prepared-change-backup change)))
+    (let* ((path          (workspace-file-resource-pathname
+                           (cl-resources:prepared-change-resource change)))
+           (backup-status (platform-path-status *platform* backup))
+           (target-status (and (workspace-prepared-change-restored-p change)
+                               (platform-path-status *platform* path)))
+           (aliased-p     (and backup-status target-status
+                               (equal (platform-file-status-identity backup-status)
+                                      (platform-file-status-identity target-status)))))
+      (unwind-protect
+           (when backup-status
+             (platform-delete-file *platform* backup))
+        (when aliased-p
+          (setf (platform-file-permissions *platform* path)
+                (workspace-prepared-change-original-permissions change))))
+      (setf (workspace-prepared-change-backup change) nil)))
   nil)
 
 (defmethod cl-resources:prepared-change-discard

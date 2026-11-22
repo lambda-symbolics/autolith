@@ -130,11 +130,10 @@
                (lease-held-p (rest entry)))
           (return-from shell-log--active-p t)
           (shell-log--release-owner directory)))
-    (let ((status (platform-path-status *platform* path :follow-links-p nil)))
-      (when status
-        (unless (eq (platform-file-status-kind status) ':file)
-          (shell-log--fail "Unsafe shell log owner lock." path))
-        (values (ls-flock:file-lock-busy-p path))))))
+    (when-let ((status (platform-path-status *platform* path :follow-links-p nil)))
+      (unless (eq (platform-file-status-kind status) ':file)
+        (shell-log--fail "Unsafe shell log owner lock." path))
+      (values (ls-flock:file-lock-busy-p path)))))
 
 (-> shell-log--measure-captures (configuration pathname list) integer)
 (defun shell-log--measure-captures (configuration directory metadata)
@@ -302,18 +301,15 @@ Disable measurement until resource resolution has checked ancestor ownership."
   "Return IDENTITY's delivery index, reading its active segment once per prune."
   (if *shell-log-sync-evidence-cache*
       (let ((key (namestring identity)))
-        (or (gethash key *shell-log-sync-evidence-cache*)
-            (setf (gethash key *shell-log-sync-evidence-cache*)
-                  (shell-log--sync-evidence identity))))
+        (values (ensure-gethash key *shell-log-sync-evidence-cache*
+                                (shell-log--sync-evidence identity))))
       (shell-log--sync-evidence identity)))
 
 (-> shell-log--sync-receipt-pathname (pathname list) pathname)
 (defun shell-log--sync-receipt-pathname (identity key)
   "Locate one exact capture/provider-call receipt within its owner's storage."
   (merge-pathnames
-   (make-pathname :name (ironclad:byte-array-to-hex-string
-                         (ironclad:digest-sequence
-                          ':sha256 (utf8-string-to-octets (task--write-readable-sexp key))))
+   (make-pathname :name (memory-source-text-digest (task--write-readable-sexp key))
                   :type "sexp")
    (merge-pathnames "shell-delivery/" (conversation-storage-directory-pathname identity))))
 
@@ -963,7 +959,7 @@ Release only when native writers and all live publication boundaries finish."
 (defun shell-log--unavailable-metadata (job &optional directory)
   "Return a bounded missing-manifest diagnostic without exposing private paths."
   (list :execution-id (session-job-execution-identifier job)
-        :artifact-id  (and directory (first (last (pathname-directory directory))))
+        :artifact-id  (and directory (lastcar (pathname-directory directory)))
         :state ':unavailable :diagnostic "Shell log manifest is missing or unreadable."))
 
 (-> shell-log-job-metadata (configuration session-job) list)

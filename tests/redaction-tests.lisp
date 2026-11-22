@@ -111,7 +111,7 @@
               "Read and call the exported function from a fresh worker.")
              (let ((result
                      (lisp-worker-request
-                      (lisp-worker-pool-worker pool "redact") ':eval
+                      (lisp-worker-manager-worker pool "redact") ':eval
                       '(:forms ("(and (null (first *redaction-result*)) (keywordp (second *redaction-result*)))")))))
                (test-assert (equal (getf (rest result) :values) '("T"))
                             "Return setup failure values through scratchpad execution.")))

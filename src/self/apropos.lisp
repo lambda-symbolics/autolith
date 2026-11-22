@@ -111,12 +111,11 @@
 (-> self-symbol-suggestion-text (string &key (:package package)) string)
 (defun self-symbol-suggestion-text (name &key (package (find-package '#:autolith)))
   "Return a sentence naming the closest defined names to NAME, or an empty string."
-  (let ((suggestions (package-symbol-suggestions
-                      name :package       package
-                           :limit         *lisp-apropos-suggestion-limit*
-                           :token-minimum *lisp-apropos-token-minimum*)))
-    (if suggestions
-        (format nil " Closest defined names: ~{~A~^, ~}."
-                (mapcar (lambda (symbol) (symbol-label symbol package))
-                        suggestions))
-        "")))
+  (if-let ((suggestions (package-symbol-suggestions
+                         name :package       package
+                              :limit         *lisp-apropos-suggestion-limit*
+                              :token-minimum *lisp-apropos-token-minimum*)))
+      (format nil " Closest defined names: ~{~A~^, ~}."
+              (mapcar (lambda (symbol) (symbol-label symbol package))
+                      suggestions))
+      ""))

@@ -1,4 +1,5 @@
 (require :asdf)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 ;;;; -- Styled Bootstrap Output --
 
@@ -185,15 +186,7 @@ Unrailed output is copied as written so that native tools can redraw progress."
     (bootstrap-call-railed
      (lambda ()
        (load (merge-pathnames ".qlot/setup.lisp" source-root))
-       (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-       (let ((profile-library-directory
-               (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-             (library-directories
-               (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-         (when (probe-file profile-library-directory)
-           (pushnew profile-library-directory
-                    (symbol-value library-directories)
-                    :test #'equal)))))
+       (autolith-script-configure-cffi)))
     (bootstrap-section "Building the private command sandbox helper")
     (bootstrap-call-railed
      (lambda ()

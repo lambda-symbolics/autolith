@@ -58,7 +58,7 @@
                          :content content)
                    requests)
              (cond
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/usercode")
                 (values
@@ -69,7 +69,7 @@
                    "interval" "2"))
                  200
                  nil))
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/token")
                 (incf poll-count)
@@ -83,7 +83,7 @@
                        "code_verifier" "verifier-test-123"))
                      200
                      nil)))
-               ((device-authentication-test--url-suffix-p url "/oauth/token")
+               ((uiop:string-suffix-p url "/oauth/token")
                 (values
                  (json-encode
                   (json-object
@@ -189,7 +189,7 @@
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
              (cond
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/usercode")
                 (values
@@ -200,7 +200,7 @@
                    "interval" "7"))
                  200
                  nil))
-               ((device-authentication-test--url-suffix-p url "/oauth/token")
+               ((uiop:string-suffix-p url "/oauth/token")
                 (values
                  (json-encode
                   (json-object
@@ -261,7 +261,7 @@
         (*device-authentication-test-saved-credentials* nil))
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
-             (if (device-authentication-test--url-suffix-p
+             (if (uiop:string-suffix-p
                   url
                   "/api/accounts/deviceauth/usercode")
                  (progn
@@ -317,7 +317,7 @@
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
              (if
-              (device-authentication-test--url-suffix-p
+              (uiop:string-suffix-p
                url
                "/api/accounts/deviceauth/usercode")
               (values
@@ -365,7 +365,7 @@
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
              (cond
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/usercode")
                 (values
@@ -376,7 +376,7 @@
                    "interval" "1"))
                  200
                  nil))
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/token")
                 (values
@@ -432,7 +432,7 @@
   (let ((*device-authentication-test-saved-credentials* nil))
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
-             (if (device-authentication-test--url-suffix-p
+             (if (uiop:string-suffix-p
                   url
                   "/api/accounts/deviceauth/usercode")
                  (values
@@ -475,7 +475,7 @@
     (flet ((request (&key method url headers content)
              (declare (ignore method headers content))
              (cond
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/usercode")
                 (values
@@ -486,7 +486,7 @@
                    "interval" "1"))
                  200
                  nil))
-               ((device-authentication-test--url-suffix-p
+               ((uiop:string-suffix-p
                  url
                  "/api/accounts/deviceauth/token")
                 (values

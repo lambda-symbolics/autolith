@@ -21,7 +21,7 @@
 (-> application-memory--date (timestamp) string)
 (defun application-memory--date (timestamp)
   "Return TIMESTAMP's UTC calendar date."
-  (subseq (memory--timestamp-string timestamp) 0 10))
+  (subseq (format-utc-timestamp timestamp) 0 10))
 
 (-> application-memory--title (memory) string)
 (defun application-memory--title (memory)

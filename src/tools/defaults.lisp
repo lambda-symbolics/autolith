@@ -49,6 +49,21 @@
                     "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))))
     (tool-object-schema properties '("forms"))))
 
+(-> default-tools--lisp-system-schema () json-object)
+(defun default-tools--lisp-system-schema ()
+  "Return the shared schema for loading a system or running its tests."
+  (tool-object-schema
+   (json-object
+    "system" (tool-string-property "The ASDF system name.")
+    "asd" (tool-string-property
+           "An optional path to the exact ASD file defining the system.")
+    "repl" (tool-string-property
+            "The persistent REPL name; defaults to default.")
+    "completion-policy" (tool-completion-policy-property)
+    "async" (tool-boolean-property
+             "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
+   '("system")))
+
 (-> default-tools--lisp-repl-control-schema
     (&key (:include-image boolean))
     json-object)
@@ -875,20 +890,10 @@ them."
                      "The workspace-relative or absolute source file or directory path."))
             '("path")))
           (list
-           'lisp-load-system-tool
+           'lisp-system-tool
            "lisp" "load-system"
            "Load one ASDF or Quicklisp system in a named persistent REPL, optionally as an inspectable job."
-           (tool-object-schema
-            (json-object
-             "system" (tool-string-property "The ASDF system name.")
-             "asd" (tool-string-property
-                     "An optional path to the exact ASD file defining the system.")
-             "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default.")
-             "completion-policy" (tool-completion-policy-property)
-             "async" (tool-boolean-property
-                      "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
-            '("system")))
+           (default-tools--lisp-system-schema))
           (list
            'lisp-describe-tool
            "lisp" "describe"
@@ -945,20 +950,10 @@ them."
                       "How many matches to list; default 40, maximum 200."))
             '("query")))
           (list
-           'lisp-run-tests-tool
+           'lisp-system-tool
            "lisp" "run-tests"
            "Run ASDF tests for one system in a named persistent REPL, optionally as an inspectable job."
-           (tool-object-schema
-            (json-object
-             "system" (tool-string-property "The ASDF system name.")
-             "asd" (tool-string-property
-                     "An optional path to the exact ASD file defining the system.")
-             "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default.")
-             "completion-policy" (tool-completion-policy-property)
-             "async" (tool-boolean-property
-                      "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
-            '("system")))
+           (default-tools--lisp-system-schema))
           (list
            'lisp-reset-tool
            "lisp" "reset"

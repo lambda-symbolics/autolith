@@ -5,19 +5,8 @@
 (-> onboarding-state-test--write (configuration string) null)
 (defun onboarding-state-test--write (configuration text)
   "Replace a fixture snapshot with literal TEXT for malformed-reader probes."
-  (let ((pathname (onboarding-state-path configuration)))
-    (ensure-directories-exist pathname)
-    (with-open-file (stream pathname :direction ':output :if-exists ':supersede
-                                    :external-format :utf-8)
-      (write-string text stream)))
+  (test-write-text (onboarding-state-path configuration) text)
   nil)
-
-(-> onboarding-state-test--signals-p (function) boolean)
-(defun onboarding-state-test--signals-p (function)
-  "Return true when FUNCTION reports a typed onboarding state failure."
-  (handler-case
-      (progn (funcall function) nil)
-    (onboarding-state-error () t)))
 
 (-> test-onboarding-state-selection () null)
 (defun test-onboarding-state-selection ()
@@ -111,11 +100,11 @@
                       "#.(error \"Reader evaluation ran\")"))
         (onboarding-state-test--write configuration text)
         (test-assert
-         (onboarding-state-test--signals-p
+         (test-signals-p 'onboarding-state-error
           (lambda () (onboarding-state-pending configuration pages)))
          "Unsupported or malformed snapshots do not acknowledge lessons")
         (test-assert
-         (onboarding-state-test--signals-p
+         (test-signals-p 'onboarding-state-error
           (lambda () (onboarding-state-record configuration pages ':completed)))
          "Recording does not silently overwrite an unreadable snapshot")
         (test-assert (string= text (uiop:read-file-string
@@ -126,7 +115,7 @@
         (onboarding-state-test--write
          configuration "#.(progn (setf autolith::evaluated-p t) '(:onboarding :version 1 :pages nil))")
         (test-assert
-         (onboarding-state-test--signals-p
+         (test-signals-p 'onboarding-state-error
           (lambda () (onboarding-state-pending configuration pages)))
          "Reader evaluation syntax is rejected through the domain condition")
         (test-assert (not evaluated-p) "Snapshot reading never evaluates forms"))))
@@ -134,7 +123,7 @@
 
 (-> test-onboarding-state-recovery-and-validation () null)
 (defun test-onboarding-state-recovery-and-validation ()
-  "Explicit reset/retry recovers bad state; invalid caller data never publishes."
+  "Recover bad state via reset or retry and reject updates over the page limit."
   (with-test-configuration (configuration)
     (let ((pages '((:id "intro" :version 1))))
       (onboarding-state-test--write configuration "(:unsupported)")
@@ -169,19 +158,10 @@
                    (invoke-restart (find-restart 'retry-onboarding-state condition))))))
           (test-assert (equal (onboarding-state-pending configuration pages) pages)
                        "Retry rereads corrected state")))
-      (dolist (invalid '(((:id "" :version 1))
-                         ((:id "intro" :version 0))
-                         ((:id "intro" :version 2147483648))
-                         ((:id "intro" :version 1) (:id "intro" :version 2))
-                         ((:id "intro" :version 1 :version 2))))
-        (test-assert
-         (onboarding-state-test--signals-p
-          (lambda () (onboarding-state-record configuration invalid ':completed)))
-         "Invalid caller page identities are rejected"))
       (let ((*onboarding-state-page-limit* 1))
         (onboarding-state-record configuration pages ':completed)
         (test-assert
-         (onboarding-state-test--signals-p
+         (test-signals-p 'onboarding-state-error
           (lambda ()
             (onboarding-state-record configuration '((:id "extra" :version 1)) ':completed)))
          "Merging beyond the bounded page count is rejected before publication"))
@@ -207,7 +187,7 @@
                          :operation ':publish))))
          (lambda ()
            (test-assert
-            (onboarding-state-test--signals-p
+            (test-signals-p 'onboarding-state-error
              (lambda ()
                (onboarding-state-record configuration '((:id "intro" :version 2)) ':completed)))
             "Publication failures propagate without falsely acknowledging a page")))

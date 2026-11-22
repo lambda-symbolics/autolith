@@ -509,20 +509,19 @@ be learned from releases its payload as soon as that is known."
          (setf (action-trace-aborted-p current) t)
          (action-trace--release current)))
       (:tool-result
-       (let ((call (and current
-                        (find (getf properties :call-id) (action-trace-calls current)
-                              :key  (lambda (call) (getf call :call-id))
-                              :test #'equal))))
-         (when call
-           (if (eq (getf properties :status) ':ok)
-               (let ((output (action-trace--retained-output (getf properties :output))))
-                 (setf (getf call :status) ':ok
-                       (getf call :output) output)
-                 (incf (action-trace-weight current) (length (or output "")))
-                 (action-trace--check-weight current))
-               (progn
-                 (setf (getf call :status) (getf properties :status))
-                 (action-trace--release current))))))
+       (when-let ((call (and current
+                             (find (getf properties :call-id) (action-trace-calls current)
+                                   :key  (lambda (call) (getf call :call-id))
+                                   :test #'equal))))
+         (if (eq (getf properties :status) ':ok)
+             (let ((output (action-trace--retained-output (getf properties :output))))
+               (setf (getf call :status) ':ok
+                     (getf call :output) output)
+               (incf (action-trace-weight current) (length (or output "")))
+               (action-trace--check-weight current))
+             (progn
+               (setf (getf call :status) (getf properties :status))
+               (action-trace--release current)))))
       (:provider
        (let ((metadata (getf properties :metadata)))
          (when (and current

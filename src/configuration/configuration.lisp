@@ -351,7 +351,7 @@ exist yet, and is only put in directory form."
   :maximum                              1048576
   :environment                          "AUTOLITH_CONTEXT_OUTPUT_RESERVE"
   :default                              (lambda (configuration)
-                                          (max 1 (min 8192 (floor (config :context-window configuration) 10)))))
+                                          (clamp (floor (config :context-window configuration) 10) 1 8192)))
 
 (define-setting :max-output-tokens (optional-positive-integer-setting)
   :label                           "Maximum output tokens"

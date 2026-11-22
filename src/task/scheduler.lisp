@@ -17,7 +17,8 @@
 (-> task--retained-prefix (string integer) string)
 (defun task--retained-prefix (text limit)
   "Return at most LIMIT leading characters from TEXT."
-  (subseq text 0 (min limit (length text))))
+  (check-type limit (integer 0 *))
+  (take limit text))
 
 (-> task-job--compact-result
     (list &key (:artifact-available-p boolean))
@@ -154,9 +155,8 @@
                                    (getf (task-job-telemetry-terminal job) :cancellation-reason)))
                          (task-job-telemetry-terminal job)))
             ;; The headless caller reads the terminal result after telemetry cleanup.
-           (let ((error-type (getf terminal :error-type)))
-             (when error-type
-               (setf (getf final-result :error-type) error-type)))
+           (when-let ((error-type (getf terminal :error-type)))
+             (setf (getf final-result :error-type) error-type))
            (values final-result final-report final-state))
       (telemetry--call-safely
        (lambda ()
@@ -282,12 +282,11 @@ caused by its agent moving or parking, is also ignored here."
           (task-orchestrator-list-jobs
            (session-job-orchestrator job))))
     (dolist (identifier (job-owner-identifiers job))
-      (let ((ancestor
-              (find identifier jobs :key #'job-identifier :test #'string=)))
-        (when ancestor
-          (let ((reason (job-cancellation-reason ancestor)))
-            (when (and reason (not (eq reason ':moved)))
-              (return reason))))))))
+      (when-let ((ancestor
+                   (find identifier jobs :key #'job-identifier :test #'string=)))
+        (let ((reason (job-cancellation-reason ancestor)))
+          (when (and reason (not (eq reason ':moved)))
+            (return reason)))))))
 
 (-> task-job--cancelled-ancestor-reason (task-job) (option keyword))
 (defun task-job--cancelled-ancestor-reason (job)
@@ -317,13 +316,12 @@ start under a cancelled ancestor, and hands over to the child."
            (multiple-value-prog1
                (progn
                  (task-job--set-progress-state job :running)
-                 (let ((reason (task-job--cancelled-ancestor-reason job)))
-                   (when reason
-                     (error 'job-aborted
-                            :message    (format nil "Task ~A was ~(~A~) with its parent."
-                                                (job-identifier job) reason)
-                            :identifier (job-identifier job)
-                            :reason     reason)))
+                 (when-let ((reason (task-job--cancelled-ancestor-reason job)))
+                   (error 'job-aborted
+                          :message    (format nil "Task ~A was ~(~A~) with its parent."
+                                              (job-identifier job) reason)
+                          :identifier (job-identifier job)
+                          :reason     reason))
                  (task-continuity-record-job job (task-job-parent-agent job))
                  (task-run-child job))
              (setf publication-p t))
@@ -387,14 +385,13 @@ The parent waits only its own cleanup budget; this execution remains running."
 (defun tool-execution-job--run (job)
   "Call JOB's operation exactly once after checking task ancestry."
   (job-check-cancellation job)
-  (let ((reason (session-job--cancelled-ancestor-reason job)))
-    (when reason
-      (error 'job-aborted
-             :message
-             (format nil "Execution ~A was ~(~A~) with its parent."
-                     (session-job-identifier job) reason)
-             :identifier (job-identifier job)
-             :reason     reason)))
+  (when-let ((reason (session-job--cancelled-ancestor-reason job)))
+    (error 'job-aborted
+           :message
+           (format nil "Execution ~A was ~(~A~) with its parent."
+                   (session-job-identifier job) reason)
+           :identifier (job-identifier job)
+           :reason     reason))
   (let ((operation                    (tool-execution-job-operation-function job))
         (*tool-execution-current-job* job))
     (unless operation
@@ -756,15 +753,14 @@ that check atomic with cascading cancellation."
                 (agent-configuration parent-agent) definition)))
         (when (and (not (getf entry :independent-context-p))
                    (task-child-reference-history-p parent-agent child-configuration))
-          (let ((limit
-                  (task-child-reference-history-byte-limit
-                   child-configuration)))
-            (when limit
-              (setf (gethash entry reference-enabled-entries) t
-                    reference-byte-limit
-                    (if reference-byte-limit
-                        (min reference-byte-limit limit)
-                        limit)))))))
+          (when-let ((limit
+                       (task-child-reference-history-byte-limit
+                        child-configuration)))
+            (setf (gethash entry reference-enabled-entries) t
+                  reference-byte-limit
+                  (if reference-byte-limit
+                      (min reference-byte-limit limit)
+                      limit))))))
     (when reference-byte-limit
       (setf inherited-reference-items
             (conversation-inherited-reference-snapshot

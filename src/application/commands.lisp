@@ -83,7 +83,7 @@ renderer, including in fullscreen."
    (terminal-span
     ':dim
     (format nil "    reported ~A  ·  ~A~%"
-            (papercut-timestamp-string (papercut-reported-at papercut))
+            (format-utc-timestamp (papercut-reported-at papercut))
             (papercut-call-source papercut)))))
 
 (-> application--papercut-ambiguous-entry (string list) list)
@@ -128,7 +128,7 @@ renderer, including in fullscreen."
            ':dim
            (format nil "  id ~A~%  reported ~A~%"
                    (papercut-identifier papercut)
-                   (papercut-timestamp-string (papercut-reported-at papercut))))
+                   (format-utc-timestamp (papercut-reported-at papercut))))
           (terminal-span
            ':strong
            (format nil "  ~A~%~%"
@@ -255,9 +255,8 @@ renderer, including in fullscreen."
                            " · resumed session")
                           (otherwise
                            ""))))
-   (let ((description (application--wire-change-description (getf miss :wire-change))))
-     (when description
-       (list (terminal-span ':dim (format nil " · request ~A" description)))))))
+   (when-let ((description (application--wire-change-description (getf miss :wire-change))))
+     (list (terminal-span ':dim (format nil " · request ~A" description))))))
 
 (-> application--wire-change-description (list) (option string))
 (defun application--wire-change-description (change)
@@ -266,21 +265,20 @@ renderer, including in fullscreen."
 A request that repeats the previous reusable prefix with the same fields and
 markers reads as intact, which points at the provider rather than the prompt."
   (and change
-       (let ((parts
-               (remove nil
-                       (list (and (getf change :fields)
-                                  (format nil "~{~A~^, ~} changed" (getf change :fields)))
-                             (let ((index (getf change :first-changed-item))
-                                   (count (getf change :items)))
-                               (when index
-                                 (if (< index count)
-                                     (format nil "item ~D of ~D changed" (1+ index) count)
-                                     (format nil "item ~D removed" (1+ index)))))
-                             (and (getf change :breakpoints-moved-p)
-                                  "cache markers moved")))))
-         (if parts
-             (format nil "~{~A~^, ~}" parts)
-             "prefix intact"))))
+       (if-let ((parts
+                  (remove nil
+                          (list (and (getf change :fields)
+                                     (format nil "~{~A~^, ~} changed" (getf change :fields)))
+                                (let ((index (getf change :first-changed-item))
+                                      (count (getf change :items)))
+                                  (when index
+                                    (if (< index count)
+                                        (format nil "item ~D of ~D changed" (1+ index) count)
+                                        (format nil "item ~D removed" (1+ index)))))
+                                (and (getf change :breakpoints-moved-p)
+                                     "cache markers moved")))))
+           (format nil "~{~A~^, ~}" parts)
+           "prefix intact")))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)
@@ -476,12 +474,11 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                        "standard"))
              (list "web search" (string-downcase (config :web-search-mode configuration)))
              (list "goal"
-                   (let ((goal (application-goal application)))
-                     (if goal
-                         (format nil "~(~A~): ~A"
-                                 (getf goal :status)
-                                 (getf goal :objective))
-                         "none")))
+                   (if-let ((goal (application-goal application)))
+                       (format nil "~(~A~): ~A"
+                               (getf goal :status)
+                               (getf goal :objective))
+                       "none"))
              (list "token usage"
                    (format nil "~A total (~A input + ~A output)"
                            (application--token-count-description
@@ -552,11 +549,10 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (option string))
 (defun application--conversation-preview-from-metadata (metadata)
   "Return a one-line excerpt from compact picker METADATA."
-  (let ((preview (conversation-picker-metadata-preview metadata)))
-    (when preview
-      (text-cell-prefix
-       (sanitize-text preview :single-line-p t)
-       *conversation-preview-width*))))
+  (when-let ((preview (conversation-picker-metadata-preview metadata)))
+    (text-cell-prefix
+     (sanitize-text preview :single-line-p t)
+     *conversation-preview-width*)))
 
 (-> application--effort-items (application) list)
 (defun application--effort-items (application)
@@ -645,9 +641,8 @@ combination."
   (let ((expanding-visibility-p
           (and enabled-p (not (application-reasoning-traces-p application)))))
     (setf (application-reasoning-traces-p application) enabled-p)
-    (let ((provider (application-provider application)))
-      (when provider
-        (provider-set-reasoning-summaries provider enabled-p)))
+    (when-let ((provider (application-provider application)))
+      (provider-set-reasoning-summaries provider enabled-p))
     (when expanding-visibility-p
       (application-reset-history-pagination application)))
   (unless enabled-p
@@ -740,10 +735,9 @@ combination."
 (-> application--models-description (application &key (:provider (option string))) string)
 (defun application--models-description (application &key provider)
   "Return a provider-distinct model listing, optionally restricted to PROVIDER."
-  (let ((items (application--model-items application :provider provider)))
-    (if items
-        (format nil "Available models:~%~{- ~A~%~}" (mapcar (lambda (item) (getf item :name)) items))
-        "No registered provider models are available.")))
+  (if-let ((items (application--model-items application :provider provider)))
+      (format nil "Available models:~%~{- ~A~%~}" (mapcar (lambda (item) (getf item :name)) items))
+      "No registered provider models are available."))
 
 (-> application-models-entry (application list &key (:provider (option string))) list)
 (defun application-models-entry (application failures &key provider)
@@ -1078,11 +1072,10 @@ work must steer the running turn, not queue as follow-up work."
                 application
                 :steering-function           steering-function
                 :steering-persisted-function steering-persisted-function)))
-        (let ((controller (application-input-controller application)))
-          (if controller
-              (application-input-controller-call-with-primary-steering
-               controller #'work)
-              (work nil nil))))))
+        (if-let ((controller (application-input-controller application)))
+            (application-input-controller-call-with-primary-steering
+             controller #'work)
+            (work nil nil)))))
   nil)
 
 (define-condition application-goal-error (autolith-error)
@@ -1953,17 +1946,16 @@ searches every task directory."
                     (provider-authenticate-with-method
                      provider method :stream output :open-browser-p t))))))))
     (application-present application (application-success-line message))
-    (let ((model (provider-authenticated-model
-                  (application-configuration application) provider)))
-      (when model
-        (application-set-model application model
-                               :provider (provider-registration-name
-                                          (model-provider-registration provider)))
-        (application-present
-         application
-         (format nil "Active provider: ~A; model: ~A."
-                 (configuration-model-provider-name
-                  (application-configuration application)) model)))))
+    (when-let ((model (provider-authenticated-model
+                       (application-configuration application) provider)))
+      (application-set-model application model
+                             :provider (provider-registration-name
+                                        (model-provider-registration provider)))
+      (application-present
+       application
+       (format nil "Active provider: ~A; model: ~A."
+               (configuration-model-provider-name
+                (application-configuration application)) model))))
   nil)
 
 (-> application-checkpoint (application &key (:allow-dirty-p boolean)) null)
@@ -2046,20 +2038,19 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 (-> application-saved-permissions-entry (application) list)
 (defun application-saved-permissions-entry (application)
   "Return saved approvals with request, domain, and pathname presentation roles."
-  (let ((rules (permission-state-rules (application-permission-state application))))
-    (if rules
-        (append
-         (list (terminal-span ':brand (format nil "# saved exact approvals~%")))
-         (loop for rule in rules
-               for kind = (command-permission-kind rule)
-               append (application--entry-fields
-                       (list (list (if (eq kind ':command) "command" "request")
-                                   ':code (command-permission-command rule))
-                             (list "kind" ':dim (string-downcase (symbol-name kind)))
-                             (list "in" ':code
-                                   (application--abbreviated-directory
-                                    (command-permission-directory rule)))))))
-        (application-hint-line "no exact approvals are saved"))))
+  (if-let ((rules (permission-state-rules (application-permission-state application))))
+      (append
+       (list (terminal-span ':brand (format nil "# saved exact approvals~%")))
+       (loop for rule in rules
+             for kind = (command-permission-kind rule)
+             append (application--entry-fields
+                     (list (list (if (eq kind ':command) "command" "request")
+                                 ':code (command-permission-command rule))
+                           (list "kind" ':dim (string-downcase (symbol-name kind)))
+                           (list "in" ':code
+                                 (application--abbreviated-directory
+                                  (command-permission-directory rule)))))))
+      (application-hint-line "no exact approvals are saved")))
 
 (-> application--permission-mode-entry (keyword string) list)
 (defun application--permission-mode-entry (mode description)
@@ -2123,9 +2114,8 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
                     (application-agent application))))
     (when (typep agent 'agent)
       (setf (agent-hurry-up-p agent) enabled-p)))
-  (let ((orchestrator (application--task-orchestrator application)))
-    (when orchestrator
-      (task-orchestrator-set-hurry-up orchestrator enabled-p)))
+  (when-let ((orchestrator (application--task-orchestrator application)))
+    (task-orchestrator-set-hurry-up orchestrator enabled-p))
   (let ((ui (and (slot-boundp application 'ui)
                  (application-ui application))))
     (when (typep ui 'terminal-ui)
@@ -2382,19 +2372,18 @@ The current value and its source sit in aligned columns of their own."
                         (setting-label setting) rendered
                         (application--setting-source-text source setting))))
               (options
-               (let ((option (application--pick-identifier
-                              application
-                              :title        (setting-label setting)
-                              :items        (application--setting-option-items setting value options)
-                              :initial-name rendered
-                              :search-p     t
-                              :usage        "Usage: (settings :NAME VALUE)"
-                              :empty-notice "This setting offers no choices.")))
-                 (when option
-                   (application-apply-setting
-                    application name
-                    (setting-parse setting option (application--setting-configuration application name)))
-                   (application--present-setting-value application name))))
+               (when-let ((option (application--pick-identifier
+                                   application
+                                   :title        (setting-label setting)
+                                   :items        (application--setting-option-items setting value options)
+                                   :initial-name rendered
+                                   :search-p     t
+                                   :usage        "Usage: (settings :NAME VALUE)"
+                                   :empty-notice "This setting offers no choices.")))
+                 (application-apply-setting
+                  application name
+                  (setting-parse setting option (application--setting-configuration application name)))
+                 (application--present-setting-value application name)))
               (t
                (application-present
                 application
@@ -2726,11 +2715,10 @@ show."
      :callable          t)
     (application &optional (first nil first-p) (second nil second-p))
   (unless first-p
-    (let ((agent (application--pick-agent application
-                                          :title "rename an agent"
-                                          :usage "Usage: (rename \"WHO\" \"NAME\")")))
-      (when agent
-        (application--prefill-call application "rename" agent)))
+    (when-let ((agent (application--pick-agent application
+                                               :title "rename an agent"
+                                               :usage "Usage: (rename \"WHO\" \"NAME\")")))
+      (application--prefill-call application "rename" agent))
     (return-from application--builtin-rename-command ':continue))
   (let* ((configuration (application-configuration application))
          (name          (princ-to-string (if second-p second first)))
@@ -2796,19 +2784,18 @@ show."
       (when target
         (application--prefill-call application "tell" (princ-to-string target)))
       (return-from application--builtin-tell-command ':continue)))
-  (let ((target (application--channel-or-ask application (princ-to-string channel)
-                                             :title "tell which channel?"
-                                             :usage "Usage: (tell \"CHANNEL\" \"MESSAGE\")")))
-    (when target
-      (let ((result (application-world-send application
-                                            :channel target
-                                            :text    (format nil "~{~A~^ ~}" words))))
-        (application-present
-         application
-         (application-notice-line
-          (format nil "sent to ~{~A~^, ~}~@[; waiting for a full inbox: ~{~A~^, ~}~]"
-                  (mapcar #'conversation-identifier-display (getf result :channels))
-                  (mapcar #'conversation-identifier-display (getf result :pending))))))))
+  (when-let ((target (application--channel-or-ask application (princ-to-string channel)
+                                                  :title "tell which channel?"
+                                                  :usage "Usage: (tell \"CHANNEL\" \"MESSAGE\")")))
+    (let ((result (application-world-send application
+                                          :channel target
+                                          :text    (format nil "~{~A~^ ~}" words))))
+      (application-present
+       application
+       (application-notice-line
+        (format nil "sent to ~{~A~^, ~}~@[; waiting for a full inbox: ~{~A~^, ~}~]"
+                (mapcar #'conversation-identifier-display (getf result :channels))
+                (mapcar #'conversation-identifier-display (getf result :pending)))))))
   ':continue)
 
 (define-application-command application--builtin-history-command
@@ -2850,13 +2837,12 @@ show."
      :terminal-behavior :exclusive
      :callable          t)
     (application &optional (provider-name nil provider-name-supplied-p) method)
-  (let ((provider-name
-          (if provider-name-supplied-p
-              provider-name
-              (and *application-command-interactive-p*
-                   (application--pick-authentication-provider application)))))
-    (when provider-name
-      (application-authenticate application provider-name method)))
+  (when-let ((provider-name
+               (if provider-name-supplied-p
+                   provider-name
+                   (and *application-command-interactive-p*
+                        (application--pick-authentication-provider application)))))
+    (application-authenticate application provider-name method))
   ':continue)
 
 (define-application-command application--builtin-model-command
@@ -2919,17 +2905,16 @@ show."
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional (effort nil effort-supplied-p))
-  (let ((effort
-          (if effort-supplied-p
-              effort
-              (and *application-command-interactive-p*
-                   (application--pick-reasoning-effort application)))))
-    (when effort
-      (application-set-reasoning-effort application effort)
-      (application-present
-       application
-       (application-selection-line
-        (config :reasoning-effort (application-configuration application))))))
+  (when-let ((effort
+               (if effort-supplied-p
+                   effort
+                   (and *application-command-interactive-p*
+                        (application--pick-reasoning-effort application)))))
+    (application-set-reasoning-effort application effort)
+    (application-present
+     application
+     (application-selection-line
+      (config :reasoning-effort (application-configuration application)))))
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
@@ -3192,11 +3177,10 @@ show."
       (t
        (error 'configuration-error
               :message "Usage: (mcp), (mcp :refresh), or (mcp :reload).")))
-    (let ((change-entry
-            (application--tool-capability-change-entry
-             added-tools removed-tools)))
-      (when change-entry
-        (application-present application change-entry)))
+    (when-let ((change-entry
+                 (application--tool-capability-change-entry
+                  added-tools removed-tools)))
+      (application-present application change-entry))
     (let ((manager
             (mcp-tool-registry-manager
              (application-tool-registry application))))
@@ -3266,19 +3250,18 @@ show."
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional (identifier nil identifier-supplied-p))
-  (let ((identifier
-          (if identifier-supplied-p
-              identifier
-              (and *application-command-interactive-p*
-                   (application--pick-identifier
-                    application
-                    :title        "select a generation for recovery"
-                    :items        (application--generation-items application)
-                    :usage        "Usage: (rollback \"ID\")"
-                    :empty-notice "No retained generations exist.")))))
-    (when identifier
-      (generation-request-rollback
-       (application-configuration application) identifier)))
+  (when-let ((identifier
+               (if identifier-supplied-p
+                   identifier
+                   (and *application-command-interactive-p*
+                        (application--pick-identifier
+                         application
+                         :title        "select a generation for recovery"
+                         :items        (application--generation-items application)
+                         :usage        "Usage: (rollback \"ID\")"
+                         :empty-notice "No retained generations exist.")))))
+    (generation-request-rollback
+     (application-configuration application) identifier))
   ':continue)
 
 (define-application-command application--builtin-info-command

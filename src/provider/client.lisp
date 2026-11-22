@@ -12,8 +12,12 @@
   (:documentation
    "Mixin for providers whose reconfiguration preserves session state."))
 
+(defclass responses-function-name-mixin ()
+  ()
+  (:documentation "Use the grammar-safe function-name codec for Responses calls."))
+
 (defclass codex-subscription-provider
-    (session-preserving-provider-mixin responses-api-provider)
+    (session-preserving-provider-mixin responses-function-name-mixin responses-api-provider)
   ((reasoning-summaries-p
     :initarg       :reasoning-summaries-p
     :initform      nil
@@ -88,16 +92,15 @@
   (let ((registration (model-provider-registration provider)))
     (if (and registration
              (provider-registration-model-discovery registration))
-        (let ((failures
-                (provider-refresh-models
-                 (provider-configuration provider)
-                 :provider-name (provider-registration-name registration))))
-          (if failures
-              (format nil
-                      "~A~%Model discovery warnings:~%~{~A~%~}"
-                      message
-                      (mapcar #'autolith-error-message failures))
-              message))
+        (if-let ((failures
+                   (provider-refresh-models
+                    (provider-configuration provider)
+                    :provider-name (provider-registration-name registration))))
+            (format nil
+                    "~A~%Model discovery warnings:~%~{~A~%~}"
+                    message
+                    (mapcar #'autolith-error-message failures))
+            message)
         message)))
 
 (defmethod provider-authenticate :around
@@ -596,15 +599,14 @@ and codes follow the Codex reference at commit 6f51c65958."
     null)
 (defun provider--codex-signal-status-failure (provider status &key headers raw-body)
   "Signal HTTP STATUS as terminal for an exhausted allowance, else as the shared failure."
-  (let ((error (and (= status 429) (provider--codex-usage-limit-error raw-body))))
-    (if error
-        (error 'provider-error
-               :message    (provider--codex-usage-limit-message error)
-               :status     status
-               :request-id (provider--response-request-id headers)
-               :response   nil)
-        (provider--signal-http-status-failure
-         provider status :headers headers :raw-body raw-body))))
+  (if-let ((error (and (= status 429) (provider--codex-usage-limit-error raw-body))))
+      (error 'provider-error
+             :message    (provider--codex-usage-limit-message error)
+             :status     status
+             :request-id (provider--response-request-id headers)
+             :response   nil)
+      (provider--signal-http-status-failure
+       provider status :headers headers :raw-body raw-body)))
 
 (-> provider--authentication-detail (t &key (:limit (integer 1 *))) (option string))
 (defun provider--authentication-detail (value &key (limit *provider-error-detail-limit*))

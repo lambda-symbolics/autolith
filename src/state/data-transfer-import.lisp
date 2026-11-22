@@ -100,7 +100,7 @@
           (dolist (owner-root (uiop:subdirectories task-root))
             (data-transfer--check-path data-root owner-root)
             (dolist (child-root (uiop:subdirectories owner-root))
-              (let ((identifier (first (last (pathname-directory child-root)))))
+              (let ((identifier (lastcar (pathname-directory child-root))))
                 (when (gethash identifier expected)
                   (data-transfer--check-path data-root child-root)
                   (check identifier
@@ -259,7 +259,7 @@
     (loop for plan in (getf archive :plans)
           append (let ((path
                         (configuration-plan-path configuration
-                                                 (data-transfer--workspace-identifier
+                                                 (workspace-name-identifier
                                                   (getf (rest plan) :directory)))))
                    (let* ((legacy-path (configuration-legacy-plan-path configuration))
                           (legacy      (when (probe-file legacy-path) (snapshot-read legacy-path))))

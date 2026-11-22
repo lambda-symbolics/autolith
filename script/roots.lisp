@@ -4,6 +4,14 @@
 
 (require :sb-posix)
 
+(defun autolith-script-configure-cffi ()
+  "Load CFFI and add the Guix profile library directory when it exists."
+  (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
+  (let ((directory   (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
+        (directories (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
+    (when (probe-file directory)
+      (pushnew directory (symbol-value directories) :test #'equal))))
+
 (defun autolith-script-setenv (name value)
   "Set environment variable NAME to VALUE for this process and its children.
 

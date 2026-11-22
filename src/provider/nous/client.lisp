@@ -138,8 +138,7 @@
                 :credential-manager
                 (nous-credential-manager-create configuration))
           for identifier = (or (model-spec-name spec) "")
-          for trimmed = (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                     identifier)
+          for trimmed = (string-trim *line-whitespace* identifier)
           when (and (non-empty-string-p trimmed)
                     (nous-provider--model-identifier-usable-p trimmed)
                     (not (member trimmed seen :test #'string=)))

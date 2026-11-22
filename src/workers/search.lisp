@@ -18,7 +18,7 @@ which may no longer exist."
   "Create Autolith's lazy supervised clifff helper below CONFIGURATION's source root."
   (let* ((source-root  (search-worker--source-root configuration))
          (script       (merge-pathnames "bin/autolith-search-worker" source-root))
-         (sbcl-command (or (uiop:getenv "AUTOLITH_SBCL") "sbcl")))
+         (sbcl-command (sbcl-command)))
     (unless (probe-file script)
       (error 'search-error
              :message   (format nil "The private fff helper is missing at ~A."
@@ -78,14 +78,13 @@ which may no longer exist."
 
 ;;;; -- Tool Execution --
 
-(defmethod tool-execute ((tool search-files-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Fuzzy-search indexed workspace paths through isolated clifff."
-  (let ((query (search-tool--string-argument tool arguments "query"
-                                             :required t))
-        (page  (search-tool--bounded-integer arguments "page"
-                                             :maximum #xffffffff))
+(-> search-tool--execute-files (search-tool tool-context hash-table
+                                 &key (:argument-name string) (:glob-p boolean))
+    tool-result)
+(defun search-tool--execute-files (tool context arguments &key argument-name glob-p)
+  "Search indexed paths using the required ARGUMENT-NAME and matching mode."
+  (let ((query (search-tool--string-argument tool arguments argument-name :required t))
+        (page  (search-tool--bounded-integer arguments "page" :maximum #xffffffff))
         (maximum-results
           (search-tool--bounded-integer
            arguments "max-results"
@@ -93,46 +92,31 @@ which may no longer exist."
            :minimum  1
            :maximum  *search-maximum-result-limit*)))
     (when (find #\Newline query)
-      (error 'tool-error
-             :message   "search.files query must fit on one line."
-             :tool-name "search.files"))
+      (let ((tool-name (tool-canonical-name tool)))
+        (error 'tool-error
+               :message   (format nil "~A ~A must fit on one line." tool-name argument-name)
+               :tool-name tool-name)))
     (tool-success
      (search-worker-request
       (search-tool-engine tool)
       (tool-context-configuration context)
       :operation ':files
       :arguments (list query
-                       :glob-p    nil
+                       :glob-p    glob-p
                        :page      page
                        :page-size maximum-results)))))
+
+(defmethod tool-execute ((tool search-files-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Fuzzy-search indexed workspace paths through isolated clifff."
+  (search-tool--execute-files tool context arguments :argument-name "query" :glob-p nil))
 
 (defmethod tool-execute ((tool search-glob-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Glob indexed workspace paths through isolated clifff."
-  (let ((pattern (search-tool--string-argument tool arguments "pattern"
-                                               :required t))
-        (page    (search-tool--bounded-integer arguments "page"
-                                               :maximum #xffffffff))
-        (maximum-results
-          (search-tool--bounded-integer
-           arguments "max-results"
-           :fallback *search-default-result-limit*
-           :minimum  1
-           :maximum  *search-maximum-result-limit*)))
-    (when (find #\Newline pattern)
-      (error 'tool-error
-             :message   "search.glob pattern must fit on one line."
-             :tool-name "search.glob"))
-    (tool-success
-     (search-worker-request
-      (search-tool-engine tool)
-      (tool-context-configuration context)
-      :operation ':files
-      :arguments (list pattern
-                       :glob-p    t
-                       :page      page
-                       :page-size maximum-results)))))
+  (search-tool--execute-files tool context arguments :argument-name "pattern" :glob-p t))
 
 (defmethod tool-execute ((tool search-content-tool)
                          (context tool-context)

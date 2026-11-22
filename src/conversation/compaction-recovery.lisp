@@ -121,8 +121,7 @@ configured window. Read existing metadata only, without discovery or preparation
           while (< characters (* 40960 4))
           do (incf characters (length (json-encode item)))
              (setf start index))
-    (let ((protected (position-if (lambda (item) (gethash item (compaction-recovery-protected state))) items)))
-      (when protected (setf start (min start protected))))
+    (when-let ((protected (position-if (lambda (item) (gethash item (compaction-recovery-protected state))) items))) (setf start (min start protected)))
     (let ((plan (clinker-transcript:make-compaction-plan
                  (conversation-projection view)
                  :cutoff            start

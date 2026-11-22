@@ -52,36 +52,35 @@
 (-> application-knowledge--provenance (knowledge-view knowledge-node) (option string))
 (defun application-knowledge--provenance (view node)
   "Return where NODE comes from: its deriving rule, or its sources' short labels."
-  (let ((justification (first (knowledge-node-justifications node))))
-    (if justification
-        (format nil "derived by ~A v~D" (getf justification :rule)
-                (getf justification :version))
-        (let ((labels (remove-duplicates
+  (if-let ((justification (first (knowledge-node-justifications node))))
+      (format nil "derived by ~A v~D" (getf justification :rule)
+              (getf justification :version))
+      (let ((labels (remove-duplicates
 
-                       (loop for support in (knowledge-node-supports node)
-                             for evidence = (and (getf support :evidence)
-                                                 (knowledge-base-evidence-record
-                                                  (knowledge-view-base view)
-                                                  (getf support :evidence)))
-                             collect (if evidence
-                                         (let ((source (getf evidence :source)))
-                                           (ecase (first source)
-                                             (:file
-                                              (getf (rest source) :path))
-                                             (:url
-                                              (or (handler-case
-                                                      (uri-host (uri (getf (rest source) :url)))
-                                                    (uri-error ()
-                                                      nil))
-                                                  "web"))
-                                             (:user
-                                              "you said")
-                                             ((:tool :memory :mission :skill)
-                                              (string-downcase (symbol-name (first source))))))
-                                         (string-downcase (symbol-name (getf support :basis)))))
+                     (loop for support in (knowledge-node-supports node)
+                           for evidence = (and (getf support :evidence)
+                                               (knowledge-base-evidence-record
+                                                (knowledge-view-base view)
+                                                (getf support :evidence)))
+                           collect (if evidence
+                                       (let ((source (getf evidence :source)))
+                                         (ecase (first source)
+                                           (:file
+                                            (getf (rest source) :path))
+                                           (:url
+                                            (or (handler-case
+                                                    (uri-host (uri (getf (rest source) :url)))
+                                                  (uri-error ()
+                                                    nil))
+                                                "web"))
+                                           (:user
+                                            "you said")
+                                           ((:tool :memory :mission :skill)
+                                            (string-downcase (symbol-name (first source))))))
+                                       (string-downcase (symbol-name (getf support :basis)))))
 
-                       :test #'string= :from-end t)))
-          (and labels (sanitize-text (format nil "~{~A~^, ~}" labels) :single-line-p t))))))
+                     :test #'string= :from-end t)))
+        (and labels (sanitize-text (format nil "~{~A~^, ~}" labels) :single-line-p t)))))
 
 (-> application-knowledge--reason (knowledge-view knowledge-node) (option string))
 (defun application-knowledge--reason (view node)
@@ -117,8 +116,7 @@
               ':failure
               (format nil "    conflicts with ~{\"~A\"~^, ~}~%"
                       (mapcar (lambda (identifier)
-                                (let ((other (knowledge-view-node view identifier)))
-                                  (if other (application-knowledge--text other) identifier)))
+                                (if-let ((other (knowledge-view-node view identifier))) (application-knowledge--text other) identifier))
                               (knowledge-node-conflicts node))))))
      (unless (eq applicability ':current)
        (list (terminal-span (if (eq applicability ':unverified) ':notice ':failure)
@@ -319,12 +317,12 @@ matches of an ambiguous prefix."
                   (length (knowledge-view-snapshot view)))))
         ((null changes)
          (application-hint-line
-          (format nil "nothing changed since ~A" (memory--timestamp-string previous))))
+          (format nil "nothing changed since ~A" (format-utc-timestamp previous))))
         (t
          (append
           (list (terminal-span ':brand "# what changed")
                 (terminal-span ':dim (format nil "  since ~A~%"
-                                             (memory--timestamp-string previous))))
+                                             (format-utc-timestamp previous))))
           (loop for change in changes
                 append
                 (ecase (getf change :kind)

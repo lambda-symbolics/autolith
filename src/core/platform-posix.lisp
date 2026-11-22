@@ -13,14 +13,6 @@
 
 ;;;; -- Process Observations --
 
-(defmethod platform-process-resident-bytes ((platform posix-platform) process-id)
-  "Observe the resident bytes of PROCESS-ID."
-  (ls-compat.posix:process-resident-bytes process-id))
-
-(defmethod platform-process-parent-snapshot ((platform posix-platform))
-  "Observe parent relationships and whether the observation completed."
-  (ls-compat.posix:process-parent-snapshot))
-
 
 ;;;; -- Failure Translation --
 
@@ -116,10 +108,6 @@
     (otherwise
      (and (member capability '(:local-sockets :process-groups :detached-sessions))
           t))))
-
-(defmethod platform-process-alive-p ((platform posix-platform) process-id)
-  "Probe PROCESS-ID with signal zero through ls-compat."
-  (process-alive-p process-id))
 
 (defmethod platform-process-group-alive-p ((platform posix-platform)
                                            process-group-id)
@@ -247,12 +235,6 @@
                  (setf (ls-compat.posix:file-permissions pathname) permissions)))
   permissions)
 
-(defmethod platform-delete-file ((platform posix-platform) pathname)
-  "Remove the exact native pathname through ls-compat."
-  (handler-case (ls-compat.posix:remove-file pathname)
-    (file-error (condition)
-      (platform--file-failure ':delete pathname condition))))
-
 (defmethod platform-shell-session-delete-directory ((platform posix-platform) pathname)
   "Unlink substituted roots; recursively remove only an observed real directory."
   (let* ((name   (string-right-trim "/" (posix--namestring pathname)))
@@ -281,29 +263,9 @@
                (lambda ()
                  (ls-compat.posix:set-file-times pathname universal-time))))
 
-(defmethod platform-replace-file ((platform posix-platform) source target)
-  "Rename SOURCE over TARGET through ls-compat."
-  (handler-case (ls-compat.posix:replace-file source target)
-    (file-error (condition)
-      (platform--file-failure ':replace target condition))))
-
 (defmethod platform-executable-file-p ((platform posix-platform) pathname)
   "Probe PATHNAME for execute permission."
   (ls-compat.posix:executable-path-p pathname))
-
-(defmethod platform-make-temporary-directory ((platform posix-platform)
-                                              parent prefix)
-  "Create a private temporary directory through ls-compat."
-  (handler-case (ls-compat.posix:make-temporary-directory parent prefix)
-    (file-error (condition)
-      (platform--file-failure ':create parent condition))))
-
-(defmethod platform-delete-directory-tree ((platform posix-platform) pathname
-                                           &rest arguments
-                                           &key validate if-does-not-exist)
-  "Remove PATHNAME's tree through ls-compat with the caller's policy."
-  (declare (ignore platform validate if-does-not-exist))
-  (apply #'ls-compat.posix:delete-directory-tree pathname arguments))
 
 
 ;;;; -- Terminal and Shell --

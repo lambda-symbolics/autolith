@@ -125,29 +125,22 @@
    'release-updater-configuration
    :selection-path
    (or selection-path
-       (let ((configured
-               (uiop:getenv "AUTOLITH_RELEASE_SELECTION_PATH")))
-         (and configured (pathname configured)))
+       (uiop:getenv-pathname "AUTOLITH_RELEASE_SELECTION_PATH")
        #p"/srv/autolith-release-server/current")
    :deployments-root
    (uiop:ensure-directory-pathname
     (or deployments-root
-        (let ((configured
-                (uiop:getenv "AUTOLITH_RELEASE_DEPLOYMENTS_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_DEPLOYMENTS_ROOT")
         #p"/srv/autolith-release-server/deployments/"))
    :state-root
    (uiop:ensure-directory-pathname
     (or state-root
-        (let ((configured
-                (uiop:getenv "AUTOLITH_RELEASE_UPDATER_STATE_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_UPDATER_STATE_ROOT")
         #p"/var/lib/autolith-release-server/updater/"))
    :host-lock-root
    (uiop:ensure-directory-pathname
     (or host-lock-root
-        (let ((configured (uiop:getenv "AUTOLITH_RELEASE_STATE_ROOT")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_STATE_ROOT")
         #p"/var/lib/autolith-release-server/builder/"))
    :repository
    (or repository
@@ -167,15 +160,11 @@
         "release host activation timeout"))
    :server-service
    (or server-service
-       (let ((configured
-               (uiop:getenv "AUTOLITH_RELEASE_SERVER_SERVICE")))
-         (and configured (pathname configured)))
+       (uiop:getenv-pathname "AUTOLITH_RELEASE_SERVER_SERVICE")
        #p"/run/service/autolith-release-server")
    :builder-service
    (or builder-service
-       (let ((configured
-               (uiop:getenv "AUTOLITH_RELEASE_BUILDER_SERVICE")))
-         (and configured (pathname configured)))
+       (uiop:getenv-pathname "AUTOLITH_RELEASE_BUILDER_SERVICE")
        #p"/run/service/autolith-release-builder")
    :health-url
    (or health-url
@@ -188,8 +177,7 @@
    :service-home
    (uiop:ensure-directory-pathname
     (or service-home
-        (let ((configured (uiop:getenv "AUTOLITH_RELEASE_SERVICE_HOME")))
-          (and configured (pathname configured)))
+        (uiop:getenv-pathname "AUTOLITH_RELEASE_SERVICE_HOME")
         #p"/var/lib/autolith-release-server/home/"))))
 
 
@@ -233,7 +221,7 @@
        (release-tag-valid-p (seventh state))
        (eq (eighth state) ':commit)
        (stringp (ninth state))
-       (release-builder--commit-valid-p (ninth state))
+       (release-commit-valid-p (ninth state))
        (eq (tenth state) ':previous-tag)
        (or (null (nth 10 state))
            (and (stringp (nth 10 state))
@@ -241,7 +229,7 @@
        (eq (nth 11 state) ':previous-commit)
        (or (null (nth 12 state))
            (and (stringp (nth 12 state))
-                (release-builder--commit-valid-p (nth 12 state))))
+                (release-commit-valid-p (nth 12 state))))
        (eq (nth 13 state) ':failed-tag)
        (or (null (nth 14 state))
            (and (stringp (nth 14 state))
@@ -249,7 +237,7 @@
        (eq (nth 15 state) ':failed-commit)
        (or (null (nth 16 state))
            (and (stringp (nth 16 state))
-                (release-builder--commit-valid-p (nth 16 state))))
+                (release-commit-valid-p (nth 16 state))))
        (eq (null (nth 10 state)) (null (nth 12 state)))
        (eq (null (nth 14 state)) (null (nth 16 state)))))
 
@@ -347,26 +335,6 @@
    (format nil "~A/" (release-source-tag-name source-tag))
    (release-updater-configuration-deployments-root configuration)))
 
-(-> release-updater--git-run (pathname list &key (:output t)) t)
-(defun release-updater--git-run (directory arguments &key (output ':string))
-  "Run Git ARGUMENTS in DIRECTORY and return the requested OUTPUT."
-  (let ((canonical
-          (namestring
-           (truename (uiop:ensure-directory-pathname directory)))))
-    (uiop:run-program
-     (append
-      (list "git" "-c" (format nil "safe.directory=~A" canonical)
-            "-C" canonical)
-      arguments)
-     :output       output
-     :error-output (if (eq output ':interactive) ':interactive ':output))))
-
-(-> release-updater--git-output (pathname list) string)
-(defun release-updater--git-output (directory arguments)
-  "Return trimmed output from Git ARGUMENTS in DIRECTORY."
-  (string-trim '(#\Space #\Tab #\Newline #\Return)
-               (release-updater--git-run directory arguments)))
-
 (-> release-updater--checkout-valid-p
     (pathname release-source-tag)
     boolean)
@@ -378,25 +346,25 @@ checked-out commit are rejected."
   (handler-case
       (and (uiop:directory-exists-p checkout)
            (string=
-            (release-updater--git-output
+            (release-server--git-output
              checkout
              (list "cat-file" "-t"
                    (format nil "refs/tags/~A"
                            (release-source-tag-name source-tag))))
             "commit")
            (string=
-            (release-updater--git-output
+            (release-server--git-output
              checkout
              (list "rev-parse"
                    (format nil "refs/tags/~A"
                            (release-source-tag-name source-tag))))
             (release-source-tag-commit source-tag))
            (string=
-            (release-updater--git-output checkout '("rev-parse" "HEAD"))
+            (release-server--git-output checkout '("rev-parse" "HEAD"))
             (release-source-tag-commit source-tag))
            (zerop
             (length
-             (release-updater--git-output
+             (release-server--git-output
               checkout '("status" "--porcelain" "--untracked-files=no"))))
            (string=
             (release-builder--source-version checkout)
@@ -410,7 +378,7 @@ checked-out commit are rejected."
   (let* ((version (release-builder--source-version checkout))
          (tag     (format nil "v~A" version))
          (commit
-           (release-updater--git-output checkout '("rev-parse" "HEAD")))
+           (release-server--git-output checkout '("rev-parse" "HEAD")))
          (source-tag
            (make-instance 'release-source-tag :name tag :commit commit)))
     (unless (release-updater--checkout-valid-p checkout source-tag)
@@ -496,19 +464,19 @@ checked-out commit are rejected."
            (list "git" "init" "--quiet" (namestring destination))
            :output       ':interactive
            :error-output ':interactive)
-          (release-updater--git-run
+          (release-server--git-run
            destination
            (list "remote" "add" "origin"
                  (release-updater-configuration-repository configuration))
            :output ':interactive)
-          (release-updater--git-run
+          (release-server--git-run
            destination
            (list "-c" "gc.auto=0"
                  "-c" "maintenance.auto=false"
                  "fetch" "--quiet" "--depth" "1" "--no-tags" "origin"
                  (format nil "refs/tags/~A:refs/tags/~A" tag tag))
            :output ':interactive)
-          (release-updater--git-run
+          (release-server--git-run
            destination
            (list "checkout" "--quiet" "--detach"
                  (release-source-tag-commit source-tag))
@@ -789,7 +757,7 @@ checked-out commit are rejected."
   (handler-case
       (string=
        (string-trim
-        '(#\Space #\Tab #\Newline #\Return)
+        *line-whitespace*
         (dexador:get
          (if source-tag
              (format nil "~A/~A/~A"
@@ -832,7 +800,7 @@ checked-out commit are rejected."
       (let ((fields
               (uiop:split-string
                (string-trim
-                '(#\Space #\Tab #\Newline #\Return)
+                *line-whitespace*
                 (funcall
                  *release-updater-service-command-function*
                  (list "s6-svstat" "-o" "up,pid" (namestring service))
@@ -887,7 +855,7 @@ checked-out commit are rejected."
          (uiop:subdirectories
           (release-updater-configuration-deployments-root configuration)))
       (let* ((components (pathname-directory deployment))
-             (tag        (and components (first (last components)))))
+             (tag        (and components (lastcar components))))
         (when (and (stringp tag)
                    (release-tag-valid-p tag)
                    (not (member tag retained :test #'string=)))
@@ -1122,7 +1090,7 @@ checked-out commit are rejected."
                       (release-source-tag-commit failed)
                       (release-source-tag-commit source-tag))))))
             remote-tags)))
-    (first (last eligible))))
+    (lastcar eligible)))
 
 (-> release-updater--deterministic-preparation-failure-p
     (release-updater-error)
@@ -1159,28 +1127,11 @@ checked-out commit are rejected."
     t)
 (defun release-updater--call-with-lock (configuration function)
   "Call FUNCTION while holding CONFIGURATION's process-shared updater lock."
-  (let* ((pathname
-           (merge-pathnames "update.lock"
-                            (release-updater-configuration-state-root
-                             configuration)))
-         (descriptor nil))
+  (let ((pathname (merge-pathnames
+                   "update.lock"
+                   (release-updater-configuration-state-root configuration))))
     (ensure-directories-exist pathname)
-    (unwind-protect
-         (progn
-           (setf descriptor
-                 (sb-posix:open
-                  (namestring pathname)
-                  (logior sb-posix:o-creat sb-posix:o-rdwr)
-                  #o600))
-           (sb-posix:lockf descriptor sb-posix:f-lock 0)
-           (funcall function))
-      (when descriptor
-        (handler-case (sb-posix:lockf descriptor sb-posix:f-ulock 0)
-          (sb-posix:syscall-error ()
-            nil))
-        (handler-case (sb-posix:close descriptor)
-          (sb-posix:syscall-error ()
-            nil))))))
+    (call-with-file-lock pathname function)))
 
 (-> release-updater-update-once
     (release-updater-configuration
@@ -1256,7 +1207,7 @@ checked-out commit are rejected."
 (defun release-updater-host-probe (tag commit)
   "Validate the loaded source as exact host candidate TAG at COMMIT."
   (unless (and (release-tag-valid-p tag)
-               (release-builder--commit-valid-p commit))
+               (release-commit-valid-p commit))
     (error 'release-updater-error
            :stage ':candidate-probe
            :tag   tag

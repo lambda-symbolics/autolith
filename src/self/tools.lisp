@@ -39,9 +39,8 @@ A source without a form, or ending inside one, signals END-OF-FILE."
            (when (and (typep condition 'reader-error)
                       (eq (find-package (package-error-package condition))
                           (find-package '#:autolith)))
-             (let ((restart (find-restart 'continue condition)))
-               (when restart
-                 (invoke-restart restart)))))))
+             (when-let ((restart (find-restart 'continue condition)))
+               (invoke-restart restart))))))
     (read-one-form source :read-eval read-eval :package package)))
 
 (-> self-resolve-symbol (string &key (:package package)) symbol)
@@ -69,15 +68,14 @@ symbol itself."
       (format stream "Value binding: yes~%Value: ~A~%Documentation: ~A~%"
               (bounded-string (symbol-value symbol) :limit 2000)
               (or (documentation symbol 'variable) "none")))
-    (let ((class (find-class symbol nil)))
-      (when class
-        (closer-mop:finalize-inheritance class)
-        (format stream "Class binding: yes~%Class documentation: ~A~%Slots:~%"
-                (or (documentation symbol 'type) "none"))
-        (dolist (slot (closer-mop:class-slots class))
-          (format stream "  ~S~@[ - ~A~]~%"
-                  (closer-mop:slot-definition-name slot)
-                  (documentation slot t)))))
+    (when-let ((class (find-class symbol nil)))
+      (closer-mop:finalize-inheritance class)
+      (format stream "Class binding: yes~%Class documentation: ~A~%Slots:~%"
+              (or (documentation symbol 'type) "none"))
+      (dolist (slot (closer-mop:class-slots class))
+        (format stream "  ~S~@[ - ~A~]~%"
+                (closer-mop:slot-definition-name slot)
+                (documentation slot t))))
     (format stream "~%Describe:~%")
     (describe symbol stream)))
 
@@ -162,13 +160,12 @@ and no thread of the new process can hold the lock yet."
     (option keyword))
 (defun self-repair--choice (tool arguments name &key context catalog message)
   "Return the CATALOG keyword ARGUMENTS' NAME spells, NIL when absent, refusing an unknown one with MESSAGE."
-  (let ((value (tool-argument arguments name)))
-    (when value
-      (or (telemetry--enum value catalog)
-          (error 'source-mutation-error
-                 :message   message
-                 :tool-name (tool-canonical-name tool)
-                 :pathname  (configuration-journal-path (tool-context-configuration context)))))))
+  (when-let ((value (tool-argument arguments name)))
+    (or (telemetry--enum value catalog)
+        (error 'source-mutation-error
+               :message   message
+               :tool-name (tool-canonical-name tool)
+               :pathname  (configuration-journal-path (tool-context-configuration context))))))
 
 (defmethod tool-execute :around ((tool mutable-self-tool)
                                  (context tool-context)
@@ -716,37 +713,36 @@ An entry without a record is judged by revision: it is stale when the lineage
 was published against another tracked revision than the running image and a
 tracked definition exists now. Outside a replay context, or when the tracked
 source cannot be read, nothing can be checked and the definition replays."
-  (let ((context *image-replay-context*))
-    (when context
-      (multiple-value-bind (current known-p)
-          (handler-case
-              (values (self-tracked-definition-source
-                       (image-replay-context-configuration context)
-                       definition)
-                      t)
-            (error ()
-              (values nil nil)))
-        (when known-p
-          (if tracked-p
-              (unless (self--definition-sources-equal-p tracked current package)
-                (cond
-                  ((null current)
-                   (values ':tracked-removed
-                           "its tracked definition was removed since the private commit was published. Reapply the definition to keep it."))
-                  ((null tracked)
-                   (values ':tracked-appeared
-                           "a tracked definition now exists where the private commit recorded none. Reapply the definition to replace the tracked one."))
-                  (t
-                   (values ':tracked-changed
-                           "its tracked definition changed since the private commit was published. Reapply the definition against the current source."))))
-              (let ((lineage (image-replay-context-lineage-source-commit context))
-                    (image   (image-replay-context-image-source-commit context)))
-                (when (and lineage image current (string/= lineage image))
-                  (values ':revision-moved
-                          (format nil
-                                  "its tracked definition may have changed: the private commit lineage was published against source ~A and this image runs ~A. Reapply the definition against the current source."
-                                  lineage
-                                  image))))))))))
+  (when-let ((context *image-replay-context*))
+    (multiple-value-bind (current known-p)
+        (handler-case
+            (values (self-tracked-definition-source
+                     (image-replay-context-configuration context)
+                     definition)
+                    t)
+          (error ()
+            (values nil nil)))
+      (when known-p
+        (if tracked-p
+            (unless (self--definition-sources-equal-p tracked current package)
+              (cond
+                ((null current)
+                 (values ':tracked-removed
+                         "its tracked definition was removed since the private commit was published. Reapply the definition to keep it."))
+                ((null tracked)
+                 (values ':tracked-appeared
+                         "a tracked definition now exists where the private commit recorded none. Reapply the definition to replace the tracked one."))
+                (t
+                 (values ':tracked-changed
+                         "its tracked definition changed since the private commit was published. Reapply the definition against the current source."))))
+            (let ((lineage (image-replay-context-lineage-source-commit context))
+                  (image   (image-replay-context-image-source-commit context)))
+              (when (and lineage image current (string/= lineage image))
+                (values ':revision-moved
+                        (format nil
+                                "its tracked definition may have changed: the private commit lineage was published against source ~A and this image runs ~A. Reapply the definition against the current source."
+                                lineage
+                                image)))))))))
 
 (-> self-replay-definition
     (string string &key (:home-package (option string))
@@ -773,15 +769,14 @@ authoritative; entries without the record are judged by source revision."
     (multiple-value-bind (reason explanation)
         (if (definition-foreign-home-p definition package
                                        :home-package home-package)
-            (let ((home (symbol-package (definition-name-symbol
-                                         (second definition)))))
-              (if home
-                  (values ':owner-moved
-                          (format nil "its owner changed from ~A to ~A. Reapply the definition to authorize its new owner."
-                                  (or home-package "an uninterned symbol")
-                                  (package-name home)))
-                  (values ':uninterned-target
-                          "an uninterned target has no stable replay identity.")))
+            (if-let ((home (symbol-package (definition-name-symbol
+                                            (second definition)))))
+                (values ':owner-moved
+                        (format nil "its owner changed from ~A to ~A. Reapply the definition to authorize its new owner."
+                                (or home-package "an uninterned symbol")
+                                (package-name home)))
+                (values ':uninterned-target
+                        "an uninterned target has no stable replay identity."))
             (self--replay-stale-reason definition package
                                        :tracked   tracked
                                        :tracked-p tracked-p))
@@ -1094,9 +1089,8 @@ see the source as it was when first read."
   "Return NAME's tracked definitions from SNAPSHOT, reading the source on first use.
 
 A failed read is remembered and signaled again for every later lookup."
-  (let ((failure (tracked-definition-snapshot--failure snapshot)))
-    (when failure
-      (error failure)))
+  (when-let ((failure (tracked-definition-snapshot--failure snapshot)))
+    (error failure))
   (unless (tracked-definition-snapshot--table snapshot)
     (handler-case
         (setf (tracked-definition-snapshot--table snapshot)
@@ -1139,15 +1133,14 @@ A failed read is remembered and signaled again for every later lookup."
     list)
 (defun self-dependency-definitions (symbol package &key system-name)
   "Return SYMBOL definitions from one direct, loaded Autolith dependency."
-  (let ((system (self-source--dependency-system package system-name)))
-    (when system
-      (let ((root (asdf:system-source-directory system)))
-        (self-source--definitions
-         (surgeon:asdf-source-pathnames system)
-         :root        root
-         :package     package
-         :name        symbol
-         :path-prefix (format nil "~A:" (asdf:component-name system)))))))
+  (when-let ((system (self-source--dependency-system package system-name)))
+    (let ((root (asdf:system-source-directory system)))
+      (self-source--definitions
+       (surgeon:asdf-source-pathnames system)
+       :root        root
+       :package     package
+       :name        symbol
+       :path-prefix (format nil "~A:" (asdf:component-name system))))))
 
 (-> self-source--withheld-files (&key (:root pathname)) list)
 (defun self-source--withheld-files

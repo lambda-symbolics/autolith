@@ -180,11 +180,10 @@
 (-> channel-resource--owner-text (world channel) string)
 (defun channel-resource--owner-text (world channel)
   "Return CHANNEL's owner as a name and identifier, falling back to its identifier alone."
-  (let ((owner (world-participant-find world (channel-owner channel))))
-    (if owner
-        (format nil "~A (~A)" (participant-name owner)
-                (conversation-identifier-display (participant-identifier owner)))
-        (conversation-identifier-display (channel-owner channel)))))
+  (if-let ((owner (world-participant-find world (channel-owner channel))))
+      (format nil "~A (~A)" (participant-name owner)
+              (conversation-identifier-display (participant-identifier owner)))
+      (conversation-identifier-display (channel-owner channel))))
 
 (-> channel-resource--state-text (world channel &key (:served list) (:configuration configuration)) string)
 (defun channel-resource--state-text (world channel &key served configuration)
@@ -207,12 +206,11 @@
       (format stream "Subscribers: ~A.~%"
               (channel-resource--participants-text (world-channel-subscribers world identifier)
                                                    served))
-      (let ((children (world-channel-children world identifier)))
-        (when children
-          (format stream "Children, ~D of the ~D an agent may have; send work with channel.send to @child-name. A busy child runs or is open, and child.* tools wait until it is idle.~%"
-                  (length children) *task-children-maximum*)
-          (dolist (child children)
-            (write-string (channel-resource--child-text world child configuration) stream)))))))
+      (when-let ((children (world-channel-children world identifier)))
+        (format stream "Children, ~D of the ~D an agent may have; send work with channel.send to @child-name. A busy child runs or is open, and child.* tools wait until it is idle.~%"
+                (length children) *task-children-maximum*)
+        (dolist (child children)
+          (write-string (channel-resource--child-text world child configuration) stream))))))
 
 (-> channel-resource--child-text (world channel configuration) string)
 (defun channel-resource--child-text (world channel configuration)

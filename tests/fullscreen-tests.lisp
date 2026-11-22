@@ -572,7 +572,7 @@
                                  "the previous theme's custom defaults are restored")
                     (when fullscreen-p
                       (test-assert (= (terminal-rows terminal)
-                                      (terminal-tests--substring-count
+                                      (test-substring-count
                                        (format nil "~C[2K" #\Escape) output))
                                    "theme changes repaint every physical row")))
                   (when fullscreen-p
@@ -720,7 +720,7 @@
            (leave   (search (alternate-screen-leave-sequence) output)))
       (test-assert (and enter enable disable leave (< enter enable disable leave))
                    "keyboard protocol is acquired and restored inside the alternate buffer")
-      (test-assert (= 1 (terminal-tests--substring-count
+      (test-assert (= 1 (test-substring-count
                          (terminal-keyboard-enhancement-enable-sequence) output))
                    "repeated startup pushes one alternate keyboard mode")))
   (let* ((terminal (make-instance 'recording-terminal :columns 30 :rows 10))
@@ -739,7 +739,7 @@
     (let ((output (recording-terminal-output terminal)))
       (dolist (sequence (list (terminal-keyboard-enhancement-enable-sequence)
                              (terminal-keyboard-enhancement-disable-sequence)))
-        (test-assert (= 2 (terminal-tests--substring-count sequence output))
+        (test-assert (= 2 (test-substring-count sequence output))
                      "releasing and reentering balance alternate keyboard modes"))))
   nil)
 
@@ -1492,7 +1492,7 @@
          (and (= 1 (fullscreen-test--chunk-count active))
               (null (terminal-ui-stream-tail active))
               (null (fullscreen-terminal-ui-markdown-stream active))
-              (= 1 (terminal-tests--substring-count
+              (= 1 (test-substring-count
                     "FINAL-MARKER"
                     (clinedi:transcript-viewport-chunk-text
                      (fullscreen-terminal-ui-viewport active) 0))))
@@ -1516,8 +1516,8 @@
         (funcall send-status ':provider-request-completed nil)
         (let ((output (clinedi:ansi-strip (recording-terminal-output terminal))))
           (test-assert
-           (and (= 1 (terminal-tests--substring-count "PIPE-FIRST" output))
-                (= 1 (terminal-tests--substring-count "PIPE-SECOND" output)))
+           (and (= 1 (test-substring-count "PIPE-FIRST" output))
+                (= 1 (test-substring-count "PIPE-SECOND" output)))
            "a plain output sink emits each incremental prefix once"))))
     ;; A fragment without a newline has no committed header or native chunk.
     (let* ((terminal (make-instance 'recording-terminal :columns 32 :rows 12))

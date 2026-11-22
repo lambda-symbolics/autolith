@@ -263,12 +263,6 @@ bound policy takes effect without reloading this file."
      :field       key))
   nil)
 
-(-> mcp-configuration--property-present-p (list keyword) boolean)
-(defun mcp-configuration--property-present-p (properties key)
-  "Return true when PROPERTIES explicitly contains KEY."
-  (loop for tail on properties by (partial #'nthcdr 2)
-        thereis (eq (first tail) key)))
-
 (-> mcp-configuration--positive-timeout
     (t keyword &key (:pathname (option pathname))
                     (:server-name (option string)))
@@ -435,17 +429,15 @@ bound policy takes effect without reloading this file."
      :required-p
      (or (mcp-configuration--property form :required-p) nil)
      :startup-timeout-seconds
-     (if (mcp-configuration--property-present-p
-          form :startup-timeout-seconds)
+     (if (plist-key-present-p form :startup-timeout-seconds)
          (mcp-configuration--property form :startup-timeout-seconds)
          *mcp-default-startup-timeout-seconds*)
      :tool-timeout-seconds
-     (if (mcp-configuration--property-present-p
-          form :tool-timeout-seconds)
+     (if (plist-key-present-p form :tool-timeout-seconds)
          (mcp-configuration--property form :tool-timeout-seconds)
          *mcp-default-tool-timeout-seconds*)
      :approval
-     (if (mcp-configuration--property-present-p form :approval)
+     (if (plist-key-present-p form :approval)
          (mcp-configuration--property form :approval)
          :prompt)
      :trusted-read-only-tools

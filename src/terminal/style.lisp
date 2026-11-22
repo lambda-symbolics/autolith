@@ -404,11 +404,10 @@ which only theme colors carrying RGB values make use of."
   "Return STYLE's trusted control, using INDEXED-COLOR-P for brand gradients and theme colors.
 
 A theme that does not define STYLE renders it plainly instead of failing the row."
-  (let ((entry (assoc style *terminal-style-table*)))
-    (when entry
-      (let ((sequence (sgr-sequence (rest entry)
-                                    :level (terminal-style--level indexed-color-p))))
-        (and (plusp (length sequence)) sequence)))))
+  (when-let ((entry (assoc style *terminal-style-table*)))
+    (let ((sequence (sgr-sequence (rest entry)
+                                  :level (terminal-style--level indexed-color-p))))
+      (and (plusp (length sequence)) sequence))))
 
 (-> terminal-environment-styling-p () boolean)
 (defun terminal-environment-styling-p ()
