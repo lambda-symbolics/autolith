@@ -685,7 +685,7 @@ Here's a rough, probably outdated map of the repository
 
 | Area                          | Primary source boundaries and dependencies                                                   |
 |-------------------------------+----------------------------------------------------------------------------------------------|
-| Application loop              | =src/startup/=, =src/agent/=, =src/application/=, =src/terminal/responsive-input.lisp=               |
+| Application loop              | =src/startup/=, =src/agent/=, =src/application/=, =src/application/input-controller.lisp=       |
 | Terminal                      | =src/terminal/=, Clinedi, cl-colorist                                                          |
 | Providers and credentials     | =src/provider/=                                                                                |
 | Tools and workspace resources | =src/tools/=, =src/resource/=, cl-exec-sandbox, clifff                                           |

@@ -620,7 +620,7 @@ generations, and the original pointer archived as
   while retaining its second-press force-exit window.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
   =src/terminal/protocol.lisp=, =src/terminal/stream.lisp=,
-  =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
+  =src/terminal/ui.lisp=, =src/application/input-controller.lisp=,
   =src/world/transport/view.lisp=, and =src/world/transport/client.lisp=.
 - Verification: Clinedi's exhaustive enhanced key mapping and exact
   bracketed-paste control suites pass. Autolith's representative Clinedi
@@ -848,7 +848,7 @@ generations, and the original pointer archived as
   process-global legacy state remains preserved and ignored.
 - Scope and location: tracked project work in =src/agent/runtime.lisp=,
   =src/application/runtime.lisp=, =src/conversation/store.lisp=,
-  =src/terminal/responsive-input.lisp=, =src/configuration/settings.lisp=,
+  =src/application/input-controller.lisp=, =src/configuration/settings.lisp=,
   =src/application/recovery-input-vault.lisp=, =src/startup/main.lisp=, ASDF
   wiring, regressions, README, guide, and specification. The implementation
   commits are =b9a63f0=, =0c7a1e0=, =4ec8398=, =feca0f2=, =9d083c0=,
@@ -990,7 +990,7 @@ generations, and the original pointer archived as
   =src/application/lisp-machine.lisp=,
   =src/application/user-operation-context.lisp=, =src/conversation/store.lisp=,
   =src/terminal/protocol.lisp=, =src/terminal/syntax-highlighting.lisp=,
-  =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
+  =src/terminal/ui.lisp=, =src/application/input-controller.lisp=,
   =src/startup/main.lisp=, provider and tool presentation, focused regressions,
   the guide, architecture, and specification. Implementation commits are
   =2cb9e51= through =1910b1a=.
@@ -1111,7 +1111,7 @@ generations, and the original pointer archived as
   presentation transaction exclude stale reconnect events. Promotion does not
   append a primary conversation record or expose hidden reasoning.
 - Scope and location: tracked project work in
-  =src/application/operation.lisp=, =src/terminal/responsive-input.lisp=,
+  =src/application/operation.lisp=, =src/application/input-controller.lisp=,
   =src/task/state.lisp=, =src/task/runtime.lisp=, =src/task/child.lisp=,
   =src/agent/runtime.lisp=, =src/application/runtime.lisp=,
   =src/terminal/style.lisp=, focused agent, task, operation, application,
