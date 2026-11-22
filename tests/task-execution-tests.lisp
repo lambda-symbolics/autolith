@@ -709,9 +709,9 @@
                 "the first spawned provider context has the child's durable participant identity")
                (test-assert
                 (and personal (equal owner (memory-owner personal))
-                     (every (lambda (entry) (and (equal owner (first entry)) (null (second entry))))
+                     (every (lambda (entry) (and (equal owner (first entry)) (second entry)))
                             tool-owners)
-                     (= 1 (count ':access-denied tool-results :key #'tool-result-error-code)))
+                     (= 4 (count-if #'tool-result-success-p tool-results)))
                 (format nil "First child owner ~S, personal ~S, tool principals ~S, results ~S"
                         owner (and personal (memory-owner personal)) tool-owners
                         (mapcar (lambda (result) (list (tool-result-error-code result)
@@ -733,8 +733,8 @@
                        (equal owner (memory-owner (first (memory-list configuration :visibility ':personal)))))
                   "normal world bootstrap creates its inbox without changing child identity or personal ownership")
                  (multiple-value-bind (reloaded-owner shared-write-p) (memory-resource--principal context)
-                   (test-assert (and (equal owner reloaded-owner) (not shared-write-p))
-                                "child shared-write restrictions survive world bootstrap and runtime reconstruction"))))
+                  (test-assert (and (equal owner reloaded-owner) shared-write-p)
+                               "child shared-write authority survives world bootstrap and runtime reconstruction"))))
              (test-assert
               (equal (goal-record->goal
                       (conversation-latest-goal-record

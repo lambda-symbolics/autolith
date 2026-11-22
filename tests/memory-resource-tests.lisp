@@ -138,12 +138,10 @@
                (child-context   (context child))
                (sibling-context (context sibling)))
           (dolist (uri '("memory:global" "memory:workspace"))
-            (test-assert (tool-result-success-p (remember top-context uri "shared guidance"))
-                         "top-level agents may create shared memories")
-            (let ((denied (remember child-context uri "forbidden shared write")))
-              (test-assert (and (not (tool-result-success-p denied))
-                                (eq (tool-result-error-code denied) ':access-denied))
-                           "a durable child served as an ordinary agent has read-only shared access")))
+            (test-assert (tool-result-success-p (remember top-context uri "direct shared guidance"))
+                         "a human-parented agent may create shared memories")
+            (test-assert (tool-result-success-p (remember child-context uri "nested shared guidance"))
+                         "an agent-parented agent may also create shared memories"))
           (test-assert (tool-result-success-p (remember child-context "memory:personal" "private quartz"))
                        "child agents may create their own personal memories")
           (test-assert (tool-result-success-p (remember top-context "memory:personal" "primary personal"))
@@ -180,11 +178,7 @@
                 (test-assert (not (tool-result-success-p promotion))
                              "replacement cannot publish personal memories into a shared scope")))
             (let* ((global     (first (memory-list configuration :visibility ':global)))
-                   (shared-uri (resource-item-uri "memory" (memory-identifier global)))
-                   (denied     (edit-resource child-context shared-uri
-                                               (json-object "op" "memory-forget"))))
-              (test-assert (eq (tool-result-error-code denied) ':access-denied)
-                           "children cannot delete exact shared items")
+                   (shared-uri (resource-item-uri "memory" (memory-identifier global))))
               (test-assert
                (handler-case
                    (progn (memory-remember configuration :title "shared derivation" :content "shared"
@@ -197,12 +191,15 @@
                                                               :premises (list (memory-identifier global)))))
                 (test-assert (eq (memory-assessment-status
                                   (memory-assess (memory-assessor-create configuration) dependent)) ':current)
-                             "personal records may cite shared global premises")))
+                             "personal records may cite shared global premises"))
+              (test-assert (tool-result-success-p
+                            (edit-resource child-context shared-uri (json-object "op" "memory-forget")))
+                           "the nested agent may forget an exact shared item"))
             (let ((facts (edit-resource child-context "memory:facts"
-                                         (json-object "op" "predicate-define" "predicate" "private.attempt"
-                                                      "arguments" #()))))
-              (test-assert (eq (tool-result-error-code facts) ':access-denied)
-                           "children cannot mutate shared structured knowledge"))
+                                        (json-object "op" "predicate-define" "predicate" "example.shared"
+                                                     "arguments" (vector (json-object "name" "subject"
+                                                                                      "type" "entity"))))))
+              (test-assert (tool-result-success-p facts) (tool-result-content facts)))
             (let* ((conversation (tool-context-conversation child-context))
                    (request      (make-instance 'request-context :configuration  configuration
                                                                 :conversation conversation :participant child
@@ -1068,12 +1065,12 @@
                        child-context "memory:workspace" (revision collection)
                        (json-object
                         "op" "memory-remember"
-                        "title" "Denied child memory"
-                        "content" "Child agents read shared memories without modifying them."))))
+                         "title" "Denied unregistered memory"
+                         "content" "An unregistered agent cannot modify shared memories."))))
                (test-assert
                 (and (not (tool-result-success-p denied))
                      (eq (tool-result-error-code denied) ':access-denied))
-                "child agents cannot modify shared memories"))
+                "an unregistered agent cannot modify shared memories"))
              (let* ((edit-tool (tool-registry-find registry "resource" "edit"))
                     (operations
                       (json-get

@@ -113,8 +113,9 @@
 (defun memory-resource--principal (context)
   "Return the durable owner and shared-write authority carried by CONTEXT.
 
-Local user calls without an agent retain shared access. An agent without a
-registered identity cannot write. Residency and runtime role confer no authority."
+Local user calls without an agent retain shared access. Registered agents
+have the same authority regardless of parentage. Residency and runtime role
+are not substitutes for a registered identity."
   (let ((agent (tool-context-agent context)))
     (if (null agent)
         (values nil t)
@@ -125,11 +126,7 @@ registered identity cannot write. Residency and runtime role confer no authority
                (participant (and (typep identity 'participant)
                                  (world-participant-find world (participant-identifier identity)))))
           (if (and participant (eq (participant-kind participant) ':agent))
-              (let* ((parent-id (participant-parent participant))
-                     (parent    (and parent-id (world-participant-find world parent-id))))
-                (values (participant-identifier participant)
-                        (or (null parent-id)
-                            (and parent (eq (participant-kind parent) ':human) t))))
+              (values (participant-identifier participant) t)
               (values nil nil))))))
 
 (defgeneric memory-resource--editable-p (resource context)
@@ -242,7 +239,7 @@ registered identity cannot write. Residency and runtime role confer no authority
 
 (defmethod resource-resolver-edit-documentation ((resolver memory-resolver))
   "Document memory: edits, with structured knowledge operations when they are offered."
-  (format nil "Create your own personal memory by reading memory:personal and editing it with memory-remember. Top-level agents may also create shared memories through memory:workspace and memory:global; children have read-only shared access. Exact memory:id/<percent-encoded-stable-id> items accept memory-replace or memory-forget when you may write that memory. Personal ownership cannot change through replacement. When a memory restates a file, a web page, or the user's words, cite them as sources; when derived from other memories, name them as premises.~:[~; Top-level agents may edit memory:facts with up to 16 operations: predicate-define, fact-assert, fact-retract, rule-propose, method-define, contract-define, and recipe-use. Record reusable values as facts with sources and recurring calculations as rules. Check memory:recipes before designing vocabulary.~]"
+  (format nil "Create your own personal memory by reading memory:personal and editing it with memory-remember. Local users and registered agents with access to resource.edit can also create shared memories through memory:workspace and memory:global. Exact memory:id/<percent-encoded-stable-id> items accept memory-replace or memory-forget when you may write that memory. Personal ownership cannot change through replacement. When a memory restates a file, a web page, or the user's words, cite them as sources; when derived from other memories, name them as premises.~:[~; The same shared-write authority allows up to 16 operations on memory:facts: predicate-define, fact-assert, fact-retract, rule-propose, method-define, contract-define, and recipe-use. Record reusable values as facts with sources and recurring calculations as rules. Check memory:recipes before designing vocabulary.~]"
           (memory-resolver-knowledge-p resolver)))
 
 (defmethod resource-resolver-resolve
