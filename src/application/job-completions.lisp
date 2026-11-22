@@ -27,10 +27,10 @@ A completion for a different owner is recorded without starting a turn."
                    (equal mission-id (getf goal :completion-id))
                    (eq (getf goal :status) ':active)
                    (not (mission--unknown-usage-blocks-p goal))
-                    (not (mission--budget-exhausted-p goal :include-reservations-p (not ignore-reservations-p)))
-                    (not (mission--deadline-expired-p goal))))
-              ((mission-goal-p goal)
-               (not (eq (getf goal :status) ':active)))
+                   (not (mission--budget-exhausted-p goal :include-reservations-p (not ignore-reservations-p)))
+                   (not (mission--deadline-expired-p goal))))
+             ((mission-goal-p goal)
+              (not (eq (getf goal :status) ':active)))
              (t
               t)))))))
 

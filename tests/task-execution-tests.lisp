@@ -628,8 +628,8 @@
                               (when (typep child 'task-child-agent)
                                 (setf state (agent-participant-state child)
                                       (participant-state-goal state)
-                                        (mission--validate-specification
-                                         '(:objective "ordinary participant mission") :final-marker-p t)))
+                                      (mission--validate-specification
+                                       '(:objective "ordinary participant mission") :final-marker-p t)))
                               child)))
                     (list 'context--invoke-contributors
                           (lambda (request registrations)

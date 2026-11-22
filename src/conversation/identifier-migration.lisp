@@ -143,7 +143,7 @@
   "Return stable identities for resumable conversations with legacy IDs."
   (sort
    (loop for pathname in (conversation-storage-identities
-                         (configuration-conversation-root configuration))
+                          (configuration-conversation-root configuration))
          for header = (conversation-identifier-migration--header pathname)
          for identifier = (and header (getf (rest header) :id))
          when (conversation-identifier-migration--legacy-identifier-p identifier)

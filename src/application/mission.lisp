@@ -408,7 +408,7 @@ preserving the calling thread's provider bindings and authorization callbacks."
           :turns-used 0 :tokens-used 0 :tokens-reserved 0 :unknown-usage 0 :requests-outstanding 0
           :unknown-usage-by-child nil :reservation-charged-tokens 0 :reservation-charges-by-child nil
           :model-complete-p nil :criteria criteria :gates gates :evidence nil
-          :acceptance-policy (if final-marker-p ':final-marker ':explicit))))
+          :acceptance-policy    (if final-marker-p ':final-marker ':explicit))))
 
 (-> application-mission-start (application list &key (:final-marker-p boolean)) null)
 (defun application-mission-start (application specification &key final-marker-p)

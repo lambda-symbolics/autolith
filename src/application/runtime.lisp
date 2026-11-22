@@ -3926,9 +3926,12 @@ A fullscreen transcript evicts its oldest output; those records page in again."
             ;; Legacy active work had a continuation cap. Require a fresh resume before
             ;; allowing it to continue under the unbudgeted mission policy.
             (setf (getf mission :status)           (case status
-                                                    (:complete ':verified)
-                                                    (:active ':paused)
-                                                    (otherwise status))
+                                                    (:complete
+                                                     ':verified)
+                                                    (:active
+                                                     ':paused)
+                                                    (otherwise
+                                                     status))
                   (getf mission :model-complete-p) (eq status ':complete)
                   (getf mission :continuations)    (getf (rest record) :continuations 0)
                   (getf mission :created-at)       (or (getf (rest record) :created-at)

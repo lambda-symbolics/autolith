@@ -4053,7 +4053,7 @@
                               (list (conversation-log-pathname loaded)))
                        (not (search "older-full-chunk" output))
                        (search "active-full-one" output)
-                         (search "active-full-two" output))
+                       (search "active-full-two" output))
                   "a full active chunk is the only segment scanned at startup"))
                (recording-terminal-reset terminal)
                (conversation-append-summary loaded (make-continuation :intent "rotated checkpoint"))
@@ -4076,7 +4076,7 @@
              (conversation-append-summary conversation (make-continuation :intent "middle checkpoint"))
              (conversation-append-user-message conversation "middle-chunk-message")
              (conversation-append-summary conversation (make-continuation :intent "active checkpoint"))
-              (conversation-append-user-message conversation "active-chunk-message")
+             (conversation-append-user-message conversation "active-chunk-message")
              (let* ((loaded
                       (conversation-load (conversation-pathname conversation)))
                     (pathnames
@@ -4112,7 +4112,7 @@
                                 (list active previous))
                          (not (search "oldest-third-chunk" output))
                          (search "middle-chunk-message" output)
-                          (search "active-chunk-message" output)
+                         (search "active-chunk-message" output)
                          (not (search "use (history) to load an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
                  (let* ((recovery-terminal
@@ -4143,7 +4143,7 @@
                      (test-assert
                       (and (equal (nreverse recovery-pathnames) (list active))
                            (not (search "middle-chunk-message" output))
-                            (search "active-chunk-message" output))
+                           (search "active-chunk-message" output))
                       "zero-cursor recovery scans only the active chunk")))
                  (recording-terminal-reset terminal)
                  (application-render-history application)
