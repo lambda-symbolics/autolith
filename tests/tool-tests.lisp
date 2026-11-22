@@ -106,7 +106,7 @@
                                 "native dispatch supplies the original capability context")
                    (incf executions)
                    (setf received arguments)
-                    (tool-success "executed")))
+                   (tool-success "executed")))
            (list 'task-json-normalize
                  (lambda (arguments &key tool-name)
                    (when (and (eq arguments role-input) (equal tool-name "child.roles"))
@@ -151,7 +151,7 @@
        (test-assert (and (= (length (tool-test-decoder-sources textual)) 1)
                          (stringp (first (tool-test-decoder-sources textual)))
                          (null (tool-test-decoder-sources opted-in)))
-                     "custom textual decoding is retained unless explicitly opted in")
+                    "custom textual decoding is retained unless explicitly opted in")
        (test-assert
         (and (tool-result-success-p
               (tool-registry-execute-native-call

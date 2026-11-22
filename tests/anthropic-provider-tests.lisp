@@ -652,44 +652,44 @@
               (lambda ()
                 (conversation-append-user-message conversation "Question")
                 (build)
-                 (multiple-value-bind (tail matches-p)
-                     (anthropic--appended-messages
-                      (json-array
-                       (json-object "role" "user" "content"
-                                    (json-array (json-object "type" "text" "text" "Same"))))
-                      (json-array
-                       (json-object "role" "user" "content"
-                                    (json-array (json-object "type" "text" "text" "same")))))
-                   (test-assert (and (null matches-p) (zerop (length tail)))
-                                "Changed-case prefix content does not reuse the cache"))
-                 (dotimes (index 6)
-                   (tool-round index)
-                   (let ((request (build)))
-                     (test-assert (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode request)))
-                                  "Unchanged request-local context occurs once across multiple tool rounds")))
-                 (setf body "PREFIX-CONTEXT-TWO")
-                 (let ((changed (build)))
-                   (test-assert (and (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode changed)))
-                                     (= 1 (cl-ppcre:count-matches body (json-encode changed))))
-                                "Changed context is appended once without rewriting the dispatched prefix"))
-                 (build)
-                 (conversation-append-provider-item
-                  conversation (json-object "type" "message" "role" "assistant"
-                                            "content" (json-array (json-object "type" "output_text" "text" "Answer"))))
-                 (conversation-append-user-message conversation "Fresh user input")
-                 (test-assert (search "Fresh user input" (json-encode (build)))
-                              "New user input follows the dispatched context without removing it")
-                 (conversation-append-user-message conversation "Additional steering input")
-                 (test-assert (search "Additional steering input" (json-encode (build)))
-                              "Consecutive user input extends the wire tail without rewriting an old message")
-                 (setf (config :model configuration) "claude-sonnet-5-5"
-                       previous nil)
-                 (let ((reset (build)))
-                   (test-assert (and (not (search "PREFIX-CONTEXT-ONE" (json-encode reset)))
-                                     (search body (json-encode reset)))
-                                "Changed request headers start a fresh projection with current context"))
-                 (let ((loaded (conversation-load (conversation-pathname conversation))))
-                   (test-assert (and (null (conversation-anthropic-request-state loaded))
-                                     (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
-                                 "Request-local prefixes are neither durable history nor restart state"))))))))
+                (multiple-value-bind (tail matches-p)
+                    (anthropic--appended-messages
+                     (json-array
+                      (json-object "role" "user" "content"
+                                   (json-array (json-object "type" "text" "text" "Same"))))
+                     (json-array
+                      (json-object "role" "user" "content"
+                                   (json-array (json-object "type" "text" "text" "same")))))
+                  (test-assert (and (null matches-p) (zerop (length tail)))
+                               "Changed-case prefix content does not reuse the cache"))
+                (dotimes (index 6)
+                  (tool-round index)
+                  (let ((request (build)))
+                    (test-assert (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode request)))
+                                 "Unchanged request-local context occurs once across multiple tool rounds")))
+                (setf body "PREFIX-CONTEXT-TWO")
+                (let ((changed (build)))
+                  (test-assert (and (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode changed)))
+                                    (= 1 (cl-ppcre:count-matches body (json-encode changed))))
+                               "Changed context is appended once without rewriting the dispatched prefix"))
+                (build)
+                (conversation-append-provider-item
+                 conversation (json-object "type" "message" "role" "assistant"
+                                           "content" (json-array (json-object "type" "output_text" "text" "Answer"))))
+                (conversation-append-user-message conversation "Fresh user input")
+                (test-assert (search "Fresh user input" (json-encode (build)))
+                             "New user input follows the dispatched context without removing it")
+                (conversation-append-user-message conversation "Additional steering input")
+                (test-assert (search "Additional steering input" (json-encode (build)))
+                             "Consecutive user input extends the wire tail without rewriting an old message")
+                (setf (config :model configuration) "claude-sonnet-5-5"
+                      previous nil)
+                (let ((reset (build)))
+                  (test-assert (and (not (search "PREFIX-CONTEXT-ONE" (json-encode reset)))
+                                    (search body (json-encode reset)))
+                               "Changed request headers start a fresh projection with current context"))
+                (let ((loaded (conversation-load (conversation-pathname conversation))))
+                  (test-assert (and (null (conversation-anthropic-request-state loaded))
+                                    (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
+                               "Request-local prefixes are neither durable history nor restart state"))))))))
    nil))
