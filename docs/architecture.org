@@ -169,7 +169,7 @@ replay and portable values, and =src/application/approvals.lisp= the approval
 offered to every approving client at once.
 
 Every world channel uses a =channel-presentation=
-(=src/terminal/presentation.lisp=) as its UI: the
+(=src/world/presentation.lisp=) as its UI: the
 application sets it as it sets any terminal UI, and each change reaches the
 clients that said =:presents-p= as one =(:ui :operation OPERATION ...)= event. Transcript
 entries and records travel as styled spans, streamed Markdown as source,

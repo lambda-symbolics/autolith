@@ -309,7 +309,7 @@
                                           (:file "terminal/clipboard")
                                           (:file "terminal/fullscreen")
                                           (:file "terminal/fullscreen-tool-outcomes")
-                                          (:file "terminal/presentation")
+                                          (:file "world/presentation")
                                           (:file "terminal/boot-screen")
                                           (:file "state/onboarding")
                                           (:file "application/onboarding-source")
