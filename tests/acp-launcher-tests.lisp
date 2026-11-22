@@ -127,6 +127,65 @@
                :stderr (subseq diagnostics (max 0 (- (length diagnostics) 8192))))))
     result))
 
+(-> acp-launcher-tests--world-log-markers (vector integer) list)
+(defun acp-launcher-tests--world-log-markers (octets end)
+  "Return fixed labels for known markers present in the detached log sample."
+  (loop for (marker label) in '(("Loading Autolith for its preloaded active image" "image-loading")
+                               ("Installed preloaded active image" "image-installed")
+                               ("No such file or directory" "missing-file")
+                               ("MISSING-COMPONENT" "missing-component")
+                               ("Permission denied" "permission-denied")
+                               ("Operation not permitted" "operation-not-permitted")
+                               ("Address already in use" "address-in-use")
+                               ("SOCKET-ERROR" "socket-error")
+                               ("Unhandled " "unhandled-condition"))
+        when (search (utf8-string-to-octets marker) octets :end2 end)
+          collect label))
+
+(-> acp-launcher-tests--report-world-log (pathname pathname) null)
+(defun acp-launcher-tests--report-world-log (pathname root)
+  "Report bounded marker evidence from one regular log inside ROOT."
+  (handler-case
+      (if (eq ':file (ls-compat.files:confined-path-inspection-status
+                      (ls-compat.files:confined-path-inspect pathname root :root-policy ':root-inclusive)))
+          (with-open-stream (input (platform-open-regular-file *platform* pathname :follow-links-p nil))
+            (let* ((size   (file-length input))
+                   (start  (max 0 (- size 16384)))
+                   (octets (make-array (- size start) :element-type '(unsigned-byte 8))))
+              (unless (file-position input start)
+                (error 'file-error :pathname pathname))
+              (let* ((scanned (read-sequence octets input))
+                     (markers (acp-launcher-tests--world-log-markers octets scanned)))
+                (format *error-output* "~&ACP detached log: bytes=~D scanned=~D tail-only=~:[no~;yes~] markers:~{ ~A~}~%"
+                        size scanned (plusp start) (or markers '("none"))))))
+          (format *error-output* "~&ACP detached log: unavailable~%"))
+    (serious-condition ()
+      (format *error-output* "~&ACP detached log: unavailable~%")))
+  nil)
+
+(-> acp-launcher-tests--report-world-logs (configuration pathname) null)
+(defun acp-launcher-tests--report-world-logs (configuration root)
+  "Report at most four fixture log entries without exposing their names or contents."
+  (let* ((directory  (merge-pathnames "logs/" (world-endpoint-directory configuration)))
+         (inspection (ls-compat.files:confined-path-inspect directory root :root-policy ':root-inclusive)))
+    (case (ls-compat.files:confined-path-inspection-status inspection)
+      (:directory
+       (multiple-value-bind (entries more-p)
+           (platform-list-directory *platform* directory :limit 4)
+         (format *error-output* "~&ACP detached log directory: entries=~D capped=~:[no~;yes~]~%"
+                 (length entries) more-p)
+         (dolist (entry entries)
+           (when (and (= (length entry) 16)
+                      (string= entry ".log" :start1 12)
+                      (every (lambda (character) (find character "0123456789ABCDEF"))
+                             (subseq entry 0 12)))
+             (acp-launcher-tests--report-world-log (merge-pathnames entry directory) root)))))
+      (:missing
+       (format *error-output* "~&ACP detached log directory: missing~%"))
+      (otherwise
+       (format *error-output* "~&ACP detached log directory: unavailable~%"))))
+  nil)
+
 (-> acp-launcher-tests--initialize-with-caller-environment (string) hash-table)
 (defun acp-launcher-tests--initialize-with-caller-environment (program)
   "Create an ACP session and observe restored ASDF values from executable user init."
@@ -156,8 +215,16 @@
                                  ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
                                  ("AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
             (unwind-protect
-                 (let ((result (acp-launcher-tests--initialize
-                                program :arguments '("acp") :directory root :new-session-p t)))
+                 (let ((result
+                         (handler-bind
+                             ((acp-launcher-test-failure
+                                (lambda (condition)
+                                  (declare (ignore condition))
+                                  (handler-case
+                                      (acp-launcher-tests--report-world-logs configuration root)
+                                    (serious-condition () nil)))))
+                           (acp-launcher-tests--initialize
+                            program :arguments '("acp") :directory root :new-session-p t))))
                    (with-open-file (stream observation)
                      (let ((*read-eval* nil))
                        (assert (equal (list registry "" nil nil) (read stream)))))
