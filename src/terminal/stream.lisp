@@ -15,10 +15,6 @@
   (write-string text (stream-terminal-output-stream terminal))
   nil)
 
-(defmethod clinedi:terminal-write ((terminal stream-terminal) text)
-  "Route native protocol output through the application write extension point."
-  (terminal--write terminal text))
-
 
 ;;;; -- Public Construction --
 

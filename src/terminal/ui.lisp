@@ -409,27 +409,6 @@ emergency terminal input responsive while another thread owns presentation."
   "Return the number of live physical rows currently painted for UI."
   (live-region-row-count (terminal-ui-live-region ui)))
 
-(-> terminal--write-newline (terminal) null)
-(defun terminal--write-newline (terminal)
-  "Write a line break that returns to column zero on interactive terminals."
-  (terminal--write terminal
-                   (if (terminal-interactive-p terminal)
-                       (format nil "~C~C" #\Return #\Newline)
-                       (string #\Newline)))
-  nil)
-
-(-> terminal--write-safe-text (terminal string) null)
-(defun terminal--write-safe-text (terminal text)
-  "Write trusted TEXT while making its line endings terminal-safe."
-  (let ((line-start 0))
-    (loop for newline = (position #\Newline text :start line-start)
-          while newline
-          do (terminal--write terminal (subseq text line-start newline))
-             (terminal--write-newline terminal)
-             (setf line-start (1+ newline))
-          finally (terminal--write terminal (subseq text line-start))))
-  nil)
-
 (-> terminal--spans-text (list) string)
 (defun terminal--spans-text (spans)
   "Return sanitized visible text for semantic SPANS and widgets."
@@ -3039,7 +3018,7 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
       (terminal-ui--present-live ui :appended-text text :appended-display display
                                   :appended-regions regions)
       (progn
-        (terminal--write-safe-text (terminal-ui-terminal ui) display)
+        (clinedi:terminal-write-text (terminal-ui-terminal ui) display)
         (terminal-flush (terminal-ui-terminal ui))))
   nil)
 

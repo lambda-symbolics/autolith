@@ -548,6 +548,10 @@ within this recent window.")
 (defgeneric terminal--write (terminal text)
   (:documentation "Write trusted renderer TEXT through the terminal transport."))
 
+(defmethod clinedi:terminal-write ((terminal terminal) (text string))
+  "Route Clinedi output through the application's terminal transport."
+  (terminal--write terminal text))
+
 (defgeneric terminal-plain-output-p (terminal)
   (:documentation
    "Return whether non-interactive TERMINAL is a plain output sink.

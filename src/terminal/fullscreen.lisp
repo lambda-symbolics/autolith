@@ -200,7 +200,7 @@ screen after leaving the alternate buffer."
              (unwind-protect
                   (terminal-screen-leave terminal token)
                (when epilogue
-                 (terminal--write-safe-text terminal (format nil "~A~%" epilogue))
+                 (clinedi:terminal-write-text terminal (format nil "~A~%" epilogue))
                  (terminal-flush terminal)))
           (setf (fullscreen-terminal-ui-active-p ui) nil)
           (terminal-ui-fullscreen-invalidate ui)))))
@@ -870,7 +870,7 @@ drag is a click: the selection ends and the transcript action there runs."
                                ui :rows rows :cursor-row cursor-row :cursor-column cursor-column))
                             (terminal-ui--note-command-paint ui (terminal-ui--command-visible-activities ui))))
                         (when (and (plusp (length display)) (terminal-plain-output-p terminal))
-                          (terminal--write-safe-text terminal display)
+                          (clinedi:terminal-write-text terminal display)
                           (terminal-flush terminal)))))
                 (setf (terminal-ui-deferred-live-appended-text ui) ""
                       (terminal-ui-deferred-live-appended-display ui) ""

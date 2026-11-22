@@ -361,7 +361,7 @@ Fullscreen restoration bypasses the UI lock, which may be held during shutdown."
          (ignore-errors (terminal-stop terminal))
          ; mallet:suppress no-ignore-errors -- best-effort exit notice before a forced exit
          (ignore-errors
-           (terminal--write-safe-text
+           (clinedi:terminal-write-text
             terminal (application-input-controller-forced-exit-message controller))
            (terminal-flush terminal)))
     (funcall (application-input-controller-forced-exit-function controller)
