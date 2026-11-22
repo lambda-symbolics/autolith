@@ -82,10 +82,12 @@
       (lambda () (copy-tree (acp-mcp-header-values transport)))))
    :exchange-scope-function
    (lambda (function)
-     (funcall (or exchange-scope-function #'funcall)
-              (lambda ()
-                (acp-mcp--credential-scope
-                 (acp-mcp-header-values transport) function))))
+     (if exchange-scope-function
+         (funcall exchange-scope-function function)
+         (mcp-tools--http-exchange-scope server-configuration function)))
+   :listener-failure-projector
+   (lambda (condition)
+     (mcp-tools--project-http-listener-failure server-configuration condition))
    :notification-handler notification-handler
    :connect-timeout
    (mcp-http-configuration-connect-timeout-seconds transport)))
@@ -145,13 +147,6 @@
       (mcp-configuration-error ()
         (agentcomms:acp-invalid-params "Invalid MCP configuration for ~A." name)))))
 
-(defgeneric acp-mcp--transport-values (transport)
-  (:documentation "Return ephemeral literal credential bindings, or NIL for native policy."))
-
-(defmethod acp-mcp--transport-values ((transport mcp-transport-configuration))
-  "Native transports resolve their credentials through the native secret boundary."
-  nil)
-
 (defmethod acp-mcp--transport-values ((transport acp-mcp-stdio-transport-configuration))
   "Return the client-supplied environment values."
   (acp-mcp-environment-values transport))
@@ -159,22 +154,6 @@
 (defmethod acp-mcp--transport-values ((transport acp-mcp-http-transport-configuration))
   "Return the client-supplied header values."
   (acp-mcp-header-values transport))
-
-(defmethod mcparen:mcp-managed-call-with-scope :around ((runtime mcp-server-runtime) function)
-  "Install literal redaction inside the native exchange scope."
-  (let ((values (acp-mcp--transport-values
-                 (mcp-server-configuration-transport (mcp-server-runtime-configuration runtime)))))
-    (if values
-        (call-next-method runtime (lambda () (acp-mcp--credential-scope values function)))
-        (call-next-method))))
-
-(defmethod mcparen:mcp-managed-call-with-cleanup :around ((runtime mcp-server-runtime) function)
-  "Apply literal redaction during cleanup before dropping the client declarations."
-  (let ((values (acp-mcp--transport-values
-                 (mcp-server-configuration-transport (mcp-server-runtime-configuration runtime)))))
-    (if values
-        (call-next-method runtime (lambda () (acp-mcp--credential-scope values function)))
-        (call-next-method))))
 
 (-> acp-mcp-create-tool-registry (configuration list &key (:conversation (option conversation))) tool-registry)
 (defun acp-mcp-create-tool-registry (configuration declarations &key conversation)

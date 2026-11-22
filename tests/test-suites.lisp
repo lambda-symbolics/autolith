@@ -2047,6 +2047,7 @@
   test-acp-extension-resource-authorization
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
+  test-acp-mcp-http-startup-failure-redaction
   test-acp-mcp-overlay-duplicate-validation
   test-acp-mcp-overlay-list-validation-order)
 

@@ -236,13 +236,27 @@
           (loop for octet across digest
                 do (format stream "~2,'0X" octet)))))))
 
+(defgeneric acp-mcp--transport-values (transport)
+  (:documentation "Return ephemeral literal credential bindings, or NIL for native policy."))
+
+(defmethod acp-mcp--transport-values ((transport mcp-transport-configuration))
+  "Native transports resolve their credentials from the environment snapshot."
+  nil)
+
+(-> mcp-tools--scope-credential-values (mcp-server-configuration list) list)
+(defun mcp-tools--scope-credential-values (configuration snapshot)
+  "Collect native and literal credential values for one guarded scope."
+  (append (mcp-tools--snapshot-credential-values snapshot)
+          (mapcar #'rest (acp-mcp--transport-values
+                          (mcp-server-configuration-transport configuration)))))
+
 (-> mcp-tools--call-with-server-secret-use
     (mcp-server-configuration function
      &key (:allow-incomplete-p boolean))
     t)
 (defun mcp-tools--call-with-server-secret-use
     (configuration function &key allow-incomplete-p)
-  "Call FUNCTION under one exact guarded environment snapshot."
+  "Call FUNCTION under one exact guarded snapshot and literal credential scope."
   (if (eq configuration *mcp-active-environment-configuration*)
       (progn
         (when (and *mcp-active-environment-missing-condition*
@@ -253,17 +267,17 @@
        (lambda ()
          (multiple-value-bind (snapshot missing-condition)
              (mcp-tools--resolve-environment-snapshot configuration)
-           (let* ((credential-values
-                    (mcp-tools--snapshot-credential-values snapshot))
-                  (*mcp-active-environment-configuration* configuration)
-                  (*mcp-active-environment-snapshot*      snapshot)
-                  (*mcp-active-environment-missing-condition*
-                    missing-condition)
-                  (*mcp-active-credential-values*         credential-values)
-                  (*mcp-active-credential-redaction-marker*
-                    (safe-redaction-marker
-                     *mcp-credential-redaction-marker*
-                     credential-values)))
+          (let* ((credential-values
+                   (mcp-tools--scope-credential-values configuration snapshot))
+                 (*mcp-active-environment-configuration* configuration)
+                 (*mcp-active-environment-snapshot*      snapshot)
+                 (*mcp-active-environment-missing-condition*
+                   missing-condition)
+                 (*mcp-active-credential-values*         credential-values)
+                 (*mcp-active-credential-redaction-marker*
+                   (safe-redaction-marker
+                    *mcp-credential-redaction-marker*
+                    credential-values)))
              (when (and missing-condition (not allow-incomplete-p))
                (error missing-condition))
              (funcall function)))))))
@@ -487,6 +501,27 @@
        #'mcp-tools--identity-ingress-projector
        #'mcp-tools--credential-stdio-ingress-projector)))
 
+(-> mcp-tools--project-http-listener-failure (mcp-server-configuration condition) condition)
+(defun mcp-tools--project-http-listener-failure (configuration condition)
+  "Detach a listener diagnostic without acquiring any client lock.
+
+An error entering or leaving the exchange scope has no exact snapshot.
+Keep a generic diagnostic in that case rather than re-resolving credentials."
+  (make-condition 'mcparen:mcp-transport-error
+                  :message   (if (eq configuration *mcp-active-environment-configuration*)
+                                 (mcp-tools--sanitized-diagnostic condition)
+                                 "The MCP HTTP listener stopped outside its exchange scope.")
+                  :transport nil
+                  :cause     nil))
+
+(-> mcp-tools--http-exchange-scope (mcp-server-configuration function) t)
+(defun mcp-tools--http-exchange-scope (configuration function)
+  "Supply exchange credentials without consulting or projecting the client.
+
+McParen may already hold its lifecycle lock or be joining the listener."
+  (mcp-tools--call-with-server-secret-use configuration function
+                                         :allow-incomplete-p t))
+
 (defmethod mcp-transport-configuration--materialize
     ((transport mcp-http-transport-configuration)
      (server-configuration mcp-server-configuration)
@@ -501,7 +536,10 @@
    :exchange-scope-function
    (or exchange-scope-function
        (lambda (function)
-         (funcall function)))
+          (mcp-tools--http-exchange-scope server-configuration function)))
+   :listener-failure-projector
+   (lambda (condition)
+     (mcp-tools--project-http-listener-failure server-configuration condition))
    :notification-handler notification-handler
    :connect-timeout
    (mcp-http-configuration-connect-timeout-seconds transport)))
@@ -802,14 +840,16 @@ retained value is credential-redacted or projected."
 (-> mcp-tools--call-cleanup-with-snapshot
     (mcp-server-runtime function
      &key (:snapshot list)
-          (:missing-condition t))
+          (:missing-condition t)
+          (:local-p boolean))
     t)
 (defun mcp-tools--call-cleanup-with-snapshot
-    (runtime function &key snapshot missing-condition)
+    (runtime function &key snapshot missing-condition local-p)
   "Call cleanup FUNCTION with SNAPSHOT available only for exact redaction."
   (let* ((configuration                              (mcp-server-runtime-configuration runtime))
          (credential-values
-           (mcp-tools--snapshot-credential-values snapshot))
+           (unless local-p
+             (mcp-tools--scope-credential-values configuration snapshot)))
          (*mcp-active-environment-configuration*     configuration)
          (*mcp-active-environment-snapshot*          snapshot)
          (*mcp-active-environment-missing-condition* missing-condition)
@@ -975,13 +1015,10 @@ retained value is credential-redacted or projected."
                            :watch-tool-changes-p              t
                            :client-factory
                            (lambda (runtime notification-handler)
+                              (declare (ignore runtime))
                              (mcp-tools--client server configuration
                                                 :notification-handler
-                                                notification-handler
-                                                :exchange-scope-function
-                                                (lambda (function)
-                                                  (mcp-tools--call-with-runtime-secret-use
-                                                   runtime function))))))))
+                                                notification-handler))))))
       registrations)
      :manager-class 'mcp-manager :manager-initargs
      (list :configuration configuration))))
@@ -2585,7 +2622,7 @@ sources in the same order, and stdio servers must resolve the same workspace."
     ((runtime mcp-server-runtime) function cause)
   "Apply product redaction without a new credential or secret-use dependency."
   (mcp-tools--call-cleanup-with-snapshot runtime function
-                                       :snapshot nil :missing-condition cause))
+                                       :local-p t :missing-condition cause))
 
 (defmethod mcparen:mcp-managed-prepare-client ((runtime mcp-server-runtime))
   "Apply Autolith metadata redaction and instruction trust policy."

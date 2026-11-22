@@ -184,8 +184,8 @@
   :version "git-09d098b458134008620b81f9e6e507a56cb0c40c"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "59e1f3388cff15655d6f7fb7256bb0089ec7df02")
-  :version "git-59e1f3388cff15655d6f7fb7256bb0089ec7df02"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "a5b3e33d54cb709c2038bb5367a21b0dbcb89a23")
+  :version "git-a5b3e33d54cb709c2038bb5367a21b0dbcb89a23"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "a6d1a97626d0a385b6a167bdab4761f1edfd5e4b")

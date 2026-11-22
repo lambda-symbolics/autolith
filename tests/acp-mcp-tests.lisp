@@ -188,6 +188,59 @@
                    "all merged transports close")))
   nil)
 
+(-> test-acp-mcp-http-startup-failure-redaction () null)
+(defun test-acp-mcp-http-startup-failure-redaction ()
+  "Redact an echoed HTTP header in the startup condition and runtime diagnostic."
+  (with-test-configuration (configuration)
+    (let* ((secret    "fixture-header-echo")
+           (server
+             (acp-mcp--server
+              (agentcomms:acp-mcp-server-http
+               "client-http" "https://example.invalid/mcp"
+               :headers (list (agentcomms:acp-http-header "Authorization" secret)))))
+           (transport nil))
+      (flet ((reject (transport request)
+               "Return a server failure containing the header actually sent."
+               (declare (ignore request))
+               (error "Fixture rejected ~A"
+                      (rest (assoc "Authorization" (acp-mcp-test-observed-bindings transport)
+                                   :test #'equal)))))
+        (test-call-with-function-replacements
+         (list (list 'make-mcp-streamable-http-transport
+                     (lambda (url &rest options)
+                       (declare (ignore url))
+                       (setf transport
+                             (make-instance 'acp-mcp-test-transport
+                                            :scope    (getf options :exchange-scope-function)
+                                            :bindings (getf options :headers-function)
+                                            :handler  #'reject)))))
+         (lambda ()
+           (let ((runtime (make-instance 'mcp-server-runtime
+                                         :configuration server
+                                         :client        (mcp-tools--client server configuration))))
+             (unwind-protect
+                  (let ((condition
+                          (handler-case (progn (mcparen:mcp-server-runtime-connect runtime) nil)
+                            (mcp-server-startup-error (condition) condition))))
+                    (test-assert condition "the required server fails startup")
+                    (test-assert (eq ':failed (mcp-server-runtime-state runtime))
+                                 "the runtime records the startup failure")
+                    (test-assert (equal (cons "Authorization" secret)
+                                        (assoc "Authorization" (acp-mcp-test-observed-bindings transport)
+                                               :test #'equal))
+                                 "the transport uses the configured header")
+                    (dolist (diagnostic (list (princ-to-string condition)
+                                              (mcp-server-startup-error-cause condition)
+                                              (mcp-server-runtime-failure runtime)))
+                      (test-assert (and (stringp diagnostic)
+                                        (search "Fixture rejected" diagnostic)
+                                        (not (search secret diagnostic)))
+                                   "the echoed header is removed from every diagnostic"))
+                    (test-assert (not (mcp-transport-open-p transport))
+                                 "failed startup closes the transport"))
+               (mcparen:mcp-server-runtime-close runtime))))))))
+  nil)
+
 (-> test-acp-mcp-overlay-duplicate-validation () null)
 (defun test-acp-mcp-overlay-duplicate-validation ()
   "Reject colliding server identities before constructing a transport."
