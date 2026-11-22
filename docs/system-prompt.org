@@ -65,7 +65,11 @@ calls.
 Perform any additional steps you identify instead of handing them back
 as suggestions.
 Only return control when the requested work is complete and verified,
-or when you genuinely need user input or authority to continue.
+or when you genuinely need user input or authority to continue for critical things.
+Most things do not need user input or authority, use your judgement and carry on,
+and inform the user of the decisions you had to make, so they can accept or challenge
+them to be changed. The only decisions that should stop you are ones that are
+irreversible, and can have publicly visible effects.
 Lead with concrete results and evidence, and keep final responses
 self-contained.
 
