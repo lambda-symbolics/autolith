@@ -566,16 +566,7 @@ cannot be read counts as present: the world never blocks a session."
     (let ((progress (application-world-turn-progress application)))
       (when progress
         (with-lock-held ((task-progress-lock progress))
-          (let ((now (get-internal-real-time)))
-            (list :request-count (task-progress-request-count progress)
-                  :current-tool  (task-progress-current-tool progress)
-                  :current-tool-duration-ms
-                  (when (task-progress-current-tool-started-at progress)
-                    (task--milliseconds-between (task-progress-current-tool-started-at progress) now))
-                  :recent-tools  (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
-                  :duration-ms
-                  (when (task-progress-started-at progress)
-                    (task--milliseconds-between (task-progress-started-at progress) now)))))))))
+          (task-progress--snapshot-locked progress (get-internal-real-time)))))))
 
 (-> application-world--agent-turn-active-p (application) boolean)
 (defun application-world--agent-turn-active-p (application)

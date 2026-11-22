@@ -36,21 +36,6 @@
              :tool-name tool-name :task-id identifier))
     (values (or job (list :durable (getf snapshot :result))) snapshot)))
 
-(-> application-client--job-state ((option keyword)) string)
-(defun application-client--job-state (state)
-  "Convert an internal job STATE to its stable wire spelling."
-  (case state
-    (:queued
-     "pending")
-    (:finalizing
-     "running")
-    (:success
-     "completed")
-    (:aborted
-     "cancelled")
-    (otherwise
-     (string-downcase (symbol-name (or state ':unknown))))))
-
 (-> application-client--job-usage (t) list)
 (defun application-client--job-usage (usage)
   "Project numeric counters as native values."
@@ -77,9 +62,7 @@
     (list :id              (or identifier (getf snapshot :job-id))
           :parent-id       (getf snapshot :parent-id)
           :role            (or (getf snapshot :agent) (getf snapshot :tool))
-          :state           (if job (getf snapshot :state)
-                               (or (getf result :state) (getf result :status)))
-          :started-at      (getf progress :started-at)
+          :state           (getf snapshot :state)
           :elapsed-seconds (and (getf progress :duration-ms)
                                 (floor (getf progress :duration-ms) 1000))
           :usage           (application-client--job-usage (getf progress :usage))

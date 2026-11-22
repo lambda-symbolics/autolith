@@ -2428,7 +2428,7 @@ pool must reject the cancelled parent without creating a descendant."
                           '(integer 0))
                    (<= (getf running-activity :current-tool-duration-ms)
                        (getf running-activity :duration-ms))
-                   (string= (getf running-activity :agent) "activity")
+                   (string= (getf running-activity :agent) "running-child")
                    (getf running-activity :detached)
                    (equal (getf progress-snapshot :recent-tools)
                           (getf running-activity :recent-tools))
@@ -2487,7 +2487,12 @@ pool must reject the cancelled parent without creating a descendant."
              running :status ':success :output "running complete"))
            (test-assert
             (null (task-orchestrator-live-activities orchestrator))
-            "no task presentation remains after every child is terminal"))
+            "no task presentation remains after every child is terminal")
+           (test-assert
+            (= (getf (task-progress-snapshot running) :duration-ms)
+               (task--milliseconds-between (task-progress-started-at (task-job-progress running))
+                                           (job-ended-at running)))
+            "Terminal inspection measures duration through the recorded end time"))
       (dolist (job (remove nil (list queued running)))
         (unless (job-terminal-p job)
           (task-tests--publish-terminal

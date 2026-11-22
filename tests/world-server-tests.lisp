@@ -494,6 +494,14 @@ Keep the override until the captured thread exits; replacement threads pass thro
                       (lambda (application text &rest arguments)
                         (if (equal "bactivitykid" (application-world--served-channel application))
                             (progn
+                               (application-world-note-child-progress
+                                application ':provider-request-started (list :request-number 1))
+                               (application-world-note-child-progress
+                                application ':tool-call-started (list :tool "example.first"))
+                               (application-world-note-child-progress
+                                application ':tool-call-completed (list :tool "example.first"))
+                               (application-world-note-child-progress
+                                application ':tool-call-started (list :tool "example.current"))
                               (sb-thread:signal-semaphore entered)
                               (sb-thread:wait-on-semaphore release :timeout 20)
                               ':continue)
@@ -511,9 +519,15 @@ Keep the override until the captured thread exits; replacement threads pass thro
                       (task-tests--wait-until
                        (lambda ()
                          (let ((rows (activities)))
-                           (and (= (length rows) 1)
-                                (equal (getf (first rows) :agent) "helper")
-                                (eq (getf (first rows) :state) ':running))))
+                           (let ((row (first rows)))
+                             (and (= (length rows) 1)
+                                  (equal (getf row :agent) "helper")
+                                  (eq (getf row :state) ':running)
+                                  (eql (getf row :request-count) 1)
+                                  (equal (getf row :recent-tools) '("example.first"))
+                                  (equal (getf row :current-tool) "example.current")
+                                  (typep (getf row :current-tool-duration-ms) '(integer 0))
+                                  (<= (getf row :current-tool-duration-ms) (getf row :duration-ms))))))
                        10)
                       "The parent receives one running child row without a spawn job."))
                 (sb-thread:signal-semaphore release))
