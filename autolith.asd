@@ -44,6 +44,7 @@
                             #:cl-termdown
                             #:clifff
                             #:clinedi
+                            #:clinedi/lisp-layout
                             (:feature (:not :win32) #:clinedi/posix)
                             (:feature :win32 #:clinedi/win32)
                             #:ls-compat/files
@@ -300,7 +301,6 @@
                                           (:file "terminal/input")
                                           (:file "terminal/style")
                                           (:file "terminal/syntax-highlighting")
-                                          (:file "terminal/lisp-layout")
                                           (:file "terminal/stream")
                                           (:file "world/transport/screen")
                                           (:file "terminal/path-completion")

@@ -300,8 +300,8 @@ let
     pname = "clinedi";
     version = qlotVersion "clinedi";
     src = qlotSource "clinedi";
-    systems = [ "clinedi" "clinedi/posix" ];
-    lispLibs = [ clColorist ] ++ (with lispPackages; [ bordeaux-threads trivial-gray-streams ]);
+    systems = [ "clinedi" "clinedi/posix" "clinedi/lisp-layout" ];
+    lispLibs = [ clColorist parenchek ] ++ (with lispPackages; [ bordeaux-threads trivial-gray-streams ]);
   };
 
   mcparen = pkgs.sbcl.buildASDFSystem {

@@ -785,7 +785,7 @@ structural discriminator as a readable heading instead."
                              (let ((width (min (getf description :lisp-columns) (max 1 (- columns 5)))))
                                (application--transcript-source-value
                                 (list ':formatted-lisp text width)
-                                (lambda () (lisp-source-layout text width))))
+                                (lambda () (clinedi:lisp-source-layout text width))))
                              text))))
          (source-rows
            (application--source-preview-rows
