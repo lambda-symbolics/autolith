@@ -55,24 +55,33 @@
 
 (-> test-acp-mcp-overlay-configuration () null)
 (defun test-acp-mcp-overlay-configuration ()
-  "Validate client declarations without starting transports."
-  (let* ((stdio        (agentcomms:acp-mcp-server-stdio
-                        "stdio" "echo" :arguments '("hello")
-                        :environment              (list (agentcomms:acp-env-variable "TOKEN" "fixture-value"))))
+  "Decode validated declarations and retain owned literal bindings without starting transports."
+  (let* ((env          (agentcomms:acp-env-variable "TOKEN" "fixture-value"))
+         (header       (agentcomms:acp-http-header "Authorization" "fixture-value"))
+         (stdio        (agentcomms:acp-mcp-server-stdio
+                        "stdio" "echo" :arguments '("hello") :environment (list env)))
          (http         (agentcomms:acp-mcp-server-http
-                        "http" "https://example.invalid/mcp"
-                        :headers (list (agentcomms:acp-http-header "Authorization" "fixture-value"))))
-         (stdio-config (acp-mcp--server stdio nil))
-         (http-config  (acp-mcp--server http nil)))
-    (test-assert (typep (mcp-server-configuration-transport stdio-config)
-                        'acp-mcp-stdio-transport-configuration)
+                        "http" "https://example.invalid/mcp" :headers (list header)))
+         (stdio-config (acp-mcp--server stdio))
+         (http-config  (acp-mcp--server http))
+         (stdio-policy (mcp-server-configuration-transport stdio-config))
+         (http-policy  (mcp-server-configuration-transport http-config)))
+    (test-assert (typep stdio-policy 'acp-mcp-stdio-transport-configuration)
                  "stdio declarations retain native validated policy")
-    (test-assert (typep (mcp-server-configuration-transport http-config)
-                        'acp-mcp-http-transport-configuration)
+    (test-assert (typep http-policy 'acp-mcp-http-transport-configuration)
                  "HTTP declarations retain native validated policy")
+    (loop for policy in (list stdio-policy http-policy)
+          for entry  in (list env header)
+          for pair   = (first (acp-mcp--transport-values policy))
+          for name   = (json-get entry "name")
+          for value  = (json-get entry "value")
+          do (test-assert (and (equal pair (cons name value))
+                               (not (eq (first pair) name))
+                               (not (eq (rest pair) value)))
+                          "literal binding strings do not alias the declaration"))
     (test-assert (handler-case
                      (progn (acp-mcp--server
-                             (agentcomms:acp-mcp-server-sse "sse" "https://example.invalid") nil)
+                              (agentcomms:acp-mcp-server-sse "sse" "https://example.invalid"))
                             nil)
                    (agentcomms:acp-method-error () t))
                  "unsupported SSE declarations fail before construction"))
@@ -196,4 +205,20 @@
                     nil)
            (agentcomms:acp-method-error () t))
          "duplicate client/client and client/native names fail before connection"))))
+  nil)
+
+(-> test-acp-mcp-overlay-list-validation-order () null)
+(defun test-acp-mcp-overlay-list-validation-order ()
+  "Reject a malformed declaration before applying native policy to any declaration."
+  (with-test-configuration (configuration)
+    (flet ((rejection (declarations)
+             (handler-case
+                 (progn (acp-mcp-create-tool-registry configuration declarations) nil)
+               (agentcomms:acp-method-error (condition)
+                 (agentcomms:acp-error-message condition)))))
+      (let* ((sse       (agentcomms:acp-mcp-server-sse "sse" "https://example.invalid"))
+             (malformed (list (json-object "name" "no-command")))
+             (expected  (rejection malformed)))
+        (test-assert (and expected (equal expected (rejection (cons sse malformed))))
+                     "malformed declarations take precedence over native SSE policy"))))
   nil)

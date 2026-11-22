@@ -320,7 +320,7 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
                            (unless (and session (not (channel-subscription-closed-p session))
                                         (not (acp-service-closed-p service)))
                              ;; Setup may have lost its socket before the library registered it.
-                             (agentcomms::agent--forget-session service identifier)
+                              (agentcomms:acp-agent-forget-session service identifier)
                              (error 'agentcomms:acp-connection-closed))))))
                    response)
                (authentication-error ()

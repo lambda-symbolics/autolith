@@ -90,14 +90,13 @@
    :connect-timeout
    (mcp-http-configuration-connect-timeout-seconds transport)))
 
-(-> acp-mcp--field (hash-table string &key (:required t)) t)
-(defun acp-mcp--field (object name &key required)
-  "Read NAME from an ACP JSON object, optionally requiring it."
+(-> acp-mcp--pair-field (hash-table string) t)
+(defun acp-mcp--pair-field (object name)
+  "Require a literal pair member, leaving present values to the pair check."
   (let ((value (json-get object name :absent)))
-    (when (and required (eq value :absent))
-      (agentcomms:acp-invalid-params
-       "MCP server field ~A is required." name))
-    (unless (eq value :absent) value)))
+    (when (eq value :absent)
+      (agentcomms:acp-invalid-params "MCP server field ~A is required." name))
+    value))
 
 (-> acp-mcp--pairs (t string) list)
 (defun acp-mcp--pairs (entries label)
@@ -110,36 +109,34 @@
           (unless (json-object-p entry)
             (agentcomms:acp-invalid-params
              "Each MCP ~A entry must be an object." label))
-          (let ((name  (acp-mcp--field entry "name" :required t))
-                (value (acp-mcp--field entry "value" :required t)))
+          (let ((name  (acp-mcp--pair-field entry "name"))
+                (value (acp-mcp--pair-field entry "value")))
             (unless (and (non-empty-string-p name) (stringp value))
               (agentcomms:acp-invalid-params
                "MCP ~A entries must contain string name and value." label))
             (cons (copy-seq name) (copy-seq value))))))
 
-(-> acp-mcp--server (hash-table t) mcp-server-configuration)
-(defun acp-mcp--server (server cwd)
-  "Validate a client declaration, then attach ephemeral literal bindings to native policy."
-  (declare (ignore cwd))
-  (agentcomms:acp-validate-mcp-servers (list server))
-  (let* ((name    (acp-mcp--field server "name" :required t))
-         (type    (or (json-get server "type") "stdio"))
-         (stdio-p (equal type "stdio"))
+(-> acp-mcp--server (hash-table) mcp-server-configuration)
+(defun acp-mcp--server (server)
+  "Attach ephemeral literal bindings to native policy for a validated declaration."
+  (let* ((name (agentcomms:acp-field server "name"))
+         (kind (agentcomms:acp-mcp-server-transport server))
          (policy
-          (cond
-            (stdio-p
-             (list :type ':stdio :command (json-get server "command")
-                   :arguments (coerce (json-get server "args") 'list)
+          (case kind
+            (:stdio
+             (list :type ':stdio :command (agentcomms:acp-field server "command")
+                   :arguments (coerce (agentcomms:acp-field server "args") 'list)
                    :directory ':workspace :environment nil))
-            ((equal type "http")
-             (list :type ':http :url (json-get server "url") :headers nil))
-            (t
-             (agentcomms:acp-invalid-params "Unsupported MCP transport ~A." type)))))
+            (:http
+             (list :type ':http :url (agentcomms:acp-field server "url") :headers nil))
+            (otherwise
+             (agentcomms:acp-invalid-params
+              "Unsupported MCP transport ~A." (json-get server "type"))))))
     (handler-case
         (let* ((configuration (mcp-server-configuration-create
                                :name name :transport policy :approval ':prompt :required-p t))
                (transport     (mcp-server-configuration-transport configuration)))
-          (if stdio-p
+          (if (eq kind ':stdio)
               (change-class transport 'acp-mcp-stdio-transport-configuration
                             :environment-values (acp-mcp--pairs (json-get server "env") "environment"))
               (change-class transport 'acp-mcp-http-transport-configuration
@@ -181,9 +178,12 @@
 
 (-> acp-mcp-create-tool-registry (configuration list) tool-registry)
 (defun acp-mcp-create-tool-registry (configuration declarations)
-  "Build the native registry with session-local client servers and no global mutation."
-  (let* ((servers                    (mapcar (lambda (declaration)
-                                               (acp-mcp--server declaration (config :working-directory configuration)))
+  "Build the native registry with session-local client servers and no global mutation.
+
+ACP validates its wire requests separately. World :OPEN arguments may come
+from local calls or IPC, so check the whole list here before applying native
+transport policy or decoding literal credentials."
+  (let* ((servers                    (mapcar #'acp-mcp--server
                                              (agentcomms:acp-validate-mcp-servers declarations)))
          (*mcp-server-registrations* (mcp-server-registrations))
          (names                      (make-hash-table :test #'equal)))

@@ -14,7 +14,7 @@ ql trivial-gray-streams 2026-01-01
 ql winhttp 2026-01-01
 ql yason 2026-01-01
 
-git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 17b22db1db0f6527fc17fa8033045fc991f03594
+git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 8ff323fc62ae68fb605bcc89d6b95c9d7355d12c
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref d1ce830ef9b53c57b9c40a80b028ba8f2b2e3292
 git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref ea7dc43e58a5bf5c9ccb1288298ac666973ec8a0
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748

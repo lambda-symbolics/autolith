@@ -7,5 +7,5 @@
     (with-lock-held ((acp-service-lock service))
       (when (eq session (gethash identifier (acp-service-sessions service)))
         (remhash identifier (acp-service-sessions service))
-        (when wire-p (agentcomms::agent--forget-session service identifier)))))
+        (when wire-p (agentcomms:acp-agent-forget-session service identifier)))))
   nil)
