@@ -569,21 +569,10 @@ require a new human decision rather than an automatic second attempt."
       (pushnew digest (getf record :overflow-context-digests) :test #'equal)
       (task-continuity--write path record))))
 
-(defmethod agent-overflow-context-owned-p ((agent task-child-agent) digest)
-  "Reread only this authenticated owner's grants, including after reconstruction."
-  (and (stringp digest) (= (length digest) 64)
-       (every (lambda (character) (digit-char-p character 16)) digest)
-       (handler-case
-           (with-lock-held ((task-orchestrator-artifact-lock (task-child-agent-orchestrator agent)))
-             (let* ((path   (task-continuity--overflow-path agent))
-                    (record (task-continuity--overflow-record agent path)))
-               (and (member (string-downcase digest) (getf record :overflow-context-digests) :test #'equal) t)))
-         (error () nil))))
-
 (defmethod resource-tool-edit :before
     ((resource workspace-file-resource) (tool resource-edit-tool)
      (context tool-context) (arguments hash-table))
-  "Prevent child model edits from manufacturing durable producer grants."
+  "Prevent child model edits to private continuity records."
   (declare (ignore tool arguments))
   (let ((path (workspace-file-resource-pathname resource)))
     (when (and (resource-context-child-agent-p context)

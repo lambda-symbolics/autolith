@@ -362,7 +362,7 @@
 
 (-> test-child-overflow-context-ownership () null)
 (defun test-child-overflow-context-ownership ()
-  "Authorize actual producer spills, reject other owners, and reconstruct durable grants."
+  "Read actual tool spills across task agents without weakening explicit resource limits."
   (task-continuity-tests--fixture
    (lambda (parent orchestrator primary job path)
      (let* ((configuration (agent-configuration parent))
@@ -370,8 +370,8 @@
             (sibling       (task-tests--make-job orchestrator :identifier "sibling"
                                                  :parent-agent parent :definition (task-job-definition job)
                                                  :item                    (list :agent "task" :task "Sibling")))
-            (sibling-path  (task-continuity-record-job sibling parent))
             (text          (tool-tests--overflow-text)))
+       (task-continuity-record-job sibling parent)
        (tool-registry-register
         registry (make-instance 'child-overflow-test-tool :namespace "test" :name "overflow-owned"
                                  :description "Emit a large test payload."
@@ -402,7 +402,7 @@
                 (other    (child-context sibling))
                 (uri      (child-overflow-tests--emit producer text)))
            (test-assert (readable-p producer uri) "The producing child can read its actual emitted tail")
-           (test-assert (denied-p other uri) "A sibling knowing the emitted URI has no grant")
+           (test-assert (readable-p other uri) "A sibling can read a shared context URI before emitting it")
            (let* ((nested-parent (tool-context-agent producer))
                   (nested-job    (task-tests--make-job orchestrator :identifier "nested"
                                                        :parent-agent            nested-parent
@@ -411,22 +411,25 @@
                                                        :owner-identifiers       (list (job-identifier job))
                                                        :item                    (list :agent "task" :task "Nested"))))
              (task-continuity-record-job nested-job nested-parent)
-             (test-assert (denied-p (child-context nested-job) uri)
-                          "A nested child does not inherit its producing parent's grants"))
-           (dolist (forbidden (list "context:index" (format nil "context:~64,'0X" 0)
-                                   (format nil "context:~A" (rlm-context-object-digest
-                                                              (rlm-context-intern configuration "foreign payload")))))
-             (test-assert (denied-p producer forbidden) "Children cannot read an index, fabricated or foreign digest"))
+             (test-assert (readable-p (child-context nested-job) uri)
+                          "A nested child can read the context by digest"))
+           (let ((index (child-overflow-tests--call other "resource" "read"
+                                                    :arguments (json-object "uri" "context:index"))))
+             (test-assert (and (tool-result-success-p index)
+                               (search (subseq uri 8) (tool-result-content index)))
+                          "A task child can discover a sibling's context in the index"))
+           (dolist (invalid (list "context:not-a-digest" (format nil "context:~64,'0X" 0)))
+             (test-assert (not (tool-result-success-p (child-overflow-tests--read producer invalid)))
+                          "Malformed and absent context digests do not resolve"))
            (let ((parent-uri (child-overflow-tests--emit primary (concatenate 'string text "parent"))))
-             (test-assert (denied-p producer parent-uri) "Parent emission conveys no child grant")
+             (test-assert (readable-p producer parent-uri) "A task child can read the parent's spill")
              (test-assert (readable-p primary parent-uri) "The primary can read its own spill"))
-           (let ((other-uri (child-overflow-tests--emit other (concatenate 'string text "sibling"))))
-             (test-assert (denied-p producer other-uri) "Another child's emitted digest is denied"))
            (test-assert (string= uri (child-overflow-tests--emit other text)) "Identical payloads deduplicate")
-           (test-assert (readable-p other uri) "Deduplicated content becomes readable only after own emission")
-           (test-assert (readable-p primary uri) "Primary reads retain ordinary context access")
+           (test-assert (readable-p primary uri) "The primary can read a child spill")
+           (test-assert (denied-p producer "inference:index") "Context access does not grant inference trace access")
            (let ((*resource-readable-schemes* '("workspace")))
-             (test-assert (denied-p producer uri) "An explicit view scheme restriction still denies own contexts"))
+             (test-assert (and (denied-p producer uri) (denied-p producer "context:index"))
+                          "An explicit scheme restriction denies both forms of context read"))
            (let ((gate    (make-lock "Concurrent overflow emission"))
                  (threads nil))
              (with-lock-held (gate)
@@ -445,14 +448,14 @@
                               "Concurrent real tool emissions each produce a context reference")
                  (when start
                    (test-assert (readable-p producer (subseq content start (+ start 72)))
-                                "Concurrent emissions retain both durable grants")))))
+                                 "Both concurrently emitted contexts can be read")))))
            (test-assert (tool-result-success-p
                          (child-overflow-tests--call primary "resource" "read"
                                                      :arguments (json-object "uri" "context:index")))
                         "The primary retains index access")
            (task-continuity-declare parent orchestrator (session-job-execution-identifier job)
                                     :safety "Deterministic overflow fixture.")
-           (test-assert (readable-p producer uri) "Recovery declarations retain producer grants")
+           (test-assert (readable-p producer uri) "Recovery declarations do not hide stored context")
            (let* ((target      (format nil "workspace:~A" (namestring path)))
                   (observation (child-overflow-tests--call producer "resource" "read"
                                                           :arguments (json-object "uri" target)))
@@ -468,10 +471,9 @@
                                                                                                             "content" "(:overflow-context-digests (fabricated))"))))))
              (test-assert (and (not (tool-result-success-p edit))
                                (eq ':access-denied (tool-result-error-code edit)))
-                          "Even an observed in-workspace owner record cannot be edited to grant access"))
-           (let ((record         (task-continuity--read path))
-                 (sibling-record (task-continuity--read sibling-path))
-                 (fresh          (task-orchestrator-create)))
+                          "A task child cannot edit private continuity records"))
+           (let ((record (task-continuity--read path))
+                 (fresh  (task-orchestrator-create)))
              (unwind-protect
                   (let ((reconstructed
                           (make-instance 'task-job :pool  (task-orchestrator-pool fresh)
@@ -481,15 +483,10 @@
                                          :body-function #'task-job--run :maximum-runtime-milliseconds 0
                                          :orchestrator fresh :execution-identifier (session-job-execution-identifier job)
                                          :definition (task-job-definition job) :item (task-job-item job) :parent-agent parent)))
-                    (test-assert (readable-p (child-context reconstructed) uri)
-                                 "A reconstructed same-owner job rereads its durable emitted grant")
-                    (task-continuity--write sibling-path record)
-                    (test-assert (denied-p other uri) "Replaying another owner's durable record grants nothing")
-                    (task-continuity--write sibling-path sibling-record)
                     (remf record :overflow-context-digests)
                     (task-continuity--write path record)
-                    (test-assert (denied-p (child-context reconstructed) uri)
-                                 "Legacy records without grants default closed"))
+                    (test-assert (readable-p (child-context reconstructed) uri)
+                                 "An older execution record needs no producer metadata to read a context"))
                (task-orchestrator-close fresh))))))))
   nil)
 

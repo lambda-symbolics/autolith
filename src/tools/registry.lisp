@@ -544,14 +544,6 @@ is unavailable. Without a URI, the result's tail is discarded.")
   (declare (ignore agent digest))
   nil)
 
-(defgeneric agent-overflow-context-owned-p (agent digest)
-  (:documentation "Return true only for DIGEST emitted by this exact child AGENT."))
-
-(defmethod agent-overflow-context-owned-p (agent digest)
-  "Unknown owners have no producer grants."
-  (declare (ignore agent digest))
-  nil)
-
 (-> tool--spill-result-text (tool-context string string) (option string))
 (defun tool--spill-result-text (context tool-name text)
   "Intern oversized result TEXT durably and return its context URI, or NIL."

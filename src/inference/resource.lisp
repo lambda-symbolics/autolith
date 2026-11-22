@@ -382,16 +382,14 @@ requested window rather than the complete trace."
   "context: exposes bounded, line-windowed stored context objects by digest: context:index lists them.")
 
 (defmethod resource-resolver-child-safe-p ((resolver context-object-resolver) context)
-  "Defer child context authorization to exact durable producer ownership."
+  "Allow task children to read stored context objects and their index."
   (declare (ignore resolver context))
   t)
 
 (defmethod resource-resolver-resolve
     ((resolver context-object-resolver) identifier (context tool-context))
-  "Resolve a context object after checking the exact child's producer grant."
-  (when (and (resource-context-child-agent-p context)
-             (not (agent-overflow-context-owned-p (tool-context-agent context) identifier)))
-    (error 'resource-access-denied :uri (format nil "context:~A" identifier)))
+  "Resolve the stored context index or one exact digest."
+  (declare (ignore context))
   (when (equal identifier *rlm-index-identifier*)
     (return-from resource-resolver-resolve
       (make-instance 'context-object-index-resource
