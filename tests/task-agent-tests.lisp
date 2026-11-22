@@ -256,7 +256,8 @@
            (task-tests--write-native-form
             (merge-pathnames "allowed.sexp" project-directory)
             (task-tests--role-form
-             "allowed" "An explicitly spawnable role." secret))
+               "allowed" "An explicitly spawnable role." secret
+               :tools '("resource.read")))
            (task-tests--write-native-form
             (merge-pathnames "denied.sexp" project-directory)
             (task-tests--role-form
@@ -268,6 +269,11 @@
            (task-tests--write-text
             hidden-broken-path
             "(:name \"hidden-broken\" :description \"Private malformed role\" :instructions 177771)")
+           (task-tests--write-native-form
+            (merge-pathnames "spawn-parent.sexp" project-directory)
+            (task-tests--role-form
+             "spawn-parent" "Permit two role names." "Exercise child role discovery."
+             :tools nil :spawns '("allowed" "blocked")))
            (let* ((primary
                     (task-tests--primary-agent
                      configuration "agents-primary" registry))
@@ -276,8 +282,8 @@
                           "the default registry exposes child.roles")
              (let ((orchestrator (task-agents-tool-orchestrator tool)))
                (labels
-                   ((invoke (selected-tool viewer offset limit)
-                      "Execute child.roles and return its result and native form."
+                   ((invoke (selected-tool viewer offset limit &key implementation-p)
+                      "Dispatch child.roles, or call its implementation directly. Read only successful replies."
                       (let* ((context
                                (make-instance
                                 'tool-context
@@ -286,14 +292,20 @@
                                 :conversation  (agent-conversation viewer)
                                 :registry      (agent-tool-registry viewer)
                                 :agent         viewer))
+                             (arguments (json-object "offset" offset "limit" limit))
                              (result
-                               (tool-execute
-                                selected-tool context
-                                (json-object "offset" offset "limit" limit)))
-                             (form
-                               (task-tests--read-exact-native-value
-                                (tool-result-content result))))
-                        (values result form)))
+                               (if implementation-p
+                                   (tool-execute selected-tool context arguments)
+                                   (tool-registry-execute-call
+                                    (agent-tool-registry viewer)
+                                    (json-object "namespace" (tool-namespace selected-tool)
+                                                 "name"      (tool-name selected-tool)
+                                                 "arguments" (json-encode arguments))
+                                    context))))
+                        (values result
+                                (when (tool-result-success-p result)
+                                  (task-tests--read-exact-native-value
+                                   (tool-result-content result))))))
 
                     (entry (form name kind)
                       "Return the native entry named NAME with KIND from FORM."
@@ -368,13 +380,10 @@
                          (= (length (getf (rest form) :entries)) 1))
                     "child.roles paginates native discovery without clipping forms"))
                  (let* ((definition
-                          (task-agent-definition-create
-                           :name         "spawn-parent"
-                           :description  "Permit two role names."
-                           :instructions "Exercise child discovery policy."
-                           :tools        ':all
-                           :spawns       '("allowed" "blocked")
-                           :source       ':test))
+                           (task-role-definition configuration "spawn-parent"))
+                        (direct-configuration (task-configuration-for-definition configuration definition))
+                        (direct-registry      (application--create-tool-registry direct-configuration))
+                        (direct               (task-tests--primary-agent direct-configuration "direct-child" direct-registry))
                         (job
                           (task-tests--register-job
                            orchestrator primary definition
@@ -407,6 +416,30 @@
                          (null (entry form "denied" :agent))
                          (null (search secret (tool-result-content result))))
                         "child child.roles shows only spawnable roles and reserved-name diagnostics")))
+                   (unwind-protect
+                        (multiple-value-bind (direct-result direct-form)
+                            (invoke child-tool direct 0 *task-agent-page-maximum*)
+                          (test-assert
+                           (and (tool-result-success-p direct-result)
+                                (entry direct-form "allowed" :agent)
+                                (entry direct-form "blocked" :diagnostic)
+                                (null (entry direct-form "denied" :agent))
+                                (loop for viewer in (list direct child)
+                                      for active = (agent-tool-registry viewer)
+                                      always
+                                      (and (null (tool-registry-resolve active "resource.read"))
+                                           (not (tool-result-success-p
+                                                 (tool-registry-execute-call
+                                                  active (json-object "name" "read" "arguments" "{}")
+                                                  (make-instance 'tool-context
+                                                                 :configuration (agent-configuration viewer)
+                                                                 :worker        nil
+                                                                 :conversation  (agent-conversation viewer)
+                                                                 :registry active :agent viewer))))))
+                                (equal (run-report direct direct-registry "hidden-broken")
+                                       (run-report child child-registry "hidden-broken")))
+                           "ordinary and pooled role views admit configured grants but enforce their own dispatch map and spawn policy"))
+                     (tool-registry-close-runtime-state direct-registry))
                    (let ((unknown-report
                            (run-report child child-registry
                                        "unlisted-request"))
@@ -473,11 +506,14 @@
                         (format nil
                                 "~A child does not inherit child.roles"
                                 name))
+                       (test-assert
+                        (not (tool-result-success-p (invoke tool child 0 *task-agent-page-maximum*)))
+                        (format nil "~A child cannot dispatch child.roles" name))
                        (multiple-value-bind (result form)
-                           (invoke tool child 0 *task-agent-page-maximum*)
-                         (declare (ignore result))
+                           (invoke tool child 0 *task-agent-page-maximum* :implementation-p t)
                          (test-assert
-                          (and (zerop (getf (rest form) :total))
+                          (and (tool-result-success-p result)
+                               (zerop (getf (rest form) :total))
                                (null (getf (rest form) :entries)))
                           (format nil
                                   "~A child has no discoverable spawn targets"

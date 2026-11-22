@@ -159,5 +159,5 @@
                   :conversation  conversation
                   :tool-registry (task-child-tool-registry (agent-tool-registry parent) definition
                                                            :orchestrator (child-tool-orchestrator tool)
-                                                           :depth        (1+ (task-parent-depth parent)))
+                                                            :depth       (task-conversation-depth configuration conversation))
                   :worker        nil)))

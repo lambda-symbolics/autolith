@@ -98,7 +98,9 @@ one lifetime owner, APPLICATION, throughout the transition."
                                    (application-input-controller-stopping-p controller))))
              (registry    (if stopping-p
                               (make-instance 'tool-registry)
-                              (application--create-tool-registry (application-configuration application))))
+                              (application--create-tool-registry
+                               (application-configuration application)
+                               :conversation (application-conversation application))))
              (installed-p nil))
         (unwind-protect
              (let ((agent (unless stopping-p

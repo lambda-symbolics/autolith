@@ -838,9 +838,10 @@ A model this launch selected explicitly stays, as it does for any conversation."
   nil)
 
 (-> application--create-tool-registry
-    (configuration &key (:shared-mcp-manager (option mcp-manager)))
+    (configuration &key (:shared-mcp-manager (option mcp-manager))
+                        (:conversation (option conversation)))
     (values tool-registry list))
-(defun application--create-tool-registry (configuration &key shared-mcp-manager)
+(defun application--create-tool-registry (configuration &key shared-mcp-manager conversation)
   "Create one complete registry and close its base runtimes on later failure.
 
 A child's channel gets only the tools permitted by its configured role.
@@ -865,8 +866,11 @@ must neither close nor lose those shared runtimes."
              (when (and manager (eq manager shared-mcp-manager))
                (setf retained (list manager)))
              (setf registry augmented)
+             (task-tool-registry-remember-delegation-tools registry)
              (when (non-empty-string-p (config :child-role configuration))
-               (task-role-restrict-tool-registry registry configuration :retain retained))
+               (task-role-restrict-tool-registry
+                registry configuration
+                :depth (if conversation (task-conversation-depth configuration conversation) 1)))
              (setf completed-p t)
              (values registry retained)))
       (unless completed-p
@@ -1048,7 +1052,8 @@ the conversation. A warning follows if the previous runtime was not fully restor
                         :reasoning-summaries-p
                         (application-reasoning-traces-p application))
                        new-registry
-                       (application--create-tool-registry configuration))
+                       (application--create-tool-registry
+                        configuration :conversation (application-conversation application)))
                  (multiple-value-setq (added-tools removed-tools)
                    (tool-registry-capability-diff old-registry new-registry))
                  (setf new-agent
@@ -1400,9 +1405,9 @@ RECOVERY-P is true, falling back to a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
 CLIENT-PANE is a plist of the :ROWS and :COLUMNS of the client a hosted
 channel opens for. Without it, use this process's terminal setup.
-TOOL-REGISTRY-FUNCTION, called with the conversation's configuration, builds
-the tool registry instead of the ordinary one, as for an editor's own MCP
-servers. Release acquired resources if construction fails."
+TOOL-REGISTRY-FUNCTION receives the role configuration and target conversation.
+It builds the registry instead of the ordinary factory, as for an editor's own
+MCP servers. Release acquired resources if construction fails."
   (let* ((recovery-state
            (if recovery-p
                (multiple-value-list
@@ -1443,8 +1448,8 @@ servers. Release acquired resources if construction fails."
              (multiple-value-bind (provider provenance update)
                  (application--prepare-connection-provider configuration)
                (setf registry (if tool-registry-function
-                                  (funcall tool-registry-function configuration)
-                                  (application--create-tool-registry configuration))
+                                   (funcall tool-registry-function configuration conversation)
+                                   (application--create-tool-registry configuration :conversation conversation))
                      worker   (lisp-worker-pool-create configuration)
                      application
                      (application--make-connected-application
@@ -1621,7 +1626,7 @@ servers. Release acquired resources if construction fails."
                                        prepared-configuration recovery-conversation-id)))))
                          (setf (config :hurry-up-p configuration) hurry-up-p
                                worker (lisp-worker-pool-create configuration)
-                               registry (application--create-tool-registry configuration)
+                                registry (application--create-tool-registry configuration :conversation conversation)
                                new-application
                                (application--make-connected-application
                                 :configuration           configuration
@@ -1888,6 +1893,7 @@ retiring the old registry."
            (multiple-value-setq (registry retained)
              (application--create-tool-registry
               configuration
+               :conversation      conversation
               :shared-mcp-manager (and share-mcp-p previous-registry
                                        (mcp-tool-registry-manager previous-registry))))
            (let ((agent

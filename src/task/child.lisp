@@ -2,30 +2,64 @@
 
 ;;;; -- Task Child Execution --
 
+(-> task-conversation-depth (configuration conversation) (integer 0))
+(defun task-conversation-depth (configuration conversation)
+  "Count channel ancestors, with an unregistered child role at depth one."
+  (if (conversation-inbox-p conversation)
+      0
+      (let* ((world   (world-load configuration))
+             (channel (world-channel-find world (conversation-identifier conversation)))
+             (seen    (make-hash-table :test #'equal)))
+        (loop for parent = (if channel
+                               (channel-parent channel)
+                               (conversation-parent-identifier conversation))
+                then (and channel (channel-parent channel))
+              while (and parent (not (gethash parent seen)))
+              count t into depth
+              do (setf (gethash parent seen) t
+                       channel (world-channel-find world parent))
+              finally (return (max depth (if (conversation-role conversation) 1 0)))))))
+
 (-> task-parent-depth ((option agent)) (integer 0))
 (defun task-parent-depth (agent)
-  "Return AGENT's explicit task depth, treating the primary agent as zero."
-  (if (typep agent 'task-child-agent)
-      (task-child-agent-depth agent)
-      0))
+  "Return the current task or channel depth of AGENT."
+  (typecase agent
+    (task-child-agent
+     (task-child-agent-depth agent))
+    (agent
+     (task-conversation-depth (agent-configuration agent) (agent-conversation agent)))
+    (t
+     0)))
 
 (-> task-parent-spawn-policy ((option agent)) t)
 (defun task-parent-spawn-policy (agent)
-  "Return AGENT's effective child-agent spawn policy."
-  (if (typep agent 'task-child-agent)
-      (task-agent-definition-spawns (task-child-agent-definition agent))
-      :all))
+  "Return the spawn policy of AGENT's effective role."
+  (typecase agent
+    (task-child-agent
+     (task-agent-definition-spawns (task-child-agent-definition agent)))
+    (agent
+     (let* ((configuration (agent-configuration agent))
+            (role          (config :child-role configuration))
+            (definition    (tool-registry-runtime-binding (agent-tool-registry agent) 'task-role)))
+       (cond (definition
+              (task-agent-definition-spawns definition))
+             ((non-empty-string-p role)
+              (task-agent-definition-spawns (task-role-definition configuration role)))
+             (t
+              ':all))))
+    (t
+     ':all)))
 
-(-> task-parent-can-spawn-p ((option agent) t task-orchestrator) boolean)
-(defun task-parent-can-spawn-p (agent child-name orchestrator)
-  "Return true when AGENT may create CHILD-NAME at the configured depth."
-  (let ((policy (task-parent-spawn-policy agent)))
-    (and
-     (< (task-parent-depth agent)
-        (task-orchestrator-maximum-depth orchestrator))
-     (or (eq policy :all)
-         (and (listp policy) (member child-name policy :test #'string-equal)))
-     t)))
+(-> task-parent-spawn-predicate ((option agent) task-orchestrator) function)
+(defun task-parent-spawn-predicate (agent orchestrator)
+  "Snapshot the parent's role policy and structural depth for one admission."
+  (let ((policy  (task-parent-spawn-policy agent))
+        (depth-p (< (task-parent-depth agent) (task-orchestrator-maximum-depth orchestrator))))
+    (lambda (child-name)
+      (and depth-p
+           (or (eq policy :all)
+               (and (listp policy) (member child-name policy :test #'string-equal)))
+           t))))
 
 (-> task--tool-spec-matches-p (string tool) boolean)
 (defun task--tool-spec-matches-p (spec tool)
@@ -60,75 +94,98 @@ Every role talks through channels, so any child can answer its parent."
            (member (tool-name tool) '("spawn" "roles" "rename" "compact" "remove") :test #'string=)
            t)))
 
-(-> task-role-restrict-tool-registry (tool-registry configuration &key (:retain list)) tool-registry)
-(defun task-role-restrict-tool-registry (registry configuration &key retain)
-  "Leave in REGISTRY only the tools the child role of CONFIGURATION may use, and return it.
+(-> task--role-tool-predicate
+    (task-agent-definition (option task-orchestrator) (integer 0)) function)
+(defun task--role-tool-predicate (definition orchestrator depth)
+  "Build the same tool filter for an interactive or a pooled child role."
+  (let ((spawn-p (and orchestrator
+                      (task-agent-definition-spawns definition)
+                      (< depth (task-orchestrator-maximum-depth orchestrator)))))
+    (lambda (tool)
+      (task--role-tool-p definition tool :spawn-p (not (null spawn-p))))))
 
-This is the registry of a child's own channel. The role decides whether it spawns.
-Runtimes in RETAIN belong to another registry."
+(-> task--delegation-source (tool-registry) tool-registry)
+(defun task--delegation-source (registry)
+  "Return the configured owner, not an ancestor's role-specific dispatch map."
+  (or (tool-registry-delegation-source registry) registry))
+
+(-> task--delegation-tools (tool-registry) list)
+(defun task--delegation-tools (source)
+  "Return the configured native and MCP helper tools available for role projection."
+  (or (tool-registry-delegation-tools source)
+      (remove-if (lambda (tool) (typep tool 'mcp-provider-tool))
+                 (tool-registry-tools source))))
+
+(-> task-tool-registry-remember-delegation-tools (tool-registry) null)
+(defun task-tool-registry-remember-delegation-tools (registry)
+  "Keep the configured catalogue and its runtime ownership separate from dispatch."
+  (setf (tool-registry-delegation-tools registry) (task--delegation-tools registry))
+  nil)
+
+(-> task-role-restrict-tool-registry (tool-registry configuration &key (:depth (integer 0))) tool-registry)
+(defun task-role-restrict-tool-registry (registry configuration &key (depth 1))
+  "Project CONFIGURATION's role onto the owner registry's active dispatch map."
   (let* ((definition (task-role-definition configuration (config :child-role configuration)))
-         (spawn-p    (not (null (task-agent-definition-spawns definition))))
-         (permitted
-           (lambda (tool)
-             (task--role-tool-p definition tool :spawn-p spawn-p))))
+         (permitted  (task--role-tool-predicate
+                      definition (tool-registry-runtime-binding registry 'task-orchestrator) depth)))
+    (task-tool-registry-remember-delegation-tools registry)
+    (tool-registry-bind-runtime registry 'task-role definition)
     (mcp-tool-registry-restrict-discovered-tools registry permitted)
-    (tool-registry-restrict registry permitted :retain retain)))
+    (tool-registry-delete-if registry (complement permitted))))
 
 (-> task-agent-definition-validate-tools-available
     (task-agent-definition tool-registry)
     null)
 (defun task-agent-definition-validate-tools-available (definition registry)
-  "Reject explicit grants in DEFINITION that REGISTRY cannot provide."
+  "Reject explicit grants in DEFINITION absent from the configured baseline."
   (let ((specifications (task-agent-definition-tools definition)))
     (when (listp specifications)
-      (dolist (specification specifications)
-        (unless
-            (or (string= specification "web_search")
-                (some (lambda (tool)
-                        (and (tool-child-safe-p tool)
-                             (task--tool-spec-matches-p specification tool)))
-                      (append (tool-registry-tools registry)
-                              (mcp-tool-registry-discovered-tools registry))))
-          (task-agent-definition--error
-           :pathname        (task-agent-definition-pathname definition)
-           :source          (task-agent-definition-source definition)
-           :field           ':tools
-           :cause           (format nil "Tool grant ~S is unavailable in this session."
-                                    specification)
-           :definition-name (task-agent-definition-name definition)))))
+      (let* ((source  (task--delegation-source registry))
+             (manager (mcp-tool-registry-manager source))
+             (tools   (append (task--delegation-tools source)
+                              (when manager
+                                (with-lock-held ((mcp-manager-lock manager))
+                                  (mcp-tools--manager-tool-objects manager))))))
+        (dolist (specification specifications)
+          (unless (or (string= specification "web_search")
+                      (some (lambda (tool)
+                              (and (tool-child-safe-p tool)
+                                   (task--tool-spec-matches-p specification tool)))
+                            tools))
+            (task-agent-definition--error
+             :pathname        (task-agent-definition-pathname definition)
+             :source          (task-agent-definition-source definition)
+             :field           ':tools
+             :cause           (format nil "Tool grant ~S is unavailable in this session."
+                                      specification)
+             :definition-name (task-agent-definition-name definition))))))
    nil))
 
 (-> task-child-tool-registry
     (tool-registry task-agent-definition
      &key (:orchestrator (option task-orchestrator)) (:depth (integer 0)))
     tool-registry)
-(defun task-child-tool-registry (parent-registry definition &key orchestrator depth)
-  "Build a restricted child registry with structurally bounded spawning."
-  (let ((registry (make-instance 'tool-registry))
-        (spawn-p  (and (task-agent-definition-spawns definition)
-                       (< depth (task-orchestrator-maximum-depth orchestrator)))))
+(defun task-child-tool-registry (parent-registry definition &key orchestrator (depth 1))
+  "Build DEFINITION's dispatch map from the configured tools, borrowing their runtimes."
+  (let* ((source    (task--delegation-source parent-registry))
+         (registry  (make-instance 'tool-registry
+                                   :resource-registry (tool-registry-resource-registry source)))
+         (permitted (task--role-tool-predicate definition orchestrator depth))
+         (manager   (mcp-tool-registry-manager source)))
+    (setf (tool-registry-delegation-source registry) source)
     (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
-    (dolist (tool (tool-registry-tools parent-registry))
-      (when (task--role-tool-p definition tool :spawn-p spawn-p)
+    (tool-registry-bind-runtime registry 'shell-session-pool
+                                (tool-registry-runtime-binding source 'shell-session-pool))
+    (maphash (lambda (namespace description)
+               (tool-registry-describe-namespace registry namespace description))
+             (tool-registry-namespace-descriptions source))
+    (dolist (tool (task--delegation-tools source))
+      (when (funcall permitted tool)
         (tool-registry-register registry tool)))
-    (let ((manager (mcp-tool-registry-manager parent-registry)))
-      (when
-          (and manager
-               (or
-                (eq (task-agent-definition-tools definition) :all)
-                (some
-                 (lambda (tool)
-                   (and
-                    (typep tool 'mcp-provider-tool)
-                    (task--definition-allows-tool-p definition tool)))
-                 (mcp-tool-registry-discovered-tools parent-registry))))
-        (mcp-tool-registry-bind-manager
-         registry
-         manager
-         (lambda (tool)
-           (task--definition-allows-tool-p definition tool)))
-        (mcp-tool-registry-refresh registry :only-dirty-p t)
-        (mcp-tool-registry-activate-discovered-tools registry)))
+    (when manager
+      (mcp-tool-registry-bind-manager registry manager permitted)
+      (mcp-tool-registry-refresh registry :only-dirty-p t)
+      (mcp-tool-registry-activate-discovered-tools registry))
     registry))
 
 (-> task--model-alias (string (option string)) (option string))
@@ -180,21 +237,22 @@ choice for the primary agent rather than a silent property of every task."
          (effort
           (task--thinking-effort
            (task-agent-definition-reasoning-effort definition)))
+         (web-search-mode
+          (or (config :configured-web-search-mode parent-configuration)
+              (config :web-search-mode parent-configuration)))
          (web-enabled-p
           (or (eq (task-agent-definition-tools definition) :all)
               (member "web_search" (task-agent-definition-tools definition)
                       :test #'string-equal))))
     (configuration-copy
      parent-configuration
-     :model                   model
-     :reasoning-effort        effort
-     :codex-fast-mode-p       nil
-     :child-role              (task-agent-definition-name definition)
-     :child-role-instructions (task-agent-definition-instructions definition)
-     :web-search-mode
-     (if web-enabled-p
-         (config :web-search-mode parent-configuration)
-         ':disabled))))
+     :model                      model
+     :reasoning-effort           effort
+     :codex-fast-mode-p          nil
+     :child-role                 (task-agent-definition-name definition)
+     :child-role-instructions    (task-agent-definition-instructions definition)
+     :configured-web-search-mode web-search-mode
+     :web-search-mode            (if web-enabled-p web-search-mode ':disabled))))
 
 (-> task-child-reference-history-p (agent configuration) boolean)
 (defun task-child-reference-history-p (parent child-configuration)

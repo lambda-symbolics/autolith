@@ -1051,8 +1051,19 @@ so direct adapter calls never accumulate notes in the global value.")
     :type     hash-table
     :documentation
     "Subsystem-specific bindings used to reconcile shared dynamic runtimes.")
+   (delegation-source
+    :initform      nil
+    :accessor      tool-registry-delegation-source
+    :type          (option tool-registry)
+    :documentation "The owning registry from which delegated role views take their configured tools.")
+   (delegation-tools
+    :initform      nil
+    :accessor      tool-registry-delegation-tools
+    :type          list
+    :documentation "Tools kept by this owner for role projection after pruning its dispatch map.")
    (resource-registry
     :initform      (make-resource-registry)
+    :initarg       :resource-registry
     :reader        tool-registry-resource-registry
     :type          resource-registry
     :documentation "The per-agent registry of authority-neutral resource resolvers."))
@@ -1107,10 +1118,11 @@ so direct adapter calls never accumulate notes in the global value.")
     (tool-registry &key (:reverse-p boolean))
     list)
 (defun tool-registry--runtime-representatives (registry &key reverse-p)
-  "Return one representative tool for every distinct runtime in REGISTRY."
+  "Return one representative for every runtime this registry can see or retains."
   (let ((tools
           (remove-if-not #'tool-runtime-identity
-                         (tool-registry-tools registry))))
+                         (append (tool-registry-tools registry)
+                                 (tool-registry-delegation-tools registry)))))
     (remove-duplicates (if reverse-p (nreverse tools) tools)
                        :key      #'tool-runtime-identity
                        :test     #'eq

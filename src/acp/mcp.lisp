@@ -176,8 +176,8 @@
         (call-next-method runtime (lambda () (acp-mcp--credential-scope values function)))
         (call-next-method))))
 
-(-> acp-mcp-create-tool-registry (configuration list) tool-registry)
-(defun acp-mcp-create-tool-registry (configuration declarations)
+(-> acp-mcp-create-tool-registry (configuration list &key (:conversation (option conversation))) tool-registry)
+(defun acp-mcp-create-tool-registry (configuration declarations &key conversation)
   "Build the native registry with session-local client servers and no global mutation.
 
 ACP validates its wire requests separately. World :OPEN arguments may come
@@ -196,7 +196,7 @@ transport policy or decoding literal credentials."
           (agentcomms:acp-invalid-params "MCP server name ~A is already registered." name))
         (setf (gethash name names) t)
         (register-mcp-server server :source ':runtime)))
-    (application--create-tool-registry configuration)))
+    (application--create-tool-registry configuration :conversation conversation)))
 
 (-> acp-mcp-release-credentials ((option mcp-manager)) null)
 (defun acp-mcp-release-credentials (manager)

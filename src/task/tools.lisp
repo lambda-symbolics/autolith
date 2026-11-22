@@ -117,53 +117,45 @@
 (defun task--resolve-items
     (parent orchestrator definitions &key items diagnostics registry)
   "Resolve ITEMS to definitions after enforcing parent policy and names."
-  (let* ((selectable-definitions
-           (remove-if-not
-            (lambda (definition)
-              (task-parent-can-spawn-p
-               parent
-               (task-agent-definition-name definition)
-               orchestrator))
-            definitions))
+  (let* ((can-spawn-p (task-parent-spawn-predicate parent orchestrator))
+         (selectable-definitions
+           (remove-if-not (lambda (definition)
+                            (funcall can-spawn-p (task-agent-definition-name definition)))
+                          definitions))
          (selectable-diagnostics
-           (remove-if-not
-            (lambda (diagnostic)
-              (let ((name
-                      (task-agent-definition-error-definition-name
-                       diagnostic)))
-                (and name
-                     (task-parent-can-spawn-p parent name orchestrator))))
-            diagnostics))
+           (remove-if-not (lambda (diagnostic)
+                            (task--agent-diagnostic-visible-p diagnostic can-spawn-p))
+                          diagnostics))
          (selectable-names
            (mapcar #'task-agent-definition-name selectable-definitions)))
     (mapcar
      (lambda (item)
        (let ((name (getf item :agent)))
-         (unless (task-parent-can-spawn-p parent name orchestrator)
+        (unless (funcall can-spawn-p name)
            (error 'task-error
                   :message   "The current agent may not spawn the requested role."
                   :code      ':authority
                   :tool-name "child.spawn"))
-         (let ((definition
-                 (task-find-agent-definition selectable-definitions name)))
-           (unless definition
-             (let ((diagnostic
-                     (task-find-agent-diagnostic selectable-diagnostics name)))
-               (if diagnostic
-                   (error diagnostic)
-                   (error 'task-error
-                          :message
-                          (if selectable-names
-                              (format nil
-                                      "Unknown task agent ~S. Available agents: ~{~A~^, ~}."
-                                      name selectable-names)
-                              (format nil
-                                      "Unknown task agent ~S. No task agents are available."
-                                      name))
-                          :tool-name "child.spawn"))))
-           (task-agent-definition-validate-tools-available definition registry)
-           (list :item item :definition definition :detached
-                  (eq (getf item :mode) ':detached)))))
+        (let ((definition
+                (task-find-agent-definition selectable-definitions name)))
+          (unless definition
+            (let ((diagnostic
+                    (task-find-agent-diagnostic selectable-diagnostics name)))
+              (if diagnostic
+                  (error diagnostic)
+                  (error 'task-error
+                         :message
+                         (if selectable-names
+                             (format nil
+                                     "Unknown task agent ~S. Available agents: ~{~A~^, ~}."
+                                     name selectable-names)
+                             (format nil
+                                     "Unknown task agent ~S. No task agents are available."
+                                     name))
+                         :tool-name "child.spawn"))))
+          (task-agent-definition-validate-tools-available definition registry)
+          (list :item item :definition definition :detached
+                 (eq (getf item :mode) ':detached)))))
      items)))
 
 (-> task-tool-result
@@ -847,12 +839,12 @@ poll a job whose completion will wake it."
            1000))))
 
 (-> task--agent-diagnostic-visible-p
-    (condition agent task-orchestrator)
+    (condition function)
     boolean)
-(defun task--agent-diagnostic-visible-p (diagnostic parent orchestrator)
-  "Return true when PARENT policy permits DIAGNOSTIC's reserved role name."
+(defun task--agent-diagnostic-visible-p (diagnostic can-spawn-p)
+  "Return true when the spawn policy permits DIAGNOSTIC's reserved role name."
   (let ((name (task-agent-definition-error-definition-name diagnostic)))
-    (and name (task-parent-can-spawn-p parent name orchestrator))))
+    (and name (funcall can-spawn-p name))))
 
 (-> task--agents-page (list integer integer) (values list string))
 (defun task--agents-page (entries offset limit)
@@ -1012,12 +1004,10 @@ poll a job whose completion will wake it."
           (task-discover-agents (agent-configuration parent))
         (let ((agent-records      nil)
               (diagnostic-records nil)
-              (registry           (agent-tool-registry parent)))
+              (registry           (agent-tool-registry parent))
+              (can-spawn-p        (task-parent-spawn-predicate parent orchestrator)))
           (dolist (definition definitions)
-            (when (task-parent-can-spawn-p
-                   parent
-                   (task-agent-definition-name definition)
-                   orchestrator)
+            (when (funcall can-spawn-p (task-agent-definition-name definition))
               (handler-case
                   (progn
                     (task-agent-definition-validate-tools-available
@@ -1028,8 +1018,7 @@ poll a job whose completion will wake it."
                   (push (task--agent-diagnostic-native-record diagnostic)
                         diagnostic-records)))))
           (dolist (diagnostic diagnostics)
-            (when (task--agent-diagnostic-visible-p
-                   diagnostic parent orchestrator)
+            (when (task--agent-diagnostic-visible-p diagnostic can-spawn-p)
               (push (task--agent-diagnostic-native-record diagnostic)
                     diagnostic-records)))
           (multiple-value-bind (form content)
