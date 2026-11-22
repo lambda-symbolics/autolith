@@ -11,7 +11,7 @@
 (defparameter *shell-log-resource-maximum-results* 50
   "Maximum bounded excerpts returned per search page, matching resource.read.")
 
-(defclass shell-log-resource (resource)
+(defclass shell-log-resource (read-only-resource)
   ((directory :initarg :directory :reader shell-log-resource-directory
               :documentation "Private managed artifact directory.")
    (metadata :initarg :metadata :reader shell-log-resource-metadata
@@ -67,11 +67,6 @@
           (make-instance 'shell-log-resource :uri uri :directory directory
                          :metadata metadata
                          :stream   (if (string= stream "output") ':output ':error)))))))
-
-(defmethod resource-capabilities ((resource shell-log-resource) (context tool-context))
-  "Expose only bounded reads."
-  (declare (ignore resource context))
-  '(:read))
 
 (-> shell-log-resource--capture (shell-log-resource) list)
 (defun shell-log-resource--capture (resource)

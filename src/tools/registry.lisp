@@ -340,6 +340,11 @@
     :documentation "The provider function call identifier for this execution."))
   (:documentation "The explicit capabilities supplied to one tool execution."))
 
+(defmethod resource-capabilities ((resource read-only-resource) (context tool-context))
+  "Advertise only reading for resources that opt in to this class."
+  (declare (ignore resource context))
+  '(:read))
+
 (defmethod resource-context-child-agent-p ((context tool-context))
   "Return true when CONTEXT's agent is a restricted task child agent."
   (let ((class (find-class 'task-child-agent nil)))

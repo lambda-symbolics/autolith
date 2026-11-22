@@ -18,7 +18,7 @@
   ()
   (:documentation "Resolve emacs: URIs against the configured Emacs server."))
 
-(defclass emacs-current-resource (resource)
+(defclass emacs-current-resource (read-only-resource)
   ()
   (:documentation "What the person currently sees in Emacs."))
 
@@ -187,11 +187,6 @@ evaluates without interleaving the person's commands.")
        (error 'resource-operation-unsupported
               :uri       (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
               :operation ':resolve)))))
-
-(defmethod resource-capabilities ((resource emacs-current-resource) (context tool-context))
-  "Expose emacs:current for reading only."
-  (declare (ignore resource context))
-  '(:read))
 
 (defmethod resource-capabilities ((resource emacs-buffer-resource) (context tool-context))
   "Expose buffers for reading and revision-gated editing."

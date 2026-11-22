@@ -48,6 +48,10 @@
 (defparameter *resource-readable-schemes* nil
   "Optional exact URI schemes permitted during one restricted tool call.")
 
+(defclass read-only-resource (resource)
+  ()
+  (:documentation "An Autolith resource that supports reading but not editing."))
+
 (defclass resource-observation-state ()
   ((alias
     :initarg       :alias

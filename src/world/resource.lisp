@@ -22,7 +22,7 @@
 (defparameter *channel-resource-identifier-prefix* "id/"
   "The prefix before a channel identifier.")
 
-(defclass channel-resource (resource)
+(defclass channel-resource (read-only-resource)
   ((world
     :initarg       :world
     :reader        channel-resource-world
@@ -41,7 +41,7 @@
     :documentation "The channel's history, or NIL if unavailable."))
   (:documentation "The read-only state and history of one channel."))
 
-(defclass channel-list-resource (resource)
+(defclass channel-list-resource (read-only-resource)
   ((world
     :initarg       :world
     :reader        channel-list-resource-world
@@ -141,18 +141,6 @@
        (error 'resource-operation-unsupported
               :uri       (channel-resource--uri resolver identifier)
               :operation ':resolve)))))
-
-(defmethod resource-capabilities
-    ((resource channel-resource) (context tool-context))
-  "Expose channel state and history as read-only."
-  (declare (ignore resource context))
-  '(:read))
-
-(defmethod resource-capabilities
-    ((resource channel-list-resource) (context tool-context))
-  "Expose the channel survey as read-only."
-  (declare (ignore resource context))
-  '(:read))
 
 
 ;;;; -- Rendering --

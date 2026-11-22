@@ -5,7 +5,7 @@
 ;;; The catalog shortens a long description. skill:NAME returns the whole
 ;;; description of one skill, and reading it never selects the skill.
 
-(defclass skill-resource (resource)
+(defclass skill-resource (read-only-resource)
   ((metadata
     :initarg       :metadata
     :reader        skill-resource-metadata
@@ -41,11 +41,6 @@
     (make-instance 'skill-resource
                    :uri      (format nil "~A:~A" (resource-resolver-scheme resolver) identifier)
                    :metadata metadata)))
-
-(defmethod resource-capabilities ((resource skill-resource) (context tool-context))
-  "Expose a skill description for reading only."
-  (declare (ignore resource context))
-  '(:read))
 
 (defmethod resource-tool-read
     ((resource skill-resource) (tool resource-read-tool)

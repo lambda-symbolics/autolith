@@ -29,18 +29,13 @@ to a readable context object rather than truncated.")
 (defparameter *conversation-resource-compactions-listed* 3
   "The number of most recent compaction sequences a window header names.")
 
-(defclass conversation-resource (resource)
+(defclass conversation-resource (read-only-resource)
   ((conversation
     :initarg       :conversation
     :reader        conversation-resource-conversation
     :type          conversation
     :documentation "The conversation whose durable history this resource reads."))
   (:documentation "The read-only durable history of one conversation."))
-
-(defmethod resource-capabilities ((resource conversation-resource) (context tool-context))
-  "Allow the channel reader to read its internal history resource."
-  (declare (ignore context))
-  '(:read))
 
 
 ;;;; -- Model-Facing Reads --

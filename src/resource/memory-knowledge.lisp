@@ -63,13 +63,6 @@
   (and (eq (memory-knowledge-resource-view-kind resource) ':facts)
        (nth-value 1 (memory-resource--principal context))))
 
-(defmethod resource-capabilities
-    ((resource memory-knowledge-resource) (context tool-context))
-  "Accept edits on memory:facts only for participants with shared-write authority."
-  (if (memory-resource--editable-p resource context)
-      '(:read :edit)
-      '(:read)))
-
 
 ;;;; -- Evaluation --
 

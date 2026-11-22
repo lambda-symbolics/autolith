@@ -20,7 +20,7 @@
 (defparameter *rlm-index-excerpt-characters* 100
   "The most characters one RLM artifact index excerpt carries.")
 
-(defclass inference-trace-resource (resource)
+(defclass inference-trace-resource (read-only-resource)
   ((identifier
     :initarg       :identifier
     :reader        inference-trace-resource-identifier
@@ -28,7 +28,7 @@
     :documentation "The trace conversation identifier selected by this URI."))
   (:documentation "One read-only persisted inference frame trace."))
 
-(defclass inference-trace-index-resource (resource)
+(defclass inference-trace-index-resource (read-only-resource)
   ()
   (:documentation "The bounded newest-first index of persisted traces."))
 
@@ -67,18 +67,6 @@
   (make-instance 'inference-trace-resource
                  :uri        (format nil "inference:~A" identifier)
                  :identifier identifier))
-
-(defmethod resource-capabilities
-    ((resource inference-trace-resource) (context tool-context))
-  "Expose traces as read-only observations."
-  (declare (ignore resource context))
-  '(:read))
-
-(defmethod resource-capabilities
-    ((resource inference-trace-index-resource) (context tool-context))
-  "Expose the trace index as a read-only observation."
-  (declare (ignore resource context))
-  '(:read))
 
 (-> rlm--trace-segments (configuration string) list)
 (defun rlm--trace-segments (configuration identifier)
@@ -360,7 +348,7 @@ requested window rather than the complete trace."
 
 ;;;; -- Context Object Resources --
 
-(defclass context-object-resource (resource)
+(defclass context-object-resource (read-only-resource)
   ((digest
     :initarg       :digest
     :reader        context-object-resource-digest
@@ -372,7 +360,7 @@ requested window rather than the complete trace."
   ()
   (:documentation "Resolve stored context objects by content digest."))
 
-(defclass context-object-index-resource (resource)
+(defclass context-object-index-resource (read-only-resource)
   ()
   (:documentation "The bounded newest-first index of stored context objects."))
 
@@ -405,18 +393,6 @@ requested window rather than the complete trace."
   (make-instance 'context-object-resource
                  :uri    (format nil "context:~A" identifier)
                  :digest (string-downcase identifier)))
-
-(defmethod resource-capabilities
-    ((resource context-object-resource) (context tool-context))
-  "Expose context objects as read-only observations."
-  (declare (ignore resource context))
-  '(:read))
-
-(defmethod resource-capabilities
-    ((resource context-object-index-resource) (context tool-context))
-  "Expose the context object index as a read-only observation."
-  (declare (ignore resource context))
-  '(:read))
 
 (-> rlm--context-index-entries (configuration) list)
 (defun rlm--context-index-entries (configuration)
