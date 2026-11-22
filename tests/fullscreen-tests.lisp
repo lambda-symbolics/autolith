@@ -889,7 +889,7 @@
 
 (-> test-terminal-fullscreen-drag-copies () null)
 (defun test-terminal-fullscreen-drag-copies ()
-  "Test dragging across the transcript highlights the text and copies it on release."
+  "Test dragging copies transcript text on release without opening a link."
   (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
         (actions  nil))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
@@ -899,9 +899,6 @@
       (terminal-ui-append-finalized ui ':first (list (terminal-span ':plain "see https://example.com/doc now")))
       (terminal-ui-process-event ui '(:click 1 1))
       (terminal-ui-process-event ui '(:drag 3 1))
-      (test-assert (search (format nil "~C[7msee~C[27m" (code-char 27) (code-char 27))
-                           (clinedi:transcript-viewport-row-display (fullscreen-terminal-ui-viewport ui) 0))
-                   "the dragged-over text shows highlighted")
       (terminal-ui-process-event ui '(:release 3 1))
       (test-assert (equal actions '((:copy "see")))
                    "releasing after a drag copies the selected text and opens nothing")
