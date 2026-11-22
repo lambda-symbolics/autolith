@@ -339,10 +339,14 @@
 (defun test-client-welcome-input ()
   "Check input startup, physical resize, quit and screen-preserving selection handoff."
   (with-test-configuration (configuration)
-    (dolist (last-event (list ':interrupt ':enter (list ':switch :session-id "b6uouHJ")))
+    (dolist (input '(:interrupt :enter #\Return #\Newline (:switch :session-id "b6uouHJ")))
       (let* ((terminal                    (make-instance 'recording-terminal :columns 80 :rows 24))
              (screen                      (world-terminal-screen-create :terminal terminal))
-             (events                      (list ':resize last-event))
+             (event                       (if (characterp input)
+                                              (with-input-from-string (stream (string input))
+                                                (clinedi:read-event :stream stream))
+                                              input))
+             (events                      (list ':resize event ':stream-end))
              (started-p                   nil)
              (stopped-p                   nil)
              (unwatched-p                 nil)
@@ -372,14 +376,14 @@
                                (= (clinedi:frame-snapshot-width last-frame) 44)
                                (= (clinedi:frame-snapshot-height last-frame) 12))
                           "welcome starts input, follows physical resize and releases only its watch on handoff")
-             (test-assert (equal exit (case last-event
-                                       (:interrupt
-                                        nil)
-                                       (:enter
-                                        (list ':switch :new-p t))
-                                       (otherwise
-                                        last-event)))
-                          "quit, explicit creation and sidebar selection return distinct results")
+             (test-assert (equal exit (case input
+                                        (:interrupt
+                                         nil)
+                                        ((:enter #\Return #\Newline)
+                                         (list ':switch :new-p t))
+                                        (otherwise
+                                         input)))
+                          "quit, Enter and sidebar selection return distinct results")
              (test-assert (not (search "INTERNAL CRASH INSTRUCTIONS"
                                       (format nil "~{~A~}" (coerce (clinedi:frame-snapshot-rows last-frame) 'list))))
                           "render safe recovery status without raw crash instructions")))))))

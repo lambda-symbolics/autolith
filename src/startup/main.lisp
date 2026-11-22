@@ -1205,7 +1205,7 @@ still shows the boot panel keeps it until the user starts the session."
                      (return nil))
                     ((and (consp event) (eq (first event) ':switch))
                      (return event))
-                    ((or (member event '(:enter :return)) (eql event #\Return) (eql event #\Newline))
+                    ((or (member event '(:submit :enter :return)) (eql event #\Return) (eql event #\Newline))
                      (return (list ':switch :new-p t)))
                     ((eq event ':resize)
                      (setf *terminal-resize-pending-p* t)))))
