@@ -919,6 +919,7 @@
                 #:mcp-call-result-structured-content
                 #:mcp-client
                 #:mcp-client-call-tool
+                #:mcp-client-clear-retained-state
                 #:mcp-client-close
                 #:mcp-client-connect
                 #:mcp-client-connection-generation
@@ -930,6 +931,7 @@
                 #:mcp-client-list-resource-templates
                 #:mcp-client-list-resources
                 #:mcp-client-list-tools
+                #:mcp-client-project-retained-state
                 #:mcp-client-read-resource
                 #:mcp-client-server-capabilities
                 #:mcp-client-server-info

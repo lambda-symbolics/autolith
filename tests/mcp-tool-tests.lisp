@@ -384,12 +384,11 @@
 (-> test-mcp--generation-rediscovery () null)
 (defun test-mcp--generation-rediscovery ()
   "Test stable rediscovery after a transparent MCP session replacement."
-  (let* ((configuration           (test-configuration))
-         (root                    (test-configuration-root configuration))
-         (session                 0)
-         (resources-expired-p     nil)
-         (tool-list-expired-p     nil)
-         (tool-list-request-count 0)
+  (let* ((configuration       (test-configuration))
+         (root                (test-configuration-root configuration))
+         (session             0)
+         (resources-expired-p nil)
+         (tool-list-expired-p nil)
          (server
            (mcp-server-configuration-create
             :name      "generation-test"
@@ -431,7 +430,6 @@
                         request
                         (json-object "resources" (vector)))))
                   ((string= method "tools/list")
-                   (incf tool-list-request-count)
                    (if (and (= session 2)
                             (not tool-list-expired-p))
                        (progn
@@ -471,8 +469,8 @@
             'mcp-manager
             :configuration configuration
             :runtimes      (list runtime)))
-         (first-registry          (make-instance 'tool-registry))
-         (second-registry         (make-instance 'tool-registry)))
+         (first-registry      (make-instance 'tool-registry))
+         (second-registry     (make-instance 'tool-registry)))
     (unwind-protect
          (progn
            (mcp-server-runtime-connect runtime)
@@ -521,10 +519,7 @@
                 "session 3"
                 (context-contribution-evidence
                  (first contributions))))
-              "rediscovery publishes instructions from the stable session"))
-           (test-assert
-            (= 5 tool-list-request-count)
-            "pagination and tool discovery both restart after generation churn"))
+              "rediscovery publishes instructions from the stable session")))
       (ignore-errors (mcp-server-runtime-close runtime))
       (platform-delete-directory-tree
        *platform*

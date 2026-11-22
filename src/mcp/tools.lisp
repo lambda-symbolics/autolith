@@ -719,49 +719,30 @@
 
 Server instructions are deliberately retained verbatim; every other
 retained value is credential-redacted or projected."
-  (let* ((client    (mcp-server-runtime-client runtime))
-         (transport (mcp-client-transport client)))
-    (setf (mcp-client-server-capabilities client)
-          (mcp-tools--project-capabilities
-           (mcp-client-server-capabilities client))
-          (mcp-client-server-info client) nil)
-    (when (typep transport 'mcp-stdio-transport)
-      (setf (mcp-stdio-transport-stderr-text transport)
-            (mcp-tools--sanitize-string
-             (mcp-stdio-transport-stderr-text transport))))
-    (when (typep transport 'mcp-streamable-http-transport)
-      (let ((session
-              (mcp-http-transport-session-identifier transport))
-            (pending-session
-              (mcp-http-transport-pending-session-identifier transport))
-            (listener-failure
-              (mcp-http-transport-listener-failure transport)))
-        (when (stringp session)
-          (setf (mcp-http-transport-session-identifier transport)
-                (mcp-tools--sanitize-string session)))
-        (when (stringp pending-session)
-          (setf (mcp-http-transport-pending-session-identifier transport)
-                (mcp-tools--sanitize-string pending-session)))
-        (when listener-failure
-          (setf (mcp-http-transport-listener-failure transport)
-                (mcp-tools--sanitized-diagnostic listener-failure))))))
-  nil)
+  (mcp-client-project-retained-state
+   (mcp-server-runtime-client runtime)
+   (lambda (field value)
+     (ecase field
+       (:instructions
+        value)
+       (:server-capabilities
+        (mcp-tools--project-capabilities value))
+       (:server-info
+        nil)
+       (:stderr-text
+        (mcp-tools--sanitize-string value))
+       ((:session-identifier :pending-session-identifier)
+        (if (stringp value)
+            (mcp-tools--sanitize-string value)
+            value))
+       (:listener-failure
+        (when value
+          (mcp-tools--sanitized-diagnostic value)))))))
 
 (-> mcp-tools--clear-client-server-state (mcp-server-runtime) null)
 (defun mcp-tools--clear-client-server-state (runtime)
-  "Forget every server-controlled value retained by RUNTIME's client."
-  (let* ((client    (mcp-server-runtime-client runtime))
-         (transport (mcp-client-transport client)))
-    (setf (mcp-client-instructions client) nil
-          (mcp-client-server-capabilities client) nil
-          (mcp-client-server-info client) nil)
-    (when (typep transport 'mcp-stdio-transport)
-      (setf (mcp-stdio-transport-stderr-text transport) ""))
-    (when (typep transport 'mcp-streamable-http-transport)
-      (setf (mcp-http-transport-session-identifier transport) nil
-            (mcp-http-transport-pending-session-identifier transport) nil
-            (mcp-http-transport-listener-failure transport) nil)))
-  nil)
+  "Reset McParen's retained server metadata and transport diagnostics."
+  (mcp-client-clear-retained-state (mcp-server-runtime-client runtime)))
 
 (-> mcp-server-runtime--persistent-launch-environment-p
     (mcp-server-runtime)
