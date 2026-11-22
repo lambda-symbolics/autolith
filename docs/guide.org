@@ -3,60 +3,44 @@
 
 * Intro
 
-Autolith is a terminal agent running in a live Common Lisp image. It works on
-Linux x86-64, macOS, and Windows x86-64.
+1. *Install Autolith.* Choose a command in [[https://lambda-symbolics.com/autolith/docs/install-update-and-uninstall][Install, update, and uninstall]].
+2. *Sign in to a model provider.* For example, run =autolith auth chatgpt=
+   and follow the prompts. If you use =nix run=, run
+   =nix run github:lambda-symbolics/autolith -- auth chatgpt= instead.
+3. *Open a channel.* Run =autolith= or =nix run github:lambda-symbolics/autolith=
+   in the directory where you want to work. In fullscreen mode, select =inbox=
+   or another channel in the sidebar. Use =autolith open= for the most recently
+   used top-level channel in the workspace, or =autolith open ID= for a
+   specific channel.
+4. *Send your first request.* Try /List the files in this workspace and tell
+   me where to start./ To see commands, enter =(help)= in the same prompt.
 
-Launch Autolith from your terminal:
-
-#+BEGIN_SRC sh
-autolith
-#+END_SRC
-
-An interactive =autolith= launch loads your home channel (=inbox=) on the
-world server. Fullscreen mode shows the mascot while it loads if the boot
-screen is enabled. Then the Autolith banner fills the transcript pane, with
-no channel selected. Select home or another channel in the sidebar, or run
-=autolith open= for the most recently touched top-level channel in the current
-workspace. Use =autolith open ID= to open a specific channel.
-
-If you haven't authenticated yet, follow the [[file:../README.org][README]] instructions.
-
-Autolith's prompt window can also evaluate Lisp forms directly:
+Write requests in plain text and enter Lisp commands as parenthesized forms.
+For example, you can inspect the workspace directly:
 
 #+BEGIN_SRC lisp
-(help)
 (resource.read :uri "workspace:.")
-(channel.send :text (read-file "review-notes.org"))
 #+END_SRC
 
-You can use the same tools and Lisp machinery as the clanker.
-
-Enter commands as parenthesized forms. If you submit text starting with =/=,
-Autolith warns and leaves it unsent.
-
-Type =(=, =[=, or ={= in the composer to insert a matching pair with the cursor
-between the delimiters. Type the closing delimiter to move past it, or press
-Backspace between an empty pair to delete both.
-
-Press =Tab= to complete operation names, finite options, and workspace paths.
-For =@= mentions, the first Tab inserts the selected agent or path followed by a
-space; further Tabs cycle through complete candidates. Use =Shift-Tab= to cycle
-backwards. Path suggestions load in the background as you type.
-With nothing to complete, press =Tab= to send the input like Enter, or queue it
-as a follow-up while a turn runs. If you press =Tab= while typing an unfinished
-form such as =(job.continuity :=, nothing happens. Finish the form before submitting it.
-
-The work indicator displays =REPL= with one letter highlighted in sequence.
+- Type an opening parenthesis, bracket, or brace to insert a pair. Type the
+  closing delimiter to move past it, or press Backspace inside an empty pair
+  to delete both delimiters.
+- Press Tab to complete a command, option, path, or =@= mention. If you complete
+  a mention, press Tab again to cycle through candidates. Use Shift-Tab to
+  cycle backward.
+- If there is nothing to complete, Tab submits the prompt or queues it during
+  a turn. Finish an open Lisp form before submitting it.
 
 * Terminal diagrams
 
-Ask for a fenced =mermaid= block to view a diagram in the terminal. Autolith uses
-[[https://github.com/lambda-symbolics/clermaid][Clermaid]] for flowcharts, sequence diagrams, flat state diagrams,
-class diagrams, and entity relationships. The library documents the syntax for
-each family.
-Boxes, connections, arrowheads, and labels use separate theme colors. Graph
-layers are centered, with ordered ports and routes that limit crossings. Unicode
-diagrams use rounded connection corners and directional end caps.
+Ask for a fenced =mermaid= block to see a diagram in the terminal.
+[[https://github.com/lambda-symbolics/clermaid][Clermaid]] documents the supported syntax for:
+
+- Flowcharts
+- Sequence diagrams
+- Flat state diagrams
+- Class diagrams
+- Entity relationship diagrams
 
 #+BEGIN_SRC markdown
 ```mermaid
@@ -66,67 +50,60 @@ flowchart LR
 ```
 #+END_SRC
 
-During streaming, view the source in the live tail until the closing fence. Use
-the diagram's copy action to copy its original Mermaid source. For syntax outside
-the supported subset, or for a diagram too wide for the terminal, read the
-ordinary source block instead.
+While the response streams, read the Mermaid source in the live tail. Use the
+*copy* action on the finished diagram to copy the source. If the syntax is
+unsupported or the diagram is too wide, read the source block instead.
 
 * Command arguments
 
-Pass native Lisp values to commands. Use keyword actions, Boolean switches,
-integers, pathnames, and quoted data directly:
+Pass Lisp values directly to commands:
+
+- Use keywords for actions, such as =:refresh= in =(mcp :refresh)=.
+- Use =t= to enable a setting and =nil= to disable it. Omit the value to
+  inspect the setting.
+- Use numbers for quantities and strings for text or identifiers. Pass
+  pathnames and quoted Lisp data directly rather than spelling them out in
+  strings.
 
 #+BEGIN_SRC lisp
 (settings :boot-screen-seconds 2)
-(settings :onboarding-p nil)
 (settings :reasoning-traces-p t)
 (settings :reasoning-traces-p nil)
-(mcp :refresh)
-(permissions :ask)
 #+END_SRC
-
-Omit a switch argument to inspect its value. Pass =t= to enable it or =nil= to
-disable it. Strings represent text such as objectives, messages, names, and
-identifiers. Pass structured arguments as Lisp data, not as source text inside a
-string.
 
 ** Automatic permissions
 
-Choose a channel's permission mode with =(permissions :ask)=,
-=(permissions :auto)=, =(permissions :sandbox)=, or =(permissions :full)=.
-The mode is stored locally and restored when you reopen a saved channel after
-an unload or restart. Full access uses your full user privileges, including
-after reopening.
-In an approval picker, choose =once= to grant access for just one operation, or
-=always= to save an approval for that exact operation.
+Choose a permission mode for the channel:
 
-Use =(permissions :auto)= to classify operations without an approval picker.
-During a fresh classification, read =judging= and the operation in the status
-bar. Cached decisions skip this phase. In fullscreen, read the decision beside
-its exact tool call, even when cache notices or other output intervene. The
-annotation survives tool completion, folding, and resizing. In linear output,
-read the command and working directory alongside the decision.
+- =(permissions :ask)= prompts for approval. Choose =once= for one operation
+  or =always= to approve the exact operation for future calls.
+- =(permissions :auto)= classifies operations without an approval prompt.
+  Read =judging= in the status bar during a fresh classification. Read the
+  decision beside the tool call in fullscreen mode, or beside the command and
+  working directory in linear mode.
+- Use =(permissions :sandbox)= for sandboxed execution on supported platforms.
+- Use =(permissions :full)= to run with your full user privileges.
+
+The mode is stored locally and restored when you reopen a saved channel. This
+includes *full* access, even after a restart.
 
 * Onboarding
 
-After opening a channel, press Space or Enter at its boot screen to start the
-tour. Press Esc or begin typing to open the listener instead. Typed and pasted
-text stays in the prompt. Open the lessons again with =(onboard)=.
+1. Open a channel. At the boot screen, press Space or Enter to start the tour.
+   To go straight to the prompt, press Esc or start typing. Typed and pasted
+   text is kept in the prompt.
+2. Try the exercises on the prompt, =(help)=, background Lisp, and
+   =(settings)=. Edit the exercise input and press Enter to submit it.
 
-On your first interactive launch, try the prompt, =(help)=, background Lisp, and
-=(settings)= in the fullscreen tour. Edit the lesson input and press Enter to
-check it. Resize your terminal at any point. Use Page Up/Page Down to scroll long
-lessons and Shift-Tab to go back. Press Tab to skip one slide, including an
-exercise, without changing its settings.
+- Use Page Up and Page Down to scroll.
+- Press Shift-Tab to go back or Tab to skip one slide, including an exercise.
+- Press Esc to skip the tour. Press Ctrl-C to interrupt it without marking
+  unfinished lessons as skipped.
 
-Press Esc to skip the tour. Completed and skipped lesson versions are recorded
-in your state directory. Ctrl-C interrupts the tour without acknowledging
-unfinished lessons. Later launches show only new or revised lessons. Evaluate
-=(onboard)= to replay the whole tour.
-
-Disable automatic tours with =(settings :onboarding-p nil)= or set
-=AUTOLITH_ONBOARDING= to =off=. Disabling the boot screen skips the tour's opening
-animation.
+On later launches, you see only new or revised lessons. Enter =(onboard)= to
+replay the full tour. To disable the automatic tour, enter
+=(settings :onboarding-p nil)= or set =AUTOLITH_ONBOARDING= to =off=. If you
+disable the boot screen, you skip the opening animation.
 
 * Goals and verified missions
 
@@ -667,193 +644,113 @@ presentation.
 
 ** Nix
 
-Nix is the simplest way to install Autolith:
+To launch Autolith without installing a command, run:
 
 #+BEGIN_SRC sh
 nix run github:lambda-symbolics/autolith
 #+END_SRC
 
-The first launch builds the Lisp images needed for startup under
-=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=.
+You can pass Autolith arguments after =--=. To get a command on your =PATH=,
+use =nix profile install github:lambda-symbolics/autolith=.
 
-** Linux binary release
+Nix supports x86-64 and ARM64 Linux and Apple silicon macOS. On first launch,
+the images are built under =${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=.
 
-Install the Linux x86-64 binary release with the shell installer:
+** Linux, macOS, and BSD
+:PROPERTIES:
+:CUSTOM_ID: linux-binary-release
+:END:
+
+Inspect the [[https://sh.lambda-symbolics.com/autolith][shell installer]] before you run it:
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
-The installer verifies the release archive's SHA-256 before extraction. The
-checksum must identify that exact archive; malformed or missing checksums abort
-installation. The initial shell script is fetched over HTTPS.
+The shell installer selects a package for your operating system and CPU:
 
-Read [[https://sh.lambda-symbolics.com/autolith][the installer]] before piping it to a shell, or use Nix.
-Linux binary releases require OpenSSL and Bubblewrap. Bubblewrap provides the
-filesystem and network isolation used for sandboxed command execution. The
-installer names missing dependencies and refuses to install without them, since
-the release needs them for sandboxed or safe automatic execution. The launcher
-distinguishes binary, Nix, and source starts by installation layout, not an
-environment marker alone.
+- Linux: x86-64 and ARM64, for glibc and musl
+- macOS: Intel and Apple silicon
+- FreeBSD, NetBSD, and OpenBSD: x86-64
 
-Autolith automatically checks for updates at most once every 20 hours.
-To install the latest binary release and exit without starting a session:
-
-#+BEGIN_SRC sh
-autolith update
-#+END_SRC
-
-The command exits successfully when updated or already current, and returns a
-nonzero status if checking or installing fails. Run =autolith= afterward to
-start the new release. The command accepts =--help= or =-h=; extra arguments
-exit with status 64 before checking for updates. Use your flake or Nix profile
-to update Nix installations; update the checkout and run =./script/bootstrap=
-for source installations. On Nix and source installations, the command
-explains how to update without building or starting Lisp images.
-
-To update from a session and restart it with its original command arguments:
-
-#+BEGIN_SRC lisp
-(update)
-#+END_SRC
-
-Release archives are built and checked by the installer host. GitHub publishes
-release metadata after the host checksum is available. See
-[[file:release-service.org][Release service]].
-
-** Source checkout
-
-Use SBCL 2.6.4 or newer, the minimum recorded in =sbcl-minimum.version=.
-The bundled release compiler is SBCL 2.6.6, recorded in =sbcl.version=.
-Set =AUTOLITH_SBCL= to use a specific runtime. Otherwise, an installed bundled
-runtime takes precedence over a compatible recorded runtime or one on =PATH=.
-
-For a fresh macOS machine:
-
-#+BEGIN_SRC sh
-brew install sbcl rust cmake pkg-config openssl@3
-curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
-  --eval '(quicklisp-quickstart:install)' --quit
-#+END_SRC
-
-On Linux, also install Bubblewrap with your distribution's package manager.
-Autolith uses its =bwrap= executable to isolate the host filesystem and network
-for sandboxed commands and the sandboxed decisions made by automatic permission
-mode. Nix installations include it. Bubblewrap is not a macOS or BSD dependency.
-Without platform sandbox support, the =sandbox= choice is unavailable; explicit
-=once=, =always=, and =full= approvals run with the user's full privileges.
-
-With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
-
-#+BEGIN_SRC sh
-./script/bootstrap
-./script/check
-#+END_SRC
-
-The check runs FiveAM tests in isolated SBCL processes, defaulting to the available
-logical CPU count (one worker if detection fails), and verifies the pristine
-recovery image. Each run first saves an active image of the checked source.
-Tests that launch another Autolith process boot that core instead of loading the
-system from scratch. List or select test suites and individual cases with:
-
-#+BEGIN_SRC sh
-./script/check --list
-./script/check --suite workspace-resource --suite fixtures
-./script/check --test test-workspace-file-resources --jobs 1
-./script/check --jobs 8 --timeout 900
-#+END_SRC
-
-Selected runs skip recovery probes. Selectors are exact, case-insensitive names
-and can be repeated; unknown names fail. =--jobs= controls process concurrency,
-and =--timeout= sets the deadline per worker in seconds (default 600). Results
-include per-case timings and the slowest cases. =AGENTS.md= documents test
-registration, reusable fixtures, and interactive Lisp entry points.
-
-To put a checkout into =PATH=:
-
-#+BEGIN_SRC sh
-mkdir -p ~/.local/bin
-ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
-#+END_SRC
-
-Make sure =~/.local/bin/= is in your =PATH=.
+Make sure that =~/.local/bin= is on your =PATH= if you use the default command
+location. Install OpenSSL before running the script. On Linux, also install
+Bubblewrap (=bwrap=) for filesystem and network isolation.
 
 ** Windows
 
-For the Windows x86-64 development artifact, extract the archive into a writable
-folder and run =.\bin\autolith.cmd= from PowerShell. Use Windows 10 version 1903
-or newer. The bundled SBCL executable has a UTF-8 process manifest for Unicode
-paths; system-wide locale changes and 8.3 filenames are unnecessary. The first
-launch builds per-user cores under =.autolith-images= beside the release.
-
-To build the source checkout, install Git for Windows, Rust with the MSVC toolchain
-and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
-=PATH= for the ColorLisp syntax library. If no compatible runtime is available,
-bootstrap downloads the official SBCL Windows binary pinned in
-=sbcl-windows-releases.sha256=, verifies its SHA-256, and unpacks it below the
-data root without registering it with Windows. OpenSSL 3
-comes from Git for Windows, from =AUTOLITH_OPENSSL_DIRECTORY=, or from a
-=native\openssl= directory beside the sources.
-
-From PowerShell, bootstrap and check the checkout:
+On Windows x86-64, inspect the [[https://sh.lambda-symbolics.com/autolith.ps1][PowerShell installer]] before you run it:
 
 #+BEGIN_SRC powershell
-script\bootstrap.ps1
-script\check.ps1
+Invoke-RestMethod https://sh.lambda-symbolics.com/autolith.ps1 | Invoke-Expression
 #+END_SRC
 
-=script\check.ps1= takes the same selectors as =./script/check=. Checks that
-need FIFOs, forked children, pseudo-terminals, POSIX file modes, or the POSIX
-shell are recorded as skipped. To package a Windows archive, install the Windows
-SDK (including =mt.exe=) and run =script\package-windows-release.ps1 -Tag VERSION=.
-The POSIX release-server scripts are not built on Windows.
+Restart Windows Terminal so that you can use the updated =PATH=. Sandboxed
+commands run in an AppContainer without network access. They can write to
+the workspace and a private temporary directory.
 
-Start a session with =bin\autolith.cmd= or =bin\autolith.ps1=; both take the
-arguments =bin/autolith= takes. Windows Terminal is the primary console;
-legacy consoles without virtual-terminal input are refused with a message.
+The SHA-256 of the release archive is verified before extraction on all
+platforms. See [[file:release-service.org][Release service]] for how archives are published.
 
-Windows sandboxed commands use the bundled AppContainer helper. They can write
-in the workspace and a private temporary directory, read system applications
-and explicit tool directories, and have no network access. Repository metadata
-is protected. Bootstrap installs the helper, both compatibility DLLs, and the
-Detours license into a content-addressed generation under the private data
-root's =native/sandbox/= directory. After validating every file, it atomically
-replaces the =selected= record. Older generations are retained. Release archives
-contain exactly the selected generation and its relative selector.
+** Update
 
-Set =CL_EXEC_SANDBOX_WINDOWS_HELPER= to a nonempty executable path to override
-the launcher default. Otherwise, the launcher validates the selected bundle and
-exports its generation-specific executable path. After source bootstrap, only
-launcher-generated defaults are refreshed. Re-run =script\bootstrap.ps1= to
-install the bundle when upgrading from a single-helper installation.
+For a packaged installation, run =autolith update= and then start Autolith
+again. Use =autolith update --help= to see the command syntax. To update and
+restart from a running session, enter =(update)=. Your original launch
+arguments are used for the restart. Automatic update checks run at most once
+every 20 hours.
 
-Windows supports supervised detached sessions, client-first starts, and exact-heap
-restart checkpoints. It withholds fork-based checkpoint saving and the =unix=
-management REPL transport.
+For Nix, update the flake input or upgrade the package in your Nix profile.
+For a source installation, update the checkout and run the bootstrap command
+again.
+
+** Source checkout
+
+1. Install a compatible SBCL as specified in =sbcl-minimum.version=. Use
+   =AUTOLITH_SBCL= to select a specific runtime.
+2. Install [[https://www.quicklisp.org/beta/][Quicklisp]] under =~/quicklisp=, along with Rust, CMake, pkg-config,
+   and OpenSSL. On Linux, install Bubblewrap as well.
+3. From the checkout, run =./script/bootstrap=. Use =./script/check= to check
+   the build.
+4. Start Autolith with =./bin/autolith=. To run it from other directories, link
+   =bin/autolith= into a directory on your =PATH=.
+
+Use =--list= to see test names, =--suite NAME= to select a suite, or
+=--test NAME= to select one test. You can repeat the selectors. For example:
+
+#+BEGIN_SRC sh
+./script/check --suite workspace-resource --suite fixtures
+./script/check --test test-workspace-file-resources --jobs 1
+#+END_SRC
+
+Use =--jobs= to set the number of workers and =--timeout= to set the time
+limit per worker in seconds. Selected runs skip the recovery checks.
+
+** Windows source checkout
+
+1. Install Git for Windows, Rust with the MSVC toolchain, and Quicklisp under
+   =%USERPROFILE%\quicklisp=. Put =clang= on =PATH= for ColorLisp. You can use
+   OpenSSL 3 from Git for Windows or set =AUTOLITH_OPENSSL_DIRECTORY= to the
+   directory that contains it.
+2. From PowerShell in the checkout, run =.\script\bootstrap.ps1=. If there is
+   no compatible SBCL, a runtime is downloaded and verified against the
+   checksum in =sbcl-windows-releases.sha256=.
+3. Use =.\script\check.ps1= to check the build. It accepts the same selectors
+   as =./script/check=.
+4. In Windows Terminal, start =.\bin\autolith.cmd= or =.\bin\autolith.ps1=.
 
 ** Uninstall
 
-To remove Autolith and keep your data:
+1. Stop running sessions.
+2. Run =autolith uninstall=. On Windows, delete the folders listed by the
+   command. On other platforms, review the paths before confirming or pass
+   =--yes= if no terminal is attached.
+3. If you used Nix, remove Autolith from the flake or profile. If you built a
+   checkout, delete the checkout separately.
 
-#+BEGIN_SRC sh
-autolith uninstall
-#+END_SRC
-
-The launcher lists what it will remove, asks for confirmation, and exits without
-starting a session. =--yes= skips confirmation and is required when no terminal
-is attached. The launcher removes the packaged installation and its command link,
-managed SBCL runtimes, the active and recovery images, retained generation cores,
-saved worker images, Nix image trees, release markers, crash capsules, launcher
-pointers, session sockets and leases, provider caches, and the cache root.
-
-User data stays in place: conversations, inference traces, memories, papercuts,
-agendas, plans, pending input, private image commits, the mutation journal and
-mutation history, permissions, preferences, credentials, and the configuration
-root. Stop running sessions first. A source checkout stays as well; delete it
-yourself. Nix installations also need the package removed from the flake or
-profile. On Windows the launcher prints the folders to delete, because the
-runtime in use lives inside them.
+The installation, managed runtimes, built images, and caches are removed.
+Your conversations, memories, image commits, configuration, and credentials
+are kept.
 
 * Talk to Autolith
 
