@@ -26,30 +26,6 @@
             (format nil "~:D B" value)
             (format nil "~,1F ~A (~:D B)" number (nth index units) value)))))
 
-(-> usage--wrap (string integer) list)
-(defun usage--wrap (text columns)
-  "Wrap TEXT at spaces or the display width, omitting spaces at line breaks."
-  (let ((lines  nil)
-        (start  0)
-        (length (length text)))
-    (loop while (< start length)
-          do (let ((end   start)
-                   (space nil))
-               (loop while (and (< end length)
-                                (<= (text-cell-width (subseq text start (1+ end))) columns))
-                     do (when (char= (char text end) #\Space)
-                          (setf space end))
-                        (incf end))
-               (when (= end start)
-                 (incf end))
-               (when (and (< end length) space (> space start))
-                 (setf end space))
-               (push (subseq text start end) lines)
-               (setf start end)
-               (loop while (and (< start length) (char= (char text start) #\Space))
-                     do (incf start))))
-    (or (nreverse lines) (list ""))))
-
 (-> usage--line (stream list boolean) t)
 (defun usage--line (stream spans styled-p)
   "Write SPANS as one optionally styled line."
@@ -58,7 +34,7 @@
 (-> usage--paragraph (stream string &key (:columns integer) (:styled-p boolean) (:style t)) null)
 (defun usage--paragraph (stream text &key columns styled-p (style ':plain))
   "Write sanitized TEXT wrapped to COLUMNS."
-  (dolist (line (usage--wrap (usage--text text) columns))
+  (dolist (line (wrap-text (usage--text text) columns))
     (usage--line stream (list (terminal-span style line)) styled-p))
   nil)
 

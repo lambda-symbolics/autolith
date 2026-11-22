@@ -108,13 +108,7 @@
 (-> workspace-file--uri-safe-octet-p ((unsigned-byte 8)) boolean)
 (defun workspace-file--uri-safe-octet-p (octet)
   "Return true when OCTET may appear literally in a workspace URI identifier."
-  (and (or (and (>= octet (char-code #\a)) (<= octet (char-code #\z)))
-           (and (>= octet (char-code #\A)) (<= octet (char-code #\Z)))
-           (and (>= octet (char-code #\0)) (<= octet (char-code #\9)))
-           (find octet
-                 (map 'list #'char-code "-._~/")
-                 :test #'=))
-       t))
+  (or (resource-uri-unreserved-octet-p octet) (= octet #x2F)))
 
 (-> workspace-file--encode-identifier (string) string)
 (defun workspace-file--encode-identifier (identifier)

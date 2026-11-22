@@ -13,13 +13,7 @@
 (-> text-buffer-append (string string) string)
 (defun text-buffer-append (buffer text)
   "Append TEXT to BUFFER in place with amortized growth and return BUFFER."
-  (let* ((start    (fill-pointer buffer))
-         (required (+ start (length text))))
-    (when (> required (array-total-size buffer))
-      (adjust-array buffer (max required (* 2 (array-total-size buffer)))))
-    (setf (fill-pointer buffer) required)
-    (replace buffer text :start1 start)
-    buffer))
+  (serapeum:vector-conc-extend buffer text (* 2 (array-total-size buffer))))
 
 (-> text-buffer-clear (string) string)
 (defun text-buffer-clear (buffer)

@@ -329,11 +329,7 @@ evaluates without interleaving the person's commands.")
 (-> emacs-buffer--uri-safe-octet-p ((unsigned-byte 8)) boolean)
 (defun emacs-buffer--uri-safe-octet-p (octet)
   "Return true when OCTET may appear literally in an emacs:buffer/ identifier."
-  (and (or (<= (char-code #\a) octet (char-code #\z))
-           (<= (char-code #\A) octet (char-code #\Z))
-           (<= (char-code #\0) octet (char-code #\9))
-           (find octet (map 'list #'char-code "-._~*") :test #'=))
-       t))
+  (or (resource-uri-unreserved-octet-p octet) (= octet #x2A)))
 
 (-> emacs-buffer--snapshot-elisp () string)
 (defun emacs-buffer--snapshot-elisp ()
