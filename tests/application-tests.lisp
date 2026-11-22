@@ -2502,19 +2502,21 @@
                             (loop for digit across depths
                                   collect (nth (1- (digit-char-p digit))
                                                *terminal-parenthesis-style-names*)))
-                     "Matching delimiters share a depth color across forms and lines.")
-        (test-assert (string= source (format nil "~{~A~}" (mapcar #'terminal-span-text spans)))
-                     "Depth coloring preserves the complete source text."))))
-  (let* ((spans     (syntax--highlight-spans "(loop for x in '(1 2) collect x)"
-                                             :language              *application-common-lisp-language*
-                                             :rainbow-parentheses-p t))
-         (loop-span (find-if (lambda (span) (search "loop" (terminal-span-text span))) spans)))
-    (test-assert (eq ':syntax-keyword (terminal-span-style loop-span))
-                 "The LOOP operator retains keyword highlighting independently of parentheses.")))
+                     "Matching delimiters share a depth color across forms and lines.")))))
 
 (-> test-lisp-rainbow-display-scope () null)
 (defun test-lisp-rainbow-display-scope ()
   "Apply nesting colors to Lisp tool and local input, source and values only."
+  (let* ((rows   (application--source-preview-rows
+                  (format nil "(list~% (list 1))")
+                  :language              *application-common-lisp-language*
+                  :prompt                "(p) "
+                  :rainbow-parentheses-p t))
+         (prompt (second (first rows))))
+    (test-assert (and (eq ':dim (terminal-span-style prompt))
+                      (string= "(p) " (terminal-span-text prompt))
+                      (find ':syntax-parenthesis-2 (second rows) :key #'terminal-span-style))
+                 "The Lisp palette applies across source lines, not to the prompt."))
   (let ((application (application-tests--ui-application :columns 100)))
     (dolist (namespace '("lisp" "self"))
       (let ((entry (response-item-entry

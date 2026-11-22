@@ -38,16 +38,15 @@ RAINBOW-PARENTHESES-P enables nesting colors for dedicated Lisp displays."
   (application--transcript-source-value
    (list ':preview text path language prompt limit rainbow-parentheses-p)
    (lambda ()
-     (let ((rows (render-source text
-                                :source-path            path
-                                :syntax-language        language
-                                :prompt                 prompt
-                                :line-limit             limit
-                                :sanitize-line-function #'application--sanitize-change-line
-                                :span-function          #'syntax--terminal-span)))
-       (if rainbow-parentheses-p
-           (syntax--rainbow-source-rows rows)
-           rows)))))
+     (render-source text
+                    :source-path            path
+                    :syntax-language        language
+                    :prompt                 prompt
+                    :line-limit             limit
+                    :role-overlay-function  (when rainbow-parentheses-p
+                                              #'syntax--parenthesis-roles)
+                    :sanitize-line-function #'application--sanitize-change-line
+                    :span-function          #'syntax--terminal-span))))
 
 
 ;;; Before-and-after viewer

@@ -2338,7 +2338,7 @@ Mark reports that repeat an active papercut as already reported."
       (let* ((visible-count (min *application-tool-output-lines* (length lines)))
              (elisions      (getf details :elisions))
              (source        (format nil "~{~A~^~%~}" (mapcar #'third lines)))
-             (highlighted   (syntax--highlight-lines source :pathname path)))
+             (highlighted   (highlight-lines source :pathname path :span-function #'syntax--terminal-span)))
         (append
          (list (list (terminal-span ':dim (format nil "URI: ~A" uri))))
          (loop for (number anchor text) in lines
