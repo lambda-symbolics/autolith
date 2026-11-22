@@ -224,6 +224,13 @@ The file belongs to another tool, so a symbolic link to it is followed."
   ()
   (:documentation "Base credential manager for Autolith."))
 
+(defgeneric credential-manager-local-status (manager)
+  (:documentation "Report availability from local credentials without acquiring request credentials."))
+
+(defmethod credential-manager-local-status (manager)
+  "Inspect a manager whose load operation only reads local sources."
+  (if (credential-manager-load manager) ':available ':missing))
+
 (defclass oauth-credential-manager (credential-manager refresh-grant-credential-manager)
   ()
   (:documentation "Credential manager with OAuth refresh grants."))

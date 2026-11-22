@@ -295,6 +295,31 @@ compatibility path at 0.68.0."
   "Return the effective provider registration named NAME."
   (provider-registry-find *provider-registry* (provider--canonical-name name)))
 
+(-> provider-credential-status (configuration provider-registration &key (:refresh-p boolean)) keyword)
+(defun provider-credential-status (configuration registration &key refresh-p)
+  "Report :available, :missing, :unconfigured or :failed without exposing credentials.
+
+With REFRESH-P, acquire request credentials, which may refresh them. Otherwise
+inspect only local sources. Availability in that mode does not verify a token."
+  (handler-case
+      (call-with-secret-use
+       (lambda ()
+         (let* ((provider (funcall (provider-registration-factory registration) configuration))
+                (manager  (provider-credential-manager provider)))
+           (if refresh-p
+               (call-with-credentials manager (constantly ':available))
+               (credential-manager-local-status manager)))))
+    (credentials-unavailable ()
+      ':missing)
+    (configuration-error ()
+      ':unconfigured)
+    (authentication-error ()
+      ':failed)
+    (file-error ()
+      ':failed)
+    (reader-error ()
+      ':failed)))
+
 (-> provider--selection-error
     (string (option string) &key (:reason keyword) (:message string)) nil)
 (defun provider--selection-error (model provider &key reason message)

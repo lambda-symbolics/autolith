@@ -4482,7 +4482,8 @@ clients as :TEXT, :REASONING and :STATUS events."
          (stream-call
           (lambda ()
            (when (eq status ':provider-request-completed)
-             (application-clients-note-usage application (getf details :usage)))
+              (application-clients-note-usage
+               application (getf details :usage) :verified-model (getf details :verified-model)))
            (application-clients-publish application (list :status :status status :details details))
            (case status
              (:user-message-persisted

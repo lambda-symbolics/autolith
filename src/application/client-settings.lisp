@@ -98,23 +98,12 @@
                 when (setting-visible-p setting)
                   collect (application-client--setting-item application configuration setting)))))
 
-(-> application-client--credential-stored-p (configuration provider-registration) boolean)
-(defun application-client--credential-stored-p (configuration registration)
-  "Probe stored credentials within transient secret accounting, without refreshing them."
-  (handler-case
-      (call-with-secret-use
-       (lambda ()
-         (let ((provider (funcall (provider-registration-factory registration) configuration)))
-           (credential-manager-load (provider-credential-manager provider))
-           t)))
-    (credentials-unavailable ()
-      nil)))
-
 (-> application-client--model-item (application provider-registration provider-model &key (:stored-p boolean)) list)
 (defun application-client--model-item (application registration model &key stored-p)
   "Return native model metadata and only locally observed credential verification."
-  (let ((verified-at (gethash (provider-model-name model)
-                              (client-hub-verified-models (application-client-hub application)))))
+  (let* ((hub         (application-client-hub application))
+         (key         (list (provider-registration-name registration) (provider-model-name model)))
+         (verified-at (gethash key (client-hub-verified-models hub))))
     (list :id                  (provider-model-name model)
           :provider            (provider-registration-name registration)
           :credential-stored-p stored-p
@@ -127,7 +116,7 @@
   (let ((configuration (application-configuration application)))
     (list :items
           (loop for registration in (provider-registrations)
-                for stored-p = (application-client--credential-stored-p configuration registration)
+                for stored-p = (eq (provider-credential-status configuration registration :refresh-p nil) ':available)
                 append (loop for model in (provider-registration-models registration)
                              collect (application-client--model-item application registration model
                                                                     :stored-p stored-p))))))

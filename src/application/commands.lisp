@@ -695,18 +695,10 @@ combination."
 
 (-> application--credentialed-provider-names (application) list)
 (defun application--credentialed-provider-names (application)
-  "Return effective provider names whose stored credentials load successfully."
+  "Return effective provider names whose local credentials are available."
   (let ((configuration (application-configuration application)))
     (loop for registration in (provider-registrations)
-          when (handler-case
-                   (progn
-                     (credential-manager-load
-                      (provider-credential-manager
-                       (funcall (provider-registration-factory registration)
-                                configuration)))
-                     t)
-                 (serious-condition ()
-                   nil))
+          when (eq (provider-credential-status configuration registration :refresh-p nil) ':available)
             collect (provider-registration-name registration))))
 
 (-> application--offered-provider-p (string (option string) list) boolean)

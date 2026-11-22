@@ -56,32 +56,50 @@
 
 (-> test-acp-extension-model-verification () null)
 (defun test-acp-extension-model-verification ()
-  "Distinguish stored credentials from an observed successful provider request."
-  (with-test-configuration (configuration root)
-    (acp-session-test--call-with-client
-     configuration
-     (lambda (service client)
-       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-              (session    (acp-service--session service identifier))
-              (model      (config :model (application-configuration (acp-session-test--application session)))))
-         (test-call-with-function-replacements
-          (list (list 'application-client--credential-stored-p
-                      (lambda (configuration registration)
-                        (declare (ignore configuration registration)) t)))
-          (lambda ()
-            (labels ((row ()
-                       "Read the current model's negotiated row without any credential files."
-                       (let* ((response (agentcomms:client-agent-request
-                                         client "_autolith/models"
-                                         (agentcomms:json-object "sessionId" identifier)))
-                              (items    (gethash "items" (gethash "value" response))))
-                         (find model items :test #'equal :key (lambda (item) (gethash "id" item))))))
-              (let ((before (row)))
-                (test-assert (eq t (gethash "credentialStored" before)) "stored presence is independent")
-                (test-assert (argo:json-false-p (gethash "recentlyVerified" before))
-                             "stored credentials alone are not verified"))
-              (application-clients-note-usage (acp-session-test--application session)
-                                              '(("input_tokens" 3)))
-              (test-assert (eq t (gethash "recentlyVerified" (row)))
-                           "successful provider completion marks this model verified"))))))))
+  "Report local credential status and recent verification for exact provider/model pairs."
+  (provider-selection-tests--with-providers
+   (lambda ()
+     (with-test-configuration (configuration root)
+       (acp-session-test--call-with-client
+        configuration
+        (lambda (service client)
+          (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
+                 (session     (acp-service--session service identifier))
+                 (application (acp-session-test--application session)))
+            (test-call-with-function-replacements
+             (list (list 'provider-credential-status
+                         (lambda (configuration registration &key refresh-p)
+                           (declare (ignore configuration))
+                           (when refresh-p (error "The catalogue must not refresh credentials."))
+                           (if (string= (provider-registration-name registration) "selection-a")
+                               ':available
+                               ':failed))))
+             (lambda ()
+               (let ((providers (application--credentialed-provider-names application)))
+                 (test-assert (equal providers '("selection-a"))
+                              "the terminal picker uses the same local credential status"))
+               (labels ((row (provider)
+                          "Read the negotiated shared model row for PROVIDER."
+                          (let* ((response (agentcomms:client-agent-request
+                                            client "_autolith/models"
+                                            (agentcomms:json-object "sessionId" identifier)))
+                                 (items    (gethash "items" (gethash "value" response))))
+                            (find-if (lambda (item)
+                                       (and (equal "shared" (gethash "id" item))
+                                            (equal provider (gethash "provider" item))))
+                                     items))))
+                 (application-clients-note-usage application '(("input_tokens" 3)))
+                 (let ((before (row "selection-a")))
+                   (test-assert (eq t (gethash "credentialStored" before)) "local presence is reported")
+                   (test-assert (argo:json-false-p (gethash "recentlyVerified" before))
+                                "usage without an accepted model is not verification"))
+                 (application-clients-note-usage application '(("input_tokens" 5))
+                                                 :verified-model '("selection-a" "shared"))
+                 (test-assert (eq t (gethash "recentlyVerified" (row "selection-a")))
+                              "successful provider completion marks its model verified")
+                 (let ((other (row "selection-b")))
+                   (test-assert (argo:json-false-p (gethash "credentialStored" other))
+                                "failed credential inspection does not abort the catalogue")
+                   (test-assert (argo:json-false-p (gethash "recentlyVerified" other))
+                                "a duplicate model ID at another provider is not verified")))))))))))
   nil)

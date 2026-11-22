@@ -43,6 +43,20 @@
     (cl-llm-provider-api:google-cloud-authentication-error (condition)
       (error 'authentication-error :message (princ-to-string condition)))))
 
+(defmethod credential-manager-local-status ((manager vertex-credential-manager))
+  "Validate local user ADC, returning before the token request."
+  (let ((path (cl-llm-provider-api:google-cloud-default-credentials-path)))
+    (if (probe-file path)
+        (block nil
+          (handler-case
+              (cl-llm-provider-api:google-cloud-user-credentials
+               path (lambda (url &key headers content)
+                      (declare (ignore url headers content))
+                      (return ':available)))
+            (cl-llm-provider-api:google-cloud-authentication-error ()
+              ':failed)))
+        ':missing)))
+
 (defmethod call-with-credentials
     ((manager vertex-credential-manager) function &key force-refresh)
   "Call FUNCTION with a newly refreshed token."

@@ -123,7 +123,7 @@
    (verified-models
     :initform      (make-hash-table :test #'equal :synchronized t)
     :reader        client-hub-verified-models
-    :documentation "The models a request answered recently, mapped to when it did."))
+    :documentation "Recent successful requests keyed by (registered provider name, exact model ID)."))
   (:documentation "The structured clients of one application's channel."))
 
 
@@ -487,17 +487,16 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 
 ;;;; -- Measurements --
 
-(-> application-clients-note-usage (application t) null)
-(defun application-clients-note-usage (application usage)
-  "Keep the provider USAGE a completed request measured, and that the channel's model answered just now."
+(-> application-clients-note-usage (application t &key (:verified-model (option cons))) null)
+(defun application-clients-note-usage (application usage &key verified-model)
+  "Keep the completed request's USAGE and mark its exact model if accepted."
   (let ((hub (application-client-hub application)))
     (with-lock-held ((client-hub-lock hub))
       (setf (client-hub-usage hub)
             (loop for name in '("input_tokens" "output_tokens" "cached_input_tokens")
                   collect (list name (conversation--usage-field usage name)))))
-    (setf (gethash (config :model (application-configuration application))
-                   (client-hub-verified-models hub))
-          (get-universal-time)))
+    (when verified-model
+      (setf (gethash verified-model (client-hub-verified-models hub)) (get-universal-time))))
   nil)
 
 

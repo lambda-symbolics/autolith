@@ -2135,6 +2135,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                                         :tool-allowlist     tool-allowlist))
               (cache-prefix    nil)
               (context-request nil)
+              (verified-model  nil)
               (result
                 (loop
                   (agent--check-request-budget agent request-number)
@@ -2154,39 +2155,44 @@ loop, so compaction ahead of the user message shares the turn's budget."
                           cache-prefix          nil))
                   (handler-case
                       (return
-                        (let* ((context-request
-                                 (setf context-request
-                                       (provider-context-request-create
-                                        (agent-provider agent) conversation
-                                        (tool-registry-provider-schemas (agent-tool-registry agent)))))
-                               (*provider-context-request*       context-request)
-                               (*request-context-participant*
-                                 (participant-state-identity (agent-participant-state agent)))
-                               (*provider-hosted-tools-enabled-p*
-                                 (not tool-restriction-p))
-                               (*provider-tool-choice*
-                                 (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
-                               (*provider-maximum-output-tokens* maximum-output-tokens)
-                               (*provider-cache-request-prefix*  nil)
-                               (*provider-cache-prefix-function*
-                                 (lambda (prefix) (setf cache-prefix prefix)))
-                               (*request-context-hurry-up-p*
-                                 (agent-hurry-up-p agent))
-                               (*context-request-contributions*
-                                 (and tools-p
-                                      (not tool-restriction-p)
-                                      (mcp-tool-registry-context-contributions
-                                       (agent-tool-registry agent)))))
-                          (provider-stream-turn
-                           (agent-provider agent)
-                           conversation
-                           :tool-namespaces tool-namespaces
-                           :event-callback
-                           (agent--provider-event-callback
-                            observer
-                            :conversation   conversation
-                            :request-number request-number)
-                           :goal-context    goal-context)))
+                         (let* ((provider                         (agent-provider agent))
+                                (registration                     (model-provider-registration provider))
+                                (context-request
+                                  (setf context-request
+                                        (provider-context-request-create
+                                         provider conversation
+                                         (tool-registry-provider-schemas (agent-tool-registry agent)))))
+                                (*provider-context-request*       context-request)
+                                (*request-context-participant*
+                                  (participant-state-identity (agent-participant-state agent)))
+                                (*provider-hosted-tools-enabled-p*
+                                  (not tool-restriction-p))
+                                (*provider-tool-choice*
+                                  (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
+                                (*provider-maximum-output-tokens* maximum-output-tokens)
+                                (*provider-cache-request-prefix*  nil)
+                                (*provider-cache-prefix-function*
+                                  (lambda (prefix) (setf cache-prefix prefix)))
+                                (*request-context-hurry-up-p*
+                                  (agent-hurry-up-p agent))
+                                (*context-request-contributions*
+                                  (and tools-p
+                                       (not tool-restriction-p)
+                                       (mcp-tool-registry-context-contributions
+                                        (agent-tool-registry agent)))))
+                           (setf verified-model
+                                 (when registration
+                                   (list (provider-registration-name registration)
+                                         (config :model (provider-configuration provider)))))
+                           (provider-stream-turn
+                            provider conversation
+                            :tool-namespaces tool-namespaces
+                            :event-callback
+                            (agent--provider-event-callback
+                             observer
+                             :conversation   conversation
+                             :request-number request-number)
+                            :goal-context    goal-context)))
                     (provider-context-budget-error (condition)
                       ;; Mission supervision and zero-usage settlement have unwound.
                       (when recovery-used-p (error condition))
@@ -2268,7 +2274,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
              agent result tool-namespaces :request-number request-number)
             (agent--note-persisted-assistant-response
              observer result request-number)
-            (agent-observer-status observer :provider-request-completed completion-details)
+            (agent-observer-status observer :provider-request-completed
+                                   (list* :verified-model verified-model completion-details))
             (knowledge-usage-capture conversation
                                      :calls          calls
                                      :request-number request-number
