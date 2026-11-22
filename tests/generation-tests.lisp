@@ -530,19 +530,16 @@
                           nil)
                       (rollback-requested (condition)
                         condition))))
-             (test-assert condition
-                          "self.rollback propagates its control condition")
              (test-assert
-              (string= (rollback-requested-generation-id condition)
-                       "rollback-generation")
-              "the rollback condition carries the selected generation ID")
+              (and condition
+                   (string= (rollback-requested-generation-id condition)
+                            "rollback-generation"))
+              "self.rollback signals with the requested generation ID")
              (let ((selected (generation-selected configuration)))
-               (test-assert selected
-                            "rollback selects the generation before signaling")
                (test-assert
-                (string= (generation-identifier selected)
-                         "rollback-generation")
-                "the rollback selection names the requested generation"))
+                (and selected
+                     (string= (generation-identifier selected) "rollback-generation"))
+                "self.rollback selects the requested generation before signaling"))
              (let* ((application
                       (make-instance 'application
                                      :configuration configuration
@@ -560,12 +557,11 @@
                             nil)
                         (rollback-requested (condition)
                           condition))))
-               (test-assert command-condition
-                             "(rollback) requests process recovery immediately")
                (test-assert
-                (string= (rollback-requested-generation-id command-condition)
-                         "rollback-generation")
-                "(rollback) carries the selected generation into recovery"))))
+                (and command-condition
+                     (string= (rollback-requested-generation-id command-condition)
+                              "rollback-generation"))
+                "(rollback) requests process recovery with the selected generation"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -599,12 +595,17 @@
            (self-install-definition
             configuration
             "(defun test-generation-replay-target () \"Return captured state.\" 73)")
-           (let* ((generation
-                    (generation-create-record
-                     configuration
-                     :git-commit       "0123456789abcdef"
-                     :mutation-checker checker))
-                  (commit (image-commit-current configuration))
+           (let* ((identifier "reconstruction-capture")
+                  (generation
+                    (sbcl-generations:generation-recreate-pending
+                     (generation-store-for configuration)
+                     :identifier identifier
+                     :created-at (get-universal-time)
+                     :metadata   (generation--metadata
+                                  configuration identifier
+                                  :git-commit       "0123456789abcdef"
+                                  :mutation-checker checker)))
+                  (commit     (image-commit-current configuration))
                   (script
                     (uiop:read-file-string
                      (generation-reconstruction-pathname generation))))

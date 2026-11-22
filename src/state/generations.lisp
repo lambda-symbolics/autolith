@@ -167,29 +167,6 @@ quiescing, because both touch the private history repository."
 
 ;;;; -- Retained Generations --
 
-(-> generation-create-record
-    (configuration &key (:git-commit (option string))
-                        (:mutation-checker (option mutation-checker)))
-    generation)
-(defun generation-create-record (configuration &key git-commit mutation-checker)
-  "Create a pending generation record with immutable artifact paths."
-  (let* ((identifier (generation--allocate-identifier configuration))
-         (metadata   (generation--metadata configuration identifier
-                                           :git-commit       git-commit
-                                           :mutation-checker mutation-checker))
-         (directory  (merge-pathnames (format nil "~A/" identifier)
-                                      (generation-root configuration))))
-     (make-instance 'generation
-                    :identifier        identifier
-                    :directory         directory
-                    :core-pathname     (merge-pathnames "autolith.core" directory)
-                    :temporary-core-pathname
-                    (merge-pathnames ".autolith.core.tmp" directory)
-                    :manifest-pathname (merge-pathnames "manifest.sexp" directory)
-                    :metadata          metadata
-                    :created-at        (get-universal-time)
-                    :status            ':pending)))
-
 (-> generation--allocate-identifier (configuration) string)
 (defun generation--allocate-identifier (configuration)
   "Reserve an artifact directory against retained and pending generation identities."
