@@ -657,7 +657,7 @@
                   (and terminal-p
                        (eq (getf snapshot :state) :aborted)
                        (eq (getf (getf snapshot :result) :status) :aborted)
-                        (not (sbcl-worker-running-p cancel-worker)))
+                       (not (sbcl-worker-running-p cancel-worker)))
                   "cancelling a Lisp job aborts it and stops the interrupted REPL")))
              (let* ((*tool-execution-blocking-grace-seconds* 20)
                     (result
@@ -667,7 +667,7 @@
                (test-assert
                 (and (tool-result-success-p result)
                      (search "42" (tool-result-content result))
-                      (sbcl-worker-running-p cancel-worker)
+                     (sbcl-worker-running-p cancel-worker)
                      (eq cancel-worker
                          (lisp-worker-pool-worker pool "cancel")))
                 "the cancelled named REPL restarts safely for its next request"))

@@ -399,7 +399,7 @@
              (test-assert
               (and terminal-p
                    (eq (getf snapshot :state) ':aborted)
-                    (not (sbcl-worker-running-p worker)))
+                   (not (sbcl-worker-running-p worker)))
               "child cleanup joins the aborted execution and detaches its REPL"))
            (lisp-worker-pool-stop-all worker-pool))
       (ignore-errors

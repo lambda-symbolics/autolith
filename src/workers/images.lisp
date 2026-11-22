@@ -171,7 +171,7 @@ only while that core still matches the source."
                          (json-encode (sbcl-worker-image-identifier image))
                          (json-encode (sbcl-worker-image-parent-identifier image))
                         (if (lisp-image-compatible-p image) "true" "false")
-                         (json-encode (sbcl-worker-image-note image))))
+                        (json-encode (sbcl-worker-image-note image))))
               images)
              (mapcar
               (lambda (failure)
