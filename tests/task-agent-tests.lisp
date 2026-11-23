@@ -797,15 +797,18 @@
             (and contribution
                  (search "halfway done" (context-contribution-evidence contribution))
                  (search "messaging-child" (context-contribution-evidence contribution)))
-            "queued notes deliver behind the parent conversation"))
-         (test-assert
-          (null
-           (find "task-notes"
-                 (context-delivery-contributions
-                  (context-resolve-request configuration (agent-conversation parent)
-                                           #()))
-                 :test #'string= :key #'context-contribution-identifier))
-          "delivered notes drain and do not repeat")
+            "queued notes deliver behind the parent conversation")
+           (task-note-post (conversation-identifier (agent-conversation parent))
+                           "messaging-child" "finished")
+           (context-delivery-complete delivery))
+         (let* ((delivery     (context-resolve-request configuration (agent-conversation parent) #()))
+                (contribution (find "task-notes" (context-delivery-contributions delivery)
+                                    :test #'string= :key #'context-contribution-identifier)))
+           (test-assert (and contribution
+                             (search "finished" (context-contribution-evidence contribution))
+                             (not (search "halfway done" (context-contribution-evidence contribution))))
+                        "completion consumes the snapshot and preserves notes queued during the request")
+           (context-delivery-complete delivery))
          (let ((*task-note-maximum-pending* 0))
            (test-assert (eq (task-note-post "any-parent" "child" "text") ':full)
                         "a full note queue refuses further notes")))
