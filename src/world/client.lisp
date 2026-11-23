@@ -40,25 +40,18 @@ Without ATTACH-EXPECTED-P no terminal is about to attach, as for autolith start.
              :message   "The world server started but its endpoint does not answer."
              :operation ':spawn)))
 
-(defparameter *world-client-wait-seconds* 60
-  "How long a client waits for a server that holds the world but does not answer yet.
-
-A server publishes its endpoint again after a checkpoint, and a channel
-opens once the checkpoint is over.")
-
 (-> world-client--entry
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline (option real))
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:attach-expected-p boolean))
     cons)
 (defun world-client--entry
-    (configuration &key (permission-mode ':ask) immutable-p deadline (attach-expected-p t))
+    (configuration &key (permission-mode ':ask) immutable-p (attach-expected-p t))
   "Return the world server's endpoint entry: the one answering, or a new server's.
 
 A server that holds the world without answering, as during a checkpoint, is
-waited for until DEADLINE, an internal real time, rather than doubled. NIL
-allows a cancellable interactive switch to wait. If two clients start a
-server each, the launch that loses the world's lease fails, and its client
-then waits for the winner like any other."
+waited for rather than doubled. Cancellation is checked between attempts.
+If two clients start a server each, the launch that loses the world's lease
+fails, and its client then waits for the winner like any other."
   (loop
     (let ((entry (world-client-entry configuration)))
       (world-terminal-client-check-cancellation)
@@ -76,10 +69,6 @@ then waits for the winner like any other."
              ;; Another client's server took the lease meanwhile: join it.
              (unless (world-server-running-p configuration)
                (error condition)))))
-        ((and deadline (>= (get-internal-real-time) deadline))
-         (error 'world-terminal-error
-                :message   "World server response timeout"
-                :operation ':open))
         (t
          (sleep 0.25))))))
 
@@ -114,9 +103,7 @@ Return the opened channel's session identifier, whose endpoint answers by
 then, and whether the server started the channel for this open rather than
 sharing one it already served."
   (channel-loading-report 1 "Connecting to world")
-  (let ((deadline (unless *world-terminal-client-cancelled-p*
-                    (+ (get-internal-real-time)
-                       (* *world-client-wait-seconds* internal-time-units-per-second)))))
+  (let ((image-daemon:*daemon-connect-timeout-seconds* nil))
     (multiple-value-bind (rows columns)
         (terminal-current-size)
       (loop
@@ -124,18 +111,13 @@ sharing one it already served."
         (let* ((entry    (world-client--entry configuration
                                               :permission-mode   permission-mode
                                               :immutable-p       immutable-p
-                                              :deadline          deadline
                                               :attach-expected-p attach-expected-p))
                (response
                  (handler-case
                      ;; Wait for the answer instead of sending the open again.
                      ;; The first open can be slow because it migrates every
                      ;; conversation, and a second open could start another channel.
-                     (let ((image-daemon:*daemon-connect-timeout-seconds*
-                            (when deadline
-                              (max image-daemon:*daemon-connect-timeout-seconds*
-                                   (/ (- deadline (get-internal-real-time))
-                                      internal-time-units-per-second)))))
+                      (progn
                        (channel-loading-report 2 "Selecting an available channel")
                        (world-terminal-query-record
                         entry ':open
@@ -164,10 +146,9 @@ sharing one it already served."
                      ;; Only an explicit rejection establishes that retrying is safe.
                      ;; A transport failure may follow an accepted mutating open.
                      (world-terminal-client-check-cancellation)
-                     (if (and (or (null deadline) (< (get-internal-real-time) deadline))
-                              (world-terminal-error-retry-p condition))
-                         nil
-                         (error condition))))))
+                     (if (world-terminal-error-retry-p condition)
+                        nil
+                        (error condition))))))
           (if response
               (let ((identifier (getf (rest response) :session-id)))
                 (unless (non-empty-string-p identifier)

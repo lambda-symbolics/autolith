@@ -3,7 +3,7 @@
 ;;;; -- World-Terminal Discovery Client --
 
 (defparameter *world-terminal-client-cancelled-p* nil
-  "The scoped interactive switch cancellation predicate, or NIL for bounded clients.")
+  "The scoped interactive switch cancellation predicate, or NIL without a cancellation hook.")
 
 (define-condition world-terminal-client-cancelled (world-terminal-error)
   ()

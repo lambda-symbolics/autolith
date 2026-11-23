@@ -2481,15 +2481,13 @@ the version the client says it is, when it says one."
                      (push ':spawn events)
                      (setf running t)
                      (error 'world-terminal-error
-                            :message   "The detached world server did not start within 1 seconds."
+                             :message  "The detached world server lost the world lease."
                             :operation ':spawn))))
        (lambda ()
          (handler-bind ((channel-loading-progress
                           (lambda (progress)
                             (push (channel-loading-progress-step progress) events))))
-           (test-assert (eq (world-client--entry configuration
-                                                 :deadline (+ (get-internal-real-time)
-                                                              (* 10 internal-time-units-per-second)))
+            (test-assert (eq (world-client--entry configuration)
                             winner)
                         "a lost launch race ends at the winning server's endpoint, not in an error")
            (test-assert (equal (reverse events) '(1 :spawn))
@@ -2503,9 +2501,7 @@ the version the client says it is, when it says one."
                                              (declare (ignore candidate))
                                              nil)))
                                (lambda ()
-                                 (world-client--entry configuration
-                                                      :deadline (+ (get-internal-real-time)
-                                                                   internal-time-units-per-second))))
+                                  (world-client--entry configuration)))
                               nil)
                           (world-terminal-error () t))
                         "a launch that fails while nobody holds the world still fails")
@@ -2736,19 +2732,22 @@ the version the client says it is, when it says one."
 
 (-> test-world-client-open-wait () null)
 (defun test-world-client-open-wait ()
-  "Keep startup bounded and retry opens only after explicit rejection, including cancellation."
+  "Retry opens only after explicit rejection and honor cancellation."
   (with-test-configuration (configuration)
-    (dolist (mode '(:bounded :retry :ambiguous :cancel))
-      (let ((calls 0) (deadline ':unseen) (cancelled-p nil) (result nil))
+    (dolist (mode '(:ordinary :retry :ambiguous :cancel))
+      (let ((calls 0) (cancelled-p nil) (result nil))
         (test-call-with-function-replacements
          (list
           (list 'world-client--entry
-                (lambda (candidate &key ((:deadline limit)) &allow-other-keys)
-                  (declare (ignore candidate)) (setf deadline limit) '("world")))
+                 (lambda (candidate &rest arguments)
+                   (declare (ignore candidate arguments))
+                   '("world")))
           (list 'terminal-current-size (lambda () (values 24 80)))
           (list 'world-terminal-query-record
                 (lambda (entry operation arguments)
                   (declare (ignore entry operation arguments))
+                  (test-assert (null image-daemon:*daemon-connect-timeout-seconds*)
+                               "Channel opens have no local connection deadline.")
                   (incf calls)
                   (when (= calls 1)
                     (case mode
@@ -2761,12 +2760,10 @@ the version the client says it is, when it says one."
                   '(:ok :session-id "bsecnd2"))))
          (lambda ()
            (let ((*world-terminal-client-cancelled-p*
-                   (unless (eq mode ':bounded) (lambda () cancelled-p))))
+                    (unless (eq mode ':ordinary) (lambda () cancelled-p))))
              (setf result (handler-case (world-client-open configuration :channel "bsecnd2")
                             (world-terminal-client-cancelled () ':cancelled)
                             (world-terminal-error () ':ambiguous))))))
-        (test-assert (if (eq mode ':bounded) (realp deadline) (null deadline))
-                     "only an interactive cancellable open omits the total deadline")
         (test-assert (and (= calls (if (eq mode ':retry) 2 1))
                           (equal result (case mode
                                           (:cancel
