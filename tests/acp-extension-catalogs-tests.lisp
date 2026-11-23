@@ -13,9 +13,9 @@
               (session     (acp-service--session service identifier))
               (application (acp-session-test--application session))
               (parameters  (tool-object-schema
-                           (json-object "text"   (tool-string-property "Text to echo.")
-                                        "nested" (json-object "type" "object"))
-                           '("text" "nested")))
+                            (json-object "text"   (tool-string-property "Text to echo.")
+                                         "nested" (json-object "type" "object"))
+                            '("text" "nested")))
               (tool        (make-instance 'application-operation-test-tool
                                           :namespace "acp-test" :name "echo"
                                           :description "Exercise headless tool authority."
