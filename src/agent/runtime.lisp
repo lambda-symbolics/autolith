@@ -2075,227 +2075,227 @@ compaction before the user message."
           (maximum-output-tokens        (agent--configured-max-output-tokens agent))
           (next-request-details         nil))
      (declare (special *task-unfinished-work-agent*))
-    (loop for recovery-used-p = nil do
-       (when (and tools-p (not tool-restriction-p))
-         (mcp-tool-registry-refresh
-          (agent-tool-registry agent)
-          :only-dirty-p t))
-       (when (agent-should-compact-p agent)
-         (setf recovery-used-p t)
-         (multiple-value-bind (compaction-requests details)
-             (agent-compact-conversation
-              agent observer
-              :tool-allowlist              tool-allowlist
-              :tool-restriction-p          tool-restriction-p
-              :tools-p                     tools-p
-              :goal-context                goal-context
-              :request-number              request-number
-              :next-request-status-details t
-              :next-request-tool-rounds    tool-rounds)
-           (incf request-number compaction-requests)
-           (setf next-request-details details)))
-       (let* ((conversation    (agent-conversation agent))
-              (tool-calls-p
-                (and tools-p
-                     (eq (agent--request-tool-choice tools-p tool-restriction-p tool-rounds)
-                         ':auto)))
-              ;; A restricted turn past its tool rounds keeps its schemas and
-              ;; disables calls instead, so its answer reuses the cached prefix.
-              (tool-namespaces
-                (agent--tool-namespaces agent
-                                        :tools-p            tools-p
-                                        :tool-restriction-p tool-restriction-p
-                                        :tool-allowlist     tool-allowlist))
-              (cache-prefix    nil)
-              (context-request nil)
-              (verified-model  nil)
-              (result
-                (loop
-                  (agent--prepare-provider-request agent)
-                  (incf request-number)
-                  (let ((output-limit
-                          (if (and next-request-details (getf next-request-details :announced-p))
-                              (getf next-request-details :maximum-output-tokens)
-                              (agent-observer-status
-                               observer :provider-request-started
-                               (list :request-number request-number :tool-rounds tool-rounds)))))
-                    (setf next-request-details  nil
-                          maximum-output-tokens
-                          (or (and (integerp output-limit)
-                                   (plusp output-limit) output-limit)
-                              (agent--configured-max-output-tokens agent))
-                          cache-prefix          nil))
-                  (handler-case
-                      (return
-                         (let* ((provider                         (agent-provider agent))
-                                (registration                     (model-provider-registration provider))
-                                (context-request
-                                  (setf context-request
-                                        (provider-context-request-create
-                                         provider conversation
-                                         (tool-registry-provider-schemas (agent-tool-registry agent)))))
-                                (*provider-context-request*       context-request)
-                                (*request-context-participant*
-                                  (participant-state-identity (agent-participant-state agent)))
-                                (*provider-hosted-tools-enabled-p*
-                                  (not tool-restriction-p))
-                                (*provider-tool-choice*
-                                  (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
-                                (*provider-maximum-output-tokens* maximum-output-tokens)
-                                (*provider-cache-request-prefix*  nil)
-                                (*provider-cache-prefix-function*
-                                  (lambda (prefix) (setf cache-prefix prefix)))
-                                (*request-context-hurry-up-p*
-                                  (agent-hurry-up-p agent))
-                                (*context-request-contributions*
-                                  (and tools-p
-                                       (not tool-restriction-p)
-                                       (mcp-tool-registry-context-contributions
-                                        (agent-tool-registry agent)))))
-                           (setf verified-model
-                                 (when registration
-                                   (list (provider-registration-name registration)
-                                         (config :model (provider-configuration provider)))))
-                           (provider-stream-turn
-                            provider conversation
-                            :tool-namespaces tool-namespaces
-                            :event-callback
-                            (agent--provider-event-callback
-                             observer
-                             :conversation   conversation
-                             :request-number request-number)
-                            :goal-context    goal-context)))
-                    (provider-context-budget-error (condition)
-                      ;; Mission supervision and zero-usage settlement have unwound.
-                      (when recovery-used-p (error condition))
-                      (setf recovery-used-p t)
-                      (multiple-value-bind (compaction-requests details)
-                          (agent-compact-conversation
-                           agent observer
-                           :tool-allowlist              tool-allowlist
-                           :tool-restriction-p          tool-restriction-p
-                           :tools-p                     tools-p
-                           :goal-context                goal-context
-                           :request-number              request-number
-                           :next-request-status-details t
-                           :next-request-tool-rounds    tool-rounds)
-                        (incf request-number compaction-requests)
-                        (setf next-request-details details)))
-                    (provider-error (condition)
-                      (conversation-append-provider-metadata
-                       conversation
-                       (list :request-number request-number
-                             :failure
-                             (agent--provider-error-metadata condition)))
-                      (error condition)))))
-              (calls
-                (remove-if-not #'function-call-item-p
-                               (provider-result-output-items result)))
-              (completion-details
-                (list :request-number    request-number
-                      :response-id       (provider-result-response-id result)
-                      :usage             (agent--portable-value
-                                          (provider-usage-normalize (provider-result-usage result)))
-                      :cache-prefix      cache-prefix
-                      :output-item-count (length (provider-result-output-items result))
-                      :tool-call-count   (length calls)
-                      :turn-completion   (provider-result-turn-completion result))))
-          (conversation-note-provider-response conversation)
-          (let ((call-plans            nil)
-                (persistence-started-p nil))
-            (handler-case
-                (unwind-protect
-                     (progn
-                      (when (and calls (not tools-p))
-                        (error 'agent-loop-error
-                               :message         "A tool-free model turn returned function calls."
-                               :conversation-id (conversation-identifier conversation)
-                               :request-number  request-number))
-                      (when (and calls tool-restriction-p (not tool-calls-p))
-                        (error 'agent-loop-error
-                               :message
-                               (format nil "A restricted turn exceeded its ~D tool-round limit."
-                                       *agent-restricted-maximum-tool-rounds*)
-                               :conversation-id (conversation-identifier conversation)
-                               :request-number  request-number))
-                      (when (and calls tool-restriction-p)
-                        (agent--validate-tool-call-allowlist
-                         agent calls tool-allowlist :request-number request-number))
-                      (conversation-clear-ephemeral-input-items conversation)
-                      (agent--validate-tool-call-identifiers
-                       agent calls
-                                   :request-number        request-number)
-                      (setf call-plans
-                            (agent--tool-call-plans agent calls :storm-state storm-state))
-                      (setf persistence-started-p t)
-                      (agent--persist-provider-result
-                       agent
-                       result
-                       :request-number request-number
-                        :call-plans    call-plans))
-                  (unless persistence-started-p
-                    (agent--record-provider-result-usage
-                     agent result :request-number request-number)))
-              (agent-loop-error (condition)
-                ;; Rejected calls still carry billable provider usage.
-                (agent-observer-status observer :provider-request-completed completion-details)
-                (error condition)))
-            (provider-context-note-response context-request result)
-            (agent--answer-tool-searches
-             agent result tool-namespaces :request-number request-number)
-            (agent--note-persisted-assistant-response
-             observer result request-number)
-            (agent-observer-status observer :provider-request-completed
-                                   (list* :verified-model verified-model completion-details))
-            (knowledge-usage-capture conversation
-                                     :calls          calls
-                                     :request-number request-number
-                                     :usage          (provider-result-usage result))
-            (when (or (agent-turn-complete-p agent result)
-                      (and (null calls) (mission-agent-terminal-p agent)))
-              (agent-observer-status
-               observer
-               :turn-completed
-               (append
-                (list :provider-requests request-number
-                      :tool-rounds       tool-rounds
-                      :tool-calls        tool-calls
-                      :response-id       (provider-result-response-id result))
-                (agent-turn-completion-details agent)))
-              (agent-learn-procedures agent observer tool-calls)
-              (return result))
-            (cond
-              ((null calls)
+     (loop for recovery-used-p = nil do
+        (when (and tools-p (not tool-restriction-p))
+          (mcp-tool-registry-refresh
+           (agent-tool-registry agent)
+           :only-dirty-p t))
+        (when (agent-should-compact-p agent)
+          (setf recovery-used-p t)
+          (multiple-value-bind (compaction-requests details)
+              (agent-compact-conversation
+               agent observer
+               :tool-allowlist              tool-allowlist
+               :tool-restriction-p          tool-restriction-p
+               :tools-p                     tools-p
+               :goal-context                goal-context
+               :request-number              request-number
+               :next-request-status-details t
+               :next-request-tool-rounds    tool-rounds)
+            (incf request-number compaction-requests)
+            (setf next-request-details details)))
+        (let* ((conversation    (agent-conversation agent))
+               (tool-calls-p
+                 (and tools-p
+                      (eq (agent--request-tool-choice tools-p tool-restriction-p tool-rounds)
+                          ':auto)))
+               ;; A restricted turn past its tool rounds keeps its schemas and
+               ;; disables calls instead, so its answer reuses the cached prefix.
+               (tool-namespaces
+                 (agent--tool-namespaces agent
+                                         :tools-p            tools-p
+                                         :tool-restriction-p tool-restriction-p
+                                         :tool-allowlist     tool-allowlist))
+               (cache-prefix    nil)
+               (context-request nil)
+               (verified-model  nil)
+               (result
+                 (loop
+                   (agent--prepare-provider-request agent)
+                   (incf request-number)
+                   (let ((output-limit
+                           (if (and next-request-details (getf next-request-details :announced-p))
+                               (getf next-request-details :maximum-output-tokens)
+                               (agent-observer-status
+                                observer :provider-request-started
+                                (list :request-number request-number :tool-rounds tool-rounds)))))
+                     (setf next-request-details  nil
+                           maximum-output-tokens
+                           (or (and (integerp output-limit)
+                                    (plusp output-limit) output-limit)
+                               (agent--configured-max-output-tokens agent))
+                           cache-prefix          nil))
+                   (handler-case
+                       (return
+                          (let* ((provider                         (agent-provider agent))
+                                 (registration                     (model-provider-registration provider))
+                                 (context-request
+                                   (setf context-request
+                                         (provider-context-request-create
+                                          provider conversation
+                                          (tool-registry-provider-schemas (agent-tool-registry agent)))))
+                                 (*provider-context-request*       context-request)
+                                 (*request-context-participant*
+                                   (participant-state-identity (agent-participant-state agent)))
+                                 (*provider-hosted-tools-enabled-p*
+                                   (not tool-restriction-p))
+                                 (*provider-tool-choice*
+                                   (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
+                                 (*provider-maximum-output-tokens* maximum-output-tokens)
+                                 (*provider-cache-request-prefix*  nil)
+                                 (*provider-cache-prefix-function*
+                                   (lambda (prefix) (setf cache-prefix prefix)))
+                                 (*request-context-hurry-up-p*
+                                   (agent-hurry-up-p agent))
+                                 (*context-request-contributions*
+                                   (and tools-p
+                                        (not tool-restriction-p)
+                                        (mcp-tool-registry-context-contributions
+                                         (agent-tool-registry agent)))))
+                            (setf verified-model
+                                  (when registration
+                                    (list (provider-registration-name registration)
+                                          (config :model (provider-configuration provider)))))
+                            (provider-stream-turn
+                             provider conversation
+                             :tool-namespaces tool-namespaces
+                             :event-callback
+                             (agent--provider-event-callback
+                              observer
+                              :conversation   conversation
+                              :request-number request-number)
+                             :goal-context    goal-context)))
+                     (provider-context-budget-error (condition)
+                       ;; Mission supervision and zero-usage settlement have unwound.
+                       (when recovery-used-p (error condition))
+                       (setf recovery-used-p t)
+                       (multiple-value-bind (compaction-requests details)
+                           (agent-compact-conversation
+                            agent observer
+                            :tool-allowlist              tool-allowlist
+                            :tool-restriction-p          tool-restriction-p
+                            :tools-p                     tools-p
+                            :goal-context                goal-context
+                            :request-number              request-number
+                            :next-request-status-details t
+                            :next-request-tool-rounds    tool-rounds)
+                         (incf request-number compaction-requests)
+                         (setf next-request-details details)))
+                     (provider-error (condition)
+                       (conversation-append-provider-metadata
+                        conversation
+                        (list :request-number request-number
+                              :failure
+                              (agent--provider-error-metadata condition)))
+                       (error condition)))))
+               (calls
+                 (remove-if-not #'function-call-item-p
+                                (provider-result-output-items result)))
+               (completion-details
+                 (list :request-number    request-number
+                       :response-id       (provider-result-response-id result)
+                       :usage             (agent--portable-value
+                                           (provider-usage-normalize (provider-result-usage result)))
+                       :cache-prefix      cache-prefix
+                       :output-item-count (length (provider-result-output-items result))
+                       :tool-call-count   (length calls)
+                       :turn-completion   (provider-result-turn-completion result))))
+           (conversation-note-provider-response conversation)
+           (let ((call-plans            nil)
+                 (persistence-started-p nil))
+             (handler-case
+                 (unwind-protect
+                      (progn
+                       (when (and calls (not tools-p))
+                         (error 'agent-loop-error
+                                :message         "A tool-free model turn returned function calls."
+                                :conversation-id (conversation-identifier conversation)
+                                :request-number  request-number))
+                       (when (and calls tool-restriction-p (not tool-calls-p))
+                         (error 'agent-loop-error
+                                :message
+                                (format nil "A restricted turn exceeded its ~D tool-round limit."
+                                        *agent-restricted-maximum-tool-rounds*)
+                                :conversation-id (conversation-identifier conversation)
+                                :request-number  request-number))
+                       (when (and calls tool-restriction-p)
+                         (agent--validate-tool-call-allowlist
+                          agent calls tool-allowlist :request-number request-number))
+                       (conversation-clear-ephemeral-input-items conversation)
+                       (agent--validate-tool-call-identifiers
+                        agent calls
+                                    :request-number        request-number)
+                       (setf call-plans
+                             (agent--tool-call-plans agent calls :storm-state storm-state))
+                       (setf persistence-started-p t)
+                       (agent--persist-provider-result
+                        agent
+                        result
+                        :request-number request-number
+                         :call-plans    call-plans))
+                   (unless persistence-started-p
+                     (agent--record-provider-result-usage
+                      agent result :request-number request-number)))
+               (agent-loop-error (condition)
+                 ;; Rejected calls still carry billable provider usage.
+                 (agent-observer-status observer :provider-request-completed completion-details)
+                 (error condition)))
+             (provider-context-note-response context-request result)
+             (agent--answer-tool-searches
+              agent result tool-namespaces :request-number request-number)
+             (agent--note-persisted-assistant-response
+              observer result request-number)
+             (agent-observer-status observer :provider-request-completed
+                                    (list* :verified-model verified-model completion-details))
+             (knowledge-usage-capture conversation
+                                      :calls          calls
+                                      :request-number request-number
+                                      :usage          (provider-result-usage result))
+             (when (or (agent-turn-complete-p agent result)
+                       (and (null calls) (mission-agent-terminal-p agent)))
                (agent-observer-status
                 observer
-                :provider-follow-up
-                (list :request-number request-number))
-               (agent--apply-steering-input
-                agent observer request-number))
-              (t
-               (incf tool-rounds)
-               (incf tool-calls (length calls))
-               (agent--execute-tool-calls agent call-plans result
-                                          :observer           observer
-                                          :tool-round         tool-rounds
-                                          :tool-allowlist     tool-allowlist
-                                          :tool-restriction-p tool-restriction-p)
-               (if (or (agent-turn-complete-p agent result)
-                       (mission-agent-terminal-p agent))
-                   (progn
-                     (agent-observer-status
-                      observer
-                      :turn-completed
-                      (append
-                       (list :provider-requests request-number
-                             :tool-rounds       tool-rounds
-                             :tool-calls        tool-calls
-                             :response-id       (provider-result-response-id result))
-                       (agent-turn-completion-details agent)))
-                     (agent-learn-procedures agent observer tool-calls)
-                     (return result))
-                   (agent--apply-steering-input
-                    agent observer request-number)))))))))
+                :turn-completed
+                (append
+                 (list :provider-requests request-number
+                       :tool-rounds       tool-rounds
+                       :tool-calls        tool-calls
+                       :response-id       (provider-result-response-id result))
+                 (agent-turn-completion-details agent)))
+               (agent-learn-procedures agent observer tool-calls)
+               (return result))
+             (cond
+               ((null calls)
+                (agent-observer-status
+                 observer
+                 :provider-follow-up
+                 (list :request-number request-number))
+                (agent--apply-steering-input
+                 agent observer request-number))
+               (t
+                (incf tool-rounds)
+                (incf tool-calls (length calls))
+                (agent--execute-tool-calls agent call-plans result
+                                           :observer           observer
+                                           :tool-round         tool-rounds
+                                           :tool-allowlist     tool-allowlist
+                                           :tool-restriction-p tool-restriction-p)
+                (if (or (agent-turn-complete-p agent result)
+                        (mission-agent-terminal-p agent))
+                    (progn
+                      (agent-observer-status
+                       observer
+                       :turn-completed
+                       (append
+                        (list :provider-requests request-number
+                              :tool-rounds       tool-rounds
+                              :tool-calls        tool-calls
+                              :response-id       (provider-result-response-id result))
+                        (agent-turn-completion-details agent)))
+                      (agent-learn-procedures agent observer tool-calls)
+                      (return result))
+                    (agent--apply-steering-input
+                     agent observer request-number)))))))))
 
 (defmethod initialize-instance :after ((agent agent) &key conversation)
   "Attach a new execution to its participant's context backing."
