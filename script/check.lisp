@@ -276,16 +276,10 @@ inherited XDG or HOME entry would silently defeat an override placed first."
                        (sb-ext:posix-environ))
             overrides)))
 
-#+win32
 (defun check--colorlisp-native-library-path ()
   "Resolve ColorLisp's native library before worker cache isolation begins."
   (uiop:native-namestring
    (uiop:symbol-call '#:colorlisp '#:native-library-path)))
-
-#-win32
-(defun check--colorlisp-native-library-path ()
-  "Return NIL on hosts where the Windows native-library pin is unnecessary."
-  nil)
 
 (defun check--build-active-core (source-root temporary-root)
   "Build this run's active image from the checked source and return its core.
