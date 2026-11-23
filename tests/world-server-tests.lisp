@@ -1408,7 +1408,7 @@ the version the client says it is, when it says one."
 
 (-> test-world-server-startup-reservations () null)
 (defun test-world-server-startup-reservations ()
-  "Exercise shared construction, unrelated admission, checkpoint cancellation and an end-to-end timeout."
+  "Exercise shared construction, unrelated admission, status and checkpoint cancellation."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((workspace-a  (world-tests--workspace root "reservation-a"))
@@ -1470,22 +1470,18 @@ the version the client says it is, when it says one."
                                      (eq (first (aref results 2)) ':ok)
                                      (= builds 1) (zerop locked-builds) (zerop loads))
                                 "ready B opens with no transcript loads while one unlocked A construction is blocked")
-                   (let* ((*world-server-open-timeout-seconds* 0.05)
-                          (failure                             (handler-case (world-server-open server (list :directory workspace-a))
-                                                                 (world-error (condition) condition)))
-                          (status                              (world-server-status server))
-                          (startup                             (and (typep failure 'world-error)
-                                                                    (find (world-error-identifier failure) (getf (rest status) :startups)
-                                                                          :key (lambda (state) (getf state :identifier)) :test #'equal))))
+                   (let* ((status  (world-server-status server))
+                          (startup (find ':building (getf (rest status) :startups)
+                                         :key (lambda (state) (getf state :phase)))))
                      (test-assert (and startup
-                                       (eq (world-error-operation failure) ':open-timeout)
-                                       (eq (getf startup :phase) ':building)
                                        (getf startup :pending-p)
+                                       (null (aref results 0))
+                                       (null (aref results 1))
                                        (<= (getf (getf startup :timings) :reserved-at)
                                            (getf (getf startup :timings) :build-started-at))
                                        (>= (getf (getf startup :timings) :lock-wait) 0)
                                        (= builds 1))
-                                  "a timed-out waiter identifies one still-owned construction and monotonic admission measurements"))
+                                  "status identifies one owned construction and both pending waiters"))
                    (setf checkpoint
                          (make-thread
                           (lambda ()

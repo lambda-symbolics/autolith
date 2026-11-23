@@ -31,9 +31,6 @@
 (defparameter *world-server-status-version* 1
   "The world status wire version.")
 
-(defparameter *world-server-open-timeout-seconds* 60
-  "How long an open waits for its channel's endpoint before it fails.")
-
 (defparameter *world-server-sweep-seconds* 60
   "How often the server looks for channels gone cold.")
 
@@ -844,16 +841,6 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
       (application-world-show-person-unread (world-host-application host) unread)))
   nil)
 
-(defvar *world-server-open-deadline* nil
-  "The current caller's end-to-end open deadline in internal real-time ticks.")
-
-(-> world-server--open-deadline () real)
-(defun world-server--open-deadline ()
-  "Return the caller deadline, or a deadline for a direct internal open."
-  (or *world-server-open-deadline*
-      (+ (get-internal-real-time)
-         (* *world-server-open-timeout-seconds* internal-time-units-per-second))))
-
 (-> world-server--call-with-open-admission (world-server function &key (:check-p boolean)) t)
 (defun world-server--call-with-open-admission (server function &key (check-p t))
   "Count an admitted operation through its result or response publication, without holding admission while it runs."
@@ -894,25 +881,23 @@ ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
 is published, so the client can attach at once. A workspace channel whose
 conversation cannot be loaded is passed over, and the channel that opens
 instead says so."
-  (let ((*world-server-open-deadline* (world-server--open-deadline)))
-    (world-server--call-with-open-admission server
-     (lambda ()
-       (multiple-value-bind (host started-p skipped)
-           (world-server--host-for server arguments)
-         (channel-loading-report 5 "Starting channel")
-         (world-server--wait-ready server host)
-         (unless started-p
-           (world-server--reconcile-launch server host (getf arguments :launch)))
-         (loop for (identifier . message) in skipped
-               do (application-present (world-host-application host)
-                                       (application-failure-line
-                                        (format nil
-                                                "channel ~A could not open: ~A"
-                                                (conversation-identifier-display
-                                                 identifier)
-                                                message))))
-         (list :ok :session-id (world-host-channel host) :started-p
-               (not (null started-p))))))))
+  (world-server--call-with-open-admission server
+   (lambda ()
+     (multiple-value-bind (host started-p skipped)
+         (world-server--host-for server arguments)
+       (channel-loading-report 5 "Starting channel")
+       (world-server--wait-ready server host)
+       (unless started-p
+         (world-server--reconcile-launch server host (getf arguments :launch)))
+       (loop for (identifier . message) in skipped
+             do (application-present (world-host-application host)
+                                     (application-failure-line
+                                      (format nil
+                                              "channel ~A could not open: ~A"
+                                              (conversation-identifier-display identifier)
+                                              message))))
+       (list :ok :session-id (world-host-channel host) :started-p
+             (not (null started-p)))))))
 
 (-> world-server--cancel-startup (world-server string) (option string))
 (defun world-server--cancel-startup (server channel)
@@ -1396,34 +1381,21 @@ running keeps the mode it started under."
 
 (-> world-server--wait-startup (world-server world-startup) world-host)
 (defun world-server--wait-startup (server startup)
-  "Await the shared construction under the caller's deadline without cancelling its owner."
-  (let ((deadline (world-server--open-deadline)) (last-progress nil))
+  "Await the shared construction and report progress until its outcome is available."
+  (let ((last-progress nil))
     (loop
-     (let ((host nil) (failure nil) (progress nil) (expired-p nil))
+     (let ((host nil) (failure nil) (progress nil))
        (with-lock-held ((world-server-lock server))
          (setf host (world-startup-host startup)
                failure (world-startup-failure startup)
-               progress (world-startup-progress startup)
-               expired-p (>= (get-internal-real-time) deadline))
-         (unless
-             (or host failure expired-p (not (equal last-progress progress)))
+               progress (world-startup-progress startup))
+         (unless (or host failure (not (equal last-progress progress)))
            (condition-wait (world-server-condition-variable server)
-                           (world-server-lock server) :timeout
-                           (max 0
-                                (min 0.1
-                                     (/ (- deadline (get-internal-real-time))
-                                        internal-time-units-per-second))))))
+                           (world-server-lock server))))
        (when (and progress (not (equal last-progress progress)))
          (setf last-progress progress)
          (apply #'channel-loading-report progress))
        (when failure (error failure))
-       (when expired-p
-         (error 'world-error :operation ':open-timeout :identifier
-                (world-startup-identifier startup) :message
-                (format nil
-                        "Startup ~A is still owned in phase ~A; query world status before retrying."
-                        (world-startup-identifier startup)
-                        (world-startup-phase startup))))
        (when host (return host))))))
 
 (-> world-server--construct-startup (world-server world-startup function) null)
@@ -1837,9 +1809,8 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
 
 (-> world-server--wait-ready (world-server world-host) world-host)
 (defun world-server--wait-ready (server host)
-  "Wait for HOST's endpoint, signaling a session failure or timeout."
-  (let ((lock     (world-server-lock server))
-        (deadline (world-server--open-deadline)))
+  "Wait for HOST's endpoint or signal its session failure."
+  (let ((lock (world-server-lock server)))
     (with-lock-held (lock)
       (loop
        (cond
@@ -1854,10 +1825,6 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
          (return host))
         ((world-host-closing-p host)
          (world-server--check-host-opening host))
-        ((>= (get-internal-real-time) deadline)
-         (error 'world-error :message
-                "The channel did not publish its endpoint in time." :operation
-                ':open :identifier (world-host-channel host)))
         (t
          (condition-wait (world-server-condition-variable server) lock :timeout
                          0.5)))))))
