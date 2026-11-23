@@ -983,8 +983,8 @@
                       (with-lock-held (state-lock)
                         (setf ui-lock-held-p t)
                         (condition-notify condition)
-                        (unless release-ui-lock-p
-                          (condition-wait condition state-lock :timeout 2)))))
+                       (loop until release-ui-lock-p
+                             do (condition-wait condition state-lock)))))
                   :name "Autolith notice lock holder"))
            (test-assert
             (task-tests--wait-until
