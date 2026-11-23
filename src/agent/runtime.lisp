@@ -2163,6 +2163,8 @@ compaction before the user message."
           (mcp-tool-registry-refresh
            (agent-tool-registry agent)
            :only-dirty-p t))
+        ;; Estimate after the same cold-cache projection preparation as the send.
+        (agent--prepare-provider-request agent)
         (when (agent-should-compact-p agent
                                       :tools-p               tools-p
                                       :tool-restriction-p    tool-restriction-p
