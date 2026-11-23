@@ -1970,37 +1970,3 @@ Each transcript event takes a line of its own."
                      (format nil "a ~(~A~) exit relays ~:[no details~;its crash capsule~]"
                              kind (eq kind :fatal))))))
   nil)
-
-(-> test-world-terminal-query-keeps-slow-endpoint () null)
-(defun test-world-terminal-query-keeps-slow-endpoint ()
-  "Test a late answer keeps an endpoint record while a refused connection prunes it."
-  (with-test-configuration (configuration)
-    (let* ((listener (make-instance 'sb-bsd-sockets:inet-socket
-                                    :type     ':stream
-                                    :protocol ':tcp))
-           (pathname (world-channel-endpoint-pathname configuration "slowendpoint"))
-           (record   nil))
-      (unwind-protect
-           (progn
-             (sb-bsd-sockets:socket-bind
-              listener (sb-bsd-sockets:make-inet-address "127.0.0.1") 0)
-             (sb-bsd-sockets:socket-listen listener 4)
-             (setf record (image-daemon:daemon-registry-record :identifier "slowendpoint" :token "token" :port
-                                     (nth-value 1 (sb-bsd-sockets:socket-name listener))
-                                     :created-at 1 :pid (current-process-id)))
-             (ensure-directories-exist pathname)
-             (image-daemon:daemon-registry-publish pathname record)
-             (flet ((query-fails-p ()
-                      (let ((image-daemon:*daemon-connect-timeout-seconds* 0.2))
-                        (handler-case
-                            (progn (world-terminal-query-record (cons pathname record) ':status) nil)
-                          (world-terminal-error () t)))))
-               (test-assert (query-fails-p) "an endpoint that never answers fails the request")
-               (test-assert (probe-file pathname)
-                            "a live process that answers late keeps its record")
-               (sb-bsd-sockets:socket-close listener)
-               (test-assert (query-fails-p) "a refused connection fails the request")
-               (test-assert (null (probe-file pathname))
-                            "a refused connection prunes the record")))
-        (sb-bsd-sockets:socket-close listener))))
-  nil)

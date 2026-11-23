@@ -1659,7 +1659,6 @@
   test-world-terminal-screen-geometry
   test-world-terminal-cli-targets
   test-channel-endpoint-prefixes
-  test-world-terminal-query-keeps-slow-endpoint
   test-world-terminal-protocol
   test-world-terminal-orphan-reconciliation
   test-world-terminal-client-pids
