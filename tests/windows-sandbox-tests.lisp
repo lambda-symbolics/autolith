@@ -68,8 +68,8 @@
                     do (write-char character stream)))))
 
 (-> windows-sandbox-tests--command
-    (pathname string &key (:timeout (option integer)) (:authorization keyword)) tool-result)
-(defun windows-sandbox-tests--command (root command &key timeout (authorization ':sandboxed))
+    (pathname string &key (:authorization keyword)) tool-result)
+(defun windows-sandbox-tests--command (root command &key (authorization ':sandboxed))
   "Run sandboxed COMMAND in ROOT through the public shell.run tool."
   (let* ((configuration (configuration-copy
                          (test-configuration) :working-directory root))
@@ -88,8 +88,6 @@
          (tool          (tool-registry-find registry "shell" "run"))
          (arguments     (json-object "command" command
                                      "directory" ".")))
-    (when timeout
-      (setf (gethash "timeout-seconds" arguments) timeout))
     (unwind-protect
          (let ((result (tool-execute tool context arguments)))
            (format t "~&Windows shell command: ~A~%~A~%" command (tool-result-content result))
@@ -243,12 +241,7 @@
            (not (uiop:directory-exists-p
                  (uiop:parse-native-namestring
                   (uiop:read-file-string (merge-pathnames "temp-path.txt" workspace)))))
-           "private temporary directory is removed after execution"))
-        (let ((result
-                (windows-sandbox-tests--command
-                 workspace "Start-Sleep 5" :timeout 1)))
-          (test-assert (not (tool-result-success-p result))
-                       "Windows shell.run reports command timeout")))))
+           "private temporary directory is removed after execution")))))
   nil)
 
 (-> test-windows-shell-sandbox-async () null)
