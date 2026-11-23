@@ -901,11 +901,19 @@ sent request."
           (context--remember-delivery delivery))
         delivery))))
 
+(defgeneric context-contribution-complete (contribution)
+  (:documentation "Acknowledge CONTRIBUTION after a completed provider response."))
+
+(defmethod context-contribution-complete ((contribution context-contribution))
+  "Complete a contribution that has no product-specific acknowledgement."
+  nil)
+
 (-> context-delivery-complete ((option context-delivery)) null)
 (defun context-delivery-complete (delivery)
-  "Consume generic receipts only after a completed provider response."
+  "Acknowledge selected contributions and consume receipts after a completed response."
   (when delivery
-    (cl-llm-provider-api:context-selection-complete (context-delivery-selection delivery)))
+    (cl-llm-provider-api:context-selection-complete (context-delivery-selection delivery))
+    (mapc #'context-contribution-complete (context-delivery-contributions delivery)))
   nil)
 
 (defvar *context-conversation-tables* nil
