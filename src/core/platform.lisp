@@ -661,10 +661,10 @@ Disable redirects, credentials, cookies, proxies and connection reuse. The calle
 owns the response stream and must bound its body before allocating it."))
 
 (defgeneric platform-http-supervision-required-p (platform)
-  (:documentation "Return true when native HTTP calls require a supervised child deadline."))
+  (:documentation "Return true when native HTTP calls require a supervised child for cancellation."))
 
 (defmethod platform-http-supervision-required-p ((platform platform))
-  "Use Lisp stream deadlines on the portable socket transport."
+  "Use the portable socket transport in the calling process."
   (declare (ignore platform))
   nil)
 
@@ -674,7 +674,7 @@ owns the response stream and must bound its body before allocating it."))
   (dex:request source :method ':get
                      :headers '(("Accept" . "application/json")
                                 ("Accept-Encoding" . "gzip"))
-                     :max-redirects 0 :connect-timeout 3 :read-timeout 3
+                     :max-redirects 0 :connect-timeout nil :read-timeout nil
                      :keep-alive nil :use-connection-pool nil :want-stream t :force-binary t
                      :proxy nil :insecure nil :verbose nil))
 

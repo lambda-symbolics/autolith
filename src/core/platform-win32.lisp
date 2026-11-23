@@ -804,7 +804,7 @@ System application directories are available through AppContainer's system acces
     (incf (win32-http-position stream))))
 
 (defmethod platform-http-supervision-required-p ((platform win32-platform))
-  "Native synchronous WinHTTP calls do not participate in SBCL deadlines."
+  "Use a child process to cancel native synchronous WinHTTP calls."
   (declare (ignore platform))
   t)
 
@@ -818,8 +818,13 @@ System application directories are available through AppContainer's system acces
       (error 'platform-error :operation ':http :message "Invalid public HTTP source."))
     (unwind-protect
          (progn
-           (setf session (winhttp:http-open nil nil)
-                 connection (winhttp:http-connect session (quri:uri-host uri) (quri:uri-port uri))
+           (setf session (winhttp:http-open nil nil))
+           (unless (cffi:foreign-funcall "WinHttpSetTimeouts"
+                                       :pointer session
+                                       :int 0 :int 0 :int 0 :int 0 :boolean)
+             (error 'platform-error :operation ':http
+                                    :message   "Cannot disable HTTP timeouts."))
+           (setf connection (winhttp:http-connect session (quri:uri-host uri) (quri:uri-port uri))
                  request (winhttp:http-open-request
                           connection :verb ':get
                           :url             (format nil "~A~@[?~A~]"

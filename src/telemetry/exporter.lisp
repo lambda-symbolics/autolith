@@ -247,9 +247,6 @@
              (record        (telemetry--make-process)))
         (supervised-process-request
          record request
-         :seconds  (if (eq (first request) ':catalog)
-                       *model-catalog-request-seconds*
-                       3)
          :start
          (lambda (install)
            ;; Admission, registration, and I/O thread installation share the

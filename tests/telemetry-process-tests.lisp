@@ -2,16 +2,16 @@
 
 ;;;; -- Supervised Operation Retirement --
 
-(-> test-supervised-request-readerless-pipe-deadline () null)
-(defun test-supervised-request-readerless-pipe-deadline ()
+(-> test-supervised-request-readerless-pipe-cancellation () null)
+(defun test-supervised-request-readerless-pipe-cancellation ()
   "Finish cleanup after a naturally full Linux pipe loses its reader."
-  (test-fixture-supervised-request-deadline *platform* 0)
+  (test-fixture-supervised-request-cancellation *platform* 0)
   nil)
 
-(-> test-supervised-request-remaining-deadline () null)
-(defun test-supervised-request-remaining-deadline ()
-  "Charge delayed I/O scheduling to the original request budget."
-  (test-fixture-supervised-request-deadline *platform* 0.5)
+(-> test-supervised-request-delayed-io-cancellation () null)
+(defun test-supervised-request-delayed-io-cancellation ()
+  "Cancel and join I/O even when its initial scheduling was delayed."
+  (test-fixture-supervised-request-cancellation *platform* 0.5)
   nil)
 
 (-> test-telemetry-concurrent-process-retirement () null)

@@ -148,28 +148,28 @@
     (sb-alien:slot poll 'sb-unix::revents)))
 
 #+linux
-(-> posix-fixture--supervised-request-deadline (real) list)
+(-> posix-fixture--supervised-request-cancellation (real) list)
 #+linux
-(defun posix-fixture--supervised-request-deadline (delay)
+(defun posix-fixture--supervised-request-cancellation (delay)
   "Collect causal checks inside a disposable process, including failed cleanup."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
-    (let* ((script      (merge-pathnames "prefix-child.lisp" root))
-           (ready       (merge-pathnames "prefix.ready" root))
-           (record      (supervised-process-create))
-           (make-thread (symbol-function 'bt:make-thread))
-           (finished    (bt:make-semaphore))
-           (budget      1.0)
-           (result      ':unset)
-           (owner-error nil)
-           (owner       nil)
-           (reaped      nil)
-           (unavailable nil)
-           (raw-poll    nil)
-           (filtered    ':unset)
-           (complete-p  nil)
-           (started     nil)
-           (returned    nil))
+    (let* ((script              (merge-pathnames "prefix-child.lisp" root))
+           (ready               (merge-pathnames "prefix.ready" root))
+           (record              (supervised-process-create))
+           (make-thread         (symbol-function 'bt:make-thread))
+           (finished            (bt:make-semaphore))
+           (observation-seconds 1.25)
+           (result              ':unset)
+           (owner-error         nil)
+           (owner               nil)
+           (reaped              nil)
+           (unavailable         nil)
+           (raw-poll            nil)
+           (filtered            ':unset)
+           (complete-p          nil)
+           (started             nil)
+           (returned            nil))
       (with-open-file (stream script :direction ':output :if-exists ':error)
         (write-string
          "(let ((bytes (make-array 4196 :element-type '(unsigned-byte 8))) (total 0))
@@ -203,7 +203,6 @@
                                    (setf result
                                          (supervised-process-request
                                           record (make-string 1048576 :initial-element #\x)
-                                          :seconds  budget
                                           :start
                                           (lambda (install)
                                             (let* ((process
@@ -257,14 +256,14 @@
                             (setf returned (get-internal-real-time))
                             (bt:signal-semaphore finished)))
                         :name "test supervised request owner"))
-         ;; A fresh budget after delayed scheduling would end near 1.5s, not 1.0s.
-         (let ((finished-p (bt:wait-on-semaphore finished :timeout (+ budget 0.25))))
+         ;; This observation bound belongs to the fixture, not the request.
+         (let ((finished-p (bt:wait-on-semaphore finished :timeout observation-seconds)))
            (when finished-p (bt:join-thread owner))
            (format t "~&PIPE delay=~F reaped=~S raw=~S filtered=~S returned=~S error=~S~%"
                   delay reaped raw-poll filtered
                   (and returned (/ (- returned started) internal-time-units-per-second)) owner-error)
            (when unavailable
-             (return-from posix-fixture--supervised-request-deadline
+              (return-from posix-fixture--supervised-request-cancellation
                (list :unavailable unavailable)))
            (when owner-error (error owner-error))
            (list :checks
@@ -273,21 +272,21 @@
                  (list (eql reaped 137) "Stop killed and reaped the fixture child.")
                  (list (eql raw-poll 8) "The readerless pipe reports raw ERR alone.")
                  (list (null filtered) "SBCL filters ERR-only output readiness to NIL.")
-                 (list (not (null finished-p)) "The original owner returns within its original request budget.")
-                 (list (null result) "The timed out exchange returns NIL.")
-                 (list (not (null complete-p)) "Original cleanup joins I/O and abort-closes the input stream.")
+                 (list (not (null finished-p)) "Explicit cancellation releases the request owner.")
+                 (list (null result) "The cancelled exchange returns NIL.")
+                 (list (not (null complete-p)) "Cleanup joins I/O and abort-closes the input stream.")
                  (list (not (bt:thread-alive-p owner)) "The request owner has exited.")
                  (list (not (bt:thread-alive-p (supervised-process-thread record)))
                        "The actual exchange I/O thread has exited."))))))))
 
 #-linux
-(defmethod test-fixture-supervised-request-deadline ((platform posix-platform) delay)
+(defmethod test-fixture-supervised-request-cancellation ((platform posix-platform) delay)
   "Withhold the Linux pipe-sizing fixture on other POSIX hosts."
   (declare (ignore platform delay))
   (test-withheld ':posix-adapter "Linux supervised request pipe sizing"))
 
 #+linux
-(defmethod test-fixture-supervised-request-deadline ((platform posix-platform) delay)
+(defmethod test-fixture-supervised-request-cancellation ((platform posix-platform) delay)
   "Replay checks from a bounded process, or explicitly withhold unavailable setup."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
@@ -298,7 +297,7 @@
       (when (zerop pid)
         (sb-posix:setpgid 0 0)
         (let ((result
-                (handler-case (posix-fixture--supervised-request-deadline delay)
+                (handler-case (posix-fixture--supervised-request-cancellation delay)
                   (error (condition) (list :error (princ-to-string condition))))))
           (with-open-file (stream result-file :direction ':output :if-exists ':error)
             (let ((*print-readably* t)) (write result :stream stream)))

@@ -33,9 +33,6 @@
 (defparameter *model-catalog-poll-seconds* 60
   "Interval for checking the daily refresh and failure backoff, including idle sessions.")
 
-(defparameter *model-catalog-request-seconds* 10
-  "Whole-request deadline across connection, headers and streaming body reads.")
-
 (-> model-catalog--timer
     (model-catalog &key (:context t) (:fetch (option function)) (:interval real))
     null)
@@ -192,34 +189,29 @@ Optional canonical_model_id must be a valid ID. Other public metadata is ignored
 
 (-> model-catalog--http-fetch () (option string))
 (defun model-catalog--http-fetch ()
-  "Read one anonymous, complete, byte-bounded response in the current process.
-Native transports without Lisp deadlines must run only in a supervised child."
-  (handler-case
-      (sb-sys:with-deadline (:seconds *model-catalog-request-seconds*)
-        (multiple-value-bind (stream status)
-            (platform-public-http-response *platform* *model-catalog-source*)
-          (unwind-protect
-               (when (eql status 200)
-                 (let ((bytes (make-array 0 :element-type '(unsigned-byte 8)
-                                           :adjustable t :fill-pointer 0)))
-                   (loop for byte = (read-byte stream nil nil)
-                         while byte
-                         do (when (>= (length bytes) *model-catalog-maximum-bytes*)
-                              (model-catalog--reject "size limit"))
-                            (vector-push-extend byte bytes))
-                   (babel:octets-to-string bytes :encoding :utf-8)))
-            (when (streamp stream) (close stream)))))
-    (sb-sys:deadline-timeout () nil)))
+  "Read one anonymous, complete, byte-bounded response in the current process."
+  (multiple-value-bind (stream status)
+      (platform-public-http-response *platform* *model-catalog-source*)
+    (unwind-protect
+         (when (eql status 200)
+           (let ((bytes (make-array 0 :element-type '(unsigned-byte 8)
+                                     :adjustable t :fill-pointer 0)))
+             (loop for byte = (read-byte stream nil nil)
+                   while byte
+                   do (when (>= (length bytes) *model-catalog-maximum-bytes*)
+                        (model-catalog--reject "size limit"))
+                      (vector-push-extend byte bytes))
+             (babel:octets-to-string bytes :encoding :utf-8)))
+      (when (streamp stream) (close stream)))))
 
 (-> model-catalog--worker-fetch (&optional (option configuration)) (option string))
 (defun model-catalog--worker-fetch (&optional configuration)
-  "Fetch within one whole-request deadline, supervising native blocking transports."
+  "Fetch the public catalog, supervising native blocking transports."
   (if (platform-http-supervision-required-p *platform*)
       (let* ((configuration (or configuration (make-configuration :provider-validation-p nil)))
              (record        (supervised-process-create)))
         (supervised-process-request
          record (list *model-catalog-source* *model-catalog-maximum-bytes*)
-         :seconds *model-catalog-request-seconds*
          :start   (lambda (install)
                     (let ((core (config :active-image-core configuration)))
                       (when (and core (probe-file core))

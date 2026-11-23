@@ -1,6 +1,6 @@
 (in-package #:autolith)
 
-;;;; -- Bounded One-Shot Processes --
+;;;; -- Supervised One-Shot Processes --
 
 (defstruct (supervised-process (:constructor supervised-process-create))
   "One child and its I/O thread, with serialized synchronous teardown."
@@ -37,7 +37,7 @@ when the caller also uses it to grant sandbox read access."
 (defun supervised-process-read-data (stream)
   "Read one bounded printer-compatible data response without owning STREAM.
 
-The process owner retains deadline, EOF handling and teardown authority."
+The process owner retains cancellation, EOF handling and teardown authority."
   (sexp-config:read-next-source
    stream
    (make-source-grammar
@@ -95,22 +95,38 @@ The process owner retains deadline, EOF handling and teardown authority."
       (setf (supervised-process-stopped-p record) t)))
   nil)
 
+(-> supervised-process--join-io (supervised-process) null)
+(defun supervised-process--join-io (record)
+  "Cancel owned I/O after child retirement, and wait for its unwind."
+  (let ((thread      (supervised-process-thread record))
+        (cancelled-p nil))
+    (when thread
+      (when (bt:thread-alive-p thread)
+        (setf cancelled-p t)
+        (handler-case (bt:destroy-thread thread)
+          (sb-thread:interrupt-thread-error () nil)))
+      (handler-case (bt:join-thread thread)
+        (sb-thread:join-thread-error (condition)
+          (unless (and cancelled-p
+                       (eq (sb-thread:join-thread-problem condition) ':abort))
+            (error condition))))))
+  nil)
+
 (-> supervised-process-request
-    (supervised-process t &key (:seconds real) (:start function)
+    (supervised-process t &key (:start function)
                               (:active-p (option function)) (:accept (option function))
                               (:stop function) (:complete (option function))) t)
-(defun supervised-process-request (record request &key seconds start active-p accept
+(defun supervised-process-request (record request &key start active-p accept
                                                       (stop #'supervised-process-stop) complete)
-  "Exchange REQUEST within one deadline, including startup and body I/O.
+  "Exchange REQUEST until completion or explicit retirement.
 START receives an installer function accepting the newly launched process. Owners
 must install its process and I/O thread and register RECORD atomically with their
 admission check. ACTIVE-P checks continuing authority. ACCEPT, when supplied,
 receives a response thunk to call under the owner's authorization lock. STOP kills
-and reaps the child. The owner joins I/O before closing streams; COMPLETE then
-releases owner records."
-  (let ((deadline    (+ (get-internal-real-time)
-                        (ceiling (* seconds internal-time-units-per-second))))
-        (result nil) (done nil)
+and reaps the child. The owner cancels and joins I/O before closing streams;
+COMPLETE then releases owner records."
+  (let ((result      nil)
+        (done        nil)
         (result-lock (bt:make-lock "supervised process response")))
     (unwind-protect
          (progn
@@ -120,15 +136,7 @@ releases owner records."
                             (supervised-process-thread record)
                             (bt:make-thread
                              (lambda ()
-                               (let ((response
-                                       (handler-case
-                                           (sb-sys:with-deadline
-                                               (:seconds
-                                                (max 0
-                                                     (/ (- deadline (get-internal-real-time))
-                                                        internal-time-units-per-second)))
-                                             (supervised-process-exchange process request))
-                                         ((or sb-sys:deadline-timeout error) () nil))))
+                               (let ((response (supervised-process-exchange process request)))
                                  (bt:with-lock-held (result-lock)
                                    (setf result response done t))))
                              :name "supervised subprocess I/O"))))
@@ -136,21 +144,18 @@ releases owner records."
              (loop
                (when (bt:with-lock-held (result-lock) done) (return))
                (unless (or (null active-p) (funcall active-p)) (return))
-               (when (>= (get-internal-real-time) deadline) (return))
                (sleep 0.005))
-             (when (< (get-internal-real-time) deadline)
-               (let ((response (lambda ()
-                                 (bt:with-lock-held (result-lock)
-                                  (when (and done (< (get-internal-real-time) deadline)) result)))))
-                 (if accept
-                     (funcall accept response)
-                     (when (or (null active-p) (funcall active-p))
-                       (funcall response)))))))
+             (let ((response (lambda ()
+                               (bt:with-lock-held (result-lock)
+                                 (when done result)))))
+               (if accept
+                   (funcall accept response)
+                   (when (or (null active-p) (funcall active-p))
+                     (funcall response))))))
       (unwind-protect
            (funcall stop record)
         (unwind-protect
-             (when (supervised-process-thread record)
-               (bt:join-thread (supervised-process-thread record)))
+             (supervised-process--join-io record)
           (unwind-protect
                (supervised-process--close-streams (supervised-process-process record))
             (when complete (funcall complete record))))))))

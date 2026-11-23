@@ -857,9 +857,9 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
 
 ;;;; -- Supervision and Authentication --
 
-(-> test-telemetry-subprocess-deadlines () null)
-(defun test-telemetry-subprocess-deadlines ()
-  "Deadline and revocation terminate an actual isolated child, without HTTP or native FFI."
+(-> test-telemetry-subprocess-cancellation () null)
+(defun test-telemetry-subprocess-cancellation ()
+  "Revocation terminates an actual isolated child, without HTTP or native FFI."
   (with-test-environment (("AUTOLITH_TEST_SUPERVISED_SECRET" "fixture-secret"))
     (let ((environment (supervised-process-environment))
           (path        (uiop:getenv "PATH")))
@@ -885,14 +885,6 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
                                 (test-telemetry--launch-stalled-child original options ready-path))
                           (apply original command options)))))
         (lambda ()
-          (let* ((run (telemetry--begin-run configuration)) (start (get-internal-real-time)))
-            (test-assert (null (telemetry--process run '(:redact "fixture" "en" nil nil)))
-                         "Hung child times out without unsafe native interruption.")
-            (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 5)
-                         "Hard deadline returns within a bounded allowance.")
-            (test-assert (probe-file ready-path)
-                         (test-telemetry--stalled-child-diagnostic process ready-path))
-            (test-assert (not (uiop:process-alive-p process)) "Timeout kills and reaps the child."))
           (let* ((run    (telemetry--begin-run configuration))
                  (thread (bt:make-thread (lambda () (telemetry--process run '(:redact "fixture" "en" nil nil)))
                                          :name "test inflight telemetry")))
@@ -910,6 +902,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
                    (setf (config :telemetry-enabled-p configuration) nil)
                    (test-assert (not (uiop:process-alive-p process)) "Consent revocation kills child synchronously.")
                    (test-assert (null (telemetry-controller-processes *telemetry-controller*)) "No live children after revocation."))
+              (setf (config :telemetry-enabled-p configuration) nil)
               (bt:join-thread thread)))))
        ;; Keep the real saved-core argv and retain controlled startup failures.
        (setf (config :telemetry-enabled-p configuration) t)

@@ -361,9 +361,9 @@
          (when stopper (ignore-errors (bt:join-thread stopper)))))))
   nil)
 
-(-> test-model-catalog-process-deadline () null)
-(defun test-model-catalog-process-deadline ()
-  "Kill an actual catalog child after its ten-second deadline."
+(-> test-model-catalog-process-cancellation () null)
+(defun test-model-catalog-process-cancellation ()
+  "Revoke actual catalog child work and complete its I/O teardown."
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t)
@@ -381,16 +381,28 @@
                                 (test-telemetry--launch-stalled-child original options ready-path))
                           (apply original command options)))))
         (lambda ()
-          (let* ((run   (telemetry--begin-run configuration))
-                 (start (get-internal-real-time)))
-            (test-assert (null (telemetry--process run '(:catalog))) "A stalled catalog yields no response.")
-            (test-assert (probe-file ready-path)
-                         (test-telemetry--stalled-child-diagnostic process ready-path))
-            (let ((elapsed (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
-              (test-assert (<= 9 elapsed 13)
-                           (format nil "Catalog work has its own ten-second deadline: ~,3Fs. ~A"
-                                   elapsed (test-telemetry--stalled-child-diagnostic process ready-path))))
-            (test-assert (not (uiop:process-alive-p process)) "The deadline kills and reaps catalog work.")))))))
+          (let* ((run    (telemetry--begin-run configuration))
+                 (thread (bt:make-thread
+                          (lambda ()
+                            (let ((*telemetry-process-function* nil))
+                              (telemetry--process run '(:catalog))))
+                          :name "test inflight catalog")))
+            (unwind-protect
+                 (progn
+                   (loop repeat 400
+                         when (bt:with-lock-held ((telemetry-controller-lock *telemetry-controller*))
+                                (not (null (telemetry-controller-processes *telemetry-controller*))))
+                           do (return)
+                         do (sleep 0.005))
+                   (test-assert (and (probe-file ready-path) process (uiop:process-alive-p process))
+                                (test-telemetry--stalled-child-diagnostic process ready-path))
+                   (setf (config :telemetry-enabled-p configuration) nil)
+                   (test-assert (not (uiop:process-alive-p process))
+                                "Consent revocation kills and reaps catalog work.")
+                   (test-assert (null (telemetry-controller-processes *telemetry-controller*))
+                                "Revocation includes catalog I/O cleanup."))
+              (setf (config :telemetry-enabled-p configuration) nil)
+              (bt:join-thread thread))))))))
   nil)
 
 (-> test-model-catalog-transport () null)
@@ -474,16 +486,10 @@
                                          (usocket:socket-close connection))))))
                                :name "trickling catalog fixture"))
                         (usocket:socket-close listener))
-                    (let ((*model-catalog-source*          (format nil "http://127.0.0.1:~D/api.json" port))
-                          (*model-catalog-request-seconds* 0.15)
-                          (start                           (get-internal-real-time)))
+                    (let ((*model-catalog-source* (format nil "http://127.0.0.1:~D/api.json" port)))
                       (test-model-catalog--refresh controller epoch
                                                   (lambda (run) (declare (ignore run))
-                                                    (model-catalog--worker-fetch configuration)))
-                      (let ((elapsed (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
-                        (test-assert (< elapsed 2) "Continuous bytes cannot extend the whole-request deadline.")
-                        (when trickle-p
-                          (test-assert (>= elapsed 0.1) "The trickling body is interrupted by its deadline."))))
+                                                    (model-catalog--worker-fetch configuration))))
                     (test-assert (gethash "cached-model" (model-catalog-identifiers controller))
                                  "Network failure retains cached membership.")
                     (test-assert (= fetched-at (model-catalog-fetched-at controller))

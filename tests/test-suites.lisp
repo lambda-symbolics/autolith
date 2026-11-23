@@ -199,9 +199,9 @@
   test-telemetry-redaction-failures
   test-telemetry-worker-redactor-contract
   test-telemetry-worker-narratives
-  test-telemetry-subprocess-deadlines
-  test-supervised-request-readerless-pipe-deadline
-  test-supervised-request-remaining-deadline
+  test-telemetry-subprocess-cancellation
+  test-supervised-request-readerless-pipe-cancellation
+  test-supervised-request-delayed-io-cancellation
   test-telemetry-concurrent-process-retirement
   test-telemetry-process-admission-retirement
   test-telemetry-anonymous-upload
@@ -226,7 +226,7 @@
   test-model-catalog-shutdown-settings-race
   test-model-catalog-transport
   test-model-catalog-network-fallback
-  test-model-catalog-process-deadline)
+  test-model-catalog-process-cancellation)
 
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
