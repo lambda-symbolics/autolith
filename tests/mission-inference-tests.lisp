@@ -1021,7 +1021,7 @@
                   ;; A defensive legacy fixture, not native unlimited admission.
                   (setf (getf goal :requests-outstanding) 1)
                   (uiop:symbol-call
-                   :autolith :mission--settle-inference context 0 nil :originating-child child))
+                   :autolith :mission--settle-inference context nil nil :originating-child child))
                  (t
                   (dotimes (index (if (eq mode ':multiple) 2 1))
                     (declare (ignorable index))

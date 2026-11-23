@@ -591,6 +591,7 @@
                     (make-instance
                      'application
                      :configuration configuration
+                     :conversation  (conversation-create configuration)
                      :tool-registry old-tool-registry)))
              (with-open-file (stream mcp-pathname
                                      :direction         ':output
@@ -700,7 +701,9 @@
          (barrier                        (make-condition-variable))
          (reload-paused-p                nil)
          (release-reload-p               nil)
-         (state-lock                     (make-lock "Autolith MCP reload isolation state"))
+         (expected-reload-failure
+           (make-condition 'simple-error
+                           :format-control "Injected isolated reload failure."))
          (reload-failure                 nil)
          (reload-finished-p              nil)
          (reader-result                  nil)
@@ -789,40 +792,48 @@
                       (make-instance
                        'application
                        :configuration configuration
+                       :conversation  (conversation-create configuration)
                        :tool-registry old-tool-registry)))
                (test-call-with-function-replacements
                 (list
                  (list
                   'application--create-tool-registry
-                  (lambda (new-configuration)
-                    (declare (ignore new-configuration))
+                  (lambda (new-configuration &key shared-mcp-manager conversation)
+                    (declare (ignore new-configuration shared-mcp-manager conversation))
                     (with-lock-held (barrier-lock)
                       (setf reload-paused-p t)
                       (condition-notify barrier)
                       (loop until release-reload-p
                             do (condition-wait barrier barrier-lock)))
-                    (error "Injected isolated reload failure."))))
+                    (error expected-reload-failure))))
                 (lambda ()
                   (setf reload-thread
                         (make-thread
                          (lambda ()
-                           (setf reload-failure
-                                 (handler-case
-                                     (progn
-                                       (application-reload-mcp application)
-                                       nil)
-                                   (simple-error (cause)
-                                     cause)))
-                           (with-lock-held (state-lock)
-                             (setf reload-finished-p t)))
+                           (let ((failure
+                                   (handler-case
+                                       (progn
+                                         (application-reload-mcp application)
+                                         nil)
+                                     (error (cause)
+                                       cause))))
+                             ;; Report an unexpected error on the test thread.
+                             (with-lock-held (barrier-lock)
+                               (setf reload-failure    failure
+                                     reload-finished-p t)
+                               (condition-notify barrier))))
                          :name "Autolith isolated MCP reload"))
                   (with-lock-held (barrier-lock)
-                    (loop until reload-paused-p
+                    (loop until (or reload-paused-p reload-finished-p)
                           unless
                             (condition-wait
                              barrier barrier-lock :timeout 2)
                             do (error
-                                "Timed out waiting for isolated MCP reload.")))
+                                "Timed out waiting for isolated MCP reload."))
+                    (unless reload-paused-p
+                      (if reload-failure
+                          (error reload-failure)
+                          (error "MCP reload returned before its isolation barrier."))))
                   (setf reader-thread
                         (make-thread
                          (lambda ()
@@ -832,7 +843,7 @@
                                       (mcp--registry-snapshot)
                                       (context--registry-snapshot)
                                       (application-command--registry-snapshot)))))
-                             (with-lock-held (state-lock)
+                             (with-lock-held (barrier-lock)
                                (setf reader-result snapshot
                                      reader-finished-p t))))
                          :name "Autolith MCP registry generation reader")
@@ -854,12 +865,12 @@
                                'test-mcp--reload-isolation-concurrent-command
                                "mcp-isolation-concurrent")
                               :source ':runtime))
-                           (with-lock-held (state-lock)
+                           (with-lock-held (barrier-lock)
                              (setf writer-finished-p t)))
                          :name "Autolith MCP concurrent registry writer"))
                   (sleep 0.05)
                   (test-assert
-                   (with-lock-held (state-lock)
+                   (with-lock-held (barrier-lock)
                      (and (not reload-finished-p)
                           (not reader-finished-p)
                           (not writer-finished-p)))
@@ -868,6 +879,8 @@
                   (join-thread reload-thread)
                   (join-thread reader-thread)
                   (join-thread writer-thread))))
+             (when (and reload-failure (not (eq reload-failure expected-reload-failure)))
+               (error reload-failure))
              (test-assert
               (and reload-failure reload-finished-p
                    reader-finished-p writer-finished-p)
@@ -1066,10 +1079,8 @@
                              (funcall context-reset)))
                           (list
                            'application--create-tool-registry
-                           (lambda (new-configuration)
-                             (setf new-registry
-                                   (funcall
-                                    registry-create new-configuration))))
+                           (lambda (&rest arguments)
+                             (setf new-registry (apply registry-create arguments))))
                           (list
                            'agent-create
                            (lambda (&rest arguments)

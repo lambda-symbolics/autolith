@@ -323,7 +323,7 @@
 (defun test-telemetry-resource-policy-denial-hooks ()
   "Actual scheme and ownership policy failures retain access-denied and count as denials."
   (dolist (case '((restricted-scheme t "memory:relevant")
-                  (foreign-owner nil "shell-log:foreign/execution/artifact/output")))
+                  (unregistered-personal nil "memory:personal")))
     (test-telemetry--call
      (lambda (configuration)
        (let* ((restricted-p (second case))

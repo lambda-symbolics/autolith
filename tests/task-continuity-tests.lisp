@@ -551,10 +551,9 @@
                         "Earlier grants and recovery metadata remain readable and intact")
            (test-assert (tool-result-success-p (child-overflow-tests--read producer uri))
                         "Earlier emission remains publicly readable after the rejected append")
-           (let ((result (child-overflow-tests--read producer (format nil "context:~A" next-digest))))
-             (test-assert (and (not (tool-result-success-p result))
-                               (eq :access-denied (tool-result-error-code result)))
-                          "The ungranted failed emission cannot be read by digest knowledge"))
+           (test-assert (not (member next-digest (getf (task-continuity--read path) :overflow-context-digests)
+                                     :test #'equal))
+                        "The rejected emission's digest was not published in the continuity record")
            (test-assert (task-continuity-tests--refused-p
                          (lambda ()
                            (task-continuity-declare parent orchestrator

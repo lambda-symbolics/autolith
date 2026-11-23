@@ -327,28 +327,24 @@
                      (equalp (getf row :choices)
                              (application-command-static-options command))
                    "supported textual choices use the structured client's argument encoding"))
-                (let ((find-command (symbol-function 'application-command-find))
-                      (restricted   (make-instance 'application-command
-                                                   :static-options '(:full :list :ask))))
-                  (test-call-with-function-replacements
-                   (list (list 'application-command-find
-                               (lambda (name)
-                                 (if (equal name "permissions")
-                                     restricted
-                                     (funcall find-command name)))))
-                   (lambda ()
-                     (test-assert (equal '(:full-access :ask)
-                                         (application-client-permission-modes))
-                                  "mode support and ordering follow current command metadata")
-                     (test-assert
-                      (handler-case
-                          (progn (application-client-permission-input ':auto) nil)
-                        (application-client-operation-unavailable () t))
-                      "removed metadata choices cannot be encoded as permission inputs")
-                     (test-assert
-                      (handler-case
-                          (progn (world-terminal-client-call connection ':mode :value ':auto) nil)
-                        (world-terminal-error () t))
-                      "structured mode admission honors the current supported choices")))))
+                 (test-call-with-function-replacements
+                  (list (list 'application--permission-mode-catalogue
+                              (lambda ()
+                                '((:full-access :full "Full access")
+                                  (:ask :ask "Ask")))))
+                  (lambda ()
+                    (test-assert (equal '(:full-access :ask)
+                                        (application-client-permission-modes))
+                                 "mode support and ordering follow the canonical permission catalogue")
+                    (test-assert
+                     (handler-case
+                         (progn (application-client-permission-input ':auto) nil)
+                       (application-client-operation-unavailable () t))
+                     "choices absent from the catalogue cannot be encoded as permission inputs")
+                    (test-assert
+                     (handler-case
+                         (progn (world-terminal-client-call connection ':mode :value ':auto) nil)
+                       (world-terminal-error () t))
+                     "structured mode admission honors the current supported choices"))))
            (world-terminal-client-close connection))))))
   nil)

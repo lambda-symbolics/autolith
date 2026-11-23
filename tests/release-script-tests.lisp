@@ -634,6 +634,8 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (ensure-directories-exist bootstrap)
     (uiop:copy-file (merge-pathnames "script/bootstrap.lisp" source-root)
                     bootstrap)
+    (uiop:copy-file (merge-pathnames "script/roots.lisp" source-root)
+                    (merge-pathnames "roots.lisp" script-directory))
     (test-write-text
      (merge-pathnames "runtime-requirement.lisp" script-directory)
      "(defun autolith-require-minimum-runtime (pathname)

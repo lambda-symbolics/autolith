@@ -12,10 +12,14 @@
        (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
               (session     (acp-service--session service identifier))
               (application (acp-session-test--application session))
+              (parameters (tool-object-schema
+                           (json-object "text"   (tool-string-property "Text to echo.")
+                                        "nested" (json-object "type" "object"))
+                           '("text" "nested")))
               (tool        (make-instance 'application-operation-test-tool
                                           :namespace "acp-test" :name "echo"
                                           :description "Exercise headless tool authority."
-                                          :parameters  (tool-object-schema (json-object) nil)))
+                                          :parameters  parameters))
               (arguments   (agentcomms:json-object
                             "text" "approved" "nested" (agentcomms:json-object
                                                         "CamelCase" ':null "false" (argo:json-false)))))
@@ -40,8 +44,11 @@
                            client "_autolith/invoke"
                            (agentcomms:json-object "sessionId" identifier
                                                   "operation" (tool-canonical-name tool) "arguments" arguments)))
+                (outcome  (agentcomms:json-get response "outcome"))
                 (decoded  (application-operation-test-tool-arguments tool)))
-           (test-assert (equal "ok" (agentcomms:json-get response "outcome")) "invocation after cancellation succeeds")
+           (test-assert (equal "ok" outcome)
+                        (format nil "invocation after cancellation succeeds (outcome ~S, condition type ~S)"
+                                outcome (agentcomms:json-get response "conditionType")))
            (test-assert (equal "full-access allow: approved"
                                (agentcomms:json-get (agentcomms:json-get response "value") "result"))
                         "tool invocation uses the ACP client's authority")

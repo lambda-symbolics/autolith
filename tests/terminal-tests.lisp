@@ -1624,7 +1624,7 @@
               (search "exec:2" text)
               (search "Build the release" text)
               (search "queued" text)
-              (search "review-3" text)
+              (search (getf agent :agent) text)
               (search (terminal-style-sequence ':command-spinner) display)
               (search (terminal-style-sequence ':command-id) display)
               (search (terminal-style-sequence ':command-tool) display))
@@ -1646,7 +1646,7 @@
             (test-assert (search "exec:1" (nth (1+ command-header) lines))
                          "the first command immediately follows its label"))
           (when agent-header
-            (test-assert (search "review-3" (nth (1+ agent-header) lines))
+            (test-assert (search (getf agent :agent) (nth (1+ agent-header) lines))
                          "the first agent immediately follows its label"))
           (when (and command-header agent-header)
             (test-assert

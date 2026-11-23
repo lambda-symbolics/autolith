@@ -1070,8 +1070,16 @@
                                                                           :main-thread (current-thread))
                              ':turn-cancellation))
                     "A session on its own terminal includes reopen advice in its forced-exit notice"))
-                 (test-assert (eq (application-serve application) reason)
-                              (format nil "The direct terminal exits through ~S" reason))
+                 ;; Boot linger can consume queued EOF before the controller reads it.
+                 (let ((actual-reason
+                         (handler-case
+                             (sb-ext:with-timeout 10
+                               (application-serve application :boot-screen-p nil))
+                           (sb-ext:timeout ()
+                             (error "The direct terminal did not exit through ~S within 10 seconds."
+                                    reason)))))
+                   (test-assert (eq actual-reason reason)
+                                (format nil "The direct terminal exits through ~S" reason)))
                  (recording-terminal-output terminal)))
 
              (occurrences (text substring)
@@ -7766,8 +7774,8 @@
             (list
              (list
               'application--create-tool-registry
-              (lambda (configuration &key shared-mcp-manager)
-                (declare (ignore configuration shared-mcp-manager))
+              (lambda (configuration &key shared-mcp-manager conversation)
+                (declare (ignore configuration shared-mcp-manager conversation))
                 workspace-registry))
              (list
               'lisp-worker-manager-change-working-directory
@@ -7822,8 +7830,8 @@
                 (list
                  (list
                   'application--create-tool-registry
-                  (lambda (configuration &key shared-mcp-manager)
-                    (declare (ignore configuration shared-mcp-manager))
+                  (lambda (configuration &key shared-mcp-manager conversation)
+                    (declare (ignore configuration shared-mcp-manager conversation))
                     (error
                      'mcp-server-startup-error
                      :message     "Required MCP server failed."
@@ -7878,8 +7886,8 @@
                (list
                 (list
                  'application--create-tool-registry
-                 (lambda (configuration &key shared-mcp-manager)
-                   (declare (ignore configuration shared-mcp-manager))
+                 (lambda (configuration &key shared-mcp-manager conversation)
+                   (declare (ignore configuration shared-mcp-manager conversation))
                    conversation-registry))
                 (list
                  'application-publish-recovery-session
@@ -8511,9 +8519,10 @@
               nil))
            (list
             'application--create-tool-registry
-            (lambda (configuration)
+            (lambda (configuration &key conversation)
               (setf created-registry
-                    (funcall original-registry-create configuration))))
+                    (funcall original-registry-create
+                             configuration :conversation conversation))))
            (list
             'lisp-worker-pool-create
             (lambda (configuration)
