@@ -807,21 +807,11 @@ leaves the channel running and gives the terminal back."
       (channel-view--paint-page view)))
   nil)
 
-(defparameter *channel-view-detach-seconds* 0.25
-  "Maximum time a departing view spends sending its best-effort goodbye.")
-
 (-> channel-view--leave (channel-view) null)
 (defun channel-view--leave (view)
-  "Send a bounded best-effort goodbye, then retire the departing view's transport."
-  (let ((connection (channel-subscription-connection view)))
-    (when (and connection (not (channel-view-read-only-p view)))
-      (unwind-protect
-           (handler-case
-               (sb-sys:with-deadline (:seconds *channel-view-detach-seconds*)
-                 (world-terminal-client-send connection ':detach))
-             (sb-sys:deadline-timeout () nil)
-             (error () nil))
-        (world-terminal-client--disconnect connection))))
+  "Retire the departing view's transport without waiting for pending writes."
+  (when-let ((connection (channel-subscription-connection view)))
+    (world-terminal-client--disconnect connection))
   nil)
 
 (-> channel-view--save-draft (channel-view) null)

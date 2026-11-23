@@ -477,20 +477,24 @@ from the client")))
          :documentation "A gate that models stalled output after a partial frame.")
    (started :initarg :started :reader client-evaluation-tests-output-started
             :documentation "Notifies the test that a frame write began.")
+   (fail-p :initform nil :accessor client-evaluation-tests-output-fail-p
+           :documentation "Whether releasing the writer causes a transport failure.")
    (writes :initform 0 :accessor client-evaluation-tests-output-writes
            :documentation "Number of characters accepted before interruption."))
-  (:documentation "A deadline-aware partial writer for transport retirement tests."))
+  (:documentation "A gated partial writer for transport retirement tests."))
 
 (defmethod trivial-gray-streams:stream-write-char ((stream client-evaluation-tests-output) character)
-  "Accept the first character and block until the deadline or test cleanup."
+  "Accept the first character and wait for explicit release or transport failure."
   (incf (client-evaluation-tests-output-writes stream))
   (sb-thread:signal-semaphore (client-evaluation-tests-output-started stream))
-  (sb-thread:wait-on-semaphore (client-evaluation-tests-output-gate stream) :timeout 10)
+  (sb-thread:wait-on-semaphore (client-evaluation-tests-output-gate stream))
+  (when (client-evaluation-tests-output-fail-p stream)
+    (error 'stream-error :stream stream))
   character)
 
 (-> client-evaluation-tests--stalled-writer () null)
 (defun client-evaluation-tests--stalled-writer ()
-  "Exercise a partial-frame timeout, queued writers and another connection's reader and close."
+  "Exercise a failed partial frame, queued writers and an independent reader's close."
   (let* ((gate            (sb-thread:make-semaphore))
          (started         (sb-thread:make-semaphore))
          (stream          (make-instance 'client-evaluation-tests-output :gate gate :started started))
@@ -507,9 +511,8 @@ from the client")))
            (setf writer
                  (make-thread
                   (lambda ()
-                    (let ((*world-terminal-client-evaluation-write-seconds* 0.25))
-                      (world-terminal-client--evaluation-answer
-                       connection '(:evaluated :evaluation "write" :succeeded-p t :text "answer"))))
+                    (world-terminal-client--evaluation-answer
+                     connection '(:evaluated :evaluation "write" :succeeded-p t :text "answer")))
                   :name "evaluation partial writer"))
            (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
                         "The evaluation answer stalled after beginning its frame.")
@@ -519,13 +522,14 @@ from the client")))
                     (handler-case (world-terminal-client--write-frame connection "second-frame")
                       (world-terminal-error () (setf queued-failed-p t))))
                   :name "evaluation queued writer"))
-           (sb-sys:with-deadline (:seconds 2)
-             (client-evaluator-close (make-instance 'client-evaluator))
-             (world-terminal-client--read other nil)
-             (world-terminal-client-close other))
+           (client-evaluator-close (make-instance 'client-evaluator))
+           (world-terminal-client--read other nil)
+           (world-terminal-client-close other)
            (test-assert (and (world-terminal-client-connection-closed-p other)
                              (gethash 7 (world-terminal-client-connection-replies other)))
                         "A stalled writer holds neither shared admission nor another reader's close path.")
+           (setf (client-evaluation-tests-output-fail-p stream) t)
+           (sb-thread:signal-semaphore gate 100)
            (join-thread writer)
            (join-thread queued)
            (test-assert (and queued-failed-p (= 1 (client-evaluation-tests-output-writes stream))
@@ -533,7 +537,7 @@ from the client")))
                              (world-terminal-client-connection-closed-p connection)
                              (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection))
                              (zerop (hash-table-count (world-terminal-client-connection-replies connection))))
-                        "The interrupted frame retires before any queued writer, without an ACK entry."))
+                        "The failed frame retires before any queued writer, without an ACK entry."))
       (sb-thread:signal-semaphore gate 100)
       (when writer (join-thread writer))
       (when queued (join-thread queued))

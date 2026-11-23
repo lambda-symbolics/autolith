@@ -702,24 +702,18 @@ channel may answer by asking this client something first."
       (join-thread thread)))
   nil)
 
-(defparameter *world-terminal-client-evaluation-write-seconds* 1
-  "Maximum time an evaluation answer may spend waiting for a write lock and transport.")
-
 (-> world-terminal-client--evaluation-answer (world-terminal-client-connection list) null)
 (defun world-terminal-client--evaluation-answer (connection packet)
-  "Write PACKET with bounded transport time and no retained acknowledgement entry."
+  "Write PACKET without retaining an acknowledgement entry."
   (handler-case
-      (sb-sys:with-deadline (:seconds *world-terminal-client-evaluation-write-seconds*)
-        (let* ((identifier
-                 (with-lock-held ((world-terminal-client-connection-lock connection))
-                   (when (world-terminal-client-connection-closed-p connection)
-                     (return-from world-terminal-client--evaluation-answer nil))
-                   (incf (world-terminal-client-connection-next-identifier connection))))
-               (frame (image-daemon:daemon-packet-string
-                       (list* (first packet) :id identifier (rest packet)))))
-          (world-terminal-client--write-frame connection frame)))
-    (sb-sys:deadline-timeout ()
-      (world-terminal-client--disconnect connection))
+      (let* ((identifier
+               (with-lock-held ((world-terminal-client-connection-lock connection))
+                 (when (world-terminal-client-connection-closed-p connection)
+                   (return-from world-terminal-client--evaluation-answer nil))
+                 (incf (world-terminal-client-connection-next-identifier connection))))
+             (frame (image-daemon:daemon-packet-string
+                     (list* (first packet) :id identifier (rest packet)))))
+        (world-terminal-client--write-frame connection frame))
     (error ()
       (world-terminal-client--disconnect connection)))
   nil)

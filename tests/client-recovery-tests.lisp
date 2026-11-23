@@ -395,9 +395,9 @@
       (test-assert (zerop (deque-count (channel-view-events view))) "Late deltas cannot reopen a closed view.")))
   nil)
 
-(-> test-channel-view-bounded-detach () null)
-(defun test-channel-view-bounded-detach ()
-  "A goodbye waiting behind a stalled writer cannot prevent retiring the view's connection."
+(-> test-channel-view-detach () null)
+(defun test-channel-view-detach ()
+  "Detach through transport shutdown without acquiring a stalled writer's lock."
   (let* ((view       (make-instance 'channel-view))
          (connection (make-instance 'world-terminal-client-connection :socket nil
                                     :stream                                   (make-string-output-stream)))
@@ -411,14 +411,14 @@
                          (lambda ()
                            (with-lock-held ((world-terminal-client-connection-write-lock connection))
                              (sb-thread:signal-semaphore started)
-                             (sb-thread:wait-on-semaphore gate :timeout 5)))
+                             (sb-thread:wait-on-semaphore gate)))
                          :name "stalled detach writer"))
            (test-assert (sb-thread:wait-on-semaphore started :timeout 5) "Another writer owns the transport.")
-           (sb-sys:with-deadline (:seconds 2)
-             (let ((*channel-view-detach-seconds* 0.05)) (channel-view--leave view)))
-           (test-assert (and (world-terminal-client-connection-closed-p connection)
+           (channel-view--leave view)
+           (test-assert (and (thread-alive-p writer)
+                             (world-terminal-client-connection-closed-p connection)
                              (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection)))
-                        "A bounded goodbye retires the connection and evaluator outside the writer lock."))
+                        "Detach retires the connection and evaluator without waiting for the writer."))
       (sb-thread:signal-semaphore gate)
       (when writer (join-thread writer))
       (channel-subscription-close view)))
