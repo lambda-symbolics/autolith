@@ -56,7 +56,7 @@ different units of one dimension match."
   "Return possible environments for PATTERNS using current facts and earlier productions.
 
 Future observations are variables, never stored facts. Resolve explicit negation,
-argument equality, accepted bases, and admitted derivations before deferring a
+argument equality, accepted bases, and active rules' derivations before deferring a
 requirement. Guards and computed values still depending on future observations
 are conditional until the ordinary per-call check. Bound the entire proof search."
   (let ((steps       0)

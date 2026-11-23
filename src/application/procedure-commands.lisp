@@ -4,8 +4,7 @@
 
 ;;; (procedures) lists the procedures Autolith learned in this workspace, what
 ;;; they call, and what they saved; (run-procedure "ID" :NAME VALUE ...) runs
-;;; one with the ordinary authorization; (admit-procedure) lets the model run
-;;; one and lifts a suspension; (retire-procedure) stops one for good.
+;;; one with ordinary tool authorization; (retire-procedure) stops one for good.
 
 
 ;;; (procedures)
@@ -33,14 +32,14 @@
          (version    (procedure-entry-version entry))
          (procedure  (getf version :procedure))
          (baseline   (getf version :baseline))
-         (savings    (and (member status '(:admitted :suspended))
+         (savings    (and (member status '(:active :suspended))
                           (procedure-savings configuration identifier)))
          (request    (procedure-input-text procedure)))
     (append
      (list (ecase status
-             (:admitted
+             (:active
               (terminal-span ':success "  ✓ "))
-             (:candidate
+             (:inactive
               (terminal-span ':notice "  ? "))
              (:suspended
               (terminal-span ':failure "  ! "))
@@ -51,9 +50,9 @@
                                   (sanitize-text identifier :single-line-p t)
                                   (getf version :version)))
            (terminal-span (ecase status
-                            (:admitted
+                            (:active
                              ':success)
-                            (:candidate
+                            (:inactive
                              ':notice)
                             (:suspended
                              ':failure)
@@ -62,17 +61,15 @@
                           (format nil "  ~(~A~)" status))
            (terminal-span ':dim
                           (format nil "~@[ · runs v~D~] · ~D run~:P, ~D failed~A~%"
-                                 (and (getf entry :admitted)
-                                      (/= (getf entry :admitted) (getf version :version))
-                                      (getf entry :admitted))
+                                 (and (getf entry :active)
+                                      (/= (getf entry :active) (getf version :version))
+                                      (getf entry :active))
                                  (getf entry :runs) (getf entry :failures)
                                  (case status
-                                   (:candidate
-                                    (format nil " · (admit-procedure ~S)"
-                                            (sanitize-text identifier :single-line-p t)))
+                                   (:inactive
+                                    " · legacy definition")
                                    (:suspended
-                                    (format nil " · (admit-procedure ~S) to resume"
-                                            (sanitize-text identifier :single-line-p t)))
+                                    " · correct its definition to resume")
                                    (otherwise
                                     ""))))
            (terminal-span ':plain
@@ -99,7 +96,7 @@
                                                  (getf savings :turns))))))))))
 
 
-;;; (run-procedure), (admit-procedure), (retire-procedure)
+;;; (run-procedure), (retire-procedure)
 
 (-> application-procedure-run-entry (application string list) list)
 (defun application-procedure-run-entry (application identifier arguments)
@@ -125,22 +122,17 @@
   (loop for (name value) on arguments by (partial #'nthcdr 2)
         collect (cons (string-downcase (string name)) value)))
 
-(-> application-procedure-transition-entry (application string keyword) list)
-(defun application-procedure-transition-entry (application identifier kind)
-  "Admit or retire procedure IDENTIFIER, as KIND says, and confirm what changed."
-  (let ((configuration (application-configuration application)))
-    (handler-case
-        (if (eq kind ':admit)
-            (let ((version (procedure-admit configuration identifier)))
-              (list (terminal-span ':success "✓ admitted  ")
-                    (terminal-span ':strong (format nil "~A v~D~%" identifier version))))
-            (progn
-              (procedure-retire configuration identifier)
-              (list (terminal-span ':success "✓ retired  ")
-                    (terminal-span ':strong (format nil "~A~%" identifier)))))
-      (knowledge-error (condition)
-        (application-failure-line
-         (format nil "~A (procedures) lists them." (autolith-error-message condition)))))))
+(-> application-procedure-retire-entry (application string) list)
+(defun application-procedure-retire-entry (application identifier)
+  "Retire procedure IDENTIFIER and confirm what changed."
+  (handler-case
+      (progn
+        (procedure-retire (application-configuration application) identifier)
+        (list (terminal-span ':success "✓ retired  ")
+              (terminal-span ':strong (format nil "~A~%" identifier))))
+    (knowledge-error (condition)
+      (application-failure-line
+       (format nil "~A (procedures) lists them." (autolith-error-message condition))))))
 
 
 ;;;; -- Command Definitions --
@@ -173,22 +165,6 @@
        (application-failure-line "usage: (run-procedure \"ID\" :NAME VALUE ...). Run (procedures) to list them.")))
   ':continue)
 
-(define-application-command application--builtin-admit-procedure-command
-    (:name              "admit-procedure"
-     :argument          "[ID]"
-     :description       "let a learned procedure run"
-     :tip               "admit the latest version of a procedure and lift suspensions after failed runs."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
-    (application &optional identifier)
-  (application-present
-   application
-   (if identifier
-       (application-procedure-transition-entry application identifier ':admit)
-       (application-failure-line "usage: (admit-procedure \"ID\"). Run (procedures) to list them.")))
-  ':continue)
-
 (define-application-command application--builtin-retire-procedure-command
     (:name              "retire-procedure"
      :argument          "[ID]"
@@ -201,6 +177,6 @@
   (application-present
    application
    (if identifier
-       (application-procedure-transition-entry application identifier ':retire)
+       (application-procedure-retire-entry application identifier)
        (application-failure-line "usage: (retire-procedure \"ID\"). Run (procedures) to list them.")))
   ':continue)

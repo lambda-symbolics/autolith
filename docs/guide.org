@@ -457,14 +457,13 @@ For an example, ask the agent to use the =appointments= recipe:
 
 1. Give it the start time of the review, 30 minutes of travel, and a 10-minute
    buffer.
-2. Admit the proposed departure rule. Run =(rules)= to get its name or ID.
+2. Run =(rules)= to inspect the active departure rule.
 3. Change the start from 13:00 to 13:15. The derived departure changes from
    12:20 to 12:35 without another model request to run the rule. Run
    =(what-changed)= to see the change and its cause.
 
 #+BEGIN_SRC lisp
 (rules)
-(admit-rule "departure")
 (what-changed)
 (why "c4dfffae")
 (retire-rule "departure")
@@ -480,7 +479,7 @@ a day; observe it again to renew it.
 Agents can inspect =memory:facts=, =memory:claim/ID=, =memory:predicates=,
 =memory:rules= and =memory:changes=. The =memory:recipes= resource lists
 =appointments= and =service-dependencies=. Use =recipe-use= on =memory:facts=
-to define the predicates and propose the rules. The same resource accepts
+to define the predicates and activate the rules. The same resource accepts
 =predicate-define=, =fact-assert=, =fact-retract=, and =rule-propose=.
 
 Set =knowledge-mode= in =(settings)= or through =AUTOLITH_KNOWLEDGE=. Use
@@ -536,20 +535,19 @@ its calls, parameters, status and measured savings in model requests and tokens.
 
 #+BEGIN_SRC lisp
 (procedures)
-(admit-procedure "make-sales-report")
 (run-procedure "make-sales-report" :file "q5")
 (retire-procedure "make-sales-report")
 #+END_SRC
 
-Replace the name and parameters with those listed for your procedure. The first
-run normally asks you to admit the procedure, and its calls still follow tool
-approvals and contracts. An exact request pattern can run automatically once
-the admitted version has demonstrated savings on completed turns. An
-approximate match is only offered to the model. Two consecutive failed runs
-suspend the procedure; use =(admit-procedure "NAME")= after you check it. Use
-=(retire-procedure "NAME")= to prevent further runs and relearning. Agents
-inspect procedures at =memory:procedures= and invoke them with =procedure.run=.
-Learning and recall require active structured knowledge.
+Replace the name and parameters with those listed for your procedure. Learned
+procedures become active on definition. Each call follows tool approvals and
+contracts. An exact request pattern can run automatically once its version has
+demonstrated savings on completed turns. An approximate match is offered to the
+model. Two consecutive failed runs suspend the procedure. Correct its definition
+to resume it; submitting the same definition does not clear a suspension. Use
+=(retire-procedure "NAME")= to prevent further runs and relearning. Agents inspect
+procedures at =memory:procedures= and invoke them with =procedure.run=. Learning
+and recall require active structured knowledge.
 
 *** Diagnosis
 

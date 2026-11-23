@@ -310,6 +310,10 @@ for removal by 0.68.0.
   rollback; they never read the knowledge log. Derivations, statuses, and
   conflicts are evaluated from the log, the cited files, and the time, and are
   never stored.
+  New rule and procedure definitions carry =:activation :automatic=. Untagged
+  legacy definitions retain their original inactive semantics, and historical
+  admission records select their recorded versions. Remove these compatibility
+  readers with the 0.69.0 knowledge-log migration.
 - Procedures are learned from tool-call traces read from conversation logs.
   Traces are cached in memory per conversation and extended from where the
   last read stopped; they are never written anywhere, so the transcript stays

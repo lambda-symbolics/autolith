@@ -1276,8 +1276,7 @@
   test-memory-resource-mutations
   test-memory-resource-filtered-read-write
   test-memory-resource-sources
-  test-memory-knowledge-resources
-  test-memory-knowledge-rule-admission)
+  test-memory-knowledge-resources)
 
 (define-test-suite papercut-resource
   test-papercut-resources)

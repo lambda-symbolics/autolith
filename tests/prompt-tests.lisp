@@ -15,16 +15,15 @@
 (-> test-system-prompt-structured-knowledge () null)
 (defun test-system-prompt-structured-knowledge ()
   "Test the prompt explains structured knowledge and diagnosis only while they are offered."
-  (dolist (case '((:active nil t nil "active knowledge explains facts, rules, and contracts")
-                  (:active t t t "enabled diagnosis adds its guidance")
-                  (:off t nil nil "knowledge off leaves both sections out")))
-    (destructuring-bind (mode diagnosis-p knowledge-p diagnosis-shown-p description) case
+  (dolist (case '((:active nil nil "disabled diagnosis leaves its guidance out")
+                  (:active t t "enabled diagnosis adds its guidance")
+                  (:off t nil "knowledge off leaves diagnosis out")))
+    (destructuring-bind (mode diagnosis-p diagnosis-shown-p description) case
       (with-test-configuration (configuration)
         (setf (config :knowledge-mode configuration) mode
               (config :diagnosis-p configuration)    diagnosis-p)
         (let ((prompt (system-prompt configuration)))
-          (test-assert (and (eq (not (null (search "(admit-rule)" prompt))) knowledge-p)
-                            (eq (not (null (search "diagnosis.run" prompt))) diagnosis-shown-p))
+          (test-assert (eq (not (null (search "diagnosis.run" prompt))) diagnosis-shown-p)
                        description)))))
   nil)
 

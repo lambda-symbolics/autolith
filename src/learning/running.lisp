@@ -46,15 +46,14 @@
 (defun procedure-run (context identifier &key parameters (caller ':model))
   "Run procedure IDENTIFIER with PARAMETERS, an alist of names and values, under CONTEXT.
 
-Admit a candidate first, either through the user's (run-procedure) command or
-command authorization for a model call. Before executing tools, signal
-KNOWLEDGE-ERROR for invalid parameters, retired or suspended procedures,
-declined admission, or unmet contract requirements. Record the run and return
+Before executing tools, signal KNOWLEDGE-ERROR for invalid parameters,
+inactive, retired or suspended procedures, or unmet contract requirements.
+Record the run and return
 :STATUS (:OK or :FAILED), :VERSION, :STEPS (each with :TOOL, :ARGUMENTS,
 :SUCCESS-P, and :OUTPUT), :TOTAL, and :FAILURE in a plist."
   (let* ((configuration (tool-context-configuration context))
-         (entry         (procedure--runnable-entry context identifier caller))
-         (version       (procedure-entry-version entry (getf entry :admitted)))
+         (entry         (procedure--runnable-entry context identifier))
+         (version       (procedure-entry-version entry (getf entry :active)))
          (procedure     (getf version :procedure))
          (bindings      (procedure--checked-bindings procedure parameters))
          (steps         (getf (rest procedure) :steps))
@@ -148,18 +147,13 @@ declined admission, or unmet contract requirements. Record the run and return
 (defun procedure-offers (configuration text)
   "Return the procedures whose request pattern fits request TEXT with every parameter bound.
 
-Each offer is a plist of :ID, :STATUS, :PROCEDURE, and :BINDINGS. Admitted
-procedures and never-admitted candidates are offered; suspended and retired
-ones, and those whose contract requirements do not hold for these values,
-are not."
+Each offer is a plist of :ID, :STATUS, :PROCEDURE, and :BINDINGS. Only active
+procedures whose contract requirements hold for these values are offered."
   (loop for entry in (knowledge-base-procedures (knowledge-base-read configuration)
                                                 (knowledge--workspace configuration))
         for status = (procedure-entry-status entry)
-        for procedure = (getf (if (eq status ':admitted)
-                                  (procedure-entry-runnable-version entry)
-                                  (procedure-entry-version entry))
-                              :procedure)
-        when (member status '(:admitted :candidate))
+        for procedure = (getf (procedure-entry-runnable-version entry) :procedure)
+        when (eq status ':active)
           append (multiple-value-bind (bindings matched-p) (procedure-match-input procedure text)
                    (and matched-p
                         (every (lambda (parameter)
@@ -206,7 +200,7 @@ are not."
 (defun procedure-related-offers (configuration text)
   "Return the procedures request TEXT may call for although no pattern matched it, best first.
 
-These are admitted procedures and never-admitted candidates sharing at least
+These are active procedures sharing at least
 *PROCEDURE-RELATED-MINIMUM-SHARED* content words with TEXT, at most
 *PROCEDURE-RELATED-OFFER-LIMIT* of them. A procedure whose pattern matches
 TEXT is left out: PROCEDURE-OFFERS either offers it exactly or has a reason,
@@ -218,11 +212,8 @@ the model choosing one and supplying its parameters."
            (loop for entry in (knowledge-base-procedures (knowledge-base-read configuration)
                                                          (knowledge--workspace configuration))
                  for status = (procedure-entry-status entry)
-                 for procedure = (getf (if (eq status ':admitted)
-                                           (procedure-entry-runnable-version entry)
-                                           (procedure-entry-version entry))
-                                       :procedure)
-                 for shared = (and (member status '(:admitted :candidate))
+                 for procedure = (getf (procedure-entry-runnable-version entry) :procedure)
+                 for shared = (and (eq status ':active)
                                    procedure
                                    (not (nth-value 1 (procedure-match-input procedure text)))
                                    (intersection words (procedure--vocabulary procedure)
@@ -243,7 +234,7 @@ the model choosing one and supplying its parameters."
 
 (-> procedure-savings (configuration string) (option list))
 (defun procedure-savings (configuration identifier)
-  "Return measured costs of completed model turns running IDENTIFIER's admitted definition.
+  "Return measured costs of completed model turns running IDENTIFIER's active definition.
 
 The plist holds :TURNS and average :REQUESTS and :TOKENS. Runs without exact
 version and definition provenance or complete usage measurements do not count."
@@ -264,7 +255,7 @@ version and definition provenance or complete usage measurements do not count."
   "Return the one offer for request TEXT that may run before the model reads the request, or NIL.
 
 Running without the model's reading needs more than a fit. The procedure must
-be admitted; every word of its request pattern that is not a parameter must
+be active; every word of its request pattern that is not a parameter must
 be literal, so a varying word such as \"Please\" or \"Never\" cannot match
 anything; and completed model turns running this exact definition must have
 used fewer measured requests and tokens than its learning baseline. Anything
@@ -272,7 +263,7 @@ less is an offer the model may decline."
   (let ((candidates
           (remove-if-not
            (lambda (offer)
-             (and (eq (getf offer :status) ':admitted)
+             (and (eq (getf offer :status) ':active)
                   (every (lambda (element)
                            (or (stringp element) (eq (first element) :param)))
                          (getf (rest (getf offer :procedure)) :input))
@@ -280,22 +271,12 @@ less is an offer the model may decline."
            (procedure-offers configuration text))))
     (and (= 1 (length candidates)) (first candidates))))
 
-(-> procedure-admission-command (string list) string)
-(defun procedure-admission-command (identifier version)
-  "Return the command text a person approves to admit VERSION of procedure IDENTIFIER."
-  (format nil "procedure.admit -- ~A v~D: ~{~A~^, ~}"
-          identifier (getf version :version)
-          (mapcar (lambda (step) (getf step :tool))
-                  (getf (rest (getf version :procedure)) :steps))))
-
 
 ;;;; -- Private Functions --
 
-(-> procedure--runnable-entry (tool-context string keyword) list)
-(defun procedure--runnable-entry (context identifier caller)
-  "Return IDENTIFIER's entry ready to run, admitting a never-admitted procedure first.
-
-The user's own run admits it; the model's run asks command authorization."
+(-> procedure--runnable-entry (tool-context string) list)
+(defun procedure--runnable-entry (context identifier)
+  "Return IDENTIFIER's active entry, or explain why it cannot run."
   (let* ((configuration (tool-context-configuration context))
          (workspace     (knowledge--workspace configuration))
          (entry         (knowledge-base-procedure (knowledge-base-read configuration)
@@ -304,31 +285,20 @@ The user's own run admits it; the model's run asks command authorization."
       (knowledge--fail ':unknown-procedure identifier
                        "No procedure is named ~A; memory:procedures lists them." identifier))
     (ecase (procedure-entry-status entry)
-      (:admitted
+      (:active
        entry)
       (:retired
        (knowledge--fail ':procedure-retired identifier
                         "Procedure ~A was retired; it no longer runs." identifier))
       (:suspended
        (knowledge--fail ':procedure-suspended identifier
-                        "Procedure ~A is suspended after ~D failed runs in a row, the last: ~A The user can admit it again with (admit-procedure ~S)."
+                        "Procedure ~A is suspended after ~D failed runs in a row, the last: ~A Correct its definition before running it again."
                         identifier (getf entry :consecutive-failures)
-                        (or (getf entry :last-failure) "unknown")
-                        identifier))
-      (:candidate
-       (let* ((version  (procedure-entry-version entry))
-              (decision (if (eq caller ':user)
-                            ':full-access
-                            (tool-context-authorize-command
-                             context
-                             (procedure-admission-command identifier version)
-                             (config :working-directory configuration)))))
-         (when (eq decision ':deny)
-           (knowledge--fail ':procedure-declined identifier
-                            "Admission of procedure ~A was declined, so it did not run. The user can admit it with (admit-procedure ~S)."
-                            identifier identifier))
-         (procedure-admit configuration identifier :version (getf version :version))
-         (knowledge-base-procedure (knowledge-base-read configuration) workspace identifier))))))
+                        (or (getf entry :last-failure) "unknown")))
+      (:inactive
+       (knowledge--fail ':procedure-inactive identifier
+                        "Legacy procedure ~A is inactive; define it again before running it."
+                        identifier)))))
 
 (-> procedure--checked-bindings (list list) list)
 (defun procedure--checked-bindings (procedure parameters)
@@ -377,7 +347,7 @@ Numbers and booleans given as text are read as such first."
   "Reject grounded blockers before any call; defer only possible earlier-call dependencies.
 
 All requirements must have a joint proof on accepted current facts, applicable
-earlier productions, or admitted derivations. Future values stay symbolic and
+earlier productions, or active rules' derivations. Future values stay symbolic and
 are checked again against actual results by the ordinary call dispatch."
   (when (knowledge-active-p configuration)
     (let ((view     (knowledge-view-current configuration))
@@ -425,11 +395,11 @@ are checked again against actual results by the ordinary call dispatch."
 
 (-> procedure--demonstrated-p (configuration string) boolean)
 (defun procedure--demonstrated-p (configuration identifier)
-  "Return true when completed runs of IDENTIFIER's admitted definition saved requests and tokens."
+  "Return true when completed runs of IDENTIFIER's active definition saved requests and tokens."
   (let* ((entry    (knowledge-base-procedure (knowledge-base-read configuration)
                                              (knowledge--workspace configuration)
                                              identifier))
-         (baseline (getf (procedure-entry-version entry (getf entry :admitted)) :baseline))
+         (baseline (getf (procedure-entry-version entry (getf entry :active)) :baseline))
          (savings  (procedure-savings configuration identifier)))
     (and baseline savings
          (realp (getf baseline :requests)) (realp (getf baseline :tokens))

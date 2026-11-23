@@ -4,8 +4,8 @@
 
 ;;; Facts appear inside (memories), and (memory "ID") explains a fact as it
 ;;; explains a memory: (why "ID") is the same command. (what-changed) reports
-;;; what changed since the person last asked, and (rules), (admit-rule), and
-;;; (retire-rule) manage the rules that derive facts.
+;;; what changed since the person last asked. (rules) lists derivations, and
+;;; (retire-rule) stops a rule deriving facts.
 
 (defparameter *knowledge-command-fact-limit* 20
   "The most facts (memories) lists before asking for a query.")
@@ -383,34 +383,26 @@ matches of an ambiguous prefix."
                      (terminal-span ':strong (format nil "~A v~D" (getf entry :id)
                                                      (getf latest :version)))
                      (terminal-span ':dim
-                                    (format nil " ~(~A~)~:[~; · active v~:*~D~]~:[ · awaiting (admit-rule ~S)~;~*~]~%"
-                                            (getf entry :scope) active
-                                            (eql active (getf latest :version))
-                                            (getf entry :id)))
+                                   (format nil " ~(~A~) · ~A~%"
+                                           (getf entry :scope)
+                                           (if active (format nil "active v~D" active) "inactive")))
                      (terminal-span ':plain
                                     (format nil "    ~A~%"
                                             (sanitize-text
-                                             (let ((command (memory-knowledge--admission-command
-                                                             (getf entry :id) (getf latest :version)
-                                                             (getf latest :rule))))
-                                               (subseq command (+ 2 (search ": " command))))
+                                             (memory-knowledge--rule-text (getf latest :rule))
                                              :single-line-p t)))))))))
 
-(-> application-knowledge-rule-transition-entry (application string keyword) list)
-(defun application-knowledge-rule-transition-entry (application identifier kind)
-  "Admit or retire rule IDENTIFIER, as KIND says, and confirm what changed."
+(-> application-knowledge-retire-rule-entry (application string) list)
+(defun application-knowledge-retire-rule-entry (application identifier)
+  "Retire rule IDENTIFIER and confirm what changed."
   (let* ((configuration (application-configuration application))
          (entry         (knowledge-base-rule (knowledge-base-read configuration) identifier
                                              :workspace (knowledge--workspace configuration))))
     (if (null entry)
         (application-failure-line (format nil "no rule ~S exists; (rules) lists them" identifier))
         (handler-case
-            (let ((version (if (eq kind ':admit)
-                               (knowledge-admit-rule configuration identifier
-                                                     :scope (getf entry :scope) :by ':user)
-                               (knowledge-retire-rule configuration identifier
-                                                      :scope (getf entry :scope)))))
-              (list (terminal-span ':success (if (eq kind ':admit) "✓ admitted  " "✓ retired  "))
+            (let ((version (knowledge-retire-rule configuration identifier :scope (getf entry :scope))))
+              (list (terminal-span ':success "✓ retired  ")
                     (terminal-span ':strong (format nil "~A v~D~%" identifier version))))
           (knowledge-error (condition)
             (application-failure-line (autolith-error-message condition)))))))
@@ -434,28 +426,12 @@ matches of an ambiguous prefix."
     (:name              "rules"
      :argument          nil
      :description       "list the rules that derive facts"
-     :tip               "show the latest version and whether it is admitted for all rules."
+     :tip               "show the latest and active versions of all rules."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
     (application)
   (application-present application (application-knowledge-rules-entry application))
-  ':continue)
-
-(define-application-command application--builtin-admit-rule-command
-    (:name              "admit-rule"
-     :argument          "[ID]"
-     :description       "admit a proposed rule"
-     :tip               "admit a proposed rule so it may be used to derive facts, the latest version replaces earlier ones."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
-    (application &optional identifier)
-  (application-present
-   application
-   (if identifier
-       (application-knowledge-rule-transition-entry application identifier ':admit)
-       (application-failure-line "usage: (admit-rule \"ID\"); (rules) lists rules")))
   ':continue)
 
 (define-application-command application--builtin-retire-rule-command
@@ -470,6 +446,6 @@ matches of an ambiguous prefix."
   (application-present
    application
    (if identifier
-       (application-knowledge-rule-transition-entry application identifier ':retire)
+       (application-knowledge-retire-rule-entry application identifier)
        (application-failure-line "usage: (retire-rule \"ID\"); (rules) lists rules")))
   ':continue)

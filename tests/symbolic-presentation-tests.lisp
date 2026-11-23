@@ -58,12 +58,12 @@
 (defun test-symbolic-command-styles ()
   "Keep textual procedure and diagnosis states visible beyond their status icons."
   (with-test-configuration (configuration)
-    (dolist (case '((:candidate :notice nil nil 0)
-                    (:admitted :success 1 nil 0)
+    (dolist (case '((:inactive :notice nil nil 0)
+                    (:active :success 1 nil 0)
                     (:suspended :failure 1 nil 2)
                     (:retired :dim 1 t 0)))
-      (destructuring-bind (status style admitted retired failures) case
-        (let* ((entry (list :id "report" :admitted admitted :retired-p retired
+      (destructuring-bind (status style active retired failures) case
+        (let* ((entry (list :id "report" :active active :retired-p retired
                             :consecutive-failures failures :runs 3 :failures failures
                             :versions '((:version 1 :procedure (:procedure :steps ((:tool "report.build")))))))
                (spans (application-procedures--entry-lines configuration entry)))

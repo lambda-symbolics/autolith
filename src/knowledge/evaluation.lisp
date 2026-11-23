@@ -558,7 +558,7 @@ are independent support paths even when their propositions agree."
 
 (-> knowledge--run-rule (knowledge-view list) null)
 (defun knowledge--run-rule (view item)
-  "Derive every conclusion of one admitted rule ITEM, (ENTRY VERSION RULE), within limits."
+  "Derive every conclusion of one active rule ITEM, (ENTRY VERSION RULE), within limits."
   (destructuring-bind (entry version rule) item
     (let ((positive (remove-if #'knowledge-negation-p (getf (rest rule) :premises)))
           (negative (remove-if-not #'knowledge-negation-p (getf (rest rule) :premises))))
@@ -642,7 +642,7 @@ are independent support paths even when their propositions agree."
   "Return the view of BASE from WORKSPACE, with evidence decided by CHECK.
 
 GOALS, a list of predicates, limits rule evaluation to rules that can
-contribute to them; by default every admitted rule runs. A view whose work
+contribute to them; by default every active rule runs. A view whose work
 limits were reached lists the unfinished rules as incomplete; their absent
 conclusions are unknown, never false."
   (let ((view (make-instance 'knowledge-view

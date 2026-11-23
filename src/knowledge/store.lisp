@@ -33,7 +33,7 @@
   "The most retracted supports a folded base keeps resident before archiving the oldest.")
 
 (deftype knowledge-admitter ()
-  "Who admitted a rule or a contract: the person, trusted Lisp, or the permission its tool call was granted."
+  "Who admitted a contract: the person, trusted Lisp, or the permission its tool call was granted."
   '(member :user :trusted-lisp :sandboxed :full-access))
 
 (deftype knowledge-basis ()
@@ -132,7 +132,7 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-procedures-table
     :type          hash-table
-    :documentation "Learned procedure entries by (WORKSPACE IDENTIFIER): versions, admission, and runs.")
+    :documentation "Learned procedure entries by (WORKSPACE IDENTIFIER): versions, activation, and runs.")
    (diagnoses
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-diagnoses-table
@@ -288,6 +288,8 @@ Without a configuration, as in standalone tool registries, knowledge is active."
             (and (knowledge--scope-valid-p (getf properties :scope)
                                            (getf properties :workspace))
                  (knowledge-rule-p (getf properties :rule))
+                 ;; Untagged definitions retain legacy replay semantics until 0.69.0.
+                 (member (getf properties :activation) '(nil :automatic))
                  (typep (getf properties :time) 'timestamp))))
          ((:rule-admitted :rule-retired)
           (let ((properties (rest record)))
@@ -464,7 +466,10 @@ by a newer generation stays readable after a rollback."
                                      :time    (getf properties :time)
                                      :source-conversation
                                      (getf properties :source-conversation))))
-                 (gethash key (knowledge-base-rules base)) entry)))
+                 (gethash key (knowledge-base-rules base)) entry)
+           (when (eq (getf properties :activation) ':automatic)
+             (setf (getf entry :active) (length (getf entry :versions))))))
+        ;; Replay-only admission history, removable with the 0.69.0 log migration.
         ((:rule-admitted :rule-retired)
          (let* ((key   (list (getf properties :scope) (getf properties :workspace)
                              (getf properties :id)))

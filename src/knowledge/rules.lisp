@@ -596,7 +596,7 @@ restricted, not well typed, or exceeds its bounds."
 
 (-> knowledge-base-active-rules (knowledge-base &key (:workspace (option string))) list)
 (defun knowledge-base-active-rules (base &key workspace)
-  "Return (ENTRY VERSION RULE) for each admitted rule visible from WORKSPACE."
+  "Return (ENTRY VERSION RULE) for each active rule visible from WORKSPACE."
   (loop for entry in (knowledge-base-rule-entries base :workspace workspace)
         for version = (getf entry :active)
         when version
@@ -630,7 +630,7 @@ restricted, not well typed, or exceeds its bounds."
     (values list list boolean))
 (defun knowledge--plan-rule-definition
     (base rule &key scope workspace viewer source-conversation)
-  "Return definition records, proposal result, and write-p for RULE against BASE."
+  "Return definition records, definition result, and write-p for active RULE against BASE."
   (let* ((prepared (knowledge-make-rule
                     :id          (getf rule :id)
                     :premises    (getf rule :premises)
@@ -647,13 +647,15 @@ restricted, not well typed, or exceeds its bounds."
          (entry    (gethash key (knowledge-base-rules base)))
          (latest   (first (last (getf entry :versions)))))
     (knowledge--check-acyclic base key :rule prepared :workspace viewer)
-    (if (and latest (equal (getf latest :rule) prepared))
+    (if (and latest (equal (getf latest :rule) prepared)
+             (eql (getf entry :active) (getf latest :version)))
         (values nil (list (getf rule :id) (getf latest :version) nil) nil)
         (values (list (list :rule-defined
                             :version *knowledge-format-version*
                             :scope               scope
                             :workspace           workspace
                             :rule                prepared
+                            :activation          ':automatic
                             :time                (get-universal-time)
                             :source-conversation source-conversation))
                 (list (getf rule :id) (1+ (length (getf entry :versions))) t)
@@ -666,9 +668,11 @@ restricted, not well typed, or exceeds its bounds."
     (values string integer boolean))
 (defun knowledge-propose-rule (configuration &key id premises guards bindings conclusion description
                                          (scope ':workspace) source-conversation)
-  "Validate and record a new version of rule ID, inactive until admitted.
+  "Validate, record, and activate a new version of rule ID.
 
-Return the rule ID, its version, and whether it differs from the latest one."
+An unchanged active definition adds no version. Redefining an inactive rule
+activates a new version. Return the rule ID, its version, and whether a
+version was added."
   (let ((workspace (knowledge--owner configuration scope))
         (viewer    (knowledge--workspace configuration)))
     (values-list
@@ -680,54 +684,21 @@ Return the rule ID, its version, and whether it differs from the latest one."
                     :conclusion conclusion :description description)
          :scope scope :workspace workspace :viewer viewer :source-conversation source-conversation))))))
 
-(-> knowledge--rule-transition
-    (configuration string keyword &key (:scope memory-scope) (:version (option integer))
-                                       (:by (option knowledge-admitter)))
-    integer)
-(defun knowledge--rule-transition (configuration id kind &key (scope ':workspace) version by)
-  "Record admission or retirement KIND of rule ID and return the affected version."
-  (let ((workspace (knowledge--owner configuration scope))
-        (viewer    (knowledge--workspace configuration)))
+(-> knowledge-retire-rule (configuration string &key (:scope memory-scope)) integer)
+(defun knowledge-retire-rule (configuration id &key (scope ':workspace))
+  "Deactivate rule ID and return its latest version; its conclusions lose that support."
+  (let ((workspace (knowledge--owner configuration scope)))
     (knowledge-transact
      configuration
      (lambda (base)
-       (let* ((key      (list scope workspace id))
-              (entry    (gethash key (knowledge-base-rules base)))
-              (selected (or version (length (getf entry :versions)))))
+       (let* ((entry   (gethash (list scope workspace id) (knowledge-base-rules base)))
+              (version (length (getf entry :versions))))
          (unless entry
            (knowledge--fail ':unknown-rule id "No ~(~A~) rule ~A exists." scope id))
-         (unless (knowledge-rule-entry-version entry selected)
-           (knowledge--fail ':unknown-rule id "Rule ~A has no version ~A." id selected))
-         (when (eq kind :rule-admitted)
-           (knowledge--check-acyclic base key
-                                     :rule      (getf (knowledge-rule-entry-version entry selected) :rule)
-                                     :workspace viewer))
-         (if (eql (getf entry :active) (and (eq kind :rule-admitted) selected))
-             (values nil selected nil)
-             (values (list (list kind
-                                 :version      *knowledge-format-version*
-                                 :scope        scope
-                                 :workspace    workspace
-                                 :id           id
-                                 :rule-version selected
-                                 :by           by
-                                 :time         (get-universal-time)))
-                     selected
-                     t)))))))
-
-(-> knowledge-admit-rule
-    (configuration string &key (:scope memory-scope) (:version (option integer))
-                               (:by (option knowledge-admitter)))
-    integer)
-(defun knowledge-admit-rule (configuration id &key (scope ':workspace) version by)
-  "Activate VERSION of rule ID, by default its latest, and return that version.
-
-BY records who admitted it. The version replaces any earlier active one, so its
-conclusions replace those derived by the earlier version."
-  (knowledge--rule-transition configuration id :rule-admitted
-                              :scope scope :version version :by by))
-
-(-> knowledge-retire-rule (configuration string &key (:scope memory-scope)) integer)
-(defun knowledge-retire-rule (configuration id &key (scope ':workspace))
-  "Deactivate rule ID; what it derived is no longer supported by it."
-  (knowledge--rule-transition configuration id :rule-retired :scope scope))
+         (if (null (getf entry :active))
+             (values nil version nil)
+             (values (list (list :rule-retired
+                                 :version *knowledge-format-version*
+                                 :scope scope :workspace workspace :id id
+                                 :rule-version version :time (get-universal-time)))
+                     version t)))))))

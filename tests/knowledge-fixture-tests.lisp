@@ -187,9 +187,8 @@
      (let ((result (knowledge-fixture--edit fixture (json-object "op" "recipe-use"
                                                                  "recipe" "service-dependencies"))))
        (knowledge-fixture--check fixture
-                                 (and (search "Defined service.status version 1." result)
-                                      (search "Admitted rule dependency-down version 1." result))
-                                 "recipe-use defines the predicates and admits the rules once approved"))
+                                 (search "Defined service.status version 1." result)
+                                 "recipe-use defines the predicates"))
      (knowledge-fixture--say fixture "The api depends on the db, and the db is down.")
      (knowledge-fixture--edit
       fixture
@@ -242,7 +241,7 @@
                  (read-sequence bytes stream)
                  bytes)))
 
-           (recipe-call (fixture operation &optional context)
+           (recipe-call (fixture operation)
              (tool-registry-execute-call
               (knowledge-fixture-registry fixture)
               (json-object "namespace" "resource"
@@ -255,7 +254,7 @@
                                           (knowledge-fixture--read fixture "memory:facts" "max-results" 1)
                                           "Revision: ")
                                          "operations" (vector operation))))
-              (or context (knowledge-fixture-context fixture)))))
+              (knowledge-fixture-context fixture))))
     (knowledge-fixture--call-with
      "recipe-atomicity-conflict"
      (lambda (fixture)
@@ -332,42 +331,6 @@
                (null (knowledge-base-schema base "event.buffer" :workspace workspace))
                (null (knowledge-base-rule base "departure" :workspace workspace)))
           "rule validation failure leaves the recipe log unchanged"))))
-    (knowledge-fixture--call-with
-     "recipe-atomicity-denial"
-     (lambda (fixture)
-       (let* ((configuration (knowledge-fixture-configuration fixture))
-              (conversation  (knowledge-fixture-conversation fixture))
-              (denied        (make-instance
-                              'tool-context
-                              :configuration configuration
-                              :worker        nil
-                              :conversation  conversation
-                              :command-authorization-function
-                              (lambda (command directory)
-                                (declare (ignore command directory))
-                                ':deny)))
-              (result        (recipe-call fixture
-                                          (json-object "op" "recipe-use"
-                                                       "recipe" "appointments")
-                                          denied))
-              (base          (knowledge-base-read configuration))
-              (workspace     (knowledge--workspace configuration))
-              (entry         (knowledge-base-rule base "departure" :workspace workspace)))
-         (knowledge-fixture--check
-          fixture
-          (and (tool-result-success-p result)
-               (search "admission was declined" (tool-result-content result)))
-          "a denied recipe admission reports the inactive proposal")
-         (knowledge-fixture--check
-          fixture
-          (and (every (lambda (predicate)
-                        (knowledge-base-schema base predicate :workspace workspace))
-                      '("event.start" "event.travel" "event.buffer" "event.departure"))
-               entry
-               (null (getf entry :active))
-               (null (knowledge-fixture--holds fixture
-                                               '("event.departure" "?event" "?time"))))
-          "a denied recipe keeps every schema and its inactive rule without deriving facts"))))
    nil))
 
 

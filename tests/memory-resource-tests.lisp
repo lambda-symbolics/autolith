@@ -1390,11 +1390,8 @@
           (test-assert (and (tool-result-success-p defined)
                             (search "Defined event.start version 1" (content defined))
                             (search "now holds: review starts at 2026-10-22 13:00 UTC"
-                                    (content defined))
-                            (search "admission was declined, so it derives nothing"
                                     (content defined)))
-                       "one edit defines predicates, asserts facts, and proposes a rule"))
-        (knowledge-admit-rule configuration "departure")
+                       "one edit defines predicates, asserts facts, and defines a rule"))
         (let* ((facts     (content (read-resource "memory:facts")))
                (line      (find-if (lambda (line) (search "leave for review" line))
                                    (uiop:split-string facts :separator '(#\Newline))))
@@ -1415,9 +1412,6 @@
         (test-assert (search "query and max-results were ignored"
                              (content (read-resource "memory:predicates" "query" "release")))
                      "a query on a view that cannot search is ignored with a note")
-        (test-assert (search "departure v1 workspace: active version 1"
-                             (content (read-resource "memory:rules")))
-                     "memory:rules lists the admitted rule")
         (test-assert (search "count: 4 (showing 1;"
                              (content (read-resource "memory:facts" "query" "review"
                                                      "max-results" 1)))
@@ -1676,61 +1670,4 @@
                                 conversation url "The appendix is verified."
                                 :configuration configuration))
                          "corrupt retained content cannot certify a quotation"))))))
-  nil)
-
-(-> test-memory-knowledge-rule-admission () null)
-(defun test-memory-knowledge-rule-admission ()
-  "Test that a proposed rule is admitted exactly when command authorization allows it."
-  (with-test-configuration (configuration)
-    (knowledge-tests--define-appointments configuration)
-    (let* ((registry     (make-default-tool-registry))
-           (conversation (conversation-create configuration :identifier "rule-admission"))
-           (requests     nil))
-      (flet ((propose (decision description)
-               "Propose a departure rule version as a context deciding DECISION would."
-               (let ((context (make-instance 'tool-context
-                                             :configuration configuration
-                                             :worker        nil
-                                             :conversation  conversation
-                                             :command-authorization-function
-                                             (lambda (command directory)
-                                               (declare (ignore directory))
-                                               (push command requests)
-                                               decision))))
-                 (test-resource-call
-                  registry context
-                  :namespace "resource"
-                  :name      "edit"
-                  :arguments (list "uri" "memory:facts"
-                                   "base-revision" (test-resource-field
-                                                    (tool-result-content
-                                                     (test-resource-call
-                                                      registry context
-                                                      :namespace "resource"
-                                                      :name      "read"
-                                                      :arguments (list "uri" "memory:facts")))
-                                                    "Revision: ")
-                                   "operations" (vector (json-object
-                                                         "op" "rule-propose" "id" "departure"
-                                                         "description" description
-                                                         "premises" (vector (vector "event.start" "?e" "?s")
-                                                                            (vector "event.travel" "?e" "?t"))
-                                                         "bindings" (vector (vector "?l" (vector "-" "?s" "?t")))
-                                                         "conclusion" (vector "event.departure" "?e" "?l"))))))))
-        (test-assert (and (search "admission was declined" (tool-result-content
-                                                            (propose ':deny "first")))
-                          (null (knowledge-base-active-rules (knowledge-base-read configuration)
-                                                             :workspace (namestring
-                                                                         (config :working-directory
-                                                                                 configuration)))))
-                     "a declined rule stays inactive")
-        (test-assert (equal (first requests)
-                            "rule.admit -- departure v1: event.start(?e, ?s) and event.travel(?e, ?t) with ?l = (?s - ?t) => event.departure(?e, ?l)")
-                     "the person approves a readable statement of the rule")
-        (test-assert (search "Admitted rule departure version 2"
-                             (tool-result-content (propose ':sandboxed "second")))
-                     "an allowed proposal is admitted at once")
-        (test-assert (search "unchanged and active"
-                             (tool-result-content (propose ':deny "second")))
-                     "proposing the active rule again asks nothing"))))
   nil)

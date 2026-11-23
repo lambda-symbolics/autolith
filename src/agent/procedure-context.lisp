@@ -5,9 +5,9 @@
 ;;; When the latest request fits a learned procedure's request pattern, the
 ;;; model is shown the one procedure.run call that makes the same tool calls
 ;;; the earlier turns made, with the parameters the request supplies. An
-;;; admitted procedure the request fits runs before the model's first request,
-;;; recorded as that procedure.run call, so the model answers from its results
-;;; in one request; admission is the consent to run it this way. A request no
+;;; active procedure with demonstrated savings runs before the model's first
+;;; request when the pattern matches exactly, recorded as that procedure.run
+;;; call, so the model answers from its results in one request. A request no
 ;;; pattern matches may still share its wording with a procedure; such related
 ;;; procedures are only listed as possible fits for the model to choose among,
 ;;; with their parameters to fill in, and never run on their own.
@@ -60,8 +60,8 @@
 (defun procedure-offer-line (offer)
   "Return the line offering OFFER: its calls and the procedure.run arguments to use."
   (let ((procedure (getf offer :procedure)))
-    (format nil "~A (~:[learned, not yet admitted; running it asks for admission~;admitted~]; calls ~{~A~^, ~}): procedure.run ~A"
-            (getf offer :id) (eq (getf offer :status) ':admitted)
+    (format nil "~A (active; calls ~{~A~^, ~}): procedure.run ~A"
+            (getf offer :id)
             (mapcar (lambda (step) (getf step :tool)) (getf (rest procedure) :steps))
             (procedure-describe-call procedure (getf offer :bindings)))))
 
@@ -70,8 +70,8 @@
   "Return the line listing related OFFER: its calls, request pattern, and parameters to fill."
   (let* ((procedure  (getf offer :procedure))
          (parameters (getf (rest procedure) :parameters)))
-    (format nil "~A (~:[learned, not yet admitted~;admitted~]; calls ~{~A~^, ~}; learned from requests like ~S~:[~;; parameters ~:*~{~A~^, ~}~]; shares ~{~A~^, ~}): procedure.run {\"id\":~S,\"parameters\":{...}}"
-            (getf offer :id) (eq (getf offer :status) ':admitted)
+    (format nil "~A (active; calls ~{~A~^, ~}; learned from requests like ~S~:[~;; parameters ~:*~{~A~^, ~}~]; shares ~{~A~^, ~}): procedure.run {\"id\":~S,\"parameters\":{...}}"
+            (getf offer :id)
             (mapcar (lambda (step) (getf step :tool)) (getf (rest procedure) :steps))
             (or (procedure-input-text procedure) "")
             (mapcar (lambda (parameter)
@@ -168,7 +168,7 @@ failure while learning is not the turn's failure: nothing is reported."
 The run is recorded as the procedure.run call the model would have made and
 executed through the ordinary tool path, so each call keeps its approval and
 the model's first request already sees every result. Only an offer
-PROCEDURE-AUTOMATIC-OFFER allows runs this way: admitted, matched word for
+PROCEDURE-AUTOMATIC-OFFER allows runs this way: active, matched word for
 word apart from its parameters, and already shown to save requests. Nothing
 runs for an automatic turn, a turn without tools or with restricted tools, or
 a child agent."

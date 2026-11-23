@@ -75,8 +75,8 @@
            :premises         (append '(("report.built" "?file"))
                                      (when (member case '(:derived-negation :missing-negation))
                                        '((:not ("report.blocked" "?file")))))
-           :conclusion       '("report.ready" "?file"))
-          (knowledge-admit-rule configuration "built-ready"))
+           :conclusion       '("report.ready" "?file")))
+
         (when (eq case ':derived-negation)
           (knowledge-tests--said configuration "report.blocked" '("q1") :quote "q1 is not blocked" :negated t))
         (knowledge-define-contract
@@ -140,22 +140,21 @@
                                      '(:object ("file" (:json "\"q1\""))
                                                ("token" (:from 0 ("id"))))
                                      '(:object ("file" (:json "\"q1\""))))))))
-        (procedure-admit configuration "preflight-report")
         (let ((outcome (handler-case
-                           (let ((*knowledge-step-limit* (if (eq case ':search-exhaustion)
-                                                             0 *knowledge-step-limit*)))
-                             (procedure-run context "preflight-report"))
-                         (knowledge-error (condition) condition))))
-          (test-assert
-           (if blocked-p
-               (and (typep outcome 'knowledge-error)
-                    (null (learning-tests--scripted-tool-calls build))
-                    (null (learning-tests--scripted-tool-calls send)))
-               (and (listp outcome) (eq (getf outcome :status) ':ok)
-                    (= 1 (length (learning-tests--scripted-tool-calls build)))
-                    (= 1 (length (learning-tests--scripted-tool-calls send)))))
-           (format nil "~(~A~): grounded preflight ~A before any unwanted effects"
-                   case (if blocked-p "refuses" "permits the dependency")))))))
+                        (let ((*knowledge-step-limit* (if (eq case ':search-exhaustion)
+                                                          0 *knowledge-step-limit*)))
+                          (procedure-run context "preflight-report"))
+                        (knowledge-error (condition) condition))))
+         (test-assert
+          (if blocked-p
+              (and (typep outcome 'knowledge-error)
+                   (null (learning-tests--scripted-tool-calls build))
+                   (null (learning-tests--scripted-tool-calls send)))
+              (and (listp outcome) (eq (getf outcome :status) ':ok)
+                   (= 1 (length (learning-tests--scripted-tool-calls build)))
+                   (= 1 (length (learning-tests--scripted-tool-calls send)))))
+          (format nil "~(~A~): grounded preflight ~A before any unwanted effects"
+                  case (if blocked-p "refuses" "permits the dependency")))))))
   nil)
 
 (-> test-procedure-preflight-rule-bindings () null)
@@ -202,7 +201,6 @@
                                 :bindings         '(("?next" ("+" "?count" 1)))
                                 :guards           '((">" "?next" 4))
                                 :conclusion       '("report.capacity" "?file" "?next"))
-        (knowledge-admit-rule configuration "measure-capacity")
         (knowledge-define-contract
          configuration :id "build-measure" :tool "report.build"
          :observes (vector (json-object "predicate" "report.measure"
@@ -212,14 +210,13 @@
                                    :when     (json-object "file" "?file" "amount" "?amount")
                                    :requires '(("report.capacity" "?file" "?amount")))
         (procedure-define configuration procedure)
-        (procedure-admit configuration "capacity-report")
         (unless refused-p
-          (let ((revision (knowledge-base-revision (knowledge-base-read configuration))))
-            (procedure--check-contracts configuration procedure nil)
-            (test-assert (and (= revision (knowledge-base-revision (knowledge-base-read configuration)))
-                              (null (knowledge-view-holds (knowledge-view-current configuration)
-                                                          '("report.measure" "q1" "?n"))))
-                         "symbolic dependency proofs do not publish speculative facts")))
+         (let ((revision (knowledge-base-revision (knowledge-base-read configuration))))
+           (procedure--check-contracts configuration procedure nil)
+           (test-assert (and (= revision (knowledge-base-revision (knowledge-base-read configuration)))
+                             (null (knowledge-view-holds (knowledge-view-current configuration)
+                                                         '("report.measure" "q1" "?n"))))
+                        "symbolic dependency proofs do not publish speculative facts")))
         (let ((outcome (handler-case (procedure-run context "capacity-report")
                          (knowledge-error (condition) condition))))
           (test-assert
@@ -290,8 +287,8 @@
            :guards           (when (member case '(:unknown-guard :false-guard)) '((">" "?count" 4)))
            :conclusion       (if (eq case ':computed-opposition)
                                  '("report.capacity" "?file" "?next")
-                                 '(:not ("report.built" "?file"))))
-          (knowledge-admit-rule configuration "measure-consequence"))
+                                 '(:not ("report.built" "?file")))))
+
         (knowledge-define-contract
          configuration :id "build-observation" :tool "report.build"
          :observes
@@ -317,18 +314,17 @@
          '(:procedure :id "conflict-report"
            :steps ((:tool "report.build" :arguments (:object))
                    (:tool "mail.send" :arguments (:object)))))
-        (procedure-admit configuration "conflict-report")
         (let ((outcome (handler-case (procedure-run context "conflict-report")
-                         (knowledge-error (condition) condition))))
-          (test-assert
-           (if blocked-p
-               (and (typep outcome 'knowledge-error)
-                    (null (learning-tests--scripted-tool-calls build))
-                    (null (learning-tests--scripted-tool-calls send)))
-               (and (listp outcome) (eq (getf outcome :status) ':ok)
-                    (= 1 (length (learning-tests--scripted-tool-calls build)))
-                    (= 1 (length (learning-tests--scripted-tool-calls send)))))
-           (format nil "~(~A~): distinguish inevitable conflict from unknown future values" case))))))
+                        (knowledge-error (condition) condition))))
+         (test-assert
+          (if blocked-p
+              (and (typep outcome 'knowledge-error)
+                   (null (learning-tests--scripted-tool-calls build))
+                   (null (learning-tests--scripted-tool-calls send)))
+              (and (listp outcome) (eq (getf outcome :status) ':ok)
+                   (= 1 (length (learning-tests--scripted-tool-calls build)))
+                   (= 1 (length (learning-tests--scripted-tool-calls send)))))
+          (format nil "~(~A~): distinguish inevitable conflict from unknown future values" case))))))
   nil)
 
 (-> test-procedure-preflight-shared-future-conflicts () null)
@@ -361,8 +357,8 @@
           (knowledge-tests--said configuration "report.ready" '("a") :quote "a is ready")
           (knowledge-propose-rule configuration :id "seed-copy"
                                  :premises          '(("report.seed" "?file"))
-                                 :conclusion        '("report.copy" "?file"))
-          (knowledge-admit-rule configuration "seed-copy"))
+                                 :conclusion        '("report.copy" "?file")))
+
         (knowledge-propose-rule
          configuration :id "future-opposition"
          :premises         (case case
@@ -378,7 +374,6 @@
          :conclusion       (if (eq case ':nested-alias)
                                '(:not ("report.ready" "a"))
                                '(:not ("report.ready" "?file"))))
-        (knowledge-admit-rule configuration "future-opposition")
         (knowledge-define-contract
          configuration :id "shared-observations" :tool "report.build"
          :observes
@@ -409,14 +404,13 @@
          '(:procedure :id "shared-conflict-report"
            :steps ((:tool "report.build" :arguments (:object))
                    (:tool "mail.send" :arguments (:object)))))
-        (procedure-admit configuration "shared-conflict-report")
         (let ((outcome (handler-case (procedure-run context "shared-conflict-report")
-                         (knowledge-error (condition) condition))))
-          (test-assert (and (typep outcome 'knowledge-error)
-                            (null (learning-tests--scripted-tool-calls build))
-                            (null (learning-tests--scripted-tool-calls send)))
-                       (format nil "~(~A~): shared symbolic observations cannot prove an undisputed requirement"
-                               case))))))
+                        (knowledge-error (condition) condition))))
+         (test-assert (and (typep outcome 'knowledge-error)
+                           (null (learning-tests--scripted-tool-calls build))
+                           (null (learning-tests--scripted-tool-calls send)))
+                      (format nil "~(~A~): shared symbolic observations cannot prove an undisputed requirement"
+                              case))))))
   nil)
 
 (-> test-procedure-preflight-proof-dependencies () null)
@@ -459,12 +453,11 @@
          :guards           (when (eq case ':selected-false-guard) '((">" "?count" 4)))
          :conclusion       (if (eq case ':selected-computation-mismatch)
                                '("report.capacity" "?file" "?next") '("report.ready" "?file")))
-        (knowledge-admit-rule configuration "derive-requirement")
         (unless numeric-p
-          (knowledge-propose-rule configuration :id "anchor-opposition"
-                                 :premises          '(("report.anchor" "?file"))
-                                 :conclusion        '(:not ("report.seed" "?file")))
-          (knowledge-admit-rule configuration "anchor-opposition"))
+         (knowledge-propose-rule configuration :id "anchor-opposition"
+                                :premises          '(("report.anchor" "?file"))
+                                :conclusion        '(:not ("report.seed" "?file"))))
+
         (knowledge-define-contract
          configuration :id "dependency-observations" :tool "report.build"
          :observes (if numeric-p
@@ -485,16 +478,15 @@
          '(:procedure :id "dependency-report"
            :steps ((:tool "report.build" :arguments (:object))
                    (:tool "mail.send" :arguments (:object)))))
-        (procedure-admit configuration "dependency-report")
         (let ((outcome (handler-case (procedure-run context "dependency-report")
-                         (knowledge-error (condition) condition))))
-          (test-assert
-           (if (eq case ':clean-alternative)
-               (and (listp outcome) (eq (getf outcome :status) ':ok)
-                    (= 1 (length (learning-tests--scripted-tool-calls build)))
-                    (= 1 (length (learning-tests--scripted-tool-calls send))))
-               (and (typep outcome 'knowledge-error)
-                    (null (learning-tests--scripted-tool-calls build))
-                    (null (learning-tests--scripted-tool-calls send))))
-           (format nil "~(~A~): final bindings must preserve a complete admissible proof" case))))))
+                        (knowledge-error (condition) condition))))
+         (test-assert
+          (if (eq case ':clean-alternative)
+              (and (listp outcome) (eq (getf outcome :status) ':ok)
+                   (= 1 (length (learning-tests--scripted-tool-calls build)))
+                   (= 1 (length (learning-tests--scripted-tool-calls send))))
+              (and (typep outcome 'knowledge-error)
+                   (null (learning-tests--scripted-tool-calls build))
+                   (null (learning-tests--scripted-tool-calls send))))
+          (format nil "~(~A~): final bindings must preserve a complete admissible proof" case))))))
   nil)

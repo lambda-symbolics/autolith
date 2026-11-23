@@ -506,12 +506,12 @@ your models have.
 * Follow facts through rules
 :PROPERTIES:
 :ID: symbolic-rules
-:VERSION: 1
+:VERSION: 2
 :END:
-An admitted *rule* derives facts locally. Move a meeting and its calculated departure time changes without a model request.
+A *rule* becomes active on definition and derives facts locally. Move a meeting and its calculated departure time changes without a model request.
 
-=(rules)=                   inspect versions and admission
-=(admit-rule "departure")=  approve a proposed rule
+=(rules)=                   inspect latest and active versions
+=(retire-rule "departure")= stop a rule deriving facts
 =(what-changed)=            inspect changes and their causes
 
 Use =(why "ID")= to inspect a conclusion's premises.
@@ -532,13 +532,13 @@ Unsatisfied requirements appear as blocked.
 * Reuse a learned sequence
 :PROPERTIES:
 :ID: symbolic-procedures
-:VERSION: 1
+:VERSION: 2
 :END:
-Autolith can learn a *parameterized procedure* locally after repeating the same tool-call sequence in three successful turns.
+Autolith learns and activates a *parameterized procedure* locally after repeating the same tool-call sequence in three successful turns.
 
-=(procedures)=  inspect calls, admission, runs, and measured savings
+=(procedures)=  inspect calls, status, runs, and measured savings
 
-Automatic reuse requires successful runs of the *exact admitted version* with measured savings in both model requests and tokens.
+Automatic reuse requires successful runs of the *exact active version* with measured savings in both model requests and tokens.
 
 Use =(retire-procedure "NAME")= to stop using and learning that procedure.
 

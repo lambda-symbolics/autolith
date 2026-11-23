@@ -9,7 +9,7 @@
   "The most parameters one procedure takes.")
 
 (defparameter *procedure-suspension-limit* 2
-  "How many consecutive failed runs suspend an admitted procedure.")
+  "How many consecutive failed runs suspend an active procedure.")
 
 (defparameter *procedure-failure-limit* 400
   "The most characters of a failed run's reason kept in the log.")
@@ -19,8 +19,8 @@
   '(member :string :integer :number :boolean))
 
 (deftype procedure-status ()
-  "Where a procedure stands: learned, approved to run, stopped by failures, or rejected."
-  '(member :candidate :admitted :suspended :retired))
+  "Whether a procedure is active, suspended, retired, or inactive legacy history."
+  '(member :inactive :active :suspended :retired))
 
 
 ;;;; -- Validation --
@@ -111,6 +111,8 @@
          (ecase (first record)
            (:procedure-defined
             (and (procedure-p (getf properties :procedure))
+                 ;; Untagged definitions and admission records replay until 0.69.0.
+                 (member (getf properties :activation) '(nil :automatic))
                  (proper-list-p (getf properties :examples))
                  (proper-list-p (getf properties :baseline))
                  (proper-list-p (getf properties :evaluation))))
@@ -348,7 +350,7 @@ compared without regard to case; bound values must suit their parameters."
 (defun procedure-entry-reduce (entry record)
   "Return procedure ENTRY after the validated procedure RECORD, without modifying ENTRY.
 
-An entry holds :ID, :VERSIONS, the :ADMITTED version, :RETIRED-P, and run
+An entry holds :ID, :VERSIONS, the :ACTIVE version, :RETIRED-P, and run
 counts. A record naming an unknown procedure or version signals a corrupt
 KNOWLEDGE-ERROR."
   (let ((properties (rest record))
@@ -365,7 +367,7 @@ KNOWLEDGE-ERROR."
              (setf entry (list :id                   (getf (rest procedure) :id)
                                :workspace            (getf properties :workspace)
                                :versions             nil
-                               :admitted             nil
+                               :active               nil
                                :retired-p            nil
                                :runs                 0
                                :failures             0
@@ -379,15 +381,20 @@ KNOWLEDGE-ERROR."
                                      :examples   (getf properties :examples)
                                      :baseline   (getf properties :baseline)
                                      :evaluation (getf properties :evaluation)
-                                     :time       (getf properties :time)))))))
+                                     :time       (getf properties :time)))))
+           (when (and (eq (getf properties :activation) ':automatic)
+                      (not (getf entry :retired-p)))
+             (setf (getf entry :active) (length (getf entry :versions))
+                   (getf entry :consecutive-failures) 0))))
+        ;; Replay-only admission history, removable with the 0.69.0 log migration.
         (:procedure-admitted
          (require-version (getf properties :procedure-version))
-         (setf (getf entry :admitted) (getf properties :procedure-version)
+         (setf (getf entry :active) (getf properties :procedure-version)
                (getf entry :retired-p) nil
                (getf entry :consecutive-failures) 0))
         (:procedure-retired
          (require-version 1)
-         (setf (getf entry :admitted) nil
+         (setf (getf entry :active) nil
                (getf entry :retired-p) t))
         (:procedure-run
          (require-version (getf properties :procedure-version))
@@ -408,12 +415,12 @@ KNOWLEDGE-ERROR."
   (cond
     ((getf entry :retired-p)
      ':retired)
-    ((null (getf entry :admitted))
-     ':candidate)
+    ((null (getf entry :active))
+     ':inactive)
     ((>= (getf entry :consecutive-failures) *procedure-suspension-limit*)
      ':suspended)
     (t
-     ':admitted)))
+     ':active)))
 
 (-> procedure-entry-version (list &optional (option integer)) list)
 (defun procedure-entry-version (entry &optional version)
@@ -424,9 +431,9 @@ KNOWLEDGE-ERROR."
 
 (-> procedure-entry-runnable-version (list) (option list))
 (defun procedure-entry-runnable-version (entry)
-  "Return the version record ENTRY runs: the admitted one, or NIL when none may run."
-  (and (eq (procedure-entry-status entry) ':admitted)
-       (procedure-entry-version entry (getf entry :admitted))))
+  "Return the active version record ENTRY runs, or NIL when none may run."
+  (and (eq (procedure-entry-status entry) ':active)
+       (procedure-entry-version entry (getf entry :active))))
 
 (-> knowledge-base-procedure (knowledge-base string string) (option list))
 (defun knowledge-base-procedure (base workspace identifier)
@@ -449,7 +456,10 @@ KNOWLEDGE-ERROR."
     (values string integer boolean))
 (defun procedure-define
     (configuration procedure &key examples baseline evaluation source-conversation)
-  "Record PROCEDURE for CONFIGURATION's workspace unless its newest version is already equal.
+  "Record and activate PROCEDURE unless its newest version is already equal.
+
+A corrected version resets the failure streak. An unchanged definition leaves
+suspension intact, and a retired procedure cannot reactivate this way.
 
 EXAMPLES lists the (:CONVERSATION :SEQUENCE) of the turns it was learned from,
 BASELINE their average (:REQUESTS :TOKENS), and EVALUATION how it was checked.
@@ -464,7 +474,9 @@ Return its name, version, and whether a version was added."
       (lambda (base)
         (let* ((entry  (knowledge-base-procedure base workspace identifier))
                (latest (and entry (procedure-entry-version entry))))
-          (if (and latest (equal (getf latest :procedure) procedure))
+          (if (and latest (equal (getf latest :procedure) procedure)
+                   (or (eql (getf entry :active) (getf latest :version))
+                       (getf entry :retired-p)))
               (values nil (list identifier (getf latest :version) nil) nil)
               (values (list (list :procedure-defined
                                   :version *knowledge-format-version*
@@ -474,38 +486,11 @@ Return its name, version, and whether a version was added."
                                   :examples            examples
                                   :baseline            baseline
                                   :evaluation          evaluation
+                                  :activation          ':automatic
                                   :time                (get-universal-time)
                                   :source-conversation source-conversation))
                       (list identifier (1+ (length (getf entry :versions))) t)
                       t))))))))
-
-(-> procedure-admit (configuration string &key (:version (option integer))) integer)
-(defun procedure-admit (configuration identifier &key version)
-  "Admit VERSION of procedure IDENTIFIER, by default its newest, so it may run.
-
-Admitting clears a suspension and a retirement. Return the admitted version."
-  (let ((workspace (knowledge--workspace configuration)))
-    (knowledge-transact
-     configuration
-     (lambda (base)
-       (let ((entry (knowledge-base-procedure base workspace identifier)))
-         (unless entry
-           (knowledge--fail ':unknown-procedure identifier "No procedure is named ~A." identifier))
-         (let ((version (or version (getf (procedure-entry-version entry) :version))))
-           (unless (<= 1 version (length (getf entry :versions)))
-             (knowledge--fail ':unknown-procedure identifier
-                              "Procedure ~A has no version ~D." identifier version))
-           (if (and (eq (procedure-entry-status entry) ':admitted)
-                    (eql (getf entry :admitted) version))
-               (values nil version nil)
-               (values (list (list :procedure-admitted
-                                   :scope ':workspace
-                                   :workspace         workspace
-                                   :id                identifier
-                                   :procedure-version version
-                                   :time              (get-universal-time)))
-                       version
-                       t))))))))
 
 (-> procedure-retire (configuration string) boolean)
 (defun procedure-retire (configuration identifier)

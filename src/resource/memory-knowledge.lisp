@@ -239,9 +239,9 @@ Conflicted facts come first, then the rest by predicate and text."
                (procedure (getf version :procedure)))
           (format stream "~%~A v~D ~(~A~)~@[ (runs v~D)~] · ~D run~:P, ~D failed~%"
                   (getf entry :id) (getf version :version) (procedure-entry-status entry)
-                  (and (getf entry :admitted)
-                       (/= (getf entry :admitted) (getf version :version))
-                       (getf entry :admitted))
+                  (and (getf entry :active)
+                       (/= (getf entry :active) (getf version :version))
+                       (getf entry :active))
                   (getf entry :runs) (getf entry :failures))
           (when (getf version :examples)
             (format stream "  learned from ~D turns averaging ~D model requests and ~D tokens per turn; each turn is reproduced by the procedure learned from the other turns~%"
@@ -348,7 +348,7 @@ Conflicted facts come first, then the rest by predicate and text."
       (dolist (entry entries)
         (let* ((latest (first (last (getf entry :versions))))
                (rule   (getf latest :rule)))
-          (format stream "~%~A v~D ~(~A~): ~:[proposed, awaiting admission~;~:*active version ~D~]~%  ~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A~@[~%  ~A~]~%"
+          (format stream "~%~A v~D ~(~A~): ~:[inactive~;~:*active version ~D~]~%  ~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A~@[~%  ~A~]~%"
                   (getf entry :id) (getf latest :version) (getf entry :scope)
                   (getf entry :active)
                   (mapcar #'knowledge-pattern-text (getf (rest rule) :premises))
@@ -784,44 +784,17 @@ never the time a later assertion cites it."
                                 :scope               scope
                                 :source-conversation (conversation-identifier
                                                       (tool-context-conversation context)))
-      (memory-knowledge--admit-proposal context identifier
-                                        :version version :new-p new-p :scope scope))))
+      (memory-knowledge--rule-definition-result identifier version new-p))))
 
-(-> memory-knowledge--admit-proposal
-    (tool-context string &key (:version integer) (:new-p boolean) (:scope memory-scope))
-    string)
-(defun memory-knowledge--admit-proposal (context identifier &key version new-p scope)
-  "Ask to admit proposed rule IDENTIFIER's VERSION and describe the outcome.
-
-An unchanged active version needs no approval; a declined one derives nothing
-until the user admits it."
-  (let ((configuration (tool-context-configuration context)))
-    (let* ((entry    (knowledge-base-rule (knowledge-base-read configuration) identifier
-                                          :workspace (knowledge--workspace configuration)))
-           (active-p (eql (getf entry :active) version))
-           (decision (if active-p
-                         ':full-access
-                         (tool-context-authorize-command
-                          context
-                          (memory-knowledge--admission-command
-                           identifier version
-                           (getf (knowledge-rule-entry-version entry version) :rule))
-                          (config :working-directory configuration)))))
-      (cond
-        (active-p
-         (format nil "Rule ~A version ~D is unchanged and active." identifier version))
-        ((eq decision ':deny)
-         (format nil "~:[Rule ~A version ~D is unchanged~;Proposed rule ~A version ~D~]; admission was declined, so it derives nothing. The user can admit it with (admit-rule ~S)."
-                 new-p identifier version identifier))
-        (t
-         (knowledge-admit-rule configuration identifier
-                               :scope scope :version version
-                               :by decision)
-         (format nil "Admitted rule ~A version ~D." identifier version))))))
+(-> memory-knowledge--rule-definition-result (string integer boolean) string)
+(defun memory-knowledge--rule-definition-result (identifier version new-p)
+  "Describe the active rule IDENTIFIER's VERSION after a definition."
+  (format nil "Rule ~A version ~D is ~:[unchanged and active~;active~]."
+          identifier version new-p))
 
 (-> memory-knowledge--use-recipe (tool-context hash-table) string)
 (defun memory-knowledge--use-recipe (context operation)
-  "Apply one recipe-use OPERATION atomically, then admit its proposed rules."
+  "Apply one recipe-use OPERATION atomically, including its active rules."
   (memory-knowledge--fields operation "recipe-use"
                              :allowed  '("op" "recipe" "scope")
                              :required '("recipe"))
@@ -874,15 +847,13 @@ until the user admits it."
               (append schema-messages
                       (mapcar (lambda (proposal)
                                 (destructuring-bind (identifier version new-p) proposal
-                                  (memory-knowledge--admit-proposal
-                                   context identifier :version version :new-p new-p :scope scope)))
+                                  (memory-knowledge--rule-definition-result identifier version new-p)))
                             proposals))))))
 
-(-> memory-knowledge--admission-command (string integer list) string)
-(defun memory-knowledge--admission-command (identifier version rule)
-  "Return the command text a person approves to admit RULE."
-  (format nil "rule.admit -- ~A v~D: ~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A"
-          identifier version
+(-> memory-knowledge--rule-text (list) string)
+(defun memory-knowledge--rule-text (rule)
+  "Return RULE's premises, guards, bindings and conclusion as text."
+  (format nil "~{~A~^ and ~}~@[ where ~{~A~^, ~}~]~@[ with ~{~A~^, ~}~] => ~A"
           (mapcar #'knowledge-pattern-text (getf (rest rule) :premises))
           (memory-knowledge--guard-texts rule)
           (memory-knowledge--binding-texts rule)

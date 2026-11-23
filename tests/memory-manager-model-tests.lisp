@@ -205,7 +205,6 @@
       (knowledge-propose-rule configuration :id "manager-copy"
                               :premises         '(("manager.value" "?subject" "?value"))
                               :conclusion       '("manager.copy" "?subject" "?value"))
-      (knowledge-admit-rule configuration "manager-copy")
       (let* ((direct  (memory-manager-model-tests--item application claim))
              (derived (find "direct copies 1" (application-memory-manager-items application)
                             :test #'string= :key #'memory-manager-item-title)))
