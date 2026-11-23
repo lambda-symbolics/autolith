@@ -1515,7 +1515,7 @@
   test-run-job-runtime-usage
   test-run-job-inline-prompt-envelope
   test-run-job-inline-prompt-publication
-  test-run-job-inline-prompt-timeout
+  test-run-job-inline-prompt-read-failure
   test-run-job-inline-prompt-cli
   run-run-job-tests)
 

@@ -38,19 +38,19 @@
   (:documentation "A synthetic non-error serious condition escaping a test executor."))
 
 (defclass run-job-test-provider (scripted-provider)
-  ((block-on-empty-p :initarg :block-on-empty-p :initform nil
-                     :reader        run-job-test-provider-block-on-empty-p
-                     :documentation "Whether the next request waits for job timeout after scripted output."))
+  ((fail-on-empty-p :initarg :fail-on-empty-p :initform nil
+                    :reader        run-job-test-provider-fail-on-empty-p
+                    :documentation "Whether the next request fails after scripted output."))
   (:documentation "Share scripted responses with one real headless child execution."))
 
 (defmethod provider-stream-turn :before
     ((provider run-job-test-provider) (conversation conversation)
      &key tool-namespaces event-callback goal-context compaction-p)
-  "Leave one billed request followed by a stalled request for deadline coverage."
+  "Leave one billed request followed by a failed request for usage coverage."
   (declare (ignore conversation tool-namespaces event-callback goal-context compaction-p))
-  (when (and (run-job-test-provider-block-on-empty-p provider)
+  (when (and (run-job-test-provider-fail-on-empty-p provider)
              (null (scripted-provider-results provider)))
-    (sleep 3)))
+    (error 'provider-error :status 400 :message "Fixture provider failure.")))
 
 (defmethod provider-with-configuration
     ((provider run-job-test-provider) (configuration configuration))
@@ -62,27 +62,23 @@
 (defun test-run-job-runtime-usage ()
   "Read usage through the real child, publication, compaction and headless boundary."
   (dolist (case '((nil nil) (t nil) (t t)))
-    (destructuring-bind (omit-usage-p timeout-p) case
+    (destructuring-bind (omit-usage-p failure-p) case
       (with-test-configuration (configuration)
         (let* ((application               (mission-test--application configuration))
                (compact-result-function   (symbol-function 'task-job--compact-result))
                (usage-omitted-p           nil)
                (request
-                 (run-job-validate-envelope
-                  (let ((form (run-job-tests--request-form)))
-                    (when timeout-p
-                      (setf (getf (rest form) :timeout-seconds) 1))
-                    form)))
+                 (run-job-validate-envelope (run-job-tests--request-form)))
                (definition
                  (task-agent-definition-create
                   :name "custom-runner" :description "Return a result."
-                   :instructions "Return the answer." :tools (when timeout-p '("job.list")) :source ':test))
+                  :instructions "Return the answer." :tools (when failure-p '("job.list")) :source ':test))
                (provider
                  (make-instance 'run-job-test-provider
-                                :configuration configuration :block-on-empty-p timeout-p
+                               :configuration configuration :fail-on-empty-p failure-p
                                 :results (list (agent-test-result
                                                 "usage-response"
-                                                (if timeout-p
+                                                (if failure-p
                                                     (list (agent-test-call :call-id   "usage-call"
                                                                             :namespace "job" :name "list"
                                                                            :arguments "{}"))
@@ -116,33 +112,32 @@
                   (multiple-value-bind (status result trace usage category message)
                       (run-job-execute-with-application configuration request ':full-access)
                     (declare (ignore trace category message))
-                    (test-assert (if timeout-p
-                                     (eq status ':timed-out)
+                    (test-assert (if failure-p
+                                     (eq status ':failed)
                                      (and (eq status ':succeeded) (equal result "usage-response")))
-                                 "Headless execution returns ordinary text or reports timeout.")
+                                 "Headless execution returns ordinary text or reports provider failure.")
                     (test-assert (equal usage (list :input-tokens 13 :output-tokens 7
-                                                   :provider-requests (if timeout-p 2 1)))
+                                                   :provider-requests (if failure-p 2 1)))
                                  "Final usage survives omitted compact metadata.")
                     (test-assert (eq usage-omitted-p omit-usage-p)
                                  "The fixture covers both retained summaries and missing usage."))))
             (run-job-event-emitter-finish *run-job-event-emitter* (run-job-event-tests--terminal)))
-          (when timeout-p
+          (when failure-p
             (let* ((records  (run-job-event-tests--records (get-output-stream-string stream)))
                    (finished (find ':tool-finished records :key (lambda (record) (getf (rest record) :kind))))
                    (data     (getf (rest finished) :data)))
               (test-assert (and (equal (getf data :tool-name) "job.list")
                                 (eq (getf data :status) ':succeeded))
-                           "A real tool completion is streamed before the timeout.")))))))
+                           "A real tool completion is streamed before the provider fails.")))))))
   nil)
 
-(defclass run-job-tests--stalled-input (trivial-gray-streams:fundamental-character-input-stream)
+(defclass run-job-tests--failing-input (trivial-gray-streams:fundamental-character-input-stream)
   ()
-  (:documentation "An input stream whose read blocks long enough to exercise a deadline."))
+  (:documentation "An input stream that signals an I/O error when read."))
 
-(defmethod trivial-gray-streams:stream-read-char ((stream run-job-tests--stalled-input))
-  "Keep the input open until its reader's deadline expires."
-  (sleep 10)
-  :eof)
+(defmethod trivial-gray-streams:stream-read-char ((stream run-job-tests--failing-input))
+  "Signal the fixture's prompt input failure."
+  (error 'stream-error :stream stream))
 
 (-> test-run-job-inline-prompt-envelope () null)
 (defun test-run-job-inline-prompt-envelope ()
@@ -153,9 +148,7 @@
      (and (string= (run-job-request-identifier request) "prompt-job")
           (string= (run-job-request-role request) *run-job-default-role*)
           (string= (run-job-request-prompt request) "Do the task.")
-          (null (run-job-request-input request))
-          (= (run-job-request-timeout-seconds request)
-             *run-job-prompt-timeout-seconds*))
+          (null (run-job-request-input request)))
      "an inline prompt builds the ordinary version-one request")
     (test-assert (string= (run-job-assignment request) "Do the task.")
                  "an inline prompt without opaque input has no input projection")
@@ -190,18 +183,6 @@
      (run-job-error (condition)
        (eq (run-job-error-category condition) ':invalid-envelope)))
    "an empty inline prompt is rejected")
-  (test-assert
-   (handler-case
-       (progn
-         (run-job-validate-envelope
-          (list :autolith-job :version 1 :id "bad-timeout" :role "task"
-                :prompt          "Do it."
-                :input           nil
-                :timeout-seconds 0))
-         nil)
-     (run-job-error (condition)
-       (eq (run-job-error-category condition) ':invalid-envelope)))
-   "an out-of-range inline prompt timeout is rejected")
   nil)
 
 (-> test-run-job-inline-prompt-publication () null)
@@ -258,35 +239,32 @@
            "an oversized inline prompt still emits terminal events")))))
   nil)
 
-(-> test-run-job-inline-prompt-timeout () null)
-(defun test-run-job-inline-prompt-timeout ()
-  "Test a stalled prompt read publishes a timeout artifact and terminal event."
+(-> test-run-job-inline-prompt-read-failure () null)
+(defun test-run-job-inline-prompt-read-failure ()
+  "Publish an input failure artifact and terminal event without invoking the executor."
   (with-test-configuration (configuration root)
-    (let* ((output   (merge-pathnames "prompt-timeout.sexp" root))
+    (let* ((output   (merge-pathnames "prompt-read-failure.sexp" root))
            (events   (make-string-output-stream))
-           (started  (get-internal-real-time))
            (exit-code
              (run-job-run-prompt
-              (make-instance 'run-job-tests--stalled-input) output ':auto
-              :configuration configuration :timeout-seconds 1 :identifier "stalled-prompt"
+              (make-instance 'run-job-tests--failing-input) output ':auto
+              :configuration configuration :identifier "failed-prompt"
               :events ':sexp :event-output events
               :executor (lambda (&rest arguments)
                           (declare (ignore arguments))
-                          (error "A stalled prompt reached the executor."))))
+                          (error "A failed prompt reached the executor."))))
            (result   (run-job-tests--read-result output))
            (records  (run-job-event-tests--records (get-output-stream-string events)))
            (terminal (find ':run-finished records
                            :key (lambda (record) (getf (rest record) :kind)))))
       (test-assert (and (= 1 exit-code)
-                        (< (- (get-internal-real-time) started)
-                           (* 5 internal-time-units-per-second))
-                        (eq ':timed-out (getf (rest result) :status))
-                        (eq ':timeout (getf (getf (rest result) :failure) :category)))
-                   "prompt ingestion terminates at its deadline and publishes the timeout")
+                        (eq ':failed (getf (rest result) :status))
+                        (getf (rest result) :failure))
+                   "Prompt ingestion failures are published as failed results.")
       (test-assert (and terminal
-                        (eq ':timed-out (getf (getf (rest terminal) :data) :status))
+                        (eq ':failed (getf (getf (rest terminal) :data) :status))
                         (getf (getf (rest terminal) :data) :published-p))
-                   "the terminal event confirms the published prompt timeout")))
+                   "The terminal event confirms the published input failure.")))
   nil)
 
 (-> test-run-job-inline-prompt-cli () null)
@@ -325,7 +303,7 @@
                  (parse-command-line
                   (main--top-level-command)
                   '("run-job" "--prompt" "-" "--role" "task"
-                    "--timeout-seconds" "30" "--id" "cli-prompt"
+                    "--id" "cli-prompt"
                     "--output" "result.sexp"))))
            (let ((*standard-input* (make-string-input-stream "Do it.")))
              (funcall (command-handler command) command)))))
@@ -338,7 +316,6 @@
               (eq permission-mode ':auto)
               (eq (getf arguments :configuration) configuration)
               (string= (getf arguments :role) "task")
-              (eql (getf arguments :timeout-seconds) 30)
               (string= (getf arguments :identifier) "cli-prompt"))
          "the command line preserves the requested prompt options"))))
   nil)
@@ -351,7 +328,7 @@
       (input '(:value "opaque")))
   "Return one valid generic job form for tests."
   (list :autolith-job :version 1 :id "job-1" :role role
-        :prompt prompt :input input :timeout-seconds 30))
+        :prompt prompt :input input))
 
 (-> run-job-tests--temporary-directory () pathname)
 (defun run-job-tests--temporary-directory ()
@@ -446,8 +423,8 @@
              "#.(progn :executed)"
              "(quote (:autolith-job))"
              "(:autolith-job :version 1 :version 1)"
-             "(:autolith-job :version 2 :id \"x\" :role \"task\" :prompt \"x\" :input nil :timeout-seconds 1)"
-             "(:autolith-job :version 1 :id \"x\" :role \"task\" :prompt \"x\" :input foo:bar :timeout-seconds 1)"))
+              "(:autolith-job :version 2 :id \"x\" :role \"task\" :prompt \"x\" :input nil)"
+              "(:autolith-job :version 1 :id \"x\" :role \"task\" :prompt \"x\" :input foo:bar)"))
     (test-assert
      (handler-case
          (progn (run-job-validate-envelope (run-job-read-string source)) nil)

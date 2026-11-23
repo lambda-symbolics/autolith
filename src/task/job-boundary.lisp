@@ -25,9 +25,6 @@
 (defparameter *run-job-maximum-string-characters* (* 512 1024)
   "The largest string accepted by the RUN-JOB reader.")
 
-(defparameter *run-job-maximum-timeout-seconds* 86400
-  "The largest wall-clock timeout accepted for one job.")
-
 (defparameter *run-job-maximum-result-bytes* (* 16 1024 1024)
   "The largest child result artifact accepted by RUN-JOB.")
 
@@ -36,9 +33,6 @@
 
 (defparameter *run-job-default-role* "task"
   "The default child role for an inline prompt job.")
-
-(defparameter *run-job-prompt-timeout-seconds* *run-job-maximum-timeout-seconds*
-  "The default wall-clock deadline for an inline prompt job.")
 
 (defclass run-job-request nil
   ((identifier :initarg :identifier :reader run-job-request-identifier
@@ -51,9 +45,7 @@
           :type t :documentation "The caller-owned opaque data tree.")
    (input-present-p :initarg :input-present-p :initform t
                     :reader run-job-request-input-present-p :type boolean
-                    :documentation "Whether the caller supplied opaque input, including NIL.")
-   (timeout-seconds :initarg :timeout-seconds :reader run-job-request-timeout-seconds
-                    :type (integer 1) :documentation "The wall-clock job deadline."))
+                    :documentation "Whether the caller supplied opaque input, including NIL."))
   (:documentation "One validated version-one non-interactive job request."))
 
 (-> run-job--error (keyword string &rest t) null)
@@ -121,21 +113,18 @@
 (-> run-job-prompt-form
     (string &key
             (:role string)
-            (:timeout-seconds (integer 1))
             (:identifier string))
     list)
 (defun run-job-prompt-form
     (prompt &key (role *run-job-default-role*)
-                 (timeout-seconds *run-job-prompt-timeout-seconds*)
                  (identifier (make-user-identifier)))
   "Return one version-one job form for an inline PROMPT."
   (list :autolith-job
         :version         1
-        :id              identifier
-        :role            role
-        :prompt          prompt
-        :input           nil
-        :timeout-seconds timeout-seconds))
+        :id     identifier
+        :role   role
+        :prompt prompt
+        :input  nil))
 
 (-> run-job--envelope-pairs (t) list)
 (defun run-job--envelope-pairs (form)
@@ -145,7 +134,7 @@
   (handler-case
       (task--plist-alist
        (rest form)
-       '(:version :id :role :prompt :input :timeout-seconds)
+       '(:version :id :role :prompt :input)
        :source ':programmatic)
     (task-agent-definition-error (condition)
       (run-job--error ':invalid-envelope "~A" condition))))
@@ -163,8 +152,7 @@
             (identifier (required :id))
             (role       (required :role))
             (prompt     (required :prompt))
-            (input      (required :input))
-            (timeout    (required :timeout-seconds)))
+            (input      (required :input)))
         (unless (eql version 1)
           (run-job--error ':unsupported-version "Unsupported job version ~S." version))
         (unless (and (non-empty-string-p identifier) (<= (length identifier) 256))
@@ -174,15 +162,12 @@
         (unless (and (non-empty-string-p prompt)
                      (<= (length prompt) *task-agent-instructions-maximum-characters*))
           (run-job--error ':invalid-envelope ":PROMPT must be a bounded non-empty string."))
-        (unless (and (integerp timeout) (<= 1 timeout *run-job-maximum-timeout-seconds*))
-          (run-job--error ':invalid-envelope ":TIMEOUT-SECONDS is outside the supported range."))
         (make-instance 'run-job-request
                        :identifier      identifier
                        :role            (string-downcase role)
                        :prompt          prompt
                        :input           input
-                       :input-present-p input-present-p
-                       :timeout-seconds timeout)))))
+                       :input-present-p input-present-p)))))
 
 (-> run-job--recover-identifier (t) string)
 (defun run-job--recover-identifier (form)
@@ -429,28 +414,8 @@
                (dolist (job inline)
                  (job-run-inline job))
                (let ((job (first jobs)))
-                 (multiple-value-bind (snapshot terminal-p)
-                     (task-job-await
-                      job (run-job-request-timeout-seconds request))
-                   (unless terminal-p
-                     (task-job-cancel job ':timeout)
-                     (multiple-value-bind (cancelled-snapshot cancelled-terminal-p)
-                         (task-job-await job 5)
-                       (declare (ignore cancelled-terminal-p))
-                       (let* ((result        (getf cancelled-snapshot :result))
-                              (artifact-path (getf result :output-path))
-                              (usage-result
-                                (or (and artifact-path
-                                         (handler-case
-                                             (run-job--read-task-result-artifact artifact-path)
-                                           (run-job-error () nil)))
-                                    result)))
-                         (return-from run-job--execute-with-application
-                           (values
-                            ':timed-out nil (task-job-execution-identifier job)
-                            (run-job--usage usage-result)
-                            ':timeout
-                            "The job exceeded its wall-clock timeout.")))))
+                  (multiple-value-bind (snapshot terminal-p) (task-job-await job nil)
+                    (declare (ignore terminal-p))
                    (let* ((compact-result (getf snapshot :result))
                           (trace-id       (task-job-execution-identifier job))
                           (usage          (run-job--usage compact-result))
@@ -688,14 +653,13 @@ Observation failure never changes execution or result publication."
 
 (-> run-job-run-prompt
     ((or string stream) (or pathname string) keyword
-     &key (:role string) (:timeout-seconds (integer 1)) (:identifier string)
+     &key (:role string) (:identifier string)
           (:executor function) (:configuration (option configuration))
           (:events (member nil :sexp)) (:event-output stream))
     integer)
 (defun run-job-run-prompt
     (prompt-source output-path permission-mode
      &key (role *run-job-default-role*)
-          (timeout-seconds *run-job-prompt-timeout-seconds*)
           (identifier (make-user-identifier))
           (executor #'run-job-execute-with-application) configuration
           events (event-output *standard-output*))
@@ -712,17 +676,12 @@ is authoritative and observes the same events and errors as RUN-JOB-RUN."
       :input-present-p nil
       :form-function
       (lambda ()
-        (handler-case
-            (sb-sys:with-deadline (:seconds timeout-seconds)
-              (run-job-prompt-form
-               (if (streamp prompt-source)
-                   (run-job-read-prompt-stream prompt-source)
-                   prompt-source)
-               :role            role
-               :timeout-seconds timeout-seconds
-               :identifier      identifier))
-          (sb-sys:deadline-timeout ()
-            (run-job--error ':timeout "Reading the inline prompt exceeded its wall-clock timeout."))))
+         (run-job-prompt-form
+          (if (streamp prompt-source)
+              (run-job-read-prompt-stream prompt-source)
+              prompt-source)
+          :role       role
+          :identifier identifier))
       :executor        executor
       :configuration   configuration))
    :events events :event-output event-output))

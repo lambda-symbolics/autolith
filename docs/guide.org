@@ -2444,17 +2444,16 @@ The input file contains one data-only form:
  :id "job-identifier"
  :role "project-role"
  :prompt "Perform the assigned work."
- :input (:caller-owned "opaque data")
- :timeout-seconds 900)
+ :input (:caller-owned "opaque data"))
 #+END_SRC
 
 For an inline assignment, pass =--prompt TEXT= or use =--prompt -= to read
-standard input. The defaults are role =task=, 86,400 seconds and a generated ID.
+standard input. The defaults are role =task= and a generated ID.
 
 #+BEGIN_SRC sh
 autolith --permissions auto run-job \
   --prompt "Review the current change and report the result." \
-  --role task --timeout-seconds 900 --id review-change \
+  --role task --id review-change \
   --output /path/to/result.sexp
 #+END_SRC
 

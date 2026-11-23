@@ -405,7 +405,7 @@
 
 (-> test-run-job-inline-prompt-launchers () null)
 (defun test-run-job-inline-prompt-launchers ()
-  "Exercise stdin deadlines, events, and failure exit statuses through both launchers."
+  "Exercise stdin validation, events, and failure exit statuses through both launchers."
   (with-test-fixture (':posix-shell "headless prompt launcher roundtrips")
     (with-test-configuration (configuration root)
       (declare (ignore configuration))
@@ -431,20 +431,21 @@
                           (uiop:launch-program
                            (append environment command
                                    (list "--permissions" "auto" "run-job" "--prompt" "-"
-                                         "--role" "task" "--timeout-seconds" "1"
+                                          "--role" "task"
                                          "--id" "launcher-stdin" "--events" "sexp"
                                          "--output" (namestring output)))
                            :directory root :input ':stream :output events :error-output errors)))
                    (unwind-protect
                         (progn
+                           (close (uiop:process-info-input process))
                           (test-assert
                            (task-tests--wait-until
                             (lambda () (not (uiop:process-alive-p process))) 15)
-                           "the launcher exits while the prompt's input pipe is still open")
+                           "the launcher exits after the empty prompt reaches EOF")
                           (unless (uiop:process-alive-p process)
-                            (test-assert (= 1 (uiop:wait-process process))
-                                         "the launcher returns the published timeout's failure status"))
-                          (test-assert (probe-file output) "the timeout artifact is published")
+                            (test-assert (= 64 (uiop:wait-process process))
+                                         "the launcher returns the published validation failure status"))
+                          (test-assert (probe-file output) "the validation failure artifact is published")
                           (when (probe-file output)
                             (let* ((result   (rest (run-job-read-file output)))
                                    (records  (run-job-event-tests--records
@@ -452,15 +453,15 @@
                                    (terminal (getf (rest (first (last records))) :data)))
                               (test-assert
                                (and (equal (getf result :id) "launcher-stdin")
-                                    (eq (getf result :status) ':timed-out)
-                                    (eq (getf (getf result :failure) :category) ':timeout))
-                               "stdin timeout options reach the boundary and its result artifact")
+                                    (eq (getf result :status) ':failed)
+                                    (eq (getf (getf result :failure) :category) ':invalid-envelope))
+                               "an empty stdin prompt produces a validation failure artifact")
                               (test-assert
                                (and (equal (run-job-streaming-tests--kinds records)
                                            '(:run-started :run-finished))
-                                    (eq (getf terminal :status) ':timed-out)
+                                    (eq (getf terminal :status) ':failed)
                                     (getf terminal :published-p))
-                               "launcher stdout contains only the published timeout's events"))))
+                               "launcher stdout contains only the published validation failure events"))))
                      (ignore-errors (close (uiop:process-info-input process)))
                      (when (uiop:process-alive-p process)
                        (uiop:terminate-process process :urgent t))
