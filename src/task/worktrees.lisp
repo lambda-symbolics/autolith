@@ -5,9 +5,6 @@
 (defvar *task-worktree-lock* (make-lock "Autolith task Git operations")
   "Serialize owned Git lifecycle and integration operations within this image.")
 
-(defparameter *task-worktree-command-timeout* 120
-  "Maximum seconds for one authorized Git command.")
-
 (defparameter *task-worktree-artifact-limit* (* 16 1024 1024)
   "Maximum captured patch characters and serialized engineering artifact octets.")
 
@@ -97,17 +94,16 @@
                            (first argv) (rest argv) :policy policy
                            :working-directory directory :input (and input (make-string-input-stream input))
                            :environment                     (task-worktree--environment :overrides environment)
-                           :clear-environment-p t :timeout *task-worktree-command-timeout*
+                           :clear-environment-p             t
                            :cancel-function                 cancel-function
                            :output-limit                    (if (member "diff" argv :test #'equal)
                                                                 *task-worktree-artifact-limit* 65536)
                            :error-output-limit              65536)))
                     (when (eq (cl-exec-sandbox:sandbox-result-status result) ':cancelled)
                       (task-worktree--error "Worktree Git command cancelled." :code ':cancelled))
-                    (when (or (sandbox-result-timed-out-p result)
-                              (sandbox-result-output-truncated-p result)
+                    (when (or (sandbox-result-output-truncated-p result)
                               (cl-exec-sandbox:sandbox-result-error-output-truncated-p result))
-                      (task-worktree--error "Git command timed out or exceeded the artifact capture limit."))
+                      (task-worktree--error "Git command exceeded the artifact capture limit."))
                     (values (sandbox-result-output result)
                             (cl-exec-sandbox:sandbox-result-error-output result)
                            (sandbox-result-exit-code result))))))

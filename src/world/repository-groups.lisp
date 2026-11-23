@@ -20,7 +20,7 @@
 
 (-> world-repository--git-output (string list) (option string))
 (defun world-repository--git-output (directory arguments)
-  "Read bounded Git metadata in DIRECTORY, returning NIL on unavailable metadata.
+  "Read output-bounded Git metadata in DIRECTORY, returning NIL on unavailable metadata.
 
 Only fixed metadata queries call this helper. No shell, permission picker, or
 process-global environment change participates in presentation discovery."
@@ -29,13 +29,12 @@ process-global environment change participates in presentation discovery."
         (let ((result
                 (run-sandboxed
                  program options
-                 :policy            (external-sandbox-policy)
-                 :working-directory (platform-pathname directory)
-                 :environment       (git-process-environment)
-                 :clear-environment-p t :timeout 1
+                 :policy              (external-sandbox-policy)
+                 :working-directory   (platform-pathname directory)
+                 :environment         (git-process-environment)
+                 :clear-environment-p t
                  :output-limit 65536 :error-output-limit 4096)))
           (when (and (eql 0 (sandbox-result-exit-code result))
-                     (not (sandbox-result-timed-out-p result))
                      (not (sandbox-result-output-truncated-p result))
                      (not (cl-exec-sandbox:sandbox-result-error-output-truncated-p result)))
             (sandbox-result-output result))))
@@ -53,7 +52,7 @@ process-global environment change participates in presentation discovery."
 
 (-> world-repository--describe (string) list)
 (defun world-repository--describe (directory)
-  "Describe DIRECTORY using the bounded runner and platform path adapter."
+  "Describe DIRECTORY using the output-bounded runner and platform path adapter."
   (cl-worktree:describe-repository directory #'world-repository--git-output
                                    :canonicalize #'world-repository--canonical-directory))
 
