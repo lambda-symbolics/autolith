@@ -3583,11 +3583,13 @@
            (conversation-create configuration :identifier "recover-source"))
          (explicit
            (conversation-create configuration :identifier "explicit-resume"))
+         (crash-pointer-name            "AUTOLITH_CRASH_POINTER")
+         (session-pointer-name          "AUTOLITH_RECOVERY_SESSION_POINTER")
          (conversation-name             "AUTOLITH_RECOVERY_CONVERSATION_ID")
          (sequence-name                 "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
          (floor-name                    "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
          (environment-names
-           (list conversation-name sequence-name floor-name))
+           (list crash-pointer-name session-pointer-name conversation-name sequence-name floor-name))
          (previous-environment
            (loop for name in environment-names
                  collect (cons name (uiop:getenv name))))
@@ -3629,6 +3631,9 @@
                  (setf application nil))))
       (unwind-protect
            (progn
+             ;; Exercise the direct handoff, not a launcher's crash/session pointers.
+             (platform-unsetenv crash-pointer-name)
+             (platform-unsetenv session-pointer-name)
              (configuration-ensure-directories configuration)
              (dotimes (index 3)
                (conversation-append-user-message

@@ -12,7 +12,7 @@
        (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
               (session     (acp-service--session service identifier))
               (application (acp-session-test--application session))
-              (parameters (tool-object-schema
+              (parameters  (tool-object-schema
                            (json-object "text"   (tool-string-property "Text to echo.")
                                         "nested" (json-object "type" "object"))
                            '("text" "nested")))
