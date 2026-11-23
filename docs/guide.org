@@ -1063,28 +1063,6 @@ Rules share the ordinary advice budget, priority, lifetime and deduplication
 policy. Inspect delivery with =context-status=; remove a registered rule with
 =unregister-context-rule= and its original ID.
 
-To turn a complaint into a persistent correction, use:
-
-#+BEGIN_SRC lisp
-(complain "Your explanations are too long. Give the result first.")
-(wtf "Use the existing library instead of reimplementing it.")
-#+END_SRC
-
-Both names open the same interactive review. Inspect the generated instruction
-and literal trigger, amend the candidate, then choose workspace or global scope
-to save it. Saving an unmatched trigger and replacing an existing rule each
-require separate confirmation. Cancel to discard the candidate. Omit the text
-to enter a complaint in the editor.
-
-Generation uses bounded recent assistant output and tool arguments as evidence.
-On later provider requests, matching corrections enter the ordinary request-local
-advice budget. Inspect them with =(context)=. Global corrections are stored in
-=data-root/context-rules.sexp=; workspace collections live under
-=data-root/context-rules/=, keyed by the canonical workspace directory. A
-same-ID workspace correction overrides the global one in that workspace.
-Saves take effect on the next request, including in other sessions using the
-same data root. Edit or remove the data files to change saved collections.
-
 The status line keeps a context meter visible while idle. It shows used tokens
 and the full model window. =|= marks the automatic compaction point. The
 ChatGPT subscription catalog currently reports a 272K-token window for the
