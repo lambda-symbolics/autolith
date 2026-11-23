@@ -151,78 +151,48 @@
                        "long server lists are summarized")))))
   nil)
 
-(-> lsp-client-tests--idle-transport () lsp-transport)
-(defun lsp-client-tests--idle-transport ()
-  "Build a real transport state that accepts writes but never receives a reply."
-  (make-instance 'lsp-transport :process nil
-                 :input                  (flexi-streams:make-in-memory-input-stream #())
-                 :output                 (make-in-memory-output-stream)
-                 :error-output           (flexi-streams:make-in-memory-input-stream #())
-                 :request-handler        (lambda (&rest arguments) (declare (ignore arguments)))
-                 :notification-handler   (lambda (&rest arguments) (declare (ignore arguments)))))
-
-(-> test-lsp-edit-diagnostics-deadline () null)
-(defun test-lsp-edit-diagnostics-deadline ()
-  "Bound startup and pull waits after a real edit, sharing one deadline across servers."
-  (dolist (stage '(:startup :pull :write))
+(-> test-lsp-edit-diagnostics-completion () null)
+(defun test-lsp-edit-diagnostics-completion ()
+  "Finish diagnostic follow-up and preserve saved edits when diagnostics fail."
+  (dolist (failure-p '(nil t))
     (with-test-configuration (base-configuration root)
-      (let* ((configuration                          (configuration-copy base-configuration :working-directory root))
-             (path                                   (lsp-client-tests--write configuration "deadline.txt" "before"))
-             (registry                               (lsp-register-tools (make-default-tool-registry)))
-             (context                                (make-instance 'tool-context :configuration configuration :worker nil
-                                                                   :registry     registry
-                                                                   :conversation (conversation-create configuration)))
-             (manager                                (lsp-tool-manager (tool-registry-find registry "lsp" "diagnostics")))
-             (servers                                (list (lsp-client-tests--configuration :name "first")
-                                                           (lsp-client-tests--configuration :name "second")))
-             (transport                              (lsp-client-tests--idle-transport))
-             (starts                                 0)
-             (*lsp-edit-diagnostics-timeout-seconds* 0.1))
-        (setf (lsp-manager-loaded-p manager) t
-              (lsp-manager-configurations manager) servers)
-        (unless (eq stage ':startup)
-          (let ((client (lsp-client-tests--client root :transport transport
-                                                :capabilities     (json-object "diagnosticProvider" t))))
-            (setf (gethash (list "first" (namestring (platform-truename *platform* root)))
-                           (lsp-manager-clients manager)) client)))
+      (let* ((configuration (configuration-copy base-configuration :working-directory root))
+             (path          (lsp-client-tests--write configuration "diagnostics.txt" "before"))
+             (registry      (lsp-register-tools (make-default-tool-registry)))
+             (context       (make-instance 'tool-context :configuration configuration :worker nil
+                                           :registry registry :conversation (conversation-create configuration)))
+             (reports       (vector (json-object "server" "test" "result"
+                                                  (json-object "diagnostics" #()))))
+             (observed      ':pending))
         (unwind-protect
              (lsp-client-tests--with-replacements
-              (append
-               (list (list 'lsp-transport-open
-                           (lambda (&rest arguments)
-                             (declare (ignore arguments))
-                             (incf starts)
-                             transport)))
-               (when (eq stage ':write)
-                 (list (list 'lsp-write-message
-                             (lambda (&rest arguments)
-                               (declare (ignore arguments))
-                               (sleep 10))))))
+              (list
+               (list 'lsp-tool--call-for-file
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (when failure-p
+                         (error 'lsp-error :message "Fixture diagnostics failure."))
+                       (sleep 1.1)
+                       reports))
+               (list 'context-rule-note-diagnostics
+                     (lambda (conversation rows &key generation)
+                       (declare (ignore conversation generation))
+                       (setf observed rows))))
               (let* ((read-result (test-resource-call registry context
-                                                                 :namespace "resource"
-                                                                 :name      "read"
-                                                                 :arguments (list "uri" "workspace:deadline.txt")))
+                                                    :namespace "resource" :name "read"
+                                                    :arguments (list "uri" "workspace:diagnostics.txt")))
                      (revision    (test-resource-field (tool-result-content read-result) "Revision: "))
-                     (start       (get-internal-real-time))
                      (result      (test-resource-call
-                                   registry context
-                                   :namespace "resource"
-                                   :name      "edit"
+                                   registry context :namespace "resource" :name "edit"
                                    :arguments
-                                   (list "uri" "workspace:deadline.txt" "base-revision" revision
+                                   (list "uri" "workspace:diagnostics.txt" "base-revision" revision
                                          "operations" (vector (json-object "op" "replace-lines" "start-line" 1
                                                                            "end-line" 1 "content" "after"))))))
-                (test-assert (tool-result-success-p result) "diagnostic timeout does not undo a saved edit")
-                (test-assert (search "after" (uiop:read-file-string path)) "the edit is durable")
-                (test-assert (< (/ (- (get-internal-real-time) start)
-                                   internal-time-units-per-second)
-                                0.8)
-                             "automatic waits share the short edit deadline")
-                (test-assert (= starts (if (eq stage ':startup) 1 0))
-                             "the deadline escapes the server loop before another startup")
-                (test-assert (= 1 (lsp-transport-next-id transport)) "the blocking request was attempted")
-                (test-assert (zerop (hash-table-count (lsp-transport-pending transport)))
-                             "deadline unwinding removes the pending request")))
-          (tool-registry-close-runtime-state registry)
-          (lsp-transport-close transport)))))
+                (test-assert (and (tool-result-success-p result)
+                                  (string= "after" (string-trim '(#\Newline #\Return)
+                                                               (uiop:read-file-string path))))
+                             "The saved edit is complete after diagnostic success or failure.")
+                (test-assert (if failure-p (eq observed ':pending) (eq observed reports))
+                             "Completed reports are recorded after the diagnostic request finishes.")))
+          (tool-registry-close-runtime-state registry)))))
   nil)

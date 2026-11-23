@@ -341,7 +341,7 @@
   test-lsp-configuration
   test-lsp-result-bounds
   test-lsp-tool-position-and-query
-  test-lsp-edit-diagnostics-deadline
+  test-lsp-edit-diagnostics-completion
   test-lsp-tool-conditional-registration
   test-lsp-session-context)
 

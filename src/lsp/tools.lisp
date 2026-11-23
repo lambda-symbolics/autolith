@@ -245,12 +245,8 @@ Bound data before serialization and retain a result and truncation note when spa
 
 ;;;; -- Saved File Diagnostics --
 
-(defparameter *lsp-edit-diagnostics-timeout-seconds* 1
-  "Shared blocking-time budget for automatic diagnostics after one saved edit.
-Explicit LSP tools use the configured server timeout; failed startup also reaps its process.")
-
 (defmethod tool-execute :around ((tool resource-edit-tool) (context tool-context) (arguments hash-table))
-  "Append bounded LSP diagnostics after successful workspace edits when configured."
+  "Append LSP diagnostics after successful workspace edits when configured."
   (let* ((result           (call-next-method))
          (uri              (tool-argument arguments "uri"))
          (registry         (tool-context-registry context))
@@ -258,25 +254,19 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
     (if (and (tool-result-success-p result) diagnostics-tool
              (stringp uri) (uiop:string-prefix-p "workspace:" uri))
         (handler-case
-            (sb-sys:with-deadline (:seconds *lsp-edit-diagnostics-timeout-seconds*)
-              (let* ((manager (lsp-tool-manager diagnostics-tool))
-                     (path    (lsp-tool--path context (workspace-file--decode-identifier "workspace" (subseq uri 10)))))
-                (let ((reports (lsp-tool--call-for-file
-                                manager context path
-                                :function (lambda (client document)
-                                            (lsp-client-diagnostics client document :wait-seconds 0.5)))))
-                  (context-rule-note-diagnostics
-                   (tool-context-conversation context) reports
-                   :generation (tool-context-rule-generation context))
-                  (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
-                                        (tool-result-content result) (lsp-tool--render reports 6000))
-                                :details (tool-result-details result)))))
+            (let* ((manager (lsp-tool-manager diagnostics-tool))
+                   (path    (lsp-tool--path context (workspace-file--decode-identifier "workspace" (subseq uri 10))))
+                   (reports (lsp-tool--call-for-file
+                             manager context path
+                             :function (lambda (client document)
+                                         (lsp-client-diagnostics client document :wait-seconds 0.5)))))
+              (context-rule-note-diagnostics
+               (tool-context-conversation context) reports
+               :generation (tool-context-rule-generation context))
+              (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
+                                    (tool-result-content result) (lsp-tool--render reports 6000))
+                            :details (tool-result-details result)))
           (cl-lsp:lsp-no-matching-server () result)
-          (sb-sys:deadline-timeout ()
-            (tool-success
-             (format nil "~A~%~%LSP diagnostics timed out; use lsp.diagnostics for the full server timeout."
-                     (tool-result-content result))
-             :details (tool-result-details result)))
           (error (condition)
             (tool-success (format nil "~A~%~%LSP: ~A" (tool-result-content result) condition)
                           :details (tool-result-details result))))
