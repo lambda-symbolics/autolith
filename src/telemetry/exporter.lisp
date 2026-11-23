@@ -330,7 +330,7 @@
     (multiple-value-bind (stream status)
         (dex:request endpoint :method ':post :content body
                   :headers '(("Content-Type" . "application/json"))
-                  :max-redirects 0 :connect-timeout 3 :read-timeout 3
+                  :max-redirects 0 :connect-timeout nil :read-timeout nil
                   :keep-alive nil :use-connection-pool nil :want-stream t
                   :proxy nil :insecure nil :verbose nil)
       (unwind-protect (and (integerp status) (<= 200 status 299) t)

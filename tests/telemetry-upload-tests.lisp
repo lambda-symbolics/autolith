@@ -95,7 +95,7 @@
 (-> test-telemetry-background-retirement () null)
 (defun test-telemetry-background-retirement ()
   "Revocation, checkpointing and immediate shutdown kill an actual stalled upload child."
-  (dolist (action '(:revoke :checkpoint :shutdown :replace-owner :clean-exit))
+  (dolist (action '(:revoke :checkpoint :shutdown :replace-owner))
     (test-telemetry--call
      (lambda (configuration)
        (setf (config :telemetry-enabled-p configuration) t)
@@ -136,11 +136,9 @@
                    (setf (application-configuration application)
                          (configuration-copy configuration :telemetry-enabled-p nil)))
                  (test-assert (not (telemetry-controller-enabled *telemetry-controller*))
-                              "Replacing the owner with an opted-out configuration cancels old uploads."))
-                (:clean-exit
-                 (telemetry-shutdown)))
+                              "Replacing the owner with an opted-out configuration cancels old uploads.")))
               (let ((seconds (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
-                (test-assert (< seconds (if (eq action ':clean-exit) 5 2))
+                (test-assert (< seconds 2)
                              (format nil "~A retirement took ~,3F seconds instead of stopping promptly."
                                      action seconds)))
               (test-assert (not (uiop:process-alive-p process)) "Retirement kills and reaps the upload child.")
@@ -169,8 +167,8 @@
                  (declare (ignore context))
                  (push (third request) bodies)
                  (bt:signal-semaphore entered)
-                 (bt:wait-on-semaphore release :timeout 5)
-                 t)))
+                (bt:wait-on-semaphore release)
+                t)))
          (unwind-protect
               (progn
                 (telemetry-call-with-run configuration (lambda () :done))
@@ -183,7 +181,11 @@
                       do (sleep 0.005))
                 (test-assert (telemetry-controller-closing controller) "Clean exit closes admissions before waiting.")
                 (test-assert (null (telemetry--begin-run configuration))
-                             "New runs cannot extend the clean-exit upload grace."))
+                             "New runs cannot extend the clean-exit drain.")
+                (sleep 3.25)
+                (test-assert (bt:with-lock-held ((telemetry-controller-lock controller))
+                               (not (telemetry-controller-stopped controller)))
+                             "Final uploads retain authorization until completion."))
            (bt:signal-semaphore release)
            (when closer (bt:join-thread closer))))
        (test-assert (= (length bodies) 1) "Clean exit drains the finalized root before stopping.")

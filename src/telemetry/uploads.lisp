@@ -145,10 +145,8 @@
 
 (-> telemetry--drain-uploads (telemetry-controller) null)
 (defun telemetry--drain-uploads (controller)
-  "Close admissions and allow at most three seconds for clean-exit uploads."
-  (let ((thread   nil)
-        (deadline (+ (get-internal-real-time)
-                     (* 3 internal-time-units-per-second))))
+  "Close admissions and wait for clean-exit uploads to finish."
+  (let ((thread nil))
     (bt:with-lock-held ((telemetry-controller-lock controller))
       (setf (telemetry-controller-closing controller) t
             (telemetry-controller-upload-now-p controller) t)
@@ -156,6 +154,5 @@
       (setf thread (telemetry-controller-upload-thread controller))
       (bt:condition-notify (telemetry-controller-upload-wakeup controller)))
     (when (and thread (not (eq thread (bt:current-thread))))
-      (loop while (and (bt:thread-alive-p thread) (< (get-internal-real-time) deadline))
-            do (sleep 0.005))))
+      (bt:join-thread thread)))
   nil)

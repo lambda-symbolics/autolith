@@ -232,11 +232,11 @@ Attaching a disabled root does not change existing process consent."
 
 (-> telemetry-shutdown (&key (:drain-p boolean)) null)
 (defun telemetry-shutdown (&key (drain-p t))
-  "Stop this controller, optionally giving final uploads one deadline to drain.
+  "Stop this controller, optionally waiting for final uploads to drain.
 Revocation and checkpoint quiescence always cancel immediately instead of draining."
   (when-let ((controller *telemetry-controller*))
     (when drain-p
-      ; mallet:suppress no-ignore-errors -- draining final uploads must never block shutdown
+      ; mallet:suppress no-ignore-errors -- failed final uploads must not prevent cleanup
       (ignore-errors (telemetry--drain-uploads controller)))
     (let (processes)
       (bt:with-lock-held ((telemetry-controller-lock controller))
@@ -716,7 +716,7 @@ Different primary identities become mixed; missing response names never inherit 
 
 (-> telemetry--diagnostic (telemetry-run t t) (option string))
 (defun telemetry--diagnostic (run summary-function language)
-  "Gate before reading the summary thunk, redact in a deadline-supervised child, then recheck."
+  "Gate before reading the summary thunk, redact in a supervised child, then recheck."
   (let ((controller (telemetry-run-controller run)))
     (unless (and (functionp summary-function)
                  (bt:with-lock-held ((telemetry-controller-lock controller))
