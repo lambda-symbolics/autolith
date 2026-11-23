@@ -647,9 +647,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
                    "max-matches-per-file" (tool-integer-property
                                            "Matches retained per file from 1 to 100; default 20. The result names files that had more.")
                    "context" (tool-integer-property
-                              "Lines before and after each match from 0 to 10; default 0.")
-                   "time-budget-ms" (tool-integer-property
-                                     "Search budget from 1 to 10000 milliseconds; default 3000."))
+                              "Lines before and after each match from 0 to 10; default 0."))
                   nil)))
            (setf (gethash "oneOf" schema)
                  (vector

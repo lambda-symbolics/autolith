@@ -23,6 +23,21 @@ normal startup. The active 0.67.66 heap was not restarted. History, saved
 generations, and the original pointer archived as
 =current-image-commit.retired-17c014d8.sexp= are available for recovery.
 
+** Temporary removal of execution timers
+
+- Problem: an uncaught TIMEOUT during tool completion crashed the world server.
+  Its originating timer is unproven. The user requires execution without deadlines.
+- Behavior: read Clifff helper responses and exchange requests without timers,
+  and run one-shot shell commands without a process deadline.
+- Scope and location: exploratory live definitions =fcffdca1=, =66a9bbe3= and
+  =34581cd2=. They are installed in this process, not a private image commit.
+  Tracked shell and search transport replacements are in =1bde0c50=.
+- Verification: live repository searches and shell commands succeeded. The
+  tracked batch passed source checks and 62 focused cases with 1,143 checks,
+  including shell cancellation, sessions, retained logs and search transport.
+- Removal condition: retire the live overrides after the active process uses
+  the tracked replacements. Do not restore the old timers during retirement.
+
 ** Shell allocation with unresolved legacy evidence
 
 - Problem: missing historical capture metadata blocked shell commands before launch.

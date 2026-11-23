@@ -12,12 +12,6 @@
 (defparameter *search-maximum-result-limit* 100
   "The largest fff result page returned to the model.")
 
-(defparameter *search-default-time-budget-milliseconds* 3000
-  "The default fff content-search wall-clock budget.")
-
-(defparameter *search-maximum-time-budget-milliseconds* 10000
-  "The largest fff content-search wall-clock budget.")
-
 (defclass search-tool (workspace-tool)
   ((engine
     :initarg       :engine
@@ -121,12 +115,5 @@ AUTOLITH_FFF_LIBRARY overrides the library path; the Nix package uses this overr
                                       :fallback 20
                                       :minimum  1
                                       :maximum  100)
-        :time-budget-milliseconds
-        (search-tool--bounded-integer
-         arguments
-         "time-budget-ms"
-         :fallback *search-default-time-budget-milliseconds*
-         :minimum  1
-         :maximum  *search-maximum-time-budget-milliseconds*)
         :context-lines
         (search-tool--bounded-integer arguments "context" :maximum 10)))
