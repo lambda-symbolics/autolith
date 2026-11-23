@@ -294,8 +294,8 @@ With PERSISTED-P its conversation holds a message."
                (declare (ignore launch-configuration))
                (push handoff-pathname launched)))
            (*world-startup-wait-function*
-             (lambda (wait-configuration token old-pid)
-               (declare (ignore wait-configuration))
+              (lambda (wait-configuration token old-pid &key alive-p)
+                (declare (ignore wait-configuration alive-p))
                (setf waited (list token old-pid))
                "world"))
            (identifier (world-startup-spawn-fresh configuration))
@@ -303,6 +303,36 @@ With PERSISTED-P its conversation holds a message."
       (test-assert (and (string= identifier "world")
                         (equal waited (list (getf (rest record) :token) (current-process-id))))
                    "a world launch records its kind and resolves the world endpoint under its token"))
+    (dolist (case '((t nil nil nil t)
+                    (nil 11 nil (11) t)
+                    (nil nil 22 (22) t)
+                    (nil 11 nil (-11) t)
+                    (nil nil 22 (-22) t)
+                    (nil nil nil nil nil)))
+      (destructuring-bind (root-alive-p launcher-pid replacement-pid live-pids expected) case
+        (test-call-with-function-replacements
+         (list (list 'world-startup--process-object-alive-p
+                     (lambda (process) (declare (ignore process)) root-alive-p))
+               (list 'image-daemon:handoff-ticket-launcher-pid
+                     (lambda (pathname) (declare (ignore pathname)) launcher-pid))
+               (list 'image-daemon:handoff-ticket-replacement-pid
+                     (lambda (pathname &key validate)
+                       (declare (ignore pathname validate)) replacement-pid))
+               (list 'world-startup--pid-alive-p
+                     (lambda (pid) (not (null (member pid live-pids))))))
+         (lambda ()
+           (test-assert (eq (world-startup--replacement-alive-p ':process #P"handoff") expected)
+                        "Launch ownership includes the process, launcher and replacement groups.")))))
+    (let ((probes 0))
+      (test-call-with-function-replacements
+       (list (list 'image-daemon:daemon-registry-discover
+                   (lambda (directory) (declare (ignore directory)) (incf probes) nil)))
+       (lambda ()
+         (test-assert
+          (and (null (world-startup--wait-for-fresh configuration "unpublished" 0
+                                                  :alive-p (lambda () (< probes 2))))
+               (= probes 2))
+          "An unpublished launch ends when its owned processes have exited."))))
     (let* ((token   (daemon-random-token))
            (runtime (image-daemon:daemon-runtime-create
                       :class           'channel-endpoint
@@ -318,9 +348,23 @@ With PERSISTED-P its conversation holds a message."
            (progn
              (test-assert (string= (world-startup--wait-for-fresh configuration token 0) "world")
                           "the world wait resolves a published endpoint carrying the launch token")
-             (test-assert (string= (let ((*world-startup-start-timeout-seconds* 0))
-                                     (world-startup--wait-for-fresh configuration "other-token" 0))
+             (let ((discover (symbol-function 'image-daemon:daemon-registry-discover))
+                   (probes   0))
+               (test-call-with-function-replacements
+                (list (list 'world-server-running-p (constantly t))
+                      (list 'image-daemon:daemon-registry-discover
+                            (lambda (directory)
+                              (when (> (incf probes) 2) (funcall discover directory)))))
+                (lambda ()
+                  (test-assert
+                   (and (string= (world-startup--wait-for-fresh
+                                  configuration "losing-token" 0 :alive-p (constantly nil))
+                                 "world")
+                        (= probes 3))
+                   "A losing launch joins the concurrent server after it publishes its endpoint."))))
+             (test-assert (string= (world-startup--wait-for-fresh configuration "other-token" 0
+                                                                 :alive-p (constantly nil))
                                    "world")
-                          "the world wait takes an answering endpoint under another token: that launch lost the race to it"))
+                         "the world wait takes an answering endpoint under another token: that launch lost the race to it"))
         (image-daemon:daemon-runtime-stop runtime))))
   nil)

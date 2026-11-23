@@ -5,9 +5,6 @@
 (defparameter *world-startup-version* 1
   "The detached-process handoff snapshot version.")
 
-(defparameter *world-startup-start-timeout-seconds* 20
-  "The maximum time an old process waits for its detached replacement.")
-
 (defparameter *world-startup-stop-grace-seconds* 1/5
   "The grace period between terminating and killing a failed replacement.")
 
@@ -33,8 +30,8 @@
   "The detached launch boundary used by client-first session starts.")
 
 (defparameter *world-startup-wait-function*
-  (lambda (configuration token old-pid)
-    (world-startup--wait-for-fresh configuration token old-pid))
+  (lambda (configuration token old-pid &key alive-p)
+    (world-startup--wait-for-fresh configuration token old-pid :alive-p alive-p))
   "The authenticated discovery boundary returning a fresh world server's identifier.")
 
 
@@ -333,13 +330,13 @@ A nonlocal exit from that callback cancels the launch."
                              :pristine-p       pristine-p))
              (setf session-id
                    (funcall *world-startup-wait-function*
-                            configuration token (current-process-id)))
+                             configuration token (current-process-id)
+                             :alive-p (lambda () (world-startup--replacement-alive-p process pathname))))
              (unless session-id
                (error 'world-terminal-error
                       :message
                       (format nil
-                              "The world server did not start within ~D seconds. See ~A."
-                              *world-startup-start-timeout-seconds*
+                               "The world server ended before publishing an endpoint. See ~A."
                               (namestring
                                (world-startup-log-pathname
                                 configuration launch-id)))
@@ -357,25 +354,30 @@ A nonlocal exit from that callback cancels the launch."
               (funcall *world-startup-stop-function* process pathname)))
           (image-daemon:handoff-ticket-delete pathname))))))
 
-(-> world-startup--wait-for-fresh (configuration string integer) (option string))
-(defun world-startup--wait-for-fresh (configuration token old-pid)
-  "Resolve a private launch TOKEN to the world endpoint a new process published.
+(-> world-startup--wait-for-fresh
+    (configuration string integer &key (:alive-p (option function))) (option string))
+(defun world-startup--wait-for-fresh (configuration token old-pid &key alive-p)
+  "Resolve a private launch TOKEN while its replacement or the world server is alive.
 
 Two terminals starting at once both spawn a server, and only one takes the
-world's lease; the other process ends without publishing. The world has one
-endpoint whichever process serves it, so a client whose own launch lost the
-race takes the endpoint that answers instead of waiting out its token."
-  (image-daemon:daemon-wait-until
-   (lambda ()
-     (loop for entry in (image-daemon:daemon-registry-discover
-                         (world-endpoint-directory configuration))
-           thereis (and (or (image-daemon:daemon-endpoint-status (rest entry) token old-pid)
-                            (handler-case
-                                (world-terminal-query-record entry ':status)
-                              (world-terminal-error ()
-                                nil)))
-                        (getf (rest (rest entry)) :session-id))))
-   *world-startup-start-timeout-seconds*))
+world's lease. Accept the endpoint that answers even when the client's own
+replacement has ended after losing that race. ALIVE-P reports whether any
+process belonging to this launch is still alive."
+  (let ((image-daemon:*daemon-connect-timeout-seconds* nil))
+    (loop
+      (when-let ((identifier
+                  (loop for entry in (image-daemon:daemon-registry-discover
+                                      (world-endpoint-directory configuration))
+                        thereis (and (or (image-daemon:daemon-endpoint-status (rest entry) token old-pid)
+                                         (handler-case
+                                             (world-terminal-query-record entry ':status)
+                                           (world-terminal-error () nil)))
+                                     (getf (rest (rest entry)) :session-id)))))
+        (return identifier))
+      (when (and alive-p (not (funcall alive-p))
+                 (not (world-server-running-p configuration)))
+        (return nil))
+      (sleep 0.05))))
 
 (-> world-startup--signal-pid (integer boolean) null)
 (defun world-startup--signal-pid (pid force-p)
@@ -410,6 +412,18 @@ race takes the endpoint that answers instead of waiting out its token."
 (defun world-startup--process-object-alive-p (process)
   "Return whether PROCESS is alive through its platform adapter."
   (and (platform-process-object-alive-p *platform* process) t))
+
+(-> world-startup--replacement-alive-p (t pathname) boolean)
+(defun world-startup--replacement-alive-p (process handoff-pathname)
+  "Return whether PROCESS or its recorded launcher or replacement is alive."
+  (or (world-startup--process-object-alive-p process)
+      (some (lambda (pid)
+              (and pid
+                   (or (world-startup--pid-alive-p pid)
+                       (world-startup--pid-alive-p (- pid)))))
+            (list (image-daemon:handoff-ticket-launcher-pid handoff-pathname)
+                  (image-daemon:handoff-ticket-replacement-pid
+                   handoff-pathname :validate #'world-startup--record-p)))))
 
 (-> world-startup--terminate-process-object (t t) null)
 (defun world-startup--terminate-process-object (process force-p)
