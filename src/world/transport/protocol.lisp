@@ -87,7 +87,7 @@ Each side reads only the fields it knows, so a peer of another version may add s
 
 (-> world-terminal--read-response (stream keyword) list)
 (defun world-terminal--read-response (stream operation)
-  "Read one required startup response without a time limit."
+  "Read one required channel response without a time limit."
   (or (daemon-read-packet stream)
       (error 'world-terminal-error
              :message   "The channel endpoint closed without a response."
@@ -105,7 +105,7 @@ Each side reads only the fields it knows, so a peer of another version may add s
             (list :world-terminal-request
                   :version *daemon-protocol-version*
                   :token token :operation operation :arguments arguments))
-           (daemon-read-response stream operation))
+           (world-terminal--read-response stream operation))
       ; mallet:suppress no-ignore-errors -- closing the connection must not mask its response
       (ignore-errors (close stream)))))
 

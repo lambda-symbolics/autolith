@@ -218,7 +218,6 @@ jobs:
         env:
           ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
           AUTOLITH_CHECK_TEST: ${{ inputs.test }}
-          AUTOLITH_TEST_STACK_AFTER: '300'
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
           $status = 0
