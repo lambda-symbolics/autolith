@@ -74,3 +74,36 @@
                 (application-client-unavailable nil (setf rejected t)))
                (test-assert rejected "invalid conversation paging parameters are rejected")))))))
   nil)
+
+(-> test-acp-extension-conversations-live-tool-result () null)
+(defun test-acp-extension-conversations-live-tool-result ()
+  "List an owned conversation mid-tool, then persist and reload its real result."
+  (with-test-configuration (configuration root)
+    (acp-session-test--call-with-client
+     configuration
+     (lambda (service client)
+       (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
+              (session     (acp-service--session service identifier))
+              (application (acp-session-test--application session)))
+         (dolist (cwd (list nil (namestring (config :working-directory configuration))))
+           (let* ((owner (acp-conversations-test--make configuration (make-identifier) "Run a tool."))
+                  (lease (conversation-lease-acquire configuration (conversation-identifier owner))))
+             (unwind-protect
+                  (progn
+                    (conversation-append-provider-item
+                     owner (json-object "type" "function_call" "call_id" "live-call"
+                                        "name" "run" "namespace" "shell" "arguments" "{}"))
+                    (application-client-conversations application :cwd cwd)
+                    (conversation-append-tool-result owner "live-call" :tool-name "shell.run"
+                                                     :output                      "The real result.")
+                    (let* ((loaded  (conversation-load (conversation-pathname owner)))
+                           (outputs (remove-if-not
+                                     (lambda (item)
+                                       (equal (json-get item "type") "function_call_output"))
+                                     (conversation-input-items loaded))))
+                      (test-assert
+                       (and (= 1 (length outputs))
+                            (equal (json-get (first outputs) "output") "The real result."))
+                       "the owner records its real result in a reloadable conversation")))
+               (conversation-lease-release lease))))))))
+  nil)

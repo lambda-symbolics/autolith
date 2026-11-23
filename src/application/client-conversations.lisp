@@ -21,7 +21,7 @@
 (-> application-client--conversation-row (application pathname) list)
 (defun application-client--conversation-row (application pathname)
   "Load PATHNAME and project its durable metadata as native values."
-  (let ((conversation (conversation-load pathname)))
+  (let ((conversation (conversation-load-snapshot pathname)))
     (list :id               (conversation-identifier conversation)
           :display-id       (conversation-identifier conversation)
           :title            (conversation-title conversation)
@@ -58,7 +58,7 @@
                          (lambda (pathname)
                            (and (not (conversation-inbox-pathname-p pathname))
                                 (or (null requested-cwd)
-                                    (let* ((conversation (conversation-load pathname))
+                                    (let* ((conversation (conversation-load-snapshot pathname))
                                            (origin       (conversation-origin-directory conversation)))
                                       (and origin
                                            (string= requested-cwd

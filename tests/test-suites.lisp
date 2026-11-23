@@ -2020,6 +2020,7 @@
   test-acp-extension-model-verification
   test-acp-extension-operations-and-invoke
   test-acp-extension-conversations-paging-and-fields
+  test-acp-extension-conversations-live-tool-result
   test-acp-extension-conversations-invalid-bounds
   test-acp-extension-job-foreign-rejection
   test-acp-extension-job-transcript-window

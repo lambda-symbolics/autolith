@@ -3940,9 +3940,9 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
                (conversation-incomplete-tail-p conversation) incomplete-p)
          conversation)))))
 
-(-> conversation-load (pathname) conversation)
-(defun conversation-load (pathname)
-  "Load PATHNAME from its newest self-contained chunk or legacy segments."
+(-> conversation-load-snapshot (pathname) conversation)
+(defun conversation-load-snapshot (pathname)
+  "Replay PATHNAME from its newest self-contained chunk or legacy segments without writing repairs."
   (let* ((identity  (conversation-storage-identity-pathname pathname))
          (pathnames (conversation-storage-pathnames identity))
          (active    (lastcar pathnames)))
@@ -3951,14 +3951,18 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
              :message  "The conversation does not contain a durable segment."
              :pathname identity
              :sequence nil))
-    (let* ((header (conversation-peek-header active))
-           (conversation
-             (if (= (or (and header (getf (rest header) :version)) 0) 2)
-                 (conversation--load-active-segment identity active)
-                 (conversation--load-all-segments identity pathnames))))
-      (conversation--repair-incomplete-tool-calls conversation)
-      (setf (conversation-resumed-p conversation) t)
-      conversation)))
+    (let ((header (conversation-peek-header active)))
+      (if (= (or (and header (getf (rest header) :version)) 0) 2)
+          (conversation--load-active-segment identity active)
+          (conversation--load-all-segments identity pathnames)))))
+
+(-> conversation-load (pathname) conversation)
+(defun conversation-load (pathname)
+  "Load PATHNAME for resumption and persist repairs for interrupted tool calls."
+  (let ((conversation (conversation-load-snapshot pathname)))
+    (conversation--repair-incomplete-tool-calls conversation)
+    (setf (conversation-resumed-p conversation) t)
+    conversation))
 
 (-> conversation-pathname-for-id (configuration string) pathname)
 (defun conversation-pathname-for-id (configuration identifier)
