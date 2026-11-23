@@ -112,43 +112,76 @@
   (test-telemetry--call
    (lambda (configuration)
      (let* ((orchestrator (task-tests--orchestrator))
-            (job          (task-tests--make-job
-                           orchestrator :identifier "worktree-child" :root-identifier "worktree-owner"
-                           :definition (task-agent-definition-create :name "worker" :description "Worktree fixture."
-                                                                     :instructions "Return a result.")))
+            (job
+             (task-tests--make-job orchestrator :identifier "worktree-child"
+                                   :root-identifier         "worktree-owner"))
             (child        (task-tests--child-viewer configuration job))
             (registry     (make-instance 'tool-registry))
-            (context      (make-instance 'tool-context :configuration configuration :agent child
-                                         :conversation (agent-conversation child) :registry registry :worker nil)))
+            (context
+             (make-instance 'tool-context :configuration configuration :agent child
+                            :conversation (agent-conversation child) :registry registry
+                            :worker nil)))
        (unwind-protect
-            (progn
-              (task-worktree-register-tool registry orchestrator)
-              (let* ((bodies (test-telemetry-hooks--capture
-                              configuration
-                              (lambda ()
-                                (telemetry-call-with-run
-                                 configuration
-                                 (lambda ()
-                                   (let ((result (tool-registry-execute-call
-                                                  registry (agent-test-call :call-id "child" :namespace "child" :name "worktree"
-                                                                            :arguments "{\"action\":\"inspect\"}")
-                                                  context)))
-                                     (test-assert (search "belong to the primary parent" (tool-result-content result))
-                                                  "The child worktree refusal emitter runs.")
-                                     (telemetry-note-tool :tool "child.worktree" :outcome "error"
-                                                          :error-code (tool-result-error-code result)))
-                                   (let* ((primary-context (make-instance 'tool-context :configuration configuration
-                                                                         :registry registry :worker nil))
-                                          (result          (tool-registry-execute-call
-                                                            registry (agent-test-call :call-id "invalid" :namespace "child" :name "worktree"
-                                                                                      :arguments "{\"action\":\"inspect\"}")
-                                                            primary-context)))
-                                     (telemetry-note-tool :tool "child.worktree" :outcome "error"
-                                                          :error-code (tool-result-error-code result))))))))
-                     (span   (first (test-telemetry-hooks--kind (first bodies) "tool"))))
-                (test-telemetry-hooks--assert-failure span "permission_denied" "authority")
-                (test-telemetry-hooks--assert-failure
-                 (second (test-telemetry-hooks--kind (first bodies) "tool")) "error" "invalid-arguments")))
+           (progn
+            (task-worktree-register-tool registry orchestrator)
+            (let* ((bodies
+                    (test-telemetry-hooks--capture configuration
+                                                   (lambda ()
+                                                     (telemetry-call-with-run
+                                                      configuration
+                                                      (lambda ()
+                                                        (let ((result
+                                                               (tool-registry-execute-call
+                                                                registry
+                                                                (agent-test-call :call-id
+                                                                                 "child"
+                                                                                 :namespace
+                                                                                 "child"
+                                                                                 :name
+                                                                                 "worktree"
+                                                                                 :arguments
+                                                                                 "{\"action\":\"inspect\"}")
+                                                                context)))
+                                                          (test-assert
+                                                           (search
+                                                            "belong to the primary parent"
+                                                            (tool-result-content result))
+                                                           "The child worktree refusal emitter runs.")
+                                                          (telemetry-note-tool :tool
+                                                                               "child.worktree"
+                                                                               :outcome
+                                                                               "error"
+                                                                               :error-code
+                                                                               (tool-result-error-code
+                                                                                result)))
+                                                        (let* ((primary-context
+                                                                (make-instance
+                                                                 'tool-context
+                                                                 :configuration
+                                                                 configuration :registry
+                                                                 registry :worker nil))
+                                                               (result
+                                                                (tool-registry-execute-call
+                                                                 registry
+                                                                 (agent-test-call
+                                                                  :call-id   "invalid"
+                                                                  :namespace "child"
+                                                                  :name      "worktree"
+                                                                  :arguments
+                                                                  "{\"action\":\"inspect\"}")
+                                                                 primary-context)))
+                                                          (telemetry-note-tool :tool
+                                                                               "child.worktree"
+                                                                               :outcome
+                                                                               "error"
+                                                                               :error-code
+                                                                               (tool-result-error-code
+                                                                                result))))))))
+                   (span (first (test-telemetry-hooks--kind (first bodies) "tool"))))
+              (test-telemetry-hooks--assert-failure span "permission_denied" "authority")
+              (test-telemetry-hooks--assert-failure
+               (second (test-telemetry-hooks--kind (first bodies) "tool")) "error"
+               "invalid-arguments")))
          (task-orchestrator-close orchestrator)))))
   nil)
 
@@ -157,33 +190,48 @@
   "Export child image and spawn refusals while retaining ordinary argument errors."
   (test-telemetry--call
    (lambda (configuration)
-     (let* ((registry     (task-augment-tool-registry (make-default-tool-registry)))
-            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-            (job          (task-tests--make-job
-                           orchestrator :identifier "authority-child" :root-identifier "authority-owner"
-                           :definition (task-agent-definition-create
-                                        :name "worker" :description "Authority fixture."
-                                        :instructions "Return a result." :spawns '("allowed"))))
+     (let* ((registry (task-augment-tool-registry (make-default-tool-registry)))
+            (orchestrator
+             (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+            (job
+             (task-tests--make-job orchestrator :identifier "authority-child"
+                                   :root-identifier         "authority-owner"))
             ;; Use the parent registry to reach emitters normally withheld from children.
-            (child        (task-tests--child-viewer configuration job :registry registry))
-            (cases        '(("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"self\"}" "permission_denied" "authority")
-                            ("lisp" "source" "{\"name\":\"CL:CAR\",\"target\":\"self\"}" "permission_denied" "authority")
-                            ("lisp" "apropos" "{\"query\":\"CAR\"}" "permission_denied" "authority")
-                            ("child" "spawn" "{\"agent\":\"forbidden\",\"task\":\"Return a result.\"}" "permission_denied" "authority")
-                            ("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"invalid\"}" "error" "invalid-arguments")
-                            ("child" "spawn" "{\"agent\":\"allowed\",\"task\":\"Return a result.\"}" "error" "invalid-arguments"))))
+            (child    (task-tests--child-viewer configuration job :registry registry))
+            (cases
+             '(("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"self\"}"
+                "permission_denied" "authority")
+               ("lisp" "source" "{\"name\":\"CL:CAR\",\"target\":\"self\"}"
+                "permission_denied" "authority")
+               ("lisp" "apropos" "{\"query\":\"CAR\"}" "permission_denied" "authority")
+               ("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"invalid\"}"
+                "error" "invalid-arguments"))))
        (with-lock-held ((cl-jobpond::job--lock job))
          (setf (job-state job) ':running))
        (task-job--set-progress-state job ':running)
        (unwind-protect
-            (let ((spans (test-telemetry-hooks--tool-attempts
-                          configuration
-                          (loop for (namespace name arguments) in cases for index from 1
-                                collect (agent-test-call :call-id (format nil "authority-~D" index)
-                                                         :namespace namespace :name name :arguments arguments))
-                          :agent child :conversation (agent-conversation child) :registry registry)))
-              (test-assert (= (length cases) (length spans)) "Every child authority and validation emitter runs.")
-              (loop for span in spans for case in cases
-                    do (test-telemetry-hooks--assert-failure span (fourth case) (fifth case))))
+           (let ((spans
+                  (test-telemetry-hooks--tool-attempts configuration
+                                                       (loop for (namespace name
+                                                                  arguments) in cases
+                                                             for index from 1
+                                                             collect (agent-test-call
+                                                                      :call-id
+                                                                      (format nil
+                                                                              "authority-~D"
+                                                                              index)
+                                                                      :namespace
+                                                                      namespace :name
+                                                                      name :arguments
+                                                                      arguments))
+                                                       :agent child :conversation
+                                                       (agent-conversation child)
+                                                       :registry registry)))
+             (test-assert (= (length cases) (length spans))
+                          "Every child authority and validation emitter runs.")
+             (loop for span in spans
+                   for case in cases
+                   do (test-telemetry-hooks--assert-failure span (fourth case)
+                                                            (fifth case))))
          (task-orchestrator-close orchestrator)))))
   nil)

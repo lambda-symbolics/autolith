@@ -279,15 +279,10 @@ A completed shutdown can be reopened only by an explicit runtime resume."
          (trimmed   (string-trim '(#\HYPHEN-MINUS) mapped)))
     (and (non-empty-string-p trimmed) trimmed)))
 
-(-> task-child-name (list t) string)
-(defun task-child-name (item definition)
-  "Return the name a new child of ITEM is admitted under: the name it was given, else its role's.
-
-The pool appends the admission index, so reviewer becomes reviewer-3, and an
-agent refers to its children by names that say what they do."
-  (or (and (non-empty-string-p (getf item :name)) (getf item :name))
-      (and definition (task-agent-definition-name definition))
-      "child"))
+(-> task-child-name (list) string)
+(defun task-child-name (item)
+  "Use the assignment's display name, with a generic fallback."
+  (or (and (non-empty-string-p (getf item :name)) (getf item :name)) "child"))
 
 (-> task-execution--claim-directory (pathname) boolean)
 (defun task-execution--claim-directory (directory)
@@ -744,20 +739,6 @@ handed rather than storing a second copy."
   "Return the primary conversation identifier owning JOB's task tree."
   (session-job-root-conversation-identifier job))
 
-(-> task-job-agent-name (task-job) non-empty-string)
-(defun task-job-agent-name (job)
-  "Return JOB's live or retained child role name."
-  (if-let ((definition (task-job-definition job)))
-      (task-agent-definition-name definition)
-      (getf (task-job-definition-summary job) :name)))
-
-(-> task-job-agent-source (task-job) keyword)
-(defun task-job-agent-source (job)
-  "Return JOB's live or retained child role source."
-  (if-let ((definition (task-job-definition job)))
-      (task-agent-definition-source definition)
-      (getf (task-job-definition-summary job) :source)))
-
 (-> task-progress--snapshot-locked (task-progress integer) list)
 (defun task-progress--snapshot-locked (progress observed-at)
   "Copy the common progress fields at OBSERVED-AT while holding the progress lock."
@@ -770,35 +751,22 @@ handed rather than storing a second copy."
           :recent-tools  (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
           :duration-ms   (when started-at (task--milliseconds-between started-at observed-at)))))
 
-(-> task-progress--snapshot
-    (task-job &key (:result t) (:ended-at t))
-    list)
+(-> task-progress--snapshot (task-job &key (:result t) (:ended-at t)) list)
 (defun task-progress--snapshot (job &key result ended-at)
-  "Return JOB progress using lifecycle values captured under the job lock."
-  (multiple-value-bind (parent definition agent-name)
+  "Return progress with lifecycle and direct execution options captured under lock."
+  (multiple-value-bind (parent item metadata)
       (with-lock-held ((cl-jobpond::job--lock job))
-        (let ((definition (task-job-definition job)))
-          (values
-           (task-job-parent-agent job)
-           definition
-           (if definition
-               (task-agent-definition-name definition)
-               (getf (task-job-definition-summary job) :name)))))
+        (values (task-job-parent-agent job) (copy-list (task-job-item job))
+                (copy-list (task-job-execution-metadata job))))
     (let ((progress (task-job-progress job)))
       (with-lock-held ((task-progress-lock progress))
         (nconc (task-progress--snapshot-locked progress (or ended-at (get-internal-real-time)))
-               (list :id            (job-identifier job)
-                     :agent         agent-name
-                     :status        (task-progress-status progress)
+               (list :id (job-identifier job) :status (task-progress-status progress)
                      :recent-output (copy-seq (task-progress-output-tail progress))
                      :usage         (task-progress--usage-summary (task-progress-usage progress))
-                     :model         (or (getf result :model)
-                                        (and parent
-                                             definition
-                                             (config :model
-                                              (task-configuration-for-definition
-                                               (agent-configuration parent)
-                                               definition))))))))))
+                     :model         (or (getf result :model) (getf metadata :model)
+                                        (and parent (config :model (task-child-configuration
+                                                                    (agent-configuration parent) item))))))))))
 
 (-> task-progress-snapshot (task-job) list)
 (defun task-progress-snapshot (job)
@@ -825,49 +793,40 @@ The lifecycle fields are read once through the pool snapshot so they cannot mix
 values from either side of a terminal transition."
   (let* ((snapshot (job-snapshot job))
          (result   (task-job--copy-result (getf snapshot :result)))
-         (waves    (agent-tool-wave-cleanup-snapshot job))
-         (agent-name
-           (with-lock-held ((cl-jobpond::job--lock job))
-             (task-job-agent-name job))))
-    (list :job-id               (session-job-identifier job)
-          :execution-id         (task-job-execution-identifier job)
-          :owner                (session-job-completion-owner-conversation job)
-          :completion-policy    (session-job-completion-policy job)
-          :type                 :task
-          :state                (getf snapshot :state)
-          :pending-prompt-count (task-job-steering-pending-count job)
-          :detached             (task-job-detached-p job)
-          :agent                agent-name
-          :assignment
-          (bounded-string (getf (task-job-item job) :task)
-                          :limit *task-retained-assignment-limit*)
+         (waves    (agent-tool-wave-cleanup-snapshot job)))
+    (list :job-id (session-job-identifier job) :execution-id
+          (task-job-execution-identifier job) :owner
+          (session-job-completion-owner-conversation job) :completion-policy
+          (session-job-completion-policy job) :type :task :state (getf snapshot :state)
+          :pending-prompt-count (task-job-steering-pending-count job) :detached
+          (task-job-detached-p job) :assignment
+          (bounded-string (getf (task-job-item job) :task) :limit
+                          *task-retained-assignment-limit*)
           :progress
-          (task-progress--snapshot job
-                                   :result   result
-                                   :ended-at (getf snapshot :ended-at))
-          :cleanup-worktree     (task-worktree-cleanup-snapshot :job job)
-          :cleanup-tool-waves   waves
-          :cleanup-descendants
+          (task-progress--snapshot job :result result :ended-at
+                                   (getf snapshot :ended-at))
+          :cleanup-worktree (task-worktree-cleanup-snapshot :job job) :cleanup-tool-waves
+          waves :cleanup-descendants
           (append
-           (loop for execution in
-                 (job-pool-descendant-jobs
-                  (task-orchestrator-execution-pool (task-job-orchestrator job))
-                  (job-identifier job))
+           (loop for execution in (job-pool-descendant-jobs
+                                   (task-orchestrator-execution-pool
+                                    (task-job-orchestrator job))
+                                   (job-identifier job))
                  when (job-cancellation-requested-p execution)
-                   collect (session-job-identifier execution))
+                 collect (session-job-identifier execution))
            (loop for wave in waves
                  append (loop for execution in (getf wave :jobs)
-                             when (and (getf execution :cancellation-reason)
-                                       (not (member (getf execution :state)
-                                                    '(:completed :failed :aborted))))
-                                collect (getf execution :id))))
-          :result               result
-          :cancellation-reason  (getf snapshot :cancellation-reason)
-          :condition-report     (getf snapshot :condition-report))))
+                              when (and (getf execution :cancellation-reason)
+                                        (not
+                                         (member (getf execution :state)
+                                                 '(:completed :failed :aborted))))
+                              collect (getf execution :id))))
+          :result result :cancellation-reason (getf snapshot :cancellation-reason)
+          :condition-report (getf snapshot :condition-report))))
 
 (defgeneric session-job-snapshot (job)
-  (:documentation
-   "Return a coherent portable lifecycle snapshot for session JOB."))
+                                 (:documentation
+                                  "Return a coherent portable lifecycle snapshot for session JOB."))
 
 (defmethod session-job-snapshot :around ((job session-job))
   "Enrich lifecycle snapshots with stable lineage shared by task query clients."
@@ -936,24 +895,20 @@ values from either side of a terminal transition."
   "Return task JOB's bounded activity trace when visible to VIEWER."
   (declare (ignore owner))
   (let ((state (job-state job)))
-    (when (and (member state '(:queued :running) :test #'eq)
-               (or (null viewer) (session-job-visible-to-agent-p job viewer)))
+    (when
+        (and (member state '(:queued :running) :test #'eq)
+             (or (null viewer) (session-job-visible-to-agent-p job viewer)))
       (let ((progress (task-job-progress job)))
         (with-lock-held ((task-progress-lock progress))
           (nconc (task-progress--snapshot-locked progress (get-internal-real-time))
-                 (list :id                   (session-job-identifier job)
-                       :channel              (session-job-execution-identifier job)
-                       :type                 ':task
-                       :index                (session-job-order job)
-                       :agent                (if (job-name job)
-                                                (task-job-display-name job)
-                                                (task-job-agent-name job))
-                       :state                state
-                       :pending-prompt-count (task-job-steering-pending-count job)
+                 (list :id (session-job-identifier job) :channel
+                       (session-job-execution-identifier job) :type ':task :index
+                       (session-job-order job) :agent (task-job-display-name job) :state
+                       state :pending-prompt-count (task-job-steering-pending-count job)
                        :assignment
-                       (bounded-string (getf (task-job-item job) :task)
-                                       :limit *task-retained-assignment-limit*)
-                       :detached             (task-job-detached-p job))))))))
+                       (bounded-string (getf (task-job-item job) :task) :limit
+                                       *task-retained-assignment-limit*)
+                       :detached (task-job-detached-p job))))))))
 
 (defmethod tool-execution-activity-callback ((runtime task-orchestrator))
   "Capture the executing job so nested workers report to the same owner."

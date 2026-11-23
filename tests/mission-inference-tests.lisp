@@ -385,18 +385,18 @@
     (setf configuration (configuration-copy configuration :working-directory root))
     (let* ((application  (mission-test--application configuration))
            (registry     (application-tool-registry application))
-           (provider     (make-instance 'mission-inference-test-child-provider :mode ':blocking-tool))
-           (tool         (make-instance 'mission-inference-test-drain-tool
-                                        :namespace "test" :name "block"
-                                        :description "Hold the admitted child."
-                                        :parameters  (tool-object-schema (json-object) nil)))
+           (provider
+            (make-instance 'mission-inference-test-child-provider :mode ':blocking-tool))
+           (tool
+            (make-instance 'mission-inference-test-drain-tool :namespace "test" :name
+                           "block" :description "Hold the admitted child." :parameters
+                           (tool-object-schema (json-object) nil)))
            (orchestrator (task-orchestrator-create))
-           (definition   (task-agent-definition-create
-                          :name "mission-child" :description "Finish admitted work"
-                           :instructions "Call the blocking tool, then finish the turn."
-                          :tools ':all :source ':test))
-           (entry        (list :definition definition :detached t
-                               :item (list :agent "mission-child" :task "Finish admitted work.")))
+           (definition   (list :tools ':all))
+           (entry
+            (list :detached t :item
+                  (append (list :agent "mission-child" :task "Finish admitted work.")
+                          definition)))
            (job          nil))
       (setf (agent-provider (application-agent application)) provider)
       (tool-registry-register registry tool)
@@ -404,61 +404,81 @@
       (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
       (application-mission-start application (mission-test--specification))
       (unwind-protect
-           (progn
-             (setf job (first (task-orchestrator-start-jobs
-                               orchestrator (application-agent application) (list entry))))
-             (test-assert (bt:wait-on-semaphore (mission-inference-test-drain-entered tool)
-                                                :timeout 10)
-                          "child reaches a real tool before usage becomes unknown")
-             (let ((failure (make-instance 'simple-error :format-control "provider disconnected")))
-               (test-assert
-                (search "provider disconnected"
-                    (handler-case
-                        (mission-inference-test--call
-                         (make-instance 'mission-inference-test-provider
-                                        :entered (bt:make-semaphore :count 0)
-                                        :release (bt:make-semaphore :count 0)
-                                        :blocked-p nil :result (mission-test--result "unused")
-                                        :failure (lambda () (error failure)))
-                         (application-conversation application))
-                      (error (condition) (princ-to-string condition))))
-                "the original provider failure report reaches its caller"))
-             (test-assert (eq :blocked (getf (application-goal application) :status))
-                          "unknown usage blocks rather than fails the mission")
-             (test-assert (not (job-cancellation-requested-p job))
-                          "the already-running child is not cancelled")
-             (let ((order (task-orchestrator-next-session-order orchestrator)))
-               (test-assert
-                (handler-case
-                    (progn (task-orchestrator-start-jobs
-                            orchestrator (mission-inference-test-drain-agent tool) (list entry)) nil)
-                  (mission-error (condition) (eq :blocked (mission-error-reason condition))))
-                "a bound child cannot admit new mission work")
-               (test-assert (= order (task-orchestrator-next-session-order orchestrator))
-                            "refusal consumes no session identity"))
-             (bt:signal-semaphore (mission-inference-test-drain-release tool))
-             (task-job-await job nil)
-             (let* ((snapshot (task-job-snapshot job))
-                    (result   (getf snapshot :result)))
-               (test-assert (and (eq :completed (getf snapshot :state))
-                                 (eq :success (getf result :status)))
-                            "the child completes its admitted inference after the block"))
-             (let ((goal (application-goal application)))
-               (test-assert (eq :blocked (getf goal :status)) "draining does not reactivate the mission")
-               (test-assert (= 1 (getf goal :unknown-usage)) "unknown spend is retained")
-               (test-assert
-                (search "provider disconnected"
-                        (or (getf (find :inference-failure (getf goal :evidence)
-                                        :key               (lambda (entry) (getf entry :kind))) :text) ""))
-                "failure evidence retains the provider report")
-               (test-assert (= 4 (getf goal :tokens-used))
-                            (format nil "both child requests settle known usage: ~D" (getf goal :tokens-used)))
-               (test-assert (= 3 (getf goal :turns-used))
-                            (format nil "requests are charged once: ~D" (getf goal :turns-used)))
-               (test-assert (and (zerop (getf goal :tokens-reserved))
-                                 (zerop (getf goal :requests-outstanding)))
-                            "all reservations and outstanding requests settle")))
-        (bt:signal-semaphore (mission-inference-test-drain-release tool))
+          (progn
+           (setf job
+                   (first
+                    (task-orchestrator-start-jobs orchestrator
+                                                  (application-agent application)
+                                                  (list entry))))
+           (test-assert
+            (bordeaux-threads:wait-on-semaphore
+             (mission-inference-test-drain-entered tool) :timeout 10)
+            "child reaches a real tool before usage becomes unknown")
+           (let ((failure
+                  (make-instance 'simple-error :format-control "provider disconnected")))
+             (test-assert
+              (search "provider disconnected"
+                      (handler-case
+                       (mission-inference-test--call
+                        (make-instance 'mission-inference-test-provider :entered
+                                       (bordeaux-threads:make-semaphore :count 0)
+                                       :release
+                                       (bordeaux-threads:make-semaphore :count 0)
+                                       :blocked-p nil :result
+                                       (mission-test--result "unused") :failure
+                                       (lambda () (error failure)))
+                        (application-conversation application))
+                       (error (condition) (princ-to-string condition))))
+              "the original provider failure report reaches its caller"))
+           (test-assert (eq :blocked (getf (application-goal application) :status))
+                        "unknown usage blocks rather than fails the mission")
+           (test-assert (not (job-cancellation-requested-p job))
+                        "the already-running child is not cancelled")
+           (let ((order (task-orchestrator-next-session-order orchestrator)))
+             (test-assert
+              (handler-case
+               (progn
+                (task-orchestrator-start-jobs orchestrator
+                                              (mission-inference-test-drain-agent tool)
+                                              (list entry))
+                nil)
+               (mission-error (condition)
+                (eq :blocked (mission-error-reason condition))))
+              "a bound child cannot admit new mission work")
+             (test-assert (= order (task-orchestrator-next-session-order orchestrator))
+                          "refusal consumes no session identity"))
+           (bordeaux-threads:signal-semaphore
+            (mission-inference-test-drain-release tool))
+           (task-job-await job nil)
+           (let* ((snapshot (task-job-snapshot job)) (result (getf snapshot :result)))
+             (test-assert
+              (and (eq :completed (getf snapshot :state))
+                   (eq :success (getf result :status)))
+              "the child completes its admitted inference after the block"))
+           (let ((goal (application-goal application)))
+             (test-assert (eq :blocked (getf goal :status))
+                          "draining does not reactivate the mission")
+             (test-assert (= 1 (getf goal :unknown-usage)) "unknown spend is retained")
+             (test-assert
+              (search "provider disconnected"
+                      (or
+                       (getf
+                        (find :inference-failure (getf goal :evidence) :key
+                              (lambda (entry) (getf entry :kind)))
+                        :text)
+                       ""))
+              "failure evidence retains the provider report")
+             (test-assert (= 4 (getf goal :tokens-used))
+                          (format nil "both child requests settle known usage: ~D"
+                                  (getf goal :tokens-used)))
+             (test-assert (= 3 (getf goal :turns-used))
+                          (format nil "requests are charged once: ~D"
+                                  (getf goal :turns-used)))
+             (test-assert
+              (and (zerop (getf goal :tokens-reserved))
+                   (zerop (getf goal :requests-outstanding)))
+              "all reservations and outstanding requests settle")))
+        (bordeaux-threads:signal-semaphore (mission-inference-test-drain-release tool))
         (when job (task-job-await job nil))
         (task-orchestrator-close orchestrator)))))
 
@@ -470,18 +490,19 @@
       (setf configuration (configuration-copy configuration :working-directory root))
       (let* ((application   (mission-test--application configuration))
              (registry      (application-tool-registry application))
-             (provider      (make-instance 'mission-inference-test-child-provider :mode ':blocking-tool))
-             (tool          (make-instance 'mission-inference-test-drain-tool
-                                           :namespace "test" :name "block"
-                                           :description "Hold the admitted child."
-                                           :parameters  (tool-object-schema (json-object) nil)))
+             (provider
+              (make-instance 'mission-inference-test-child-provider :mode
+                             ':blocking-tool))
+             (tool
+              (make-instance 'mission-inference-test-drain-tool :namespace "test" :name
+                             "block" :description "Hold the admitted child." :parameters
+                             (tool-object-schema (json-object) nil)))
              (orchestrator  (task-orchestrator-create))
-             (definition    (task-agent-definition-create
-                             :name "mission-child" :description "Finish admitted work"
-                             :instructions "Call the blocking tool, then finish the turn."
-                             :tools ':all :source ':test))
-             (entry         (list :definition definition :detached t
-                                  :item (list :agent "mission-child" :task "Finish admitted work.")))
+             (definition    (list :tools ':all))
+             (entry
+              (list :detached t :item
+                    (append (list :agent "mission-child" :task "Finish admitted work.")
+                            definition)))
              (record-status (symbol-function 'mission-knowledge-record-status))
              (published-p   nil)
              (job           nil))
@@ -491,44 +512,57 @@
         (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
         (application-mission-start application (mission-test--specification))
         (unwind-protect
-             (progn
-               (setf job (first (task-orchestrator-start-jobs
-                                 orchestrator (application-agent application) (list entry))))
-               (test-assert (bt:wait-on-semaphore (mission-inference-test-drain-entered tool)
-                                                :timeout 10)
-                            "child reaches a real tool before the cancelling block")
-               (let ((context (mission-context-find (application-conversation application))))
-                 (when quarantined-p
-                   (mission--transition context ':blocked "Unknown usage." :cancel-p nil))
-                 (test-call-with-function-replacements
-                  (list (list 'mission-knowledge-record-status
-                              (lambda (published-context status)
-                                (when (and (eq published-context context) (eq status ':blocked))
-                                  (setf published-p t)
-                                  (test-assert (eq :blocked (getf (application-goal application) :status))
-                                               "the cancelling status is already published")
-                                  (test-assert (not (job-cancellation-requested-p job))
-                                               "continuation is tested before job cancellation")
-                                  (test-assert (mission-agent-terminal-p
-                                                (mission-inference-test-drain-agent tool))
-                                               "the child is terminal before cancellation reaches its job")
-                                  (let ((*mission-admitted-operation* job))
-                                    (dolist (inference-p '(nil t))
-                                      (test-assert
-                                       (handler-case
-                                           (progn (mission--admit context :inference-p inference-p) nil)
-                                         (mission-error (condition)
-                                           (eq :blocked (mission-error-reason condition))))
-                                       "both tool and inference continuation refuse the cancelling block")))
-                                  (bt:signal-semaphore (mission-inference-test-drain-release tool))
-                                  (task-job-await job nil)
-                                  (test-assert (= 1 (getf (application-goal application) :turns-used))
-                                               "the released child cannot admit another provider request"))
-                                (funcall record-status published-context status))))
-                  (lambda ()
-                    (application-mission-stop application ':blocked "Explicit blocker."))))
-               (test-assert published-p "the test reached status publication before cancellation"))
-          (bt:signal-semaphore (mission-inference-test-drain-release tool))
+            (progn
+             (setf job
+                     (first
+                      (task-orchestrator-start-jobs orchestrator
+                                                    (application-agent application)
+                                                    (list entry))))
+             (test-assert
+              (bordeaux-threads:wait-on-semaphore
+               (mission-inference-test-drain-entered tool) :timeout 10)
+              "child reaches a real tool before the cancelling block")
+             (let ((context
+                    (mission-context-find (application-conversation application))))
+               (when quarantined-p
+                 (mission--transition context ':blocked "Unknown usage." :cancel-p nil))
+               (test-call-with-function-replacements
+                (list
+                 (list 'mission-knowledge-record-status
+                       (lambda (published-context status)
+                         (when (and (eq published-context context) (eq status ':blocked))
+                           (setf published-p t)
+                           (test-assert
+                            (eq :blocked (getf (application-goal application) :status))
+                            "the cancelling status is already published")
+                           (test-assert (not (job-cancellation-requested-p job))
+                                        "continuation is tested before job cancellation")
+                           (test-assert
+                            (mission-agent-terminal-p
+                             (mission-inference-test-drain-agent tool))
+                            "the child is terminal before cancellation reaches its job")
+                           (let ((*mission-admitted-operation* job))
+                             (dolist (inference-p '(nil t))
+                               (test-assert
+                                (handler-case
+                                 (progn
+                                  (mission--admit context :inference-p inference-p)
+                                  nil)
+                                 (mission-error (condition)
+                                  (eq :blocked (mission-error-reason condition))))
+                                "both tool and inference continuation refuse the cancelling block")))
+                           (bordeaux-threads:signal-semaphore
+                            (mission-inference-test-drain-release tool))
+                           (task-job-await job nil)
+                           (test-assert
+                            (= 1 (getf (application-goal application) :turns-used))
+                            "the released child cannot admit another provider request"))
+                         (funcall record-status published-context status))))
+                (lambda ()
+                  (application-mission-stop application ':blocked "Explicit blocker."))))
+             (test-assert published-p
+                          "the test reached status publication before cancellation"))
+          (bordeaux-threads:signal-semaphore (mission-inference-test-drain-release tool))
           (when job (task-job-await job nil))
           (task-orchestrator-close orchestrator))))))
 
@@ -634,121 +668,171 @@
   (mission-schedule-tests--fixture
    (lambda (application service path clock commands executions)
      (declare (ignore path commands executions))
-     (let* ((registry     (task-augment-tool-registry (application-tool-registry application)))
-            (provider     (make-instance 'mission-child-unknown-test-provider :mode mode))
-            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-            (definition   (task-agent-definition-create
-                           :name "bounded-child" :description "Exercise missing usage"
-                           :instructions "Attempt one turn." :tools ':all :source ':test))
-            (entry        (list :definition definition :detached t
-                                :item (list :agent "bounded-child" :task "Attempt one turn.")))
-            (goal         (application-goal application))
-            (identity nil) (job nil) (next-child nil)
-            (primary-error nil) (child-error nil) (wake-error nil) (duplicate-error nil)
-            (ticket nil) (failed-attempts 0) (reservation 0) (result nil)
-            (after-failure nil) (after-primary 0) (after-child 0) (after-wake 0))
+     (let* ((registry
+             (task-augment-tool-registry (application-tool-registry application)))
+            (provider        (make-instance 'mission-child-unknown-test-provider :mode mode))
+            (orchestrator
+             (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+            (definition      (list :tools ':all))
+            (entry
+             (list :detached t :item
+                   (append (list :agent "bounded-child" :task "Attempt one turn.")
+                           definition)))
+            (goal            (application-goal application))
+            (identity        nil)
+            (job             nil)
+            (next-child      nil)
+            (primary-error   nil)
+            (child-error     nil)
+            (wake-error      nil)
+            (duplicate-error nil)
+            (ticket          nil)
+            (failed-attempts 0)
+            (reservation     0)
+            (result          nil)
+            (after-failure   nil)
+            (after-primary   0)
+            (after-child     0)
+            (after-wake      0))
        (setf (application-provider application) provider
              (agent-provider (application-agent application)) provider
              (slot-value service 'run) #'mission-schedule--run)
-       (application-mission-schedule-add application :id "recurring" :content "Inspect state"
-                                        :at 110 :interval 10)
-       (setf identity (list (getf goal :schedule-identity) (getf goal :schedule-version)))
+       (application-mission-schedule-add application :id "recurring" :content
+                                         "Inspect state" :at 110 :interval 10)
+       (setf identity
+               (list (getf goal :schedule-identity) (getf goal :schedule-version)))
        ;; Legacy optional metadata must be appended without replacing GOAL.
-       (dolist (key '(:unknown-usage-by-child :reservation-charged-tokens :reservation-charges-by-child))
+       (dolist
+           (key
+            '(:unknown-usage-by-child :reservation-charged-tokens
+              :reservation-charges-by-child))
          (remf goal key))
        (unwind-protect
-            (progn
-              (setf job (first (task-orchestrator-start-jobs
-                                orchestrator (application-agent application) (list entry))))
-              (task-job-await job nil)
-              (setf result (getf (task-job-snapshot job) :result)
-                    failed-attempts (mission-child-unknown-test-attempts provider)
-                    reservation (first (mission-child-unknown-test-reservations provider))
-                    after-failure (copy-tree goal)
-                    (slot-value provider 'mode) ':primary-success)
-              (handler-case (application--run-turn application "Continue same mission" :continuation-p t)
-                (error (condition) (setf primary-error condition)))
-              (setf after-primary (mission-child-unknown-test-attempts provider)
-                    (slot-value provider 'mode) ':numeric-success)
+           (progn
+            (setf job
+                    (first
+                     (task-orchestrator-start-jobs orchestrator
+                                                   (application-agent application)
+                                                   (list entry))))
+            (task-job-await job nil)
+            (setf result (getf (task-job-snapshot job) :result)
+                  failed-attempts (mission-child-unknown-test-attempts provider)
+                  reservation (first (mission-child-unknown-test-reservations provider))
+                  after-failure (copy-tree goal)
+                  (slot-value provider 'mode) ':primary-success)
+            (handler-case
+             (application--run-turn application "Continue same mission" :continuation-p
+                                    t)
+             (error (condition) (setf primary-error condition)))
+            (setf after-primary (mission-child-unknown-test-attempts provider)
+                  (slot-value provider 'mode) ':numeric-success)
+            (handler-case
+             (progn
+              (setf next-child
+                      (first
+                       (task-orchestrator-start-jobs orchestrator
+                                                     (application-agent application)
+                                                     (list entry))))
+              (task-job-await next-child nil))
+             (error (condition) (setf child-error condition)))
+            (setf after-child (mission-child-unknown-test-attempts provider)
+                  (slot-value provider 'mode) ':primary-success)
+            (funcall clock 110)
+            (let ((wakeups (application-mission-schedules-wake application)))
+              (setf ticket
+                      (and wakeups (mission-schedule-tests--ticket (first wakeups)))))
+            (when ticket
               (handler-case
-                  (progn
-                    (setf next-child (first (task-orchestrator-start-jobs
-                                             orchestrator (application-agent application) (list entry))))
-                    (task-job-await next-child nil))
-                (error (condition) (setf child-error condition)))
-              (setf after-child (mission-child-unknown-test-attempts provider)
-                    (slot-value provider 'mode) ':primary-success)
-              (funcall clock 110)
-              (let ((wakeups (application-mission-schedules-wake application)))
-                (setf ticket (and wakeups (mission-schedule-tests--ticket (first wakeups)))))
-              (when ticket
-                (handler-case (application-operation-call application "mission-wakeup" ticket)
-                  (error (condition) (setf wake-error condition)))
-                (setf after-wake (mission-child-unknown-test-attempts provider))
-                (handler-case (application-operation-call application "mission-wakeup" ticket)
-                  (error (condition) (setf duplicate-error condition))))
-              (format t "~&BOUNDED-OBSERVATIONS ~S~%"
-                      (list :mode mode :attempts failed-attempts :reservation reservation
-                            :shared-unknown  (getf after-failure :unknown-usage)
-                            :primary-error   (and primary-error (princ-to-string primary-error))
-                            :child-error     (and child-error (princ-to-string child-error))
-                            :wake-error      (and wake-error (princ-to-string wake-error))
-                            :provider-counts (list failed-attempts after-primary after-child after-wake)))
-              ;; First oracle is the rejected policy's visible pre-provider refusal, not new metadata.
-              (test-assert (and (null primary-error) (= (1+ failed-attempts) after-primary))
-                           "same-mission primary inference reaches the provider without reauthorization")
-              (test-assert (and (null child-error) next-child (= (1+ after-primary) after-child)
-                                (eq ':success (getf (getf (task-job-snapshot next-child) :result) :status)))
-                           "new child admission and its provider work succeed on the same mission")
-              (test-assert (and ticket (null wake-error) (= (1+ after-child) after-wake))
-                           "native due recurrence obtains measured provider usage through the default runner")
-              (test-assert (and duplicate-error (= after-wake (mission-child-unknown-test-attempts provider)))
-                           "duplicate ticket dispatches and charges nothing")
-              (test-assert (and (eq ':failed (getf result :status)) (getf result :error))
-                           "child failure and original report survive settlement")
-              (test-assert (= (if (eq mode ':quota) 1 3) failed-attempts)
-                           "pinned classifier makes quota terminal and length retry three generations")
-              (test-assert (and (typep reservation '(integer 1))
-                                (= reservation (getf after-failure :tokens-used))
-                                (zerop (getf after-failure :unknown-usage))
-                                (zerop (getf after-failure :requests-outstanding))
-                                (zerop (getf after-failure :tokens-reserved)))
-                           "one full allocation replaces one reservation with no new unresolved UNKNOWN")
-              (test-assert (and (= reservation (getf after-failure :reservation-charged-tokens 0))
-                                (= 1 (getf result :unknown-usage 0))
-                                (= 1 (getf result :reservation-charge-requests 0))
-                                (= reservation (getf result :reservation-charged-tokens 0))
-                                (null (getf result :usage)))
-                           "terminal compact summary distinguishes audit and charged allocation from measured usage")
-              (test-assert (= (+ reservation 15) (getf goal :tokens-used))
-                           "subsequent primary, child and recurrence each add only measured five tokens")
-              (test-assert (and (eq goal (application-goal application))
-                                (eq ':active (getf goal :status))
-                                (equal identity (list (getf goal :schedule-identity) (getf goal :schedule-version))))
-                           "legacy additions and all continuations preserve active mission identity and version")
-              (let* ((pathname (getf result :output-path))
-                     (before   (uiop:read-file-string pathname))
-                     (artifact (task-tests--read-exact-native-value before)))
-                (test-assert (and (eq ':failed (getf artifact :status))
-                                  (= 1 (getf artifact :unknown-usage 0))
-                                  (= reservation (getf artifact :reservation-charged-tokens 0))
-                                  (= 1 (getf artifact :reservation-charge-requests 0)))
-                             "durable native artifact retains failure UNKNOWN and full allocation charge")
-                (task-tests--publish-terminal job ':failed result)
-                (test-assert (and (string= before (uiop:read-file-string pathname))
-                                  (= reservation (getf goal :reservation-charged-tokens 0)))
-                             "duplicate terminal publication neither rewrites nor settles again"))
+               (application-operation-call application "mission-wakeup" ticket)
+               (error (condition) (setf wake-error condition)))
+              (setf after-wake (mission-child-unknown-test-attempts provider))
+              (handler-case
+               (application-operation-call application "mission-wakeup" ticket)
+               (error (condition) (setf duplicate-error condition))))
+            (format t "~&BOUNDED-OBSERVATIONS ~S~%"
+                    (list :mode mode :attempts failed-attempts :reservation reservation
+                          :shared-unknown (getf after-failure :unknown-usage)
+                          :primary-error
+                          (and primary-error (princ-to-string primary-error))
+                          :child-error    (and child-error (princ-to-string child-error))
+                          :wake-error     (and wake-error (princ-to-string wake-error))
+                          :provider-counts
+                          (list failed-attempts after-primary after-child after-wake)))
+            ;; First oracle is the rejected policy's visible pre-provider refusal, not new metadata.
+            (test-assert
+             (and (null primary-error) (= (1+ failed-attempts) after-primary))
+             "same-mission primary inference reaches the provider without reauthorization")
+            (test-assert
+             (and (null child-error) next-child (= (1+ after-primary) after-child)
+                  (eq ':success
+                      (getf (getf (task-job-snapshot next-child) :result) :status)))
+             "new child admission and its provider work succeed on the same mission")
+            (test-assert (and ticket (null wake-error) (= (1+ after-child) after-wake))
+                         "native due recurrence obtains measured provider usage through the default runner")
+            (test-assert
+             (and duplicate-error
+                  (= after-wake (mission-child-unknown-test-attempts provider)))
+             "duplicate ticket dispatches and charges nothing")
+            (test-assert (and (eq ':failed (getf result :status)) (getf result :error))
+                         "child failure and original report survive settlement")
+            (test-assert
+             (=
+              (if (eq mode ':quota)
+                  1
+                  3)
+              failed-attempts)
+             "pinned classifier makes quota terminal and length retry three generations")
+            (test-assert
+             (and (typep reservation '(integer 1))
+                  (= reservation (getf after-failure :tokens-used))
+                  (zerop (getf after-failure :unknown-usage))
+                  (zerop (getf after-failure :requests-outstanding))
+                  (zerop (getf after-failure :tokens-reserved)))
+             "one full allocation replaces one reservation with no new unresolved UNKNOWN")
+            (test-assert
+             (and (= reservation (getf after-failure :reservation-charged-tokens 0))
+                  (= 1 (getf result :unknown-usage 0))
+                  (= 1 (getf result :reservation-charge-requests 0))
+                  (= reservation (getf result :reservation-charged-tokens 0))
+                  (null (getf result :usage)))
+             "terminal compact summary distinguishes audit and charged allocation from measured usage")
+            (test-assert (= (+ reservation 15) (getf goal :tokens-used))
+                         "subsequent primary, child and recurrence each add only measured five tokens")
+            (test-assert
+             (and (eq goal (application-goal application))
+                  (eq ':active (getf goal :status))
+                  (equal identity
+                         (list (getf goal :schedule-identity)
+                               (getf goal :schedule-version))))
+             "legacy additions and all continuations preserve active mission identity and version")
+            (let* ((pathname (getf result :output-path))
+                   (before   (uiop/stream:read-file-string pathname))
+                   (artifact (task-tests--read-exact-native-value before)))
+              (test-assert
+               (and (eq ':failed (getf artifact :status))
+                    (= 1 (getf artifact :unknown-usage 0))
+                    (= reservation (getf artifact :reservation-charged-tokens 0))
+                    (= 1 (getf artifact :reservation-charge-requests 0)))
+               "durable native artifact retains failure UNKNOWN and full allocation charge")
+              (task-tests--publish-terminal job ':failed result)
+              (test-assert
+               (and (string= before (uiop/stream:read-file-string pathname))
+                    (= reservation (getf goal :reservation-charged-tokens 0)))
+               "duplicate terminal publication neither rewrites nor settles again"))
+            (application--load-goal application)
+            (let ((restored (application-goal application)))
+              (test-assert
+               (and (eq ':active (getf restored :status))
+                    (zerop (getf restored :unknown-usage))
+                    (= reservation (getf restored :reservation-charged-tokens 0))
+                    (getf restored :reservation-charges-by-child)
+                    (getf restored :unknown-usage-by-child))
+               "ordinary durable reload retains charge and audit with no quarantine")
               (application--load-goal application)
-              (let ((restored (application-goal application)))
-                (test-assert (and (eq ':active (getf restored :status))
-                                  (zerop (getf restored :unknown-usage))
-                                  (= reservation (getf restored :reservation-charged-tokens 0))
-                                  (getf restored :reservation-charges-by-child)
-                                  (getf restored :unknown-usage-by-child))
-                             "ordinary durable reload retains charge and audit with no quarantine")
-                (application--load-goal application)
-                (test-assert (= (getf restored :tokens-used) (getf (application-goal application) :tokens-used))
-                             "completed restore does not settle twice")))
+              (test-assert
+               (= (getf restored :tokens-used)
+                  (getf (application-goal application) :tokens-used))
+               "completed restore does not settle twice")))
          (when job (task-job-await job nil))
          (when next-child (task-job-await next-child nil))
          (task-orchestrator-close orchestrator)))))
@@ -940,59 +1024,90 @@
   (dolist (mode '(:numeric-success :retry-success :provider-error :nested))
     (with-test-configuration (configuration root)
       (setf configuration (configuration-copy configuration :working-directory root))
-      (let* ((application  (mission-test--application configuration))
-             (registry     (task-augment-tool-registry (application-tool-registry application)))
-             (provider     (make-instance 'mission-child-unknown-test-provider :mode mode))
-             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-             (definition   (task-agent-definition-create
-                            :name "outcome-child" :description "Exercise native outcome"
-                            :instructions "Return the requested outcome." :tools ':all :spawns ':all :source ':test))
-             (entry        (list :definition definition :detached t
-                                 :item (list :agent "outcome-child" :task "Return the requested outcome.")))
-             (job          nil))
+      (let* ((application (mission-test--application configuration))
+             (registry
+              (task-augment-tool-registry (application-tool-registry application)))
+             (provider    (make-instance 'mission-child-unknown-test-provider :mode mode))
+             (orchestrator
+              (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+             (definition  (list :tools ':all))
+             (entry
+              (list :detached t :item
+                    (append
+                     (list :agent "outcome-child" :task "Return the requested outcome.")
+                     definition)))
+             (job         nil))
         (setf (application-provider application) provider
               (agent-provider (application-agent application)) provider)
         (application-mission-start application (mission-test--specification))
         (unwind-protect
-             (progn
-               (setf job (first (task-orchestrator-start-jobs
-                                 orchestrator (application-agent application) (list entry))))
-               (task-job-await job nil)
-               (let* ((goal    (application-goal application))
-                      (result  (getf (task-job-snapshot job) :result))
-                      (unknown (member mode '(:provider-error :nested)))
-                      (failed  (eq mode ':provider-error)))
-                  (test-assert (eq (if failed ':failed ':success) (getf result :status))
-                              "the original native child outcome is retained")
-                 (test-assert (eq ':active (getf goal :status))
-                              "a child outcome does not retire the shared lifecycle")
-                 (test-assert (zerop (getf goal :unknown-usage))
-                              "only missing final usage creates logical uncertainty")
-                 (test-assert (= (if (member mode '(:retry-success :nested)) 3 1)
-                                 (mission-child-unknown-test-attempts provider))
-                              "the native retry budget counts actual attempts")
-                 (test-assert (and (zerop (getf goal :tokens-reserved))
-                                   (zerop (getf goal :requests-outstanding)))
-                              "native child completion releases all its reservations")
-                 (if (eq mode ':nested)
-                     (let* ((ledger (getf goal :unknown-usage-by-child))
-                            (nested (find (first (first ledger))
-                                          (task-orchestrator-list-visible-jobs
-                                           orchestrator (application-agent application))
-                                          :key #'job-identifier :test #'equal)))
-                       (test-assert (and (= 1 (length ledger)) nested (not (eq nested job))
-                                         (= 1 (getf (getf (task-job-snapshot nested) :result) :unknown-usage 0))
-                                         (zerop (getf result :unknown-usage 0)))
-                                    (format nil "nested ledger ~S; outer ~S; owners ~S; visible ~S"
-                                            ledger (job-identifier job)
-                                            (mission-child-unknown-test-owners provider)
-                                            (mapcar #'job-identifier
-                                                    (task-orchestrator-list-jobs orchestrator)))))
-                     (progn
-                       (test-assert (= (if unknown 1 0) (getf result :unknown-usage 0))
-                                    "each actual terminal result retains its own uncertainty")
-                       (test-assert (= (if unknown (getf goal :reservation-charged-tokens) 5) (getf goal :tokens-used))
-                                    "success charges reported usage and uncertainty charges the reservation")))))
+            (progn
+             (setf job
+                     (first
+                      (task-orchestrator-start-jobs orchestrator
+                                                    (application-agent application)
+                                                    (list entry))))
+             (task-job-await job nil)
+             (let* ((goal    (application-goal application))
+                    (result  (getf (task-job-snapshot job) :result))
+                    (unknown (member mode '(:provider-error :nested)))
+                    (failed  (eq mode ':provider-error)))
+               (test-assert
+                (eq
+                 (if failed
+                     ':failed
+                     ':success)
+                 (getf result :status))
+                "the original native child outcome is retained")
+               (test-assert (eq ':active (getf goal :status))
+                            "a child outcome does not retire the shared lifecycle")
+               (test-assert (zerop (getf goal :unknown-usage))
+                            "only missing final usage creates logical uncertainty")
+               (test-assert
+                (=
+                 (if (member mode '(:retry-success :nested))
+                     3
+                     1)
+                 (mission-child-unknown-test-attempts provider))
+                "the native retry budget counts actual attempts")
+               (test-assert
+                (and (zerop (getf goal :tokens-reserved))
+                     (zerop (getf goal :requests-outstanding)))
+                "native child completion releases all its reservations")
+               (if (eq mode ':nested)
+                   (let* ((ledger (getf goal :unknown-usage-by-child))
+                          (nested
+                           (find (first (first ledger))
+                                 (task-orchestrator-list-visible-jobs orchestrator
+                                                                      (application-agent
+                                                                       application))
+                                 :key #'job-identifier :test #'equal)))
+                     (test-assert
+                      (and (= 1 (length ledger)) nested (not (eq nested job))
+                           (= 1
+                              (getf (getf (task-job-snapshot nested) :result)
+                                    :unknown-usage 0))
+                           (zerop (getf result :unknown-usage 0)))
+                      (format nil "nested ledger ~S; outer ~S; owners ~S; visible ~S"
+                              ledger (job-identifier job)
+                              (mission-child-unknown-test-owners provider)
+                              (mapcar #'job-identifier
+                                      (task-orchestrator-list-jobs orchestrator)))))
+                   (progn
+                    (test-assert
+                     (=
+                      (if unknown
+                          1
+                          0)
+                      (getf result :unknown-usage 0))
+                     "each actual terminal result retains its own uncertainty")
+                    (test-assert
+                     (=
+                      (if unknown
+                          (getf goal :reservation-charged-tokens)
+                          5)
+                      (getf goal :tokens-used))
+                     "success charges reported usage and uncertainty charges the reservation")))))
           (when job (task-job-await job nil))
           (task-orchestrator-close orchestrator)))))
   nil)

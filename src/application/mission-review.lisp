@@ -123,56 +123,57 @@ across changed snapshots and is not reset by retries or restarts."
                   (push (list input before) fingerprint))))))
       (values (nreverse fingerprint) background))))
 
-(-> mission-review--definition (list) task-agent-definition)
-(defun mission-review--definition (policy)
-  "Return a read-only programmatic reviewer using ordinary provider output."
-  (make-instance 'task-agent-definition
-                 :name "reviewer" :source ':programmatic
-                 :description  "Independent mission checkpoint reviewer"
-                 :instructions "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
-                 :tools nil :spawns nil :models (getf policy :models)))
-
 (-> mission-review--run-task (mission-context list &key (:run list) (:background string) (:tool-context tool-context)) list)
 (defun mission-review--run-task (context policy &key run background tool-context)
   "Run one independent review under existing delegation and permissions."
-  (let* ((parent     (tool-context-agent tool-context))
-         (runtime    (tool-context-execution-runtime tool-context))
-         (definition (mission-review--definition policy))
-         (item       (list :name (format nil "review-~A" (getf policy :id))
-                           :agent "reviewer" :context background
-                           :task "Perform the configured independent review. Return a concise plain-text review with findings and summary.")))
+  (let* ((parent  (tool-context-agent tool-context))
+         (runtime (tool-context-execution-runtime tool-context))
+         (item
+          (list :name (format nil "review-~A" (getf policy :id)) :context background
+                :task
+                "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
+                :tools nil :models (getf policy :models))))
     (unless (and (typep parent 'agent) (not (typep parent 'task-child-agent)))
-      (mission--reject ':review-authority "Only the primary agent may request mission review."))
+      (mission--reject ':review-authority
+                       "Only the primary agent may request mission review."))
     (unless (typep runtime 'task-orchestrator)
       (mission--reject ':unavailable "Mission review requires a task runtime."))
-    (let* ((entries (task--resolve-items parent runtime (list definition)
-                                       :items (list item) :registry (tool-context-registry tool-context)))
-           (entry (first entries)) (jobs nil) (finished-p nil))
+    (let* ((entries    (task--admit-items parent runtime (list item)))
+           (entry      (first entries))
+           (jobs       nil)
+           (finished-p nil))
       (setf (first entries)
-            (list* :independent-context-p t
-                   :review-checkpoint     (list :policy policy :run run) entry))
+            (list* :independent-context-p t :review-checkpoint
+                   (list :policy policy :run run) entry))
       (unwind-protect
-           (progn
-             (multiple-value-bind (admitted inline)
-                 (task-orchestrator-start-jobs
-                  runtime parent entries :parent-call-id (tool-context-call-id tool-context)
-                  :command-authorization-function        (tool-context-command-authorization-function tool-context)
-                  :tool-authorization-function           (tool-context-tool-authorization-function tool-context))
-              (setf jobs admitted)
-              (with-recursive-lock-held ((mission-context-lock context))
-                (setf (getf run :job-id) (job-identifier (first jobs)))
-                (mission--record context))
-              (dolist (job inline) (job-run-inline job)))
-             (task-job-await (first jobs) nil)
-             (setf finished-p t)
-             ;; Use the complete durable artifact, not its bounded preview.
-             (let* ((result (getf (task-job-snapshot (first jobs)) :result))
-                    (path   (getf result :output-path)))
-               (if path
-                   (with-open-file (stream path :external-format ':utf-8)
-                     (let ((*read-eval* nil)) (read stream)))
-                   result)))
-        (unless finished-p (task-run--cancel-synchronous-jobs jobs))))))
+          (progn
+           (multiple-value-bind (admitted inline)
+               (task-orchestrator-start-jobs runtime parent entries :parent-call-id
+                                             (tool-context-call-id tool-context)
+                                             :command-authorization-function
+                                             (tool-context-command-authorization-function
+                                              tool-context)
+                                             :tool-authorization-function
+                                             (tool-context-tool-authorization-function
+                                              tool-context))
+             (setf jobs admitted)
+             (with-recursive-lock-held ((mission-context-lock context))
+               (setf (getf run :job-id) (job-identifier (first jobs)))
+               (mission--record context))
+             (dolist (job inline) (job-run-inline job)))
+           (task-job-await (first jobs) nil)
+           (setf finished-p t)
+           ;; Use the complete durable artifact, not its bounded preview.
+           (let* ((result (getf (task-job-snapshot (first jobs)) :result))
+                  (path   (getf result :output-path)))
+             (if path
+                 (with-open-file (stream path :external-format ':utf-8)
+                   (let ((*read-eval* nil))
+                     (read stream)))
+                 result)))
+        (unless finished-p
+          (dolist (job jobs)
+            (task-job-cancel job ':parent-finished)))))))
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)

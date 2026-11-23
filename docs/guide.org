@@ -418,8 +418,7 @@ reuse with its evidence. An agent can edit its own notes through
 =memory:personal=. That scope follows the agent across channels and restarts.
 When the turn allows =memory:=, agents can read shared workspace and global
 memories with =resource.read=. Registered agents can write them with
-=resource.edit=. For child agents, the role must grant the corresponding tool,
-regardless of who created them.
+=resource.edit=. Child agents need the corresponding tool grant.
 
 #+BEGIN_SRC lisp
 (memories)
@@ -1054,7 +1053,7 @@ Register selective project or user advice as a declarative rule:
    :priority 30 :lifetime :while-relevant))
 #+END_SRC
 
-Use =:paths=, =:languages=, =:tools=, =:namespaces=, =:roles=,
+Use =:paths=, =:languages=, =:tools=, =:namespaces=,
 =:diagnostics=, =:events= and =:output-contains= in =:when=. Fields are
 conjunctive; values within a field are alternatives. Paths match prefixes;
 =:output-contains= matches literal case-insensitive substrings of recent
@@ -1820,46 +1819,17 @@ Use the returned session ID in the conversation that created it:
 
 Run the optional checks with =(asdf:test-system "autolith/debug/tests")=.
 
-** Child roles
+** Child agents
 
-Autolith looks for roles in this order:
+Use =child.spawn= to start a child with a self-contained assignment and an
+optional name and context. Children use the parent's model, medium reasoning
+effort, and the configured child-safe tools. Codex Fast mode is not inherited.
 
-1. =.autolith/agents/=
-2. =${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=
-3. =<site-config-root>/agents/=
-4. Bundled roles.
-
-The first match wins. If it is malformed, Autolith reports the error rather
-than looking for another copy. Define a role as one bounded UTF-8 =*.sexp=
-property list:
-
-#+BEGIN_SRC lisp
-(:name             "reviewer"
- :description      "Review a change for regressions."
- :instructions     "Report concrete, evidence-backed findings."
- :tools            ("resource.read" "search.*")
- :spawns           nil
- :models           ("@parent")
- :reasoning-effort :high)
-#+END_SRC
-
-- Require =:name=, =:description= and =:instructions=. The other keys are
-  optional.
-- Use =nil=, =:all= or exact names and namespace patterns for =:tools=. A
-  role cannot grant =self.*=, =task.*= or =yield.*=. Grant =job.*= for job
-  inspection, waiting or cancellation. Children can only access their own
-  jobs and those of their descendants.
-- Use =nil=, =:all= or a list of role names for =:spawns=. The task depth
-  limit still applies.
-- Set =:reasoning-effort= to a supported effort. Omit it or use =:auto= for
-  =medium=. Codex Fast mode is not inherited.
-
-Use =child.roles= to see effective roles and =child.spawn= to start a task.
 Reuse a child by sending work to its channel. An agent can have up to 32
 children. Read =channel:current= to see which are busy. Use =child.rename=
 to rename one, =child.compact= to summarize an idle child's history, or
-=child.remove= to delete an idle child and its descendants. Opening a child's
-channel uses the same role and tools as a delegated run.
+=child.remove= to delete an idle child and its descendants. When you open a
+child's channel, its recorded tool grants apply.
 
 Channel deletion validates the whole selection first. If storage cleanup
 fails after deletion, use the =retry-cleanup= restart or let the next server
@@ -2426,8 +2396,8 @@ and fails if they exceed the shutdown timeout.
 
 * Non-interactive jobs
 
-Use =run-job= to run one child role from a script or CI. It uses the configured
-providers, MCP servers and role policies. Read the result from =--output=.
+Use =run-job= to run one assignment from a script or CI with the configured
+providers and MCP servers. Read the result from =--output=.
 Choose exactly one input form: =--input FILE= or =--prompt TEXT=.
 
 #+BEGIN_SRC sh
@@ -2442,18 +2412,17 @@ The input file contains one data-only form:
 (:autolith-job
  :version 1
  :id "job-identifier"
- :role "project-role"
  :prompt "Perform the assigned work."
  :input (:caller-owned "opaque data"))
 #+END_SRC
 
 For an inline assignment, pass =--prompt TEXT= or use =--prompt -= to read
-standard input. The defaults are role =task= and a generated ID.
+standard input. Autolith generates an ID unless you supply =--id=.
 
 #+BEGIN_SRC sh
 autolith --permissions auto run-job \
   --prompt "Review the current change and report the result." \
-  --role task --id review-change \
+  --id review-change \
   --output /path/to/result.sexp
 #+END_SRC
 
@@ -2466,7 +2435,6 @@ errors and oversized prompts produce a failure artifact too.
 *Headless jobs cannot ask for approval.* =auto= denies decisions that require
 a prompt. =sandbox= permits only sandboxed shell commands. =full= permits
 full command execution and external tools that otherwise require a prompt.
-The child role still controls which tools it can call.
 
 ** Live S-expression events
 

@@ -353,29 +353,33 @@
   "Retain a child's detached outcome for authorized inspection without redirecting its owner."
   (job-completion-tests--fixture
    (lambda (parent runtime configuration)
-     (let* ((definition (make-instance 'task-agent-definition :name "fixture" :description "fixture"
-                                                            :instructions "fixture" :source ':test))
-            (owner-job  (task-tests--make-job runtime :identifier "owner" :parent-agent parent
-                                             :definition definition :item (list :task "fixture")))
-            (child      (make-instance 'task-child-agent
-                                      :configuration configuration :conversation (conversation-create configuration)
-                                      :provider (agent-provider parent) :tool-registry (agent-tool-registry parent)
-                                      :worker nil :definition definition :identity nil :depth 1
-                                      :orchestrator runtime :job owner-job))
+     (let* ((definition (list))
+            (owner-job
+             (task-tests--make-job runtime :identifier "owner" :parent-agent parent :item
+                                   (append (list :task "fixture") definition)))
+            (child
+             (make-instance 'task-child-agent :configuration configuration :conversation
+                            (conversation-create configuration) :provider
+                            (agent-provider parent) :tool-registry
+                            (agent-tool-registry parent) :worker nil :identity nil :depth
+                            1 :orchestrator runtime :job owner-job))
             (job        (job-completion-tests--start child runtime)))
        (task-completion-restore parent)
        (test-assert (null (task-completion-pending parent))
                     "a grandchild outcome never enters the primary conversation implicitly")
-       (let ((record (find (session-job-execution-identifier job)
-                           (task-continuity-inventory parent runtime)
-                           :key (lambda (entry) (getf entry :execution-id)) :test #'equal)))
+       (let ((record
+              (find (session-job-execution-identifier job)
+                    (task-continuity-inventory parent runtime) :key
+                    (lambda (entry) (getf entry :execution-id)) :test #'equal)))
          (test-assert (eq ':inspection-only (getf record :completion-route))
                       "authorized continuity inspection identifies an inactive conversation route")
-         (test-assert (equal (conversation-identifier (agent-conversation child))
-                             (getf record :completion-owner-conversation))
-                      "inspection preserves the exact child owner")
-         (test-assert (and (eq ':continue (getf record :completion-policy)) (getf record :result))
-                      "headless completion policy and terminal artifacts remain inspectable")))))
+         (test-assert
+          (equal (conversation-identifier (agent-conversation child))
+                 (getf record :completion-owner-conversation))
+          "inspection preserves the exact child owner")
+         (test-assert
+          (and (eq ':continue (getf record :completion-policy)) (getf record :result))
+          "headless completion policy and terminal artifacts remain inspectable")))))
   nil)
 
 (-> job-completion-tests--held-cancellation (function) null)
@@ -384,58 +388,97 @@
   (job-completion-tests--fixture
    (lambda (parent runtime configuration)
      (let* ((*job-cancellation-warning-delay-seconds* 1)
-            (application                              (make-instance 'application :configuration configuration
-                                                       :conversation (agent-conversation parent) :provider (agent-provider parent)
-                                                       :tool-registry (agent-tool-registry parent) :worker nil :agent parent
-                                                       :ui                                       (terminal-ui-create :terminal (make-instance 'recording-terminal))))
-            (controller                               (make-instance 'application-input-controller
-                                                       :application application :main-thread (current-thread)))
+            (application
+             (make-instance 'application :configuration configuration :conversation
+                            (agent-conversation parent) :provider (agent-provider parent)
+                            :tool-registry (agent-tool-registry parent) :worker nil
+                            :agent parent :ui
+                            (terminal-ui-create :terminal
+                                                (make-instance 'recording-terminal))))
+            (controller
+             (make-instance 'application-input-controller :application application
+                            :main-thread                               (current-thread)))
             (entered                                  (sb-thread:make-semaphore :count 0))
-            (release (sb-thread:make-semaphore :count 0)) (jobs nil))
+            (release                                  (sb-thread:make-semaphore :count 0))
+            (jobs                                     nil))
        (setf (application-input-controller application) controller
-             (application-channel-endpoint application) (make-instance 'channel-endpoint :application application))
+             (application-channel-endpoint application)
+             (make-instance 'channel-endpoint :application application))
        (labels ((hold (&optional quick-p)
-                  (flet ((wait () (sb-thread:signal-semaphore entered)
-                                  (sb-thread:wait-on-semaphore release :timeout 20)))
-                    (if quick-p (wait) (sb-sys:without-interrupts (wait))))
+                  (flet ((wait ()
+                           (sb-thread:signal-semaphore entered)
+                           (sb-thread:wait-on-semaphore release :timeout 20)))
+                    (if quick-p
+                        (wait)
+                        (sb-sys:without-interrupts
+                          (wait))))
                   (tool-success "released"))
 
                 (start (&key owners task-p quick-p (policy ':notify))
                   (let ((job nil))
-                     (let ((submit (symbol-function 'job-pool-submit-batch)))
-                       (test-call-with-function-replacements
-                        (list (list 'task-parent-owner-identifiers (lambda (owner) (declare (ignore owner)) owners))
-                              (list 'job-pool-submit-batch
-                                    (lambda (pool entries)
-                                      (funcall submit pool
-                                               (mapcar (lambda (entry)
-                                                         (list* :parent-job
-                                                                (find (first owners) jobs :key #'job-identifier :test #'equal)
-                                                                entry))
-                                                       entries)))))
-                        (lambda ()
-                          (setf job
-                                (if task-p
-                                    (first (task-orchestrator-start-jobs runtime parent
-                                            (list (list :definition (make-instance 'task-agent-definition
-                                                                     :name "held" :description "held" :instructions "held" :source ':test)
-                                                        :item (list :agent "held" :task "held") :detached t))))
-                                    (task-orchestrator-start-execution-job runtime parent
-                                     :tool-name "cancellation.fixture" :summary "held cancellation"
-                                      :operation-function (lambda () (hold quick-p)) :detached-p t :completion-policy policy))))))
+                    (let ((submit (symbol-function 'job-pool-submit-batch)))
+                      (test-call-with-function-replacements
+                       (list
+                        (list 'task-parent-owner-identifiers
+                              (lambda (owner) (declare (ignore owner)) owners))
+                        (list 'job-pool-submit-batch
+                              (lambda (pool entries)
+                                (funcall submit pool
+                                         (mapcar
+                                          (lambda (entry)
+                                            (list* :parent-job
+                                                   (find (first owners) jobs :key
+                                                         #'job-identifier :test #'equal)
+                                                   entry))
+                                          entries)))))
+                       (lambda ()
+                         (setf job
+                                 (if task-p
+                                     (first
+                                      (task-orchestrator-start-jobs runtime parent
+                                                                    (list
+                                                                     (list :item
+                                                                           (append
+                                                                            (list :agent
+                                                                                  "held"
+                                                                                  :task
+                                                                                  "held")
+                                                                            (list))
+                                                                           :detached
+                                                                           t))))
+                                     (task-orchestrator-start-execution-job runtime
+                                                                            parent
+                                                                            :tool-name
+                                                                            "cancellation.fixture"
+                                                                            :summary
+                                                                            "held cancellation"
+                                                                            :operation-function
+                                                                            (lambda ()
+                                                                              (hold
+                                                                               quick-p))
+                                                                            :detached-p t
+                                                                            :completion-policy
+                                                                            policy))))))
                     (push job jobs)
                     (unless task-p (task-completion-watch job parent))
-                    (test-assert (sb-thread:wait-on-semaphore entered :timeout 5) "real job body entered")
-                    (values job (lambda ()
-                                  (unless (job-terminal-p job) (sb-thread:signal-semaphore release))
-                                  (session-job-await job 5))))))
+                    (test-assert (sb-thread:wait-on-semaphore entered :timeout 5)
+                                 "real job body entered")
+                    (values job
+                            (lambda ()
+                              (unless (job-terminal-p job)
+                                (sb-thread:signal-semaphore release))
+                              (session-job-await job 5))))))
          (unwind-protect
-              (test-call-with-function-replacements
-               (list (list 'task-job--run (lambda (job) (declare (ignore job)) (hold) nil)))
-               (lambda () (funcall function parent controller #'start)))
-           (dolist (job jobs) (declare (ignore job)) (sb-thread:signal-semaphore release))
+             (test-call-with-function-replacements
+              (list
+               (list 'task-job--run (lambda (job) (declare (ignore job)) (hold) nil)))
+              (lambda () (funcall function parent controller #'start)))
            (dolist (job jobs)
-             (test-assert (nth-value 1 (session-job-await job 5)) "cleanup joins released worker")))))))
+             (declare (ignore job))
+             (sb-thread:signal-semaphore release))
+           (dolist (job jobs)
+             (test-assert (nth-value 1 (session-job-await job 5))
+                          "cleanup joins released worker")))))))
   nil)
 
 (-> test-job-cancellation-warning-once () null)

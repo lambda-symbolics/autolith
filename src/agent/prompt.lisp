@@ -180,40 +180,26 @@ prompt instead of the full Autolith persona.")
 (-> system-prompt--config (configuration) hash-table)
 (defun system-prompt--config (configuration)
   "Return the stable org-templater bindings for CONFIGURATION."
-  (dict 'eq
-        :hosted-web-search-p *system-prompt-hosted-web-search-p*
-        :web-run-p           (system-prompt--web-run-p configuration)
-        :rlm-available       t
-        :knowledge-active-p  (knowledge-active-p configuration)
-        :diagnosis-available (and (knowledge-active-p configuration)
-                                  (config :diagnosis-p configuration)
-                                  t)
-        :user                (system-prompt--environment-value "USER")
-        :os                  (system-prompt--context-value (software-type))
-        :os-version          (system-prompt--context-value (software-version))
-        :arch                (system-prompt--context-value (string-downcase (machine-type)))
-        :shell               (system-prompt--environment-value "SHELL")
-        :term                (system-prompt--environment-value "TERM")
-        :lisp                (system-prompt--context-value (lisp-implementation-type))
-        :lisp-version        (system-prompt--context-value (lisp-implementation-version))
-        :lang                (system-prompt--environment-value "LANG")
-        :immutable-p         (config :immutable-p configuration)
-        :source-root         (system-prompt--context-value
-                              (namestring (config :source-root configuration)))
-        :workspace           (system-prompt--context-value
-                              (namestring (config :working-directory configuration)))
-        :session-date        (system-prompt-session-date)
-        :child-role          (system-prompt--setting-text configuration :child-role)
-        :child-role-instructions
-        (system-prompt--setting-text configuration :child-role-instructions)
-        :workspace-instructions
+  (dict 'eq :hosted-web-search-p *system-prompt-hosted-web-search-p* :web-run-p
+        (system-prompt--web-run-p configuration) :rlm-available t :knowledge-active-p
+        (knowledge-active-p configuration) :diagnosis-available
+        (and (knowledge-active-p configuration) (config :diagnosis-p configuration) t)
+        :user (system-prompt--environment-value "USER") :os
+        (system-prompt--context-value (software-type)) :os-version
+        (system-prompt--context-value (software-version)) :arch
+        (system-prompt--context-value (string-downcase (machine-type))) :shell
+        (system-prompt--environment-value "SHELL") :term
+        (system-prompt--environment-value "TERM") :lisp
+        (system-prompt--context-value (lisp-implementation-type)) :lisp-version
+        (system-prompt--context-value (lisp-implementation-version)) :lang
+        (system-prompt--environment-value "LANG") :immutable-p
+        (config :immutable-p configuration) :source-root
+        (system-prompt--context-value (namestring (config :source-root configuration)))
+        :workspace
+        (system-prompt--context-value
+         (namestring (config :working-directory configuration)))
+        :session-date (system-prompt-session-date) :workspace-instructions
         (system-prompt--workspace-instructions configuration)))
-
-(-> system-prompt--setting-text (configuration keyword) (option string))
-(defun system-prompt--setting-text (configuration name)
-  "Return text setting NAME of CONFIGURATION, or NIL when it is empty, so a section that needs it is left out."
-  (let ((text (config name configuration)))
-    (and (non-empty-string-p text) text)))
 
 (-> request-context--bounded-complete-lines (string integer) string)
 (defun request-context--bounded-complete-lines (text limit)

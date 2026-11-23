@@ -87,7 +87,7 @@ autolith_launcher_parse()
         remaining_arguments+=("$argument")
         ;;
       --permissions|--site-config-root|--model|--provider|--id|--input|--output|\
-      --prompt|--role|--timeout-seconds|--events|--generation|--status|--capsule|\
+      --prompt|--timeout-seconds|--events|--generation|--status|--capsule|\
       --original-argument|--workspace|--token|--days|--examples)
         take_value=true
         remaining_arguments+=("$argument")

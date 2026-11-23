@@ -6,6 +6,23 @@
   ()
   (:documentation "A continuity decision lacks authority or a safe recovery path."))
 
+(defclass task-continuity-context (tool-context)
+  ((child-item
+    :initarg       :child-item
+    :reader        task-continuity-context-child-item
+    :type          list
+    :documentation "The persisted assignment whose execution options are restored."))
+  (:documentation "A trusted recovery invocation with its original child execution options."))
+
+(defmethod task-context-spawn-items ((context task-continuity-context) arguments)
+  "Restore direct execution options through ordinary child admission and tool dispatch."
+  (let* ((item    (task-continuity-context-child-item context))
+         (options (loop for key in '(:tools :models :reasoning-effort)
+                        for tail = (member key item)
+                        when tail
+                          append (list key (copy-tree (second tail))))))
+    (mapcar (lambda (normalized) (append options normalized)) (call-next-method))))
+
 (defparameter *task-continuity-maximum-octets* (* 1024 1024)
   "The maximum portable continuity record size.")
 
@@ -140,7 +157,6 @@ The result is a list of at most one entry, so callers can append scans."
                   (checkpoint    (getf record :checkpoint)))
               (when specification
                 (unless (and (eq (getf record :kind) :task)
-                             (non-empty-string-p (getf specification :agent))
                              (non-empty-string-p (getf specification :task)))
                   (task-continuity--fail "Invalid persisted task specification.")))
               (when checkpoint
@@ -296,7 +312,6 @@ The result is a list of at most one entry, so callers can append scans."
            :progress                      (task-continuity--progress-summary (getf activity :progress))
            :result                        (task-continuity--result-summary
                                            (or result (getf terminal :result)) (if result result-path terminal-path))
-           :agent                         (getf (getf record :specification) :agent)
            :assignment                    (bounded-string (or (getf (getf record :specification) :task) "")
                                                           :limit *task-retained-assignment-limit*)
            :restart-safety                (getf record :restart-safety)
@@ -372,9 +387,9 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                               viewer orchestrator)))
 
 (-> task-continuity-dispatch
-    (tool-context string string &key (:arguments json-object))
+    (tool-context string string &key (:arguments json-object) (:child-item list))
     (values tool-result string))
-(defun task-continuity-dispatch (context namespace name &key arguments)
+(defun task-continuity-dispatch (context namespace name &key arguments child-item)
   "Dispatch a normal registered operation with correlated durable action records."
   (let* ((registry     (tool-context-registry context))
          (tool         (tool-registry-find registry namespace name))
@@ -399,11 +414,12 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                         :arguments           (json-encode arguments)))
     (let* ((nested-context
              (make-instance
-              'tool-context :configuration (tool-context-configuration context)
+              'task-continuity-context :child-item child-item
+              :configuration                       (tool-context-configuration context)
               :conversation conversation :worker (tool-context-worker context)
               :registry registry :agent (tool-context-agent context)
               :observer observer :call-id call-id
-              :mutation-checker            (tool-context-mutation-checker context)
+              :mutation-checker                    (tool-context-mutation-checker context)
               :command-authorization-function
               (tool-context-command-authorization-function context)
               :tool-authorization-function
@@ -464,10 +480,11 @@ require a new human decision rather than an automatic second attempt."
                :arguments (json-object "image" (getf checkpoint :image) "repl" (getf checkpoint :repl)))
               (task-continuity-dispatch
                context "child" "spawn"
-               :arguments (let ((arguments (json-object "agent" (getf spec :agent) "task" (getf spec :task))))
-                            (when (getf spec :context)
-                              (setf (gethash "context" arguments) (getf spec :context)))
-                            arguments)))
+               :child-item spec
+               :arguments  (let ((arguments (json-object "task" (getf spec :task))))
+                             (when (getf spec :context)
+                               (setf (gethash "context" arguments) (getf spec :context)))
+                             arguments)))
         (task-continuity--write
          (merge-pathnames "revive-result.sexp" directory)
          (list :success-p         (tool-result-success-p result)

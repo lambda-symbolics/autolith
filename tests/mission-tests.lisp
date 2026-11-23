@@ -852,55 +852,75 @@
   (with-test-configuration (configuration)
     (let* ((application  (mission-test--application configuration))
            (orchestrator (task-orchestrator-create))
-           (definition   (task-agent-definition-create
-                          :name "mission-child" :description "Check immutable mission admission"
-                          :instructions "Work under the admitted mission" :source ':test))
-           (entry        (list :definition definition :detached t
-                               :item (list :name "child" :agent "mission-child" :task "Check admission")))
+           (definition   (list))
+           (entry
+            (list :detached t :item
+                  (append
+                   (list :name "child" :agent "mission-child" :task "Check admission")
+                   definition)))
            (submit       (symbol-function 'job-pool-submit-batch)))
       (unwind-protect
-           (test-call-with-function-replacements
-            (list (list 'job-pool-submit-batch
-                        (lambda (pool entries)
-                          (funcall submit pool
-                                   (mapcar (lambda (entry) (list* :inline-only-p t entry)) entries)))))
-            (lambda ()
-              (application-mission-start application (mission-test--specification))
-              (let* ((context (mission-context-find (application-conversation application)))
-                     (job     (first (task-orchestrator-start-jobs orchestrator (application-agent application) (list entry)))))
-                (test-assert (eq context (task-job-mission-context job)) "queued children retain admitted mission identity")
-                (mission-context-bind context (application-agent application))
-                (application-mission-start application (mission-test--specification))
-                (test-assert (handler-case (progn (mission-task-job-run job) nil)
-                               (mission-error (condition) (eq ':replaced (mission-error-reason condition))))
-                             "replaced mission authority is refused before child startup")
-                (test-assert (mission-agent-terminal-p (application-agent application))
-                             "the replaced primary turn stops under its admitted mission")
-                (test-assert (eq context (mission--agent-context (application-agent application)))
-                             "new delegated work cannot acquire replacement authority from an old turn")
-                (test-assert
-                 (handler-case
-                     (progn
-                       (provider-stream-turn (application-provider application)
-                                             (application-conversation application)
-                                             :tool-namespaces #() :event-callback #'identity)
-                       nil)
-                   (mission-error (condition) (eq ':replaced (mission-error-reason condition))))
-                 "an old primary request cannot charge the replacement mission")
-                (let ((inherited (configuration-copy configuration)))
-                  (mission-context-inherit configuration inherited)
-                  (test-assert (eq context (mission-context-find inherited))
-                               "recursive work retains the engaged turn's exact mission"))
-                (test-assert (zerop (getf (application-goal application) :turns-used))
-                             "old primary and child work cannot charge a new mission")
-                (with-lock-held (*mission-contexts-lock*)
-                  (remhash (application-agent application) *mission-contexts*)))
-              (tool-registry-bind-runtime (application-tool-registry application) 'task-orchestrator orchestrator)
-              (let ((job (first (task-orchestrator-start-jobs orchestrator (application-agent application) (list entry)))))
-                (application-mission-stop application ':cancelled "Operator cancelled queued work")
-                (test-assert (nth-value 1 (task-job-await job 5))
-                             "queued mission cancellation finishes publication")
-                (test-assert (job-terminal-p job) "explicit mission cancellation publishes queued child termination"))))
+          (test-call-with-function-replacements
+           (list
+            (list 'job-pool-submit-batch
+                  (lambda (pool entries)
+                    (funcall submit pool
+                             (mapcar (lambda (entry) (list* :inline-only-p t entry))
+                                     entries)))))
+           (lambda ()
+             (application-mission-start application (mission-test--specification))
+             (let* ((context
+                     (mission-context-find (application-conversation application)))
+                    (job
+                     (first
+                      (task-orchestrator-start-jobs orchestrator
+                                                    (application-agent application)
+                                                    (list entry)))))
+               (test-assert (eq context (task-job-mission-context job))
+                            "queued children retain admitted mission identity")
+               (mission-context-bind context (application-agent application))
+               (application-mission-start application (mission-test--specification))
+               (test-assert
+                (handler-case (progn (mission-task-job-run job) nil)
+                              (mission-error (condition)
+                               (eq ':replaced (mission-error-reason condition))))
+                "replaced mission authority is refused before child startup")
+               (test-assert (mission-agent-terminal-p (application-agent application))
+                            "the replaced primary turn stops under its admitted mission")
+               (test-assert
+                (eq context (mission--agent-context (application-agent application)))
+                "new delegated work cannot acquire replacement authority from an old turn")
+               (test-assert
+                (handler-case
+                 (progn
+                  (provider-stream-turn (application-provider application)
+                                        (application-conversation application)
+                                        :tool-namespaces #() :event-callback #'identity)
+                  nil)
+                 (mission-error (condition)
+                  (eq ':replaced (mission-error-reason condition))))
+                "an old primary request cannot charge the replacement mission")
+               (let ((inherited (configuration-copy configuration)))
+                 (mission-context-inherit configuration inherited)
+                 (test-assert (eq context (mission-context-find inherited))
+                              "recursive work retains the engaged turn's exact mission"))
+               (test-assert (zerop (getf (application-goal application) :turns-used))
+                            "old primary and child work cannot charge a new mission")
+               (with-lock-held (*mission-contexts-lock*)
+                 (remhash (application-agent application) *mission-contexts*)))
+             (tool-registry-bind-runtime (application-tool-registry application)
+                                         'task-orchestrator orchestrator)
+             (let ((job
+                    (first
+                     (task-orchestrator-start-jobs orchestrator
+                                                   (application-agent application)
+                                                   (list entry)))))
+               (application-mission-stop application ':cancelled
+                                         "Operator cancelled queued work")
+               (test-assert (nth-value 1 (task-job-await job 5))
+                            "queued mission cancellation finishes publication")
+               (test-assert (job-terminal-p job)
+                            "explicit mission cancellation publishes queued child termination"))))
         (task-orchestrator-close orchestrator)))))
 
 (-> test-mission-inline-parent-cancellation () null)

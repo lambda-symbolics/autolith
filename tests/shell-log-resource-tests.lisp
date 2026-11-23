@@ -128,64 +128,87 @@
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (orchestrator                   (task-orchestrator-create))
-           (definition                     (task-agent-definition-create
-                                            :name "reader" :description "Read retained output."
-                                            :instructions "Read the capture." :tools '("resource.read")))
-           (job                            (task-tests--make-job orchestrator :identifier "current-child"
-                                                                  :definition             definition
-                                                                   :root-identifier       "shell-receiver"))
-           (producer-job                   (task-tests--make-job orchestrator :identifier "producer-child"
-                                                                   :definition            definition
-                                                                   :root-identifier       "shell-producer"))
-           (registry                       (task-child-tool-registry
-                                            (make-default-tool-registry :configuration configuration)
-                                            definition :orchestrator orchestrator :depth 1))
+           (definition                     (list :tools '("resource.read")))
+           (job
+            (task-tests--make-job orchestrator :identifier "current-child"
+                                  :root-identifier         "shell-receiver"))
+           (producer-job
+            (task-tests--make-job orchestrator :identifier "producer-child"
+                                  :root-identifier         "shell-producer"))
+           (registry
+            (task-child-tool-registry
+             (make-default-tool-registry :configuration configuration) definition
+             :orchestrator orchestrator :depth 1))
            (child                          (task-tests--child-viewer configuration job :registry registry))
-           (producer                       (task-tests--child-viewer configuration producer-job :registry registry))
-           (context                        (make-instance 'tool-context :configuration configuration
-                                                          :agent         producer :worker nil
-                                                          :conversation                (agent-conversation producer)))
+           (producer
+            (task-tests--child-viewer configuration producer-job :registry registry))
+           (context
+            (make-instance 'tool-context :configuration configuration :agent producer
+                           :worker nil :conversation (agent-conversation producer)))
            (artifact                       (shell-log-allocate context))
            (approval-requests              0))
       (flet ((refuse-approval (operation arguments)
                (declare (ignore operation arguments))
                (incf approval-requests)
                ':deny))
-        (let ((observer (callback-agent-observer-create
-                         :command-authorization-callback #'refuse-approval
-                         :tool-authorization-callback    #'refuse-approval)))
+        (let ((observer
+               (callback-agent-observer-create :command-authorization-callback
+                                               #'refuse-approval
+                                               :tool-authorization-callback
+                                               #'refuse-approval)))
           (flet ((read-log (reference arguments &key restricted-p)
                    (setf (gethash "uri" arguments) reference)
-                   (getf (agent--execute-tool-plan
-                          child (list :call (json-object "namespace" "resource" "name" "read"
-                                                         "arguments" (json-encode arguments)))
-                          :observer observer :tool-restriction-p restricted-p)
-                         :result)))
+                   (getf
+                    (agent--execute-tool-plan child
+                                              (list :call
+                                                    (json-object "namespace" "resource"
+                                                                 "name" "read"
+                                                                 "arguments"
+                                                                 (json-encode
+                                                                  arguments)))
+                                              :observer observer :tool-restriction-p
+                                              restricted-p)
+                    :result)))
             (unwind-protect
-                 (progn
-                   (shell-log-tests--finish artifact (utf8-string-to-octets "shared diagnostics"))
-                   (let* ((reference (shell-log-reference artifact))
-                          (range     (read-log reference (json-object "byte-offset" 7 "byte-count" 4)))
-                          (query     (read-log reference (json-object "query" "diagnostics" "max-results" 1))))
-                     (test-assert (and (tool-result-success-p range)
-                                       (search "returned bytes: 4" (tool-result-content range))
-                                       (search (format nil "Content:~%diag") (tool-result-content range)))
-                                  "A child reads a bounded byte window using a reference shared by another task")
-                     (test-assert (and (tool-result-success-p query)
-                                       (search "7: shared diagnostics" (tool-result-content query)))
-                                  "A child searches the shared reference by byte offset")
-                     (let ((restricted-range (read-log reference (json-object "byte-offset" 7 "byte-count" 4)
-                                                       :restricted-p t))
-                           (restricted-query (read-log reference (json-object "query" "diagnostics" "max-results" 1)
-                                                       :restricted-p t)))
-                       (test-assert (and (tool-result-success-p restricted-range)
-                                         (search (format nil "Content:~%diag")
-                                                 (tool-result-content restricted-range)))
-                                    "An exact shell-log reference can be read in a restricted frame")
-                       (test-assert (and (tool-result-success-p restricted-query)
-                                         (search "7: shared diagnostics" (tool-result-content restricted-query)))
-                                    "An exact shell-log reference can be searched in a restricted frame")))
-                   (test-assert (zerop approval-requests) "Log reads do not ask for approval"))
+                (progn
+                 (shell-log-tests--finish artifact
+                                          (utf8-string-to-octets "shared diagnostics"))
+                 (let* ((reference (shell-log-reference artifact))
+                        (range
+                         (read-log reference
+                          (json-object "byte-offset" 7 "byte-count" 4)))
+                        (query
+                         (read-log reference
+                          (json-object "query" "diagnostics" "max-results" 1))))
+                   (test-assert
+                    (and (tool-result-success-p range)
+                         (search "returned bytes: 4" (tool-result-content range))
+                         (search (format nil "Content:~%diag")
+                                 (tool-result-content range)))
+                    "A child reads a bounded byte window using a reference shared by another task")
+                   (test-assert
+                    (and (tool-result-success-p query)
+                         (search "7: shared diagnostics" (tool-result-content query)))
+                    "A child searches the shared reference by byte offset")
+                   (let ((restricted-range
+                          (read-log reference
+                           (json-object "byte-offset" 7 "byte-count" 4) :restricted-p t))
+                         (restricted-query
+                          (read-log reference
+                           (json-object "query" "diagnostics" "max-results" 1)
+                           :restricted-p t)))
+                     (test-assert
+                      (and (tool-result-success-p restricted-range)
+                           (search (format nil "Content:~%diag")
+                                   (tool-result-content restricted-range)))
+                      "An exact shell-log reference can be read in a restricted frame")
+                     (test-assert
+                      (and (tool-result-success-p restricted-query)
+                           (search "7: shared diagnostics"
+                                   (tool-result-content restricted-query)))
+                      "An exact shell-log reference can be searched in a restricted frame")))
+                 (test-assert (zerop approval-requests)
+                              "Log reads do not ask for approval"))
               (task-orchestrator-close orchestrator)))))))
   nil)
 

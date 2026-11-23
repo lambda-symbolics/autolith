@@ -1473,82 +1473,77 @@ Return success and bounded secondary cleanup metadata without replacing a primar
 (-> main--run-job-command () clingon:command)
 (defun main--run-job-command ()
   "Return the non-interactive single-job command definition."
-  (make-command
-   :name        "run-job"
-   :description "run one contracted child-agent job without a terminal"
-   :options
-   (list
-    (make-option ':string :long-name "input" :key ':input
-                 :parameter "FILE" :description "data-only job S-expression")
-    (make-option ':string :long-name "prompt" :key ':prompt
-                 :parameter "TEXT" :description "inline job prompt, or - to read standard input")
-    (make-option ':string :long-name "role" :key ':role
-                 :parameter "NAME" :description "task role for an inline prompt")
-    (make-option ':string :long-name "id" :key ':job-id
-                 :parameter "ID" :description "inline prompt job identifier")
-    (make-option ':string :long-name "output" :key ':output
-                 :parameter "FILE" :description "atomically installed terminal result")
-    (make-option ':string :long-name "events" :key ':events
-                 :parameter "sexp" :description "observe bounded S-expression events on stdout"))
-   :handler
-   (lambda (command)
-     (when (command-arguments command)
-       (error 'configuration-error
-              :message "run-job accepts options only; use --input FILE or --prompt TEXT, with --output FILE."))
-     (let* ((input         (getopt* command ':input))
-            (prompt-option (getopt* command ':prompt))
-            (prompt-p      (not (null prompt-option)))
-            (role-option   (getopt* command ':role))
-            (id-option     (getopt* command ':job-id))
-            (output        (getopt* command ':output))
-            (events        (getopt* command ':events)))
-       (unless (or (null events) (equal events "sexp"))
-         (error 'configuration-error :message "run-job --events requires sexp."))
-       (when (and input prompt-p)
-         (error 'configuration-error :message "run-job accepts --input or --prompt, not both."))
-       (unless (or (non-empty-string-p input) prompt-p)
-         (error 'configuration-error :message "run-job requires --input FILE or --prompt TEXT."))
-       (when (and input (or role-option id-option))
-         (error 'configuration-error
-                :message "run-job --role and --id require --prompt."))
-       (unless (non-empty-string-p output)
-         (error 'configuration-error :message "run-job requires --output FILE."))
-       (let* ((configuration
-                (apply #'configuration-create
-                       :immutable-p                 (not (null (getopt* command ':immutable)))
-                       :defer-provider-validation-p t
-                       (append (main--site-root-arguments command)
-                               (main--model-arguments command))))
-              (permission-mode
-                (or (getopt* command ':permissions)
-                    (config :permission-mode configuration)
-                    ':auto))
-              (observation
-                (when events
-                  (list :events ':sexp :event-output *standard-output*)))
-              (status
-                (if prompt-p
-                    (apply #'run-job-run-prompt
-                           (if (equal prompt-option "-")
-                               *standard-input*
-                               prompt-option)
-                           output permission-mode
-                           :configuration configuration
-                           (append
-                            (when role-option
-                              (list :role role-option))
-                            (when id-option
-                              (list :identifier id-option))
-                            observation))
-                    (apply #'run-job-run input output permission-mode
-                           :configuration configuration
-                           observation))))
-         ;; The boundary has cleaned up the application and attempted publication.
-         ;; Normal Lisp exit can interrupt or flush a retained blocked writer.
-         (if events
-             (sb-ext:exit :code status :abort t)
-             (unless (zerop status)
-               (uiop:quit status))))))))
+  (make-command :name "run-job" :description
+                "run one contracted child-agent job without a terminal" :options
+                (list
+                 (make-option ':string :long-name "input" :key ':input :parameter "FILE"
+                              :description "data-only job S-expression")
+                 (make-option ':string :long-name "prompt" :key ':prompt :parameter
+                              "TEXT" :description
+                              "inline job prompt, or - to read standard input")
+                 (make-option ':string :long-name "id" :key ':job-id :parameter "ID"
+                              :description "inline prompt job identifier")
+                 (make-option ':string :long-name "output" :key ':output :parameter
+                              "FILE" :description "atomically installed terminal result")
+                 (make-option ':string :long-name "events" :key ':events :parameter
+                              "sexp" :description
+                              "observe bounded S-expression events on stdout"))
+                :handler
+                (lambda (command)
+                  (when (command-arguments command)
+                    (error 'configuration-error :message
+                           "run-job accepts options only; use --input FILE or --prompt TEXT, with --output FILE."))
+                  (let* ((input         (getopt* command ':input))
+                         (prompt-option (getopt* command ':prompt))
+                         (prompt-p      (not (null prompt-option)))
+                         (id-option     (getopt* command ':job-id))
+                         (output        (getopt* command ':output))
+                         (events        (getopt* command ':events)))
+                    (unless (or (null events) (equal events "sexp"))
+                      (error 'configuration-error :message
+                             "run-job --events requires sexp."))
+                    (when (and input prompt-p)
+                      (error 'configuration-error :message
+                             "run-job accepts --input or --prompt, not both."))
+                    (unless (or (non-empty-string-p input) prompt-p)
+                      (error 'configuration-error :message
+                             "run-job requires --input FILE or --prompt TEXT."))
+                    (when (and input id-option)
+                      (error 'configuration-error :message
+                             "run-job --id requires --prompt."))
+                    (unless (non-empty-string-p output)
+                      (error 'configuration-error :message
+                             "run-job requires --output FILE."))
+                    (let* ((configuration
+                            (apply #'configuration-create :immutable-p
+                                   (not (null (getopt* command ':immutable)))
+                                   :defer-provider-validation-p t
+                                   (append (main--site-root-arguments command)
+                                           (main--model-arguments command))))
+                           (permission-mode
+                            (or (getopt* command ':permissions)
+                                (config :permission-mode configuration) ':auto))
+                           (observation
+                            (when events
+                              (list :events ':sexp :event-output *standard-output*)))
+                           (status
+                            (if prompt-p
+                                (apply #'run-job-run-prompt
+                                       (if (equal prompt-option "-")
+                                           *standard-input*
+                                           prompt-option)
+                                       output permission-mode :configuration
+                                       configuration
+                                       (append
+                                        (when id-option (list :identifier id-option))
+                                        observation))
+                                (apply #'run-job-run input output permission-mode
+                                       :configuration configuration observation))))
+                      ;; The boundary has cleaned up the application and attempted publication.
+                      ;; Normal Lisp exit can interrupt or flush a retained blocked writer.
+                      (if events
+                          (sb-ext:exit :code status :abort t)
+                          (unless (zerop status) (uiop/image:quit status))))))))
 
 (-> main--known-model-identifiers () list)
 (defun main--known-model-identifiers ()

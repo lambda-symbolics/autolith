@@ -188,101 +188,130 @@
     (let* ((registry     (make-instance 'tool-registry))
            (parent       (task-tests--primary-agent configuration "streaming-scope" registry))
            (orchestrator (task-orchestrator-create))
-           (definition   (task-agent-definition-create
-                          :name "streaming-role" :description "Observer fixture."
-                          :instructions "Return a result." :source ':test))
+           (definition   (list))
            (stream       (make-string-output-stream))
            (emitter      (run-job-event-emitter-create "run-scoped" stream))
-           (listener     (run-job-event-observer-create
-                          orchestrator emitter :configuration configuration :registry registry
-                          :root-conversation "streaming-scope" :root-name "PRIVATE-ROOT-ALIAS")))
-      (tool-registry-register
-       registry (make-instance 'task-test-effect-tool :namespace "test" :name "effect"
-                               :description "Record a test effect."
-                               :parameters  (tool-object-schema (json-object) nil)))
+           (listener
+            (run-job-event-observer-create orchestrator emitter :configuration
+                                           configuration :registry registry
+                                           :root-conversation "streaming-scope"
+                                           :root-name         "PRIVATE-ROOT-ALIAS")))
+      (tool-registry-register registry
+                              (make-instance 'task-test-effect-tool :namespace "test"
+                                             :name "effect" :description
+                                             "Record a test effect." :parameters
+                                             (tool-object-schema (json-object) nil)))
       (task-orchestrator-add-listener orchestrator listener)
       (unwind-protect
-           (let* ((root          (task-tests--register-job orchestrator parent definition
-                                                         :name "PRIVATE-ROOT-ALIAS"))
-                  (child         (task-tests--register-job
-                                  orchestrator parent definition :name "PRIVATE-CHILD-ALIAS"
-                                  :owner-identifiers                   (list (job-identifier root))))
-                  (grandchild    (task-tests--register-job
-                                  orchestrator parent definition :name "PRIVATE-GRANDCHILD-ALIAS"
-                                  :owner-identifiers                   (list (job-identifier root) (job-identifier child))))
-                  (foreign       (task-tests--register-job orchestrator parent definition
-                                                         :name "PRIVATE-FOREIGN-ROOT"))
-                  (other-session (task-tests--register-job
-                                  orchestrator parent definition :name "PRIVATE-OTHER-SESSION"
-                                  :owner-identifiers                   (list (job-identifier root))
-                                  :root-conversation-identifier        "other-conversation")))
-             (run-job-event-emit emitter ':run-started nil)
-             ;; The transition is not observable until continuity is durable.
-             (task-orchestrator-emit orchestrator ':task-subagent-lifecycle
-                                     (list :id (job-identifier root) :status ':started))
-             (dolist (job (list root child grandchild foreign other-session))
-               (task-continuity-record-job job parent)
-               (task-orchestrator-emit orchestrator ':task-subagent-lifecycle
-                                       (list :id (job-identifier job) :status ':started))
-               (task-progress-note-status job ':provider-request-started '(:request-number 2))
-               (task-progress-note-status
-                job ':provider-request-completed
-                '(:usage (("input_tokens" 5) ("output_tokens" 7) ("total_tokens" 12))
-                  :message "PRIVATE-PROVIDER-BODY")))
-             (task-progress-note-status root ':tool-call-started
-                                        '(:tool "test.effect" :call-id "PRIVATE-CALL-ID"
-                                          :arguments "PRIVATE-ARGUMENTS"))
-             (task-progress-note-status root ':tool-call-completed
-                                        '(:tool "test.effect" :call-id "PRIVATE-CALL-ID"
-                                          :success-p t :result "PRIVATE-RESULT-BODY"))
-             (task-progress-note-status child ':tool-call-started
-                                        '(:tool "PRIVATE-UNKNOWN-TOOL" :call-id "PRIVATE-OTHER-CALL-ID"))
-             (task-tests--publish-terminal
-              child ':completed (task-tests--terminal-result child :output "PRIVATE-CHILD-RESULT"))
-             (task-tests--publish-terminal
-              root ':completed (task-tests--terminal-result root :output "PRIVATE-ROOT-RESULT"))
-             (test-assert (run-job-event-emitter-finish emitter (run-job-event-tests--terminal))
-                          "connected owned observation completes")
-             (let* ((text     (get-output-stream-string stream))
-                    (records  (run-job-event-tests--records text))
-                    (starts   (remove-if-not
-                               (lambda (record) (eq (getf (rest record) :kind) ':job-started)) records))
-                    (finishes (remove-if-not
-                               (lambda (record) (eq (getf (rest record) :kind) ':job-finished)) records))
-                    (tools    (remove-if-not
-                               (lambda (record) (member (getf (rest record) :kind)
-                                                        '(:tool-started :tool-finished))) records))
-                    (usage    (find ':usage records :key (lambda (record) (getf (rest record) :kind)))))
-               (test-assert (= (length starts) 3)
-                            "one durable start per owned job excludes premature and foreign transitions")
-               (test-assert
-                (every (lambda (record)
-                         (let ((id (getf (getf (rest record) :data) :job-id)))
-                           (or (null id)
-                               (member id (mapcar #'session-job-execution-identifier
-                                                   (list root child grandchild)) :test #'equal))))
-                       records)
-                "wire identifiers are execution UUIDs scoped to this root and conversation")
-               (test-assert
-                (and (= (length finishes) 1)
-                     (equal (getf (getf (rest (first finishes)) :data) :job-id)
-                            (session-job-execution-identifier child))
-                     (getf (getf (rest (first finishes)) :data) :published-p))
-                "only the durably published descendant terminal is observed before outer publication")
-               (test-assert (= (length tools) 3) "provider callbacks supply tool boundaries")
-               (test-assert
-                (and (equal (getf (getf (rest (first tools)) :data) :tool-name) "test.effect")
-                     (equal (getf (getf (rest (third tools)) :data) :tool-name) "unknown")
-                     (equal (getf (getf (rest (first tools)) :data) :call-id)
-                            (getf (getf (rest (second tools)) :data) :call-id)))
-                "known tool names and stable pseudonymized calls are projected")
-               (test-assert (and (= (getf (getf (rest usage) :data) :input-tokens) 5)
-                                 (= (getf (getf (rest usage) :data) :output-tokens) 7)
-                                 (= (getf (getf (rest usage) :data) :total-tokens) 12)
-                                 (= (getf (getf (rest usage) :data) :provider-requests) 2))
-                            "normalized provider usage counters are emitted")
-               (test-assert (not (search "PRIVATE-" text))
-                            "caller aliases, provider text, arguments and result bodies are absent")))
+          (let* ((root
+                  (task-tests--register-job orchestrator parent definition :name
+                                            "PRIVATE-ROOT-ALIAS"))
+                 (child
+                  (task-tests--register-job orchestrator parent definition :name
+                                            "PRIVATE-CHILD-ALIAS" :owner-identifiers
+                                            (list (job-identifier root))))
+                 (grandchild
+                  (task-tests--register-job orchestrator parent definition :name
+                                            "PRIVATE-GRANDCHILD-ALIAS" :owner-identifiers
+                                            (list (job-identifier root)
+                                                  (job-identifier child))))
+                 (foreign
+                  (task-tests--register-job orchestrator parent definition :name
+                                            "PRIVATE-FOREIGN-ROOT"))
+                 (other-session
+                  (task-tests--register-job orchestrator parent definition :name
+                                            "PRIVATE-OTHER-SESSION" :owner-identifiers
+                                            (list (job-identifier root))
+                                            :root-conversation-identifier
+                                            "other-conversation")))
+            (run-job-event-emit emitter ':run-started nil)
+            (task-orchestrator-emit orchestrator ':task-subagent-lifecycle
+                                    (list :id (job-identifier root) :status ':started))
+            (dolist (job (list root child grandchild foreign other-session))
+              (task-continuity-record-job job parent)
+              ;; The transition is not observable until continuity is durable.
+              (task-orchestrator-emit orchestrator ':task-subagent-lifecycle
+                                      (list :id (job-identifier job) :status ':started))
+              (task-progress-note-status job ':provider-request-started
+                                         '(:request-number 2))
+              (task-progress-note-status job ':provider-request-completed
+                                         '(:usage
+                                           (("input_tokens" 5) ("output_tokens" 7)
+                                            ("total_tokens" 12))
+                                           :message "PRIVATE-PROVIDER-BODY")))
+            (task-progress-note-status root ':tool-call-started
+                                       '(:tool "test.effect" :call-id "PRIVATE-CALL-ID"
+                                         :arguments "PRIVATE-ARGUMENTS"))
+            (task-progress-note-status root ':tool-call-completed
+                                       '(:tool "test.effect" :call-id "PRIVATE-CALL-ID"
+                                         :success-p t :result "PRIVATE-RESULT-BODY"))
+            (task-progress-note-status child ':tool-call-started
+                                       '(:tool "PRIVATE-UNKNOWN-TOOL" :call-id
+                                         "PRIVATE-OTHER-CALL-ID"))
+            (task-tests--publish-terminal child ':completed
+                                          (task-tests--terminal-result child :output
+                                                                       "PRIVATE-CHILD-RESULT"))
+            (task-tests--publish-terminal root ':completed
+                                          (task-tests--terminal-result root :output
+                                                                       "PRIVATE-ROOT-RESULT"))
+            (test-assert
+             (run-job-event-emitter-finish emitter (run-job-event-tests--terminal))
+             "connected owned observation completes")
+            (let* ((text    (get-output-stream-string stream))
+                   (records (run-job-event-tests--records text))
+                   (starts
+                    (remove-if-not
+                     (lambda (record) (eq (getf (rest record) :kind) ':job-started))
+                     records))
+                   (finishes
+                    (remove-if-not
+                     (lambda (record) (eq (getf (rest record) :kind) ':job-finished))
+                     records))
+                   (tools
+                    (remove-if-not
+                     (lambda (record)
+                       (member (getf (rest record) :kind)
+                               '(:tool-started :tool-finished)))
+                     records))
+                   (usage
+                    (find ':usage records :key
+                          (lambda (record) (getf (rest record) :kind)))))
+              (test-assert (= (length starts) 3)
+                           "one durable start per owned job excludes premature and foreign transitions")
+              (test-assert
+               (every
+                (lambda (record)
+                  (let ((id (getf (getf (rest record) :data) :job-id)))
+                    (or (null id)
+                        (member id
+                                (mapcar #'session-job-execution-identifier
+                                        (list root child grandchild))
+                                :test #'equal))))
+                records)
+               "wire identifiers are execution UUIDs scoped to this root and conversation")
+              (test-assert
+               (and (= (length finishes) 1)
+                    (equal (getf (getf (rest (first finishes)) :data) :job-id)
+                           (session-job-execution-identifier child))
+                    (getf (getf (rest (first finishes)) :data) :published-p))
+               "only the durably published descendant terminal is observed before outer publication")
+              (test-assert (= (length tools) 3)
+                           "provider callbacks supply tool boundaries")
+              (test-assert
+               (and
+                (equal (getf (getf (rest (first tools)) :data) :tool-name) "test.effect")
+                (equal (getf (getf (rest (third tools)) :data) :tool-name) "unknown")
+                (equal (getf (getf (rest (first tools)) :data) :call-id)
+                       (getf (getf (rest (second tools)) :data) :call-id)))
+               "known tool names and stable pseudonymized calls are projected")
+              (test-assert
+               (and (= (getf (getf (rest usage) :data) :input-tokens) 5)
+                    (= (getf (getf (rest usage) :data) :output-tokens) 7)
+                    (= (getf (getf (rest usage) :data) :total-tokens) 12)
+                    (= (getf (getf (rest usage) :data) :provider-requests) 2))
+               "normalized provider usage counters are emitted")
+              (test-assert (not (search "PRIVATE-" text))
+                           "caller aliases, provider text, arguments and result bodies are absent")))
         (task-orchestrator-remove-listener orchestrator listener)
         (task-orchestrator-close orchestrator)
         (run-job-event-emitter-finish emitter (run-job-event-tests--terminal)))))
@@ -431,7 +460,6 @@
                           (uiop:launch-program
                            (append environment command
                                    (list "--permissions" "auto" "run-job" "--prompt" "-"
-                                          "--role" "task"
                                          "--id" "launcher-stdin" "--events" "sexp"
                                          "--output" (namestring output)))
                            :directory root :input ':stream :output events :error-output errors)))

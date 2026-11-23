@@ -112,29 +112,35 @@ strings in chronological order from the current durable provider projection."
 (-> context-rule--validate (t) list)
 (defun context-rule--validate (rule)
   "Return a detached validated rule without executing its declarative predicates."
-  (unless (plist-schema-p rule
-                          :allowed-keys '(:id :when :instruction :priority :lifetime :workspace))
-    (context-rule--reject ':rule "A rule accepts only id, when, instruction, priority, lifetime and workspace."))
-  (let ((predicates (getf rule :when))
-        (workspace  (getf rule :workspace)))
+  (unless
+      (plist-schema-p rule :allowed-keys
+                      '(:id :when :instruction :priority :lifetime :workspace))
+    (context-rule--reject ':rule
+                          "A rule accepts only id, when, instruction, priority, lifetime and workspace."))
+  (let ((predicates (getf rule :when)) (workspace (getf rule :workspace)))
     (context--validate-identifier (getf rule :id) "Context rule ID")
-    (unless (and predicates
-                 (plist-schema-p predicates
-                                 :allowed-keys '(:paths :languages :tools :namespaces :roles
-                                                 :diagnostics :events :output-contains)))
-      (context-rule--reject ':when "A rule requires at least one recognized metadata or output predicate."))
+    (unless
+        (and predicates
+             (plist-schema-p predicates :allowed-keys
+                             '(:paths :languages :tools :namespaces :diagnostics :events
+                               :output-contains)))
+      (context-rule--reject ':when
+                            "A rule requires at least one recognized metadata or output predicate."))
     (loop for (field values) on predicates by (partial #'nthcdr 2)
           do (unless (context-rule--values field values)
-               (context-rule--reject field "A rule predicate requires at least one value.")))
-    (when (and workspace
-               (not (and (non-empty-string-p workspace)
-                         (uiop:absolute-pathname-p (pathname workspace)))))
-      (context-rule--reject ':workspace "Rule workspace scope must be an absolute directory namestring."))
+               (context-rule--reject field
+                                     "A rule predicate requires at least one value.")))
+    (when
+        (and workspace
+             (not
+              (and (non-empty-string-p workspace)
+                   (uiop/pathname:absolute-pathname-p (pathname workspace)))))
+      (context-rule--reject ':workspace
+                            "Rule workspace scope must be an absolute directory namestring."))
     ;; Use the ordinary contribution constructor for all delivery policy validation.
-    (make-context-contribution :identifier  (getf rule :id)
-                               :instruction (getf rule :instruction)
-                               :priority    (getf rule :priority 0)
-                               :lifetime    (getf rule :lifetime ':while-relevant))
+    (make-context-contribution :identifier (getf rule :id) :instruction
+                               (getf rule :instruction) :priority (getf rule :priority 0)
+                               :lifetime (getf rule :lifetime ':while-relevant))
     (labels ((detach (value)
                (typecase value
                  (string
@@ -188,37 +194,39 @@ strings in chronological order from the current durable provider projection."
           (context-rule--generation (tool-context-conversation context)))))
 
 (-> context-rule-note
-    (conversation &key (:paths list) (:languages list) (:tools list)
-                  (:namespaces list) (:roles list) (:diagnostics list) (:events list)
-                  (:generation (option string))) null)
-(defun context-rule-note (conversation &key paths languages tools namespaces roles diagnostics events
-                                           (generation nil generation-p))
-  "Add bounded structured trigger metadata for CONVERSATION's current turn.
+    (conversation &key (:paths list) (:languages list) (:tools list) (:namespaces list)
+     (:diagnostics list) (:events list) (:generation (option string)))
+    null)
+(defun context-rule-note
+          (conversation
+           &key paths languages tools namespaces diagnostics events
+           (generation nil generation-p))
+          "Add bounded structured trigger metadata for CONVERSATION's current turn.
 
 Values are exact strings, except :paths predicates match workspace-relative
 prefixes. Supply a captured GENERATION for asynchronous work; stale facts are
 ignored. Metadata never grants tool authority."
-  (let ((additions
-          (list :paths       (context-rule--values ':paths paths)
-                :languages   (context-rule--values ':languages languages)
-                :tools       (context-rule--values ':tools tools)
-                :namespaces  (context-rule--values ':namespaces namespaces)
-                :roles       (context-rule--values ':roles roles)
-                :diagnostics (context-rule--values ':diagnostics diagnostics)
-                :events      (context-rule--values ':events events)))
-        (identifier (conversation-identifier conversation)))
-    (with-lock-held (*context-lock*)
-      (let ((facts (copy-tree (gethash identifier *context-rule-facts*))))
-        (unless (and generation-p (not (equal generation (getf facts :generation))))
-          (unless (getf facts :generation)
-            (setf (getf facts :generation) (make-identifier)))
-          (loop for (field values) on additions by (partial #'nthcdr 2)
-                for merged = (remove-duplicates (append values (getf facts field))
-                                                :test #'equal :from-end t)
-                do (setf (getf facts field)
-                         (subseq merged 0 (min *context-rule-value-limit* (length merged)))))
-          (context-rule--remember identifier facts)))))
-  nil)
+          (let ((additions
+                 (list :paths (context-rule--values ':paths paths) :languages
+                       (context-rule--values ':languages languages) :tools
+                       (context-rule--values ':tools tools) :namespaces
+                       (context-rule--values ':namespaces namespaces) :diagnostics
+                       (context-rule--values ':diagnostics diagnostics) :events
+                       (context-rule--values ':events events)))
+                (identifier (conversation-identifier conversation)))
+            (with-lock-held (*context-lock*)
+              (let ((facts (copy-tree (gethash identifier *context-rule-facts*))))
+                (unless (and generation-p (not (equal generation (getf facts :generation))))
+                  (unless (getf facts :generation)
+                    (setf (getf facts :generation) (make-identifier)))
+                  (loop for (field values) on additions by (partial #'nthcdr 2)
+                        for merged = (remove-duplicates (append values (getf facts field)) :test
+                                                        #'equal :from-end t)
+                        do (setf (getf facts field)
+                                 (subseq merged 0
+                                         (min *context-rule-value-limit* (length merged)))))
+                  (context-rule--remember identifier facts)))))
+          nil)
 
 (-> context-rule--workspace-name ((or string pathname)) string)
 (defun context-rule--workspace-name (directory)
@@ -278,51 +286,38 @@ Registration replaces the same rule ID using existing context registry semantics
   "Remove the rule with the original unprefixed IDENTIFIER."
   (unregister-context-contributor (concatenate 'string "rule/" identifier)))
 
-(-> context-rule--agent-role (t) (option string))
-(defun context-rule--agent-role (agent)
-  "Return the primary or known child role, or NIL before child initialization."
-  (typecase agent
-    (task-child-agent
-     (when (and (slot-boundp agent 'definition)
-                (typep (task-child-agent-definition agent) 'task-agent-definition))
-       (task-agent-definition-name (task-child-agent-definition agent))))
-    (t
-     "primary")))
-
 (-> context-rule-start-turn (agent) null)
 (defun context-rule-start-turn (agent)
   "Reset trigger metadata inside AGENT's serialized logical turn."
   (with-lock-held (*context-lock*)
     (context-rule--remember (conversation-identifier (agent-conversation agent))
-                            (list :generation (make-identifier)
-                                  :roles      (remove nil (list (context-rule--agent-role agent))))))
+                            (list :generation (make-identifier))))
   nil)
 
 (-> context-rule--note-tool (tool tool-context json-object) null)
 (defun context-rule--note-tool (tool context arguments)
   "Record an authorized operation and bounded source metadata without copying its payload."
   (let* ((paths
-           (loop for key in '("path" "uri")
-                 for value = (json-get arguments key)
-                 when (and (non-empty-string-p value) (<= (length value) 1024))
-                   collect (if (uiop:string-prefix-p "workspace:" value)
-                               (subseq value 10) value)))
+          (loop for key in '("path" "uri")
+                for value = (json-get arguments key)
+                when (and (non-empty-string-p value) (<= (length value) 1024))
+                collect (if (uiop/utility:string-prefix-p "workspace:" value)
+                            (subseq value 10)
+                            value)))
          (languages
-           (remove nil
-                   (mapcar (lambda (path)
-                             (handler-case
-                                 (rest (assoc (string-downcase (or (pathname-type (pathname path)) ""))
-                                              *context-rule-language-extensions* :test #'equal))
-                               (error ()
-                                 nil)))
-                           paths))))
-    (context-rule-note (tool-context-conversation context)
-                       :generation (tool-context-rule-generation context)
-                       :paths paths :languages languages
-                       :tools      (list (tool-canonical-name tool))
-                       :namespaces (list (tool-namespace tool))
-                       :roles      (remove nil (list (context-rule--agent-role (tool-context-agent context))))
-                       :events     '("tool-start")))
+          (remove nil
+                  (mapcar
+                   (lambda (path)
+                     (handler-case
+                      (rest
+                       (assoc (string-downcase (or (pathname-type (pathname path)) ""))
+                              *context-rule-language-extensions* :test #'equal))
+                      (error nil nil)))
+                   paths))))
+    (context-rule-note (tool-context-conversation context) :generation
+                       (tool-context-rule-generation context) :paths paths :languages
+                       languages :tools (list (tool-canonical-name tool)) :namespaces
+                       (list (tool-namespace tool)) :events '("tool-start")))
   nil)
 
 (defmethod tool-execute :around ((tool tool) (context tool-context) (arguments hash-table))

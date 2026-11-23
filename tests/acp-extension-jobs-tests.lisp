@@ -2,14 +2,10 @@
 
 ;;;; -- ACP Job Extension Tests --
 
-(-> acp-extension-job-tests--definition () task-agent-definition)
+(-> acp-extension-job-tests--definition nil list)
 (defun acp-extension-job-tests--definition ()
-  "Return a valid child definition for ACP job fixtures."
-  (task-agent-definition-create
-   :name         "acp-job-fixture"
-   :description  "Exercise ACP job projection."
-   :instructions "Return the fixture result."
-   :source       ':test))
+                                           "Return a valid child definition for ACP job fixtures."
+                                           (list))
 
 (-> acp-extension-job-tests--result (task-job pathname) list)
 (defun acp-extension-job-tests--result (job pathname)

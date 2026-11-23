@@ -3,18 +3,17 @@
 ;;;; -- Schema 1 OTLP Projection --
 
 (defparameter *telemetry-tool-catalog*
-  '("resource.read" "resource.edit" "search.content" "search.files" "search.glob" "shell.run"
-    "lisp.eval" "lisp.load-system" "lisp.run-tests" "lisp.source" "lisp.apropos" "lisp.describe"
-    "lisp.scratchpad-run" "lisp.repls" "lisp.images" "lisp.reset" "lisp.start" "lisp.stop"
-    "lisp.save-image" "lisp.paren-check" "self.eval" "self.define" "self.set"
-    "self.exercise" "self.commit" "self.diff" "self.discard" "self.status" "self.checkpoint"
-    "self.generations"
-    "self.rollback" "child.spawn" "child.roles" "job.get" "job.wait"
-    "job.cancel" "job.list" "job.continuity" "child.worktree" "skill.invoke" "skill.verify"
-    "agenda.transport" "mcp.status" "mcp.refresh" "mcp.resources" "mcp.read-resource"
-    "mcp.prompts" "mcp.get-prompt" "tool_search.tool_search_tool"
-    "multi_tool_use.parallel" "web.run" "web_extra.gist" "rlm.infer" "rlm.map" "rlm.complete"
-    "papercut.report" "fs.view-image" "skill.load")
+  '("resource.read" "resource.edit" "search.content" "search.files" "search.glob"
+    "shell.run" "lisp.eval" "lisp.load-system" "lisp.run-tests" "lisp.source"
+    "lisp.apropos" "lisp.describe" "lisp.scratchpad-run" "lisp.repls" "lisp.images"
+    "lisp.reset" "lisp.start" "lisp.stop" "lisp.save-image" "lisp.paren-check"
+    "self.eval" "self.define" "self.set" "self.exercise" "self.commit" "self.diff"
+    "self.discard" "self.status" "self.checkpoint" "self.generations" "self.rollback"
+    "child.spawn" "job.get" "job.wait" "job.cancel" "job.list" "job.continuity"
+    "child.worktree" "skill.invoke" "skill.verify" "agenda.transport" "mcp.status"
+    "mcp.refresh" "mcp.resources" "mcp.read-resource" "mcp.prompts" "mcp.get-prompt"
+    "tool_search.tool_search_tool" "multi_tool_use.parallel" "web.run" "web_extra.gist"
+    "rlm.infer" "rlm.map" "rlm.complete" "papercut.report" "fs.view-image" "skill.load")
   "Exact Seismograph schema-1 named tools, excluding absence and external categories.")
 
 (defparameter *telemetry-field-catalogs*

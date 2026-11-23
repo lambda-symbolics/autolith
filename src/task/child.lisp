@@ -4,7 +4,7 @@
 
 (-> task-conversation-depth (configuration conversation) (integer 0))
 (defun task-conversation-depth (configuration conversation)
-  "Count channel ancestors, with an unregistered child role at depth one."
+  "Count registered channel ancestors and explicit unregistered parent links."
   (if (conversation-inbox-p conversation)
       0
       (let* ((world   (world-load configuration))
@@ -12,13 +12,15 @@
              (seen    (make-hash-table :test #'equal)))
         (loop for parent = (if channel
                                (channel-parent channel)
-                               (conversation-parent-identifier conversation))
-                then (and channel (channel-parent channel))
+                               (conversation-parent-identifier conversation)) then (and
+                                                                                    channel
+                                                                                    (channel-parent
+                                                                                     channel))
               while (and parent (not (gethash parent seen)))
               count t into depth
               do (setf (gethash parent seen) t
                        channel (world-channel-find world parent))
-              finally (return (max depth (if (conversation-role conversation) 1 0)))))))
+              finally (return (max depth 0))))))
 
 (-> task-parent-depth ((option agent)) (integer 0))
 (defun task-parent-depth (agent)
@@ -31,36 +33,6 @@
     (t
      0)))
 
-(-> task-parent-spawn-policy ((option agent)) t)
-(defun task-parent-spawn-policy (agent)
-  "Return the spawn policy of AGENT's effective role."
-  (typecase agent
-    (task-child-agent
-     (task-agent-definition-spawns (task-child-agent-definition agent)))
-    (agent
-     (let* ((configuration (agent-configuration agent))
-            (role          (config :child-role configuration))
-            (definition    (tool-registry-runtime-binding (agent-tool-registry agent) 'task-role)))
-       (cond (definition
-              (task-agent-definition-spawns definition))
-             ((non-empty-string-p role)
-              (task-agent-definition-spawns (task-role-definition configuration role)))
-             (t
-              ':all))))
-    (t
-     ':all)))
-
-(-> task-parent-spawn-predicate ((option agent) task-orchestrator) function)
-(defun task-parent-spawn-predicate (agent orchestrator)
-  "Snapshot the parent's role policy and structural depth for one admission."
-  (let ((policy  (task-parent-spawn-policy agent))
-        (depth-p (< (task-parent-depth agent) (task-orchestrator-maximum-depth orchestrator))))
-    (lambda (child-name)
-      (and depth-p
-           (or (eq policy :all)
-               (and (listp policy) (member child-name policy :test #'string-equal)))
-           t))))
-
 (-> task--tool-spec-matches-p (string tool) boolean)
 (defun task--tool-spec-matches-p (spec tool)
   "Return true when agent tool SPEC permits TOOL."
@@ -70,48 +42,14 @@
     (or (string= normalized canonical)
         (string= normalized (format nil "~A.*" namespace)))))
 
-(-> task--definition-allows-tool-p (task-agent-definition tool) boolean)
-(defun task--definition-allows-tool-p (definition tool)
-  "Return true when DEFINITION permits ordinary TOOL."
-  (let ((specs (task-agent-definition-tools definition)))
-    (and (tool-child-safe-p tool)
-         (or (eq specs :all)
-             (and (listp specs)
-                  (some (lambda (spec)
-                          (task--tool-spec-matches-p spec tool))
-                        specs))))))
-
-(-> task--role-tool-p (task-agent-definition tool &key (:spawn-p boolean)) boolean)
-(defun task--role-tool-p (definition tool &key spawn-p)
-  "Return true when a child in DEFINITION's role may use TOOL; SPAWN-P lets it spawn, list roles, and look after its children.
-
-Every role talks through channels, so any child can answer its parent."
-  (or (task--definition-allows-tool-p definition tool)
-      (and (string= (tool-namespace tool) "channel")
-           (tool-child-safe-p tool))
-      (and spawn-p
-           (string= (tool-namespace tool) "child")
-           (member (tool-name tool) '("spawn" "roles" "rename" "compact" "remove") :test #'string=)
-           t)))
-
-(-> task--role-tool-predicate
-    (task-agent-definition (option task-orchestrator) (integer 0)) function)
-(defun task--role-tool-predicate (definition orchestrator depth)
-  "Build the same tool filter for an interactive or a pooled child role."
-  (let ((spawn-p (and orchestrator
-                      (task-agent-definition-spawns definition)
-                      (< depth (task-orchestrator-maximum-depth orchestrator)))))
-    (lambda (tool)
-      (task--role-tool-p definition tool :spawn-p (not (null spawn-p))))))
-
 (-> task--delegation-source (tool-registry) tool-registry)
 (defun task--delegation-source (registry)
-  "Return the configured owner, not an ancestor's role-specific dispatch map."
+  "Return the configured owner of borrowed capabilities."
   (or (tool-registry-delegation-source registry) registry))
 
 (-> task--delegation-tools (tool-registry) list)
 (defun task--delegation-tools (source)
-  "Return the configured native and MCP helper tools available for role projection."
+  "Return the configured native and MCP helper tools available for delegation."
   (or (tool-registry-delegation-tools source)
       (remove-if (lambda (tool) (typep tool 'mcp-provider-tool))
                  (tool-registry-tools source))))
@@ -122,137 +60,113 @@ Every role talks through channels, so any child can answer its parent."
   (setf (tool-registry-delegation-tools registry) (task--delegation-tools registry))
   nil)
 
-(-> task-role-restrict-tool-registry (tool-registry configuration &key (:depth (integer 0))) tool-registry)
-(defun task-role-restrict-tool-registry (registry configuration &key (depth 1))
-  "Project CONFIGURATION's role onto the owner registry's active dispatch map."
-  (let* ((definition (task-role-definition configuration (config :child-role configuration)))
-         (permitted  (task--role-tool-predicate
-                      definition (tool-registry-runtime-binding registry 'task-orchestrator) depth)))
+(-> task-child-restrict-tool-registry (tool-registry &key (:tools t) (:depth (integer 0))) tool-registry)
+(defun task-child-restrict-tool-registry (registry &key (tools ':all) (depth 1))
+  "Restrict the owner's dispatch map to direct child grants and structural depth."
+  (task-child-validate-tool-grants tools registry)
+  (let ((permitted
+         (task--child-tool-predicate tools
+          (tool-registry-runtime-binding registry 'task-orchestrator) depth)))
     (task-tool-registry-remember-delegation-tools registry)
-    (tool-registry-bind-runtime registry 'task-role definition)
     (mcp-tool-registry-restrict-discovered-tools registry permitted)
     (tool-registry-delete-if registry (complement permitted))))
 
-(-> task-agent-definition-validate-tools-available
-    (task-agent-definition tool-registry)
-    null)
-(defun task-agent-definition-validate-tools-available (definition registry)
-  "Reject explicit grants in DEFINITION absent from the configured baseline."
-  (let ((specifications (task-agent-definition-tools definition)))
-    (when (listp specifications)
-      (let* ((source  (task--delegation-source registry))
-             (manager (mcp-tool-registry-manager source))
-             (tools   (append (task--delegation-tools source)
-                              (when manager
-                                (with-lock-held ((mcp-manager-lock manager))
-                                  (mcp-tools--manager-tool-objects manager))))))
-        (dolist (specification specifications)
-          (unless (or (string= specification "web_search")
-                      (some (lambda (tool)
-                              (and (tool-child-safe-p tool)
-                                   (task--tool-spec-matches-p specification tool)))
-                            tools))
-            (task-agent-definition--error
-             :pathname        (task-agent-definition-pathname definition)
-             :source          (task-agent-definition-source definition)
-             :field           ':tools
-             :cause           (format nil "Tool grant ~S is unavailable in this session."
-                                      specification)
-             :definition-name (task-agent-definition-name definition))))))
-   nil))
+(-> task-child-validate-tool-grants (t tool-registry) null)
+(defun task-child-validate-tool-grants (grants registry)
+  "Reject malformed, forbidden, or unavailable explicit execution tool grants."
+  (unless (or (eq grants :all)
+              (and (proper-list-p grants) (every #'non-empty-string-p grants)
+                   (task--unique-list-p grants)))
+    (error 'task-error :message "Child tool grants must be :ALL or a unique list of canonical tool names." :tool-name "child.spawn"))
+  (when (listp grants)
+    (let* ((source  (task--delegation-source registry))
+           (manager (mcp-tool-registry-manager source))
+           (tools   (append (task--delegation-tools source)
+                            (when manager (with-lock-held ((mcp-manager-lock manager))
+                                            (mcp-tools--manager-tool-objects manager))))))
+      (dolist (grant grants)
+        (let* ((separator (position #\. grant))
+               (namespace (and separator (subseq grant 0 separator))))
+          (unless (or (string= grant "web_search")
+                      (and separator (plusp separator)
+                           (= separator (position #\. grant :from-end t))
+                           (string= grant (string-downcase grant))
+                           (not (member namespace *task-forbidden-child-tool-namespaces* :test #'string=))
+                           (some (lambda (tool)
+                                   (and (tool-child-safe-p tool)
+                                        (task--tool-spec-matches-p grant tool))) tools)))
+            (error 'task-error :message (format nil "Unavailable or forbidden child tool grant ~S." grant)
+                               :code ':authority :tool-name "child.spawn"))))))
+  nil)
+
+(-> task--child-tool-predicate (t (option task-orchestrator) (integer 0)) function)
+(defun task--child-tool-predicate (grants orchestrator depth)
+  "Filter direct grants through child safety, forbidden namespaces and depth."
+  (lambda (tool)
+    (and (if (string= (tool-namespace tool) "child")
+             (and orchestrator (< depth (task-orchestrator-maximum-depth orchestrator))
+                  (eq grants :all)
+                  (member (tool-name tool) '("spawn" "rename" "compact" "remove")
+                          :test #'string=))
+             (and (not (member (tool-namespace tool) *task-forbidden-child-tool-namespaces* :test #'string=))
+                  (tool-child-safe-p tool)
+                  (or (eq grants :all)
+                      (and (listp grants)
+                           (some (lambda (grant) (task--tool-spec-matches-p grant tool)) grants)))))
+         t)))
 
 (-> task-child-tool-registry
-    (tool-registry task-agent-definition
-     &key (:orchestrator (option task-orchestrator)) (:depth (integer 0)))
+    (tool-registry list &key (:orchestrator (option task-orchestrator)) (:depth (integer 0)))
     tool-registry)
-(defun task-child-tool-registry (parent-registry definition &key orchestrator (depth 1))
-  "Build DEFINITION's dispatch map from the configured tools, borrowing their runtimes."
-  (let* ((source    (task--delegation-source parent-registry))
-         (registry  (make-instance 'tool-registry
-                                   :resource-registry (tool-registry-resource-registry source)))
-         (permitted (task--role-tool-predicate definition orchestrator depth))
-         (manager   (mcp-tool-registry-manager source)))
-    (setf (tool-registry-delegation-source registry) source)
+(defun task-child-tool-registry (parent-registry item &key orchestrator (depth 1))
+  "Borrow configured runtimes and project this execution's child-safe tool grants."
+  (let* ((source  (task--delegation-source parent-registry))
+         (registry
+          (make-instance 'tool-registry :resource-registry
+                         (tool-registry-resource-registry source)))
+         (permitted
+          (task--child-tool-predicate (getf item :tools ':all) orchestrator depth))
+         (manager (mcp-tool-registry-manager source)))
+    (progn
+     (task-child-validate-tool-grants (getf item :tools ':all) source)
+     (setf (tool-registry-delegation-source registry) source))
     (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (tool-registry-bind-runtime registry 'shell-session-pool
-                                (tool-registry-runtime-binding source 'shell-session-pool))
-    (maphash (lambda (namespace description)
-               (tool-registry-describe-namespace registry namespace description))
-             (tool-registry-namespace-descriptions source))
+                                (tool-registry-runtime-binding source
+                                                               'shell-session-pool))
+    (maphash
+     (lambda (namespace description)
+       (tool-registry-describe-namespace registry namespace description))
+     (tool-registry-namespace-descriptions source))
     (dolist (tool (task--delegation-tools source))
-      (when (funcall permitted tool)
-        (tool-registry-register registry tool)))
+      (when (funcall permitted tool) (tool-registry-register registry tool)))
     (when manager
       (mcp-tool-registry-bind-manager registry manager permitted)
       (mcp-tool-registry-refresh registry :only-dirty-p t)
       (mcp-tool-registry-activate-discovered-tools registry))
     registry))
 
-(-> task--model-alias (string (option string)) (option string))
-(defun task--model-alias (alias parent-model)
-  "Resolve one child model ALIAS relative to PARENT-MODEL."
-  (let ((value (string-downcase alias)))
-    (cond
-      ((member value '("@task" "@parent" "@auto") :test #'string=)
-       parent-model)
-      ((string= value "@smol")
-       "gpt-5.6-luna")
-      ((member value '("@slow" "@designer") :test #'string=)
-       "gpt-6.1-terra")
-      ((member alias *supported-models* :test #'string=)
-       alias)
-      (t
-       nil))))
+(defparameter *task-default-reasoning-effort*
+  "medium"
+  "Default reasoning effort for delegated child assignments.")
 
-(defparameter *task-default-reasoning-effort* "medium"
-  "The effort of child roles that leave their reasoning effort unspecified or :auto.
-
-Routine delegated work should not inherit the parent's effort: a parent
-running at high or max effort would otherwise multiply that cost across every
-child it spawns.")
-
-(-> task--thinking-effort ((option keyword)) string)
-(defun task--thinking-effort (level)
-  "Resolve child reasoning LEVEL to a supported provider effort."
-  (let ((value (and level (string-downcase (symbol-name level)))))
-    (if (and value
-             (string/= value "auto")
-             (member value *supported-reasoning-efforts* :test #'string=))
-        value
-        *task-default-reasoning-effort*)))
-
-(-> task-configuration-for-definition (configuration task-agent-definition) configuration)
-(defun task-configuration-for-definition (parent-configuration definition)
-  "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, web policy, and role.
-
-Children never inherit Codex Fast mode: the premium tier stays an explicit
-choice for the primary agent rather than a silent property of every task."
-  (let* ((parent-model (config :model parent-configuration))
-         (model
-          (or
-           (loop for candidate in (task-agent-definition-models definition)
-                 for resolved = (task--model-alias candidate parent-model)
-                 when resolved return resolved)
-           parent-model))
-         (effort
-          (task--thinking-effort
-           (task-agent-definition-reasoning-effort definition)))
-         (web-search-mode
-          (or (config :configured-web-search-mode parent-configuration)
-              (config :web-search-mode parent-configuration)))
-         (web-enabled-p
-          (or (eq (task-agent-definition-tools definition) :all)
-              (member "web_search" (task-agent-definition-tools definition)
-                      :test #'string-equal))))
-    (configuration-copy
-     parent-configuration
-     :model                      model
-     :reasoning-effort           effort
-     :codex-fast-mode-p          nil
-     :child-role                 (task-agent-definition-name definition)
-     :child-role-instructions    (task-agent-definition-instructions definition)
-     :configured-web-search-mode web-search-mode
-     :web-search-mode            (if web-enabled-p web-search-mode ':disabled))))
+(-> task-child-configuration (configuration list) configuration)
+(defun task-child-configuration (parent-configuration item)
+  "Apply direct execution options, medium child effort, and child web grants."
+  (let* ((tools           (getf item :tools ':all))
+         (model           (or (find-if (lambda (candidate)
+                                        (member candidate *supported-models* :test #'string=))
+                                      (getf item :models))
+                              (config :model parent-configuration)))
+         (effort          (or (getf item :reasoning-effort) *task-default-reasoning-effort*))
+         (web-search-mode (or (config :configured-web-search-mode parent-configuration)
+                              (config :web-search-mode parent-configuration)))
+         (web-enabled-p   (or (eq tools :all)
+                              (member "web_search" tools :test #'string=))))
+    (configuration-copy parent-configuration
+                        :model model :reasoning-effort effort :codex-fast-mode-p nil
+                        :configured-web-search-mode web-search-mode
+                        :web-search-mode            (if web-enabled-p web-search-mode ':disabled))))
 
 (-> task-child-reference-history-p (agent configuration) boolean)
 (defun task-child-reference-history-p (parent child-configuration)
@@ -284,20 +198,19 @@ boundary cannot fit within that budget."
 (-> task-child-goal-context (task-job configuration) string)
 (defun task-child-goal-context (job child-configuration)
   "Build child instructions without a terminal output contract."
-  (let* ((item    (task-job-item job))
+  (let* ((item (task-job-item job))
          (context
-           (if (getf item :worktree)
-               (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through the ordinary child result; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before finishing so the complete patch can be extracted."
-                       (getf item :context)
-                       (getf (getf item :worktree) :baseline)
-                       (getf (getf item :worktree) :path)
-                       (getf (getf item :worktree) :source))
-               (getf item :context))))
+          (if (getf item :worktree)
+              (format nil
+                      "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through the ordinary child result; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before finishing so the complete patch can be extracted."
+                      (getf item :context) (getf (getf item :worktree) :baseline)
+                      (getf (getf item :worktree) :path)
+                      (getf (getf item :worktree) :source))
+              (getf item :context))))
     (format nil
-            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message and finish the turn normally."
+            "You are child agent ~A, depth ~D.~@[~2%Shared parent context:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use ordinary tool path authorization. Complete the assignment in the user message and finish the turn normally. Messages on your channel refine your current assignment unless they explicitly replace or cancel it. Between assignments, answer your parent through channel.send to @parent."
             (getf (task-job-identity job) :id)
-            (1+ (task-parent-depth (task-job-parent-agent job)))
-            context
+            (1+ (task-parent-depth (task-job-parent-agent job))) context
             (namestring (config :working-directory child-configuration)))))
 
 (-> task--bounded-output ((option string)) string)
@@ -381,7 +294,7 @@ the root's cache key. Siblings with matching prefixes still share one key."
    (mapcar (lambda (key)
              (list :indicator key
                    :validate  (lambda (value) (or (null value) (stringp value)))))
-           '(:id :name :agent :assignment :error :label :model :conversation-file))
+           '(:id :name :assignment :error :label :model :conversation-file))
    (mapcar (lambda (key)
              (list :indicator key :validate (lambda (value) (typep value 'boolean))))
 
@@ -463,26 +376,19 @@ the root's cache key. Siblings with matching prefixes still share one key."
           (t
            "(no output)"))))
 
-(-> task--execution-metadata
-    (task-job &key (:configuration (option configuration))) list)
+(-> task--execution-metadata (task-job &key (:configuration (option configuration))) list)
 (defun task--execution-metadata (job &key configuration)
-  "Capture JOB's portable identity and attempted model once, before execution."
+  "Capture portable assignment identity and attempted model before execution."
   (or (task-job-execution-metadata job)
-      (let* ((definition (task-job-definition job))
-             (parent     (task-job-parent-agent job))
-             (configuration
-               (or configuration
-                   (and parent
-                        (task-configuration-for-definition
-                         (agent-configuration parent) definition)))))
+      (let* ((parent        (task-job-parent-agent job))
+             (configuration (or configuration
+                                (and parent (task-child-configuration
+                                             (agent-configuration parent) (task-job-item job))))))
         (setf (task-job-execution-metadata job)
-              (list :id           (job-identifier job)
-                    :name         (task-job-display-name job)
-                    :agent        (task-agent-definition-name definition)
-                    :agent-source (task-agent-definition-source definition)
-                    :assignment   (getf (task-job-item job) :task)
-                    :model        (and configuration (config :model configuration))
-                    :detached     (task-job-detached-p job))))))
+              (list :id (job-identifier job) :name (task-job-display-name job)
+                    :assignment (getf (task-job-item job) :task)
+                    :model      (and configuration (config :model configuration))
+                    :detached   (task-job-detached-p job))))))
 
 (-> task--terminal-result (task-job list) list)
 (defun task--terminal-result (job outcome)
@@ -605,122 +511,128 @@ Live executions retain their pool ownership and remain inspectable after return.
 (defun task-run-child (job)
   "Create and run JOB's real in-process child session through a terminal child turn."
   (let* ((parent       (task-job-parent-agent job))
-         (definition   (task-job-definition job))
+         (item         (task-job-item job))
          (orchestrator (task-job-orchestrator job))
          (depth        (1+ (task-parent-depth parent)))
          (configuration
-          (task-worktree-configuration
-           job (task-configuration-for-definition (agent-configuration parent)
-                                                  definition)))
+          (task-worktree-configuration job
+                                       (task-child-configuration
+                                        (agent-configuration parent) item)))
          (conversation
           (progn
-            (task--execution-metadata job :configuration configuration)
-            (let ((conversation
-                    (conversation-create
-                     configuration
-                     :identifier        (task-job-execution-identifier job)
-                     :prompt-cache-key  (task--child-prompt-cache-key
-                                         (task-job-root-conversation-identifier job))
-                     :storage-root      (task--artifact-root configuration job)
-                     :parent-identifier (session-job-completion-owner-conversation job)
-                     :agent-name        (job-name job)
-                     :role              (task-agent-definition-name definition))))
-              (setf (getf (task-job-execution-metadata job) :conversation-file)
-                    (namestring (conversation-pathname conversation)))
-              conversation)))
+           (task--execution-metadata job :configuration configuration)
+           (let ((conversation
+                  (conversation-create configuration :identifier
+                                       (task-job-execution-identifier job)
+                                       :prompt-cache-key
+                                       (task--child-prompt-cache-key
+                                        (task-job-root-conversation-identifier job))
+                                       :storage-root
+                                       (task--artifact-root configuration job)
+                                       :parent-identifier
+                                       (session-job-completion-owner-conversation job)
+                                       :agent-name (job-name job) :tool-grants
+                                       (getf item :tools ':all))))
+             (setf (getf (task-job-execution-metadata job) :conversation-file)
+                   (namestring (conversation-pathname conversation)))
+             conversation)))
          (worker       (lisp-worker-pool-create configuration))
          (taken        (make-hash-table :test #'equal))
          (registry
-          (task-child-tool-registry (agent-tool-registry parent) definition
-                                    :orchestrator orchestrator
-                                    :depth        depth))
-         (provider
-          (provider-with-configuration (agent-provider parent) configuration))
+          (task-child-tool-registry (agent-tool-registry parent) item :orchestrator
+                                    orchestrator :depth depth))
+         (provider     (provider-with-configuration (agent-provider parent) configuration))
          (child
-          (agent-create :class          'task-child-agent
-                         :configuration configuration
-                         :provider provider :conversation conversation
-                         :tool-registry registry :worker worker
-                         :initargs      (list :definition definition
-                                              :identity (task-job-identity job) :depth depth
-                                              :orchestrator orchestrator :job job)))
+          (agent-create :class 'task-child-agent :configuration configuration :provider
+                        provider :conversation conversation :tool-registry registry
+                        :worker worker :initargs
+                        (list :identity (task-job-identity job) :depth depth
+                              :orchestrator orchestrator :job job)))
          (progress     (task-job-progress job))
          (observer
-          (callback-agent-observer-create
-           :text-callback
-           (lambda (text)
-             (task-progress-append-output progress text))
-           :reasoning-callback
-           (lambda (text)
-             (declare (ignore text))
-             nil)
-           :status-callback
-           (lambda (status details)
-             (when (eq status ':user-message-persisted)
-               (setf (participant-state-identity (agent-participant-state child))
-                     (world-register-conversation configuration conversation)))
-             (task-job-note-agent-status job status details))
-           :steering-callback
-           (lambda ()
-             (append (task-job-take-steering job)
-                     (world-inbox-steering-take configuration
-                                                :channel      (conversation-identifier conversation)
-                                                :conversation conversation
-                                                :taken        taken)))
-           :steering-persisted-callback
-           (lambda (identifier)
-             (or (world-inbox-steering-ack configuration
-                                           :channel    (conversation-identifier conversation)
-                                           :identifier identifier
-                                           :taken      taken)
-                 (task-job-acknowledge-steering job identifier)))
-           :command-authorization-callback
-           (task-job-command-authorization-function job)
-           :tool-authorization-callback
-           (task-job-tool-authorization-function job))))
+          (callback-agent-observer-create :text-callback
+                                          (lambda (text)
+                                            (task-progress-append-output progress text))
+                                          :reasoning-callback
+                                          (lambda (text) (declare (ignore text)) nil)
+                                          :status-callback
+                                          (lambda (status details)
+                                            (when (eq status ':user-message-persisted)
+                                              (setf (participant-state-identity
+                                                     (agent-participant-state child))
+                                                    (world-register-conversation
+                                                     configuration conversation)))
+                                            (task-job-note-agent-status job status
+                                                                        details))
+                                          :steering-callback
+                                          (lambda ()
+                                            (append (task-job-take-steering job)
+                                                    (world-inbox-steering-take
+                                                     configuration :channel
+                                                     (conversation-identifier
+                                                      conversation)
+                                                     :conversation conversation :taken
+                                                     taken)))
+                                          :steering-persisted-callback
+                                          (lambda (identifier)
+                                            (or
+                                             (world-inbox-steering-ack configuration
+                                                                       :channel
+                                                                       (conversation-identifier
+                                                                        conversation)
+                                                                       :identifier
+                                                                       identifier :taken
+                                                                       taken)
+                                             (task-job-acknowledge-steering job
+                                                                            identifier)))
+                                          :command-authorization-callback
+                                          (task-job-command-authorization-function job)
+                                          :tool-authorization-callback
+                                          (task-job-tool-authorization-function job))))
     (setf (task-job-participant-state job) (agent-participant-state child))
     (mission-context-bind (task-job-mission-context job) configuration)
     (mission-context-bind (task-job-mission-context job) conversation)
     (mission-review-bind-checkpoint (task-job-review-checkpoint job) conversation)
     ;; The pooled job keeps execution authority; its hosted channel owns any
     ;; resources that must outlive the assignment's terminal result.
-    (let ((lease (conversation-lease-acquire configuration (conversation-identifier conversation)))
-          (host  nil))
+    (let ((lease
+           (conversation-lease-acquire configuration
+                                       (conversation-identifier conversation)))
+          (host nil))
       (unwind-protect
-           (progn
-             (sb-sys:without-interrupts
-               (setf host (world-server-prepare-assignment job child lease))
-               (when host
-                 (world-server-start-assignment host)))
-             (when host
-               (world-server--wait-ready
-                (application-world-server (world-host-application host)) host)
-               (setf observer (application-assignment-observer
-                               (world-host-application host) observer job)))
-             (task-child-inherit-reference-history job conversation provider)
-             (let ((result
-                     (agent-run-user-turn
-                      child
-                      (getf (task-job-item job) :task)
-                      :observer          observer
-                      :automatic-p       t
-                      :operation-request (task-child-assignment-request job conversation)
-                       :goal-context     (task-child-goal-context job configuration))))
-               (task--assemble-child-result
-                job :provider-result result
-                    :child           child
-                      :conversation  conversation)))
+          (progn
+           (sb-sys:without-interrupts
+             (setf host (world-server-prepare-assignment job child lease))
+             (when host (world-server-start-assignment host)))
+           (when host
+             (world-server--wait-ready
+              (application-world-server (world-host-application host)) host)
+             (setf observer
+                     (application-assignment-observer (world-host-application host)
+                                                      observer job)))
+           (task-child-inherit-reference-history job conversation provider)
+           (let ((result
+                  (agent-run-user-turn child (getf (task-job-item job) :task) :observer
+                                       observer :automatic-p t :operation-request
+                                       (task-child-assignment-request job conversation)
+                                       :goal-context
+                                       (task-child-goal-context job configuration))))
+             (task--assemble-child-result job :provider-result result :child child
+                                          :conversation conversation)))
         (unwind-protect
-             (progn
-               (task-job-cancel-execution-descendants job ':parent-finished)
-               (when (participant-state-goal (agent-participant-state child))
-                 (conversation-append-record
-                  conversation (goal->record (participant-state-goal (agent-participant-state child))))))
-        ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-         (ignore-errors (task-completion-release child))
-        ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-         (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
-         (unless host
-           ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
-           (ignore-errors (lisp-worker-pool-stop-all worker))
-           (conversation-lease-release lease)))))))
+            (progn
+             (task-job-cancel-execution-descendants job ':parent-finished)
+             (when (participant-state-goal (agent-participant-state child))
+               (conversation-append-record conversation
+                                           (goal->record
+                                            (participant-state-goal
+                                             (agent-participant-state child))))))
+          ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
+          (ignore-errors (task-completion-release child))
+          ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
+          (ignore-errors
+           (context-forget-conversation (conversation-identifier conversation)))
+          (unless host
+            ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
+            (ignore-errors (lisp-worker-pool-stop-all worker))
+            (conversation-lease-release lease)))))))

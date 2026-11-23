@@ -412,55 +412,70 @@ Keep the override until the captured thread exits; replacement threads pass thro
   (world-server-tests--call
    (lambda (server configuration root)
      (declare (ignore root))
-     (let* ((parent  (world-tests--persisted-conversation configuration "bmaint11" 1000))
-            (context (make-instance 'tool-context :configuration configuration :conversation parent
-                                                 :worker nil :agent nil :registry (make-instance 'tool-registry)))
-            (entry   (world-client-entry configuration)))
-       (world-tests--child-conversation configuration "bmaintkid" :root "bmaint11" :parent "bmaint11"
-                                                                :name "helper" :role "general" :created-at 1500)
+     (let* ((parent (world-tests--persisted-conversation configuration "bmaint11" 1000))
+            (context
+             (make-instance 'tool-context :configuration configuration :conversation
+                            parent :worker nil :agent nil :registry
+                            (make-instance 'tool-registry)))
+            (entry  (world-client-entry configuration)))
+       (world-tests--child-conversation configuration "bmaintkid" :root "bmaint11"
+                                        :parent "bmaint11" :name "helper" :created-at
+                                        1500)
        (flet ((visit ()
                 "Open the child and wait until its host is idle."
-                (world-terminal-query-record entry ':open (list :channel "bmaintkid" :switch-p t))
+                (world-terminal-query-record entry ':open
+                                             (list :channel "bmaintkid" :switch-p t))
                 (let ((host (world-server--find-host server "bmaintkid")))
-                  (test-assert (task-tests--wait-until (lambda () (world-server--host-idle-p host)) 30)
-                               "the visited finished child has an idle host")
+                  (test-assert
+                   (task-tests--wait-until (lambda () (world-server--host-idle-p host))
+                                           30)
+                   "the visited finished child has an idle host")
                   host)))
-           (visit)
-           (test-assert (conversation-lease-busy-p configuration "bmaintkid")
-                        "visiting holds the child's conversation lease")
-           (let ((called nil))
-             (task-child--call-with-lease
-              context "bmaintkid"
-              (lambda ()
-                (setf called t)
-                (test-assert (null (world-server--find-host server "bmaintkid"))
-                             "maintenance waits until the idle host has ended")
-                (test-assert (conversation-lease-busy-p configuration "bmaintkid")
-                             "maintenance holds the child's lease"))
-              :tool-name "child.compact")
-             (test-assert called "compaction can operate on a visited child"))
+         (visit)
+         (test-assert (conversation-lease-busy-p configuration "bmaintkid")
+                      "visiting holds the child's conversation lease")
+         (let ((called nil))
+           (task-child--call-with-lease context "bmaintkid"
+                                        (lambda ()
+                                          (setf called t)
+                                          (test-assert
+                                           (null
+                                            (world-server--find-host server "bmaintkid"))
+                                           "maintenance waits until the idle host has ended")
+                                          (test-assert
+                                           (conversation-lease-busy-p configuration
+                                                                      "bmaintkid")
+                                           "maintenance holds the child's lease"))
+                                        :tool-name "child.compact")
+           (test-assert called "compaction can operate on a visited child"))
          (let* ((host        (visit))
                 (application (world-host-application host))
                 (controller  (application-input-controller application))
-                (connection  (test-world-terminal--present (world-server-tests--session server "bmaintkid"))))
+                (connection
+                 (test-world-terminal--present
+                  (world-server-tests--session server "bmaintkid"))))
            (unwind-protect
-                (test-assert
-                 (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
-                   (task-error (condition) (search "terminal" (autolith-error-message condition))))
-                 "removing an attached child refuses with an attachment-specific reason")
+               (test-assert
+                (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
+                              (task-error (condition)
+                               (search "terminal" (autolith-error-message condition))))
+                "removing an attached child refuses with an attachment-specific reason")
              (world-terminal-client-close connection))
-           (test-assert (task-tests--wait-until (lambda () (not (world-host-attached-p host))) 10)
-                        "the terminal that left no longer shows the child")
+           (test-assert
+            (task-tests--wait-until (lambda () (not (world-host-attached-p host))) 10)
+            "the terminal that left no longer shows the child")
            (with-lock-held ((application-input-controller-lock controller))
              (setf (application-input-controller-active-p controller) t))
            (unwind-protect
-                (test-assert
-                 (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
-                   (task-error (condition) (search "running" (autolith-error-message condition))))
-                 "removing a running child refuses without cancelling it")
+               (test-assert
+                (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
+                              (task-error (condition)
+                               (search "running" (autolith-error-message condition))))
+                "removing a running child refuses without cancelling it")
              (with-lock-held ((application-input-controller-lock controller))
                (setf (application-input-controller-active-p controller) nil)))
-           (test-assert (world-host-live-p host) "refused maintenance keeps the host alive"))
+           (test-assert (world-host-live-p host)
+                        "refused maintenance keeps the host alive"))
          (test-assert (= 1 (channel-remove configuration '("bmaintkid")))
                       "an idle visited child can be removed immediately")
          (test-assert (null (world-channel-find (world-load configuration) "bmaintkid"))
@@ -475,11 +490,13 @@ Keep the override until the captured thread exits; replacement threads pass thro
      (declare (ignore root))
      (world-tests--persisted-conversation configuration "bactivityparent" 1000)
      (world-tests--persisted-conversation configuration "bactivitypeer" 2000)
-     (world-tests--child-conversation configuration "bactivitykid" :root "bactivityparent"
-                                     :parent "bactivityparent" :name "helper" :role "general" :created-at 1500)
+     (world-tests--child-conversation configuration "bactivitykid" :root
+                                      "bactivityparent" :parent "bactivityparent" :name
+                                      "helper" :created-at 1500)
      (world-terminal-query-record (world-client-entry configuration) ':open
-                              (list :channel "bactivityparent" :switch-p t))
-     (let* ((parent  (world-host-application (world-server--find-host server "bactivityparent")))
+                                  (list :channel "bactivityparent" :switch-p t))
+     (let* ((parent
+             (world-host-application (world-server--find-host server "bactivityparent")))
             (ui      (application-presentation parent))
             (human   (world-human-participant (world-load configuration)))
             (entered (sb-thread:make-semaphore))
@@ -490,46 +507,57 @@ Keep the override until the captured thread exits; replacement threads pass thro
                 (with-terminal-ui-locked (ui)
                   (getf (channel-presentation-state ui ':agent-activities) :activities))))
          (test-call-with-function-replacements
-          (list (list 'application--run-turn
-                      (lambda (application text &rest arguments)
-                        (if (equal "bactivitykid" (application-world--served-channel application))
-                            (progn
-                               (application-world-note-child-progress
-                                application ':provider-request-started (list :request-number 1))
-                               (application-world-note-child-progress
-                                application ':tool-call-started (list :tool "example.first"))
-                               (application-world-note-child-progress
-                                application ':tool-call-completed (list :tool "example.first"))
-                               (application-world-note-child-progress
-                                application ':tool-call-started (list :tool "example.current"))
-                              (sb-thread:signal-semaphore entered)
-                              (sb-thread:wait-on-semaphore release :timeout 20)
-                              ':continue)
-                            (apply run application text arguments)))))
+          (list
+           (list 'application--run-turn
+                 (lambda (application text &rest arguments)
+                   (if (equal "bactivitykid"
+                              (application-world--served-channel application))
+                       (progn
+                        (application-world-note-child-progress application
+                                                               ':provider-request-started
+                                                               (list :request-number 1))
+                        (application-world-note-child-progress application
+                                                               ':tool-call-started
+                                                               (list :tool
+                                                                     "example.first"))
+                        (application-world-note-child-progress application
+                                                               ':tool-call-completed
+                                                               (list :tool
+                                                                     "example.first"))
+                        (application-world-note-child-progress application
+                                                               ':tool-call-started
+                                                               (list :tool
+                                                                     "example.current"))
+                        (sb-thread:signal-semaphore entered)
+                        (sb-thread:wait-on-semaphore release :timeout 20)
+                        ':continue)
+                       (apply run application text arguments)))))
           (lambda ()
-            (dolist (sender (list (participant-identifier human) "bactivityparent" "bactivitypeer"))
+            (dolist
+                (sender
+                 (list (participant-identifier human) "bactivityparent" "bactivitypeer"))
               (test-assert (null (activities)) "An idle child has no activity row.")
               (unwind-protect
-                   (progn
-                     (world-message-send configuration :sender sender :channel "bactivitykid"
-                                         :text "check child activity")
-                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 20)
-                                  "The existing child starts the delivered turn.")
-                     (test-assert
-                      (task-tests--wait-until
-                       (lambda ()
-                         (let ((rows (activities)))
-                           (let ((row (first rows)))
-                             (and (= (length rows) 1)
-                                  (equal (getf row :agent) "helper")
-                                  (eq (getf row :state) ':running)
-                                  (eql (getf row :request-count) 1)
-                                  (equal (getf row :recent-tools) '("example.first"))
-                                  (equal (getf row :current-tool) "example.current")
-                                  (typep (getf row :current-tool-duration-ms) '(integer 0))
-                                  (<= (getf row :current-tool-duration-ms) (getf row :duration-ms))))))
-                       10)
-                      "The parent receives one running child row without a spawn job."))
+                  (progn
+                   (world-message-send configuration :sender sender :channel
+                                       "bactivitykid" :text "check child activity")
+                   (test-assert (sb-thread:wait-on-semaphore entered :timeout 20)
+                                "The existing child starts the delivered turn.")
+                   (test-assert
+                    (task-tests--wait-until
+                     (lambda ()
+                       (let ((rows (activities)))
+                         (let ((row (first rows)))
+                           (and (= (length rows) 1) (equal (getf row :agent) "helper")
+                                (eq (getf row :state) ':running)
+                                (eql (getf row :request-count) 1)
+                                (equal (getf row :recent-tools) '("example.first"))
+                                (equal (getf row :current-tool) "example.current")
+                                (typep (getf row :current-tool-duration-ms) '(integer 0))
+                                (<= (getf row :current-tool-duration-ms)
+                                    (getf row :duration-ms))))))
+                     10)
+                    "The parent receives one running child row without a spawn job."))
                 (sb-thread:signal-semaphore release))
               (test-assert (task-tests--wait-until (lambda () (null (activities))) 10)
                            "The row clears when the child finishes its turn."))))))))
@@ -3209,15 +3237,19 @@ the version the client says it is, when it says one."
 
 (-> world-server-tests--call-running-child
     (function &key (:before-start (option function)) (:uncancellable-p boolean)) null)
-(defun world-server-tests--call-running-child (function &key before-start uncancellable-p)
+(defun world-server-tests--call-running-child
+       (function &key before-start uncancellable-p)
   "Call FUNCTION with a pool-admitted child blocked in its first provider request.
 The parent invokes child.spawn through its ordinary serving loop. Wait for real
 terminal publication and join the serving owner before restoring the provider."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry            (world-client-entry configuration))
-            (parent-id        (getf (rest (world-server-tests--open
-                                           entry (world-tests--workspace root "parent"))) :session-id))
+            (parent-id
+             (getf
+              (rest
+               (world-server-tests--open entry (world-tests--workspace root "parent")))
+              :session-id))
             (parent           (world-host-application (world-server--find-host server parent-id)))
             (parent-requests  0)
             (identifier       nil)
@@ -3237,80 +3269,97 @@ terminal publication and join the serving owner before restoring the provider."
                (lambda (host)
                  (when before-start
                    (handler-case (funcall before-start host)
-                     (error (condition) (setf start-error condition))))
+                                 (error (condition) (setf start-error condition))))
                  (funcall start-assignment host)))
          (list 'provider-stream-turn
                (lambda (provider conversation &rest arguments)
                  (declare (ignore provider))
                  (if (string= (conversation-identifier conversation) parent-id)
-                     (agent-test-result
-                      "parent-spawn"
-                      (if (= (incf parent-requests) 1)
-                          (list (agent-test-call
-                                 :call-id "spawn-first-turn-child" :namespace "child" :name "spawn"
-                                 :arguments "{\"name\":\"first-turn-child\",\"agent\":\"task\",\"task\":\"Complete the assignment.\",\"completion-policy\":\"notify\"}"))
-                          (list (agent-test-message "Child admitted."))))
+                     (agent-test-result "parent-spawn"
+                                        (if (= (incf parent-requests) 1)
+                                            (list
+                                             (agent-test-call :call-id
+                                                              "spawn-first-turn-child"
+                                                              :namespace "child" :name
+                                                              "spawn" :arguments
+                                                              "{\"name\":\"first-turn-child\",\"task\":\"Complete the assignment.\",\"completion-policy\":\"notify\"}"))
+                                            (list
+                                             (agent-test-message "Child admitted."))))
                      (let ((first-p nil))
                        (with-lock-held (statistics-lock)
-                        (setf first-p (null requests))
-                        (when first-p
-                          (setf identifier (conversation-identifier conversation)))
-                        (push (current-thread) requests)
-                        (incf active)
-                        (setf maximum-active (max maximum-active active)))
+                         (setf first-p (null requests))
+                         (when first-p
+                           (setf identifier (conversation-identifier conversation)))
+                         (push (current-thread) requests)
+                         (incf active)
+                         (setf maximum-active (max maximum-active active)))
                        (unwind-protect
-                            (progn
-                             (when first-p
-                               (flet ((hold ()
-                                        "Block this actual provider owner until released or interrupted."
-                                        (sb-thread:signal-semaphore entered)
-                                        (assert (sb-thread:wait-on-semaphore release :timeout 60))))
-                                 (if uncancellable-p
-                                     (sb-sys:without-interrupts (hold))
-                                     (hold))))
-                             (let ((text (if first-p "assignment-live-result" "ordinary-follow-up-result")))
-                               (funcall (getf arguments :event-callback)
-                                        (make-instance 'assistant-delta-event :text text))
-                               (agent-test-result
-                                (if first-p "child-first-turn" "child-follow-up")
-                                (list (agent-test-message text)))))
-                         (with-lock-held (statistics-lock) (decf active))))))))
+                           (progn
+                            (when first-p
+                              (flet ((hold ()
+                                       "Block this actual provider owner until released or interrupted."
+                                       (sb-thread:signal-semaphore entered)
+                                       (assert
+                                        (sb-thread:wait-on-semaphore release :timeout
+                                                                     60))))
+                                (if uncancellable-p
+                                    (sb-sys:without-interrupts
+                                      (hold))
+                                    (hold))))
+                            (let ((text
+                                   (if first-p
+                                       "assignment-live-result"
+                                       "ordinary-follow-up-result")))
+                              (funcall (getf arguments :event-callback)
+                                       (make-instance 'assistant-delta-event :text text))
+                              (agent-test-result
+                               (if first-p
+                                   "child-first-turn"
+                                   "child-follow-up")
+                               (list (agent-test-message text)))))
+                         (with-lock-held (statistics-lock)
+                           (decf active))))))))
         (lambda ()
           (unwind-protect
-               (progn
-                 (setf parent-client
-                       (test-world-terminal--present (application-channel-endpoint parent) :client-pid 424239))
-                 (world-terminal-client-call parent-client ':submit :text "Delegate this work.")
-                 (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
-                              "ordinary child.spawn admits a real pool job and enters its first request")
-                 (setf job
+              (progn
+               (setf parent-client
+                       (test-world-terminal--present
+                        (application-channel-endpoint parent) :client-pid 424239))
+               (world-terminal-client-call parent-client ':submit :text
+                                           "Delegate this work.")
+               (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
+                            "ordinary child.spawn admits a real pool job and enters its first request")
+               (setf job
                        (find identifier
-                             (task-orchestrator-list-jobs (application--task-orchestrator parent))
+                             (task-orchestrator-list-jobs
+                              (application--task-orchestrator parent))
                              :key #'task-job-execution-identifier :test #'string=))
-                 (test-assert (null start-error)
-                              (format nil "the registration hook completes before serving: ~A" start-error))
-                 (test-assert (and job (eq (job-state job) ':running))
-                              "the production pool owns the running assignment")
-                 (test-assert (conversation-lease-busy-p configuration identifier)
-                              "a pooled assignment owns its conversation before a client opens it")
-                 (let* ((opened (world-server-open server (list :channel identifier :switch-p t)))
-                        (host   (world-server--find-host server identifier)))
-                   (test-assert opened "opening the running child reuses its registered host")
-                   (funcall function
-                            (list :server server :configuration configuration :root root
-                                  :parent parent :job job :host host
-                                  :application (world-host-application host)
-                                  :thread      (first requests)
-                                  :release     (lambda () (sb-thread:signal-semaphore release))
-                                  :statistics
-                                  (lambda ()
-                                    (with-lock-held (statistics-lock)
-                                      (list :requests       (reverse requests)
-                                            :maximum-active maximum-active)))))))
+               (test-assert (null start-error)
+                            (format nil
+                                    "the registration hook completes before serving: ~A"
+                                    start-error))
+               (test-assert (and job (eq (job-state job) ':running))
+                            "the production pool owns the running assignment")
+               (test-assert (conversation-lease-busy-p configuration identifier)
+                            "a pooled assignment owns its conversation before a client opens it")
+               (let* ((opened
+                       (world-server-open server (list :channel identifier :switch-p t)))
+                      (host (world-server--find-host server identifier)))
+                 (test-assert opened
+                              "opening the running child reuses its registered host")
+                 (funcall function
+                          (list :server server :configuration configuration :root root
+                                :parent parent :job job :host host :application
+                                (world-host-application host) :thread (first requests)
+                                :release (lambda () (sb-thread:signal-semaphore release))
+                                :statistics
+                                (lambda ()
+                                  (with-lock-held (statistics-lock)
+                                    (list :requests (reverse requests) :maximum-active
+                                          maximum-active)))))))
             (sb-thread:signal-semaphore release)
             (when job
-              (unless (job-terminal-p job)
-                (job-cancel job :reason ':shutdown))
+              (unless (job-terminal-p job) (job-cancel job :reason ':shutdown))
               (test-assert (nth-value 1 (job-await job :timeout-seconds 15))
                            "real pool terminal publication follows assignment unwind before fixture shutdown"))
             (let ((host (and identifier (world-server--find-host server identifier))))
@@ -3321,8 +3370,7 @@ terminal publication and join the serving owner before restoring the provider."
                     (sb-thread:join-thread owner :default nil :timeout 15)
                     (test-assert (not (thread-alive-p owner))
                                  "the serving owner ends before the provider fixture is restored")))))
-            (when parent-client
-              (world-terminal-client-close parent-client))))))))
+            (when parent-client (world-terminal-client-close parent-client))))))))
   nil)
 
 (-> test-world-server-open-running-child () null)
@@ -3332,116 +3380,149 @@ terminal publication and join the serving owner before restoring the provider."
   (application-lisp-code-spans "(settings :turn-timestamps-p t)")
   (world-server-tests--call-running-child
    (lambda (context)
-     (destructuring-bind (&key root parent job host application thread release statistics
-                              &allow-other-keys)
+     (destructuring-bind
+         (
+          &key root parent job host application thread release statistics
+          &allow-other-keys)
          context
        (let ((endpoint    (application-channel-endpoint application))
              (state       (application-participant-state application))
              (connections nil)
              (seen        nil))
          (unwind-protect
-              (progn
-                (test-assert (and (application-world--agent-turn-active-p application)
-                                  (eq (application-participant-state application)
-                                      (task-job-participant-state job)))
-                             "the admitted host is busy with the exact pooled participant state")
-                (test-assert (not (eq (application-permission-state parent)
-                                     (application-permission-state application)))
-                             "ordinary permission changes have an independent mutable state")
-                (dotimes (index 3)
-                  (multiple-value-bind (connection events)
-                      (test-world-terminal--present endpoint :client-pid (+ 424240 index)
-                                                       :watches-p        (= index 2))
-                    (push connection connections)
-                    (push events seen)))
-                (setf connections (nreverse connections) seen (nreverse seen))
-                (test-assert (= (length (application-clients application)) 3)
-                             "two controlling clients and a watcher attach during the initial assignment")
-                (let* ((commands 0)
-                       (tools    0)
-                       (assignment
-                         (callback-agent-observer-create
-                          :command-authorization-callback
-                          (lambda (command directory)
-                            (declare (ignore command directory)) (incf commands) ':allow)
-                          :tool-authorization-callback
-                          (lambda (tool arguments)
-                            (declare (ignore tool arguments)) (incf tools) ':deny)))
-                       (observer (application-assignment-observer application assignment job)))
-                  (test-assert
-                   (and (eq (agent-observer-authorize-command observer "true" root) ':allow)
-                        (eq (agent-observer-authorize-tool
-                             observer (first (tool-registry-tools (application-tool-registry application)))
-                             (json-object)) ':deny)
-                        (= commands 1) (= tools 1)
-                        (handler-case
-                            (progn (agent-observer-evaluate-on-client observer '("(+ 1 2)")) nil)
-                          (client-evaluation-error () t)))
-                   "presentation preserves assignment authorization and does not grant client evaluation"))
-                (world-terminal-client-call (second connections) ':submit :text "queued follow-up")
+             (progn
+              (test-assert
+               (and (application-world--agent-turn-active-p application)
+                    (eq (application-participant-state application)
+                        (task-job-participant-state job)))
+               "the admitted host is busy with the exact pooled participant state")
+              (test-assert
+               (not
+                (eq (application-permission-state parent)
+                    (application-permission-state application)))
+               "ordinary permission changes have an independent mutable state")
+              (dotimes (index 3)
+                (multiple-value-bind (connection events)
+                    (test-world-terminal--present endpoint :client-pid (+ 424240 index)
+                                                  :watches-p           (= index 2))
+                  (push connection connections)
+                  (push events seen)))
+              (setf connections (nreverse connections)
+                    seen (nreverse seen))
+              (test-assert (= (length (application-clients application)) 3)
+                           "two controlling clients and a watcher attach during the initial assignment")
+              (let* ((commands 0)
+                     (tools    0)
+                     (assignment
+                      (callback-agent-observer-create :command-authorization-callback
+                                                      (lambda (command directory)
+                                                        (declare
+                                                         (ignore command directory))
+                                                        (incf commands)
+                                                        ':allow)
+                                                      :tool-authorization-callback
+                                                      (lambda (tool arguments)
+                                                        (declare (ignore tool arguments))
+                                                        (incf tools)
+                                                        ':deny)))
+                     (observer
+                      (application-assignment-observer application assignment job)))
                 (test-assert
-                 (= (length (getf (funcall statistics) :requests)) 1)
-                 "direct input queues honestly behind the pooled assignment")
-                (funcall release)
+                 (and
+                  (eq (agent-observer-authorize-command observer "true" root) ':allow)
+                  (eq
+                   (agent-observer-authorize-tool observer
+                                                  (first
+                                                   (tool-registry-tools
+                                                    (application-tool-registry
+                                                     application)))
+                                                  (json-object))
+                   ':deny)
+                  (= commands 1) (= tools 1)
+                  (handler-case
+                   (progn (agent-observer-evaluate-on-client observer '("(+ 1 2)")) nil)
+                   (client-evaluation-error nil t)))
+                 "presentation preserves assignment authorization and does not grant client evaluation"))
+              (world-terminal-client-call (second connections) ':submit :text
+                                          "queued follow-up")
+              (test-assert (= (length (getf (funcall statistics) :requests)) 1)
+                           "direct input queues honestly behind the pooled assignment")
+              (funcall release)
+              (test-assert
+               (task-tests--wait-until
+                (lambda ()
+                  (and (job-terminal-p job)
+                       (null (application-assignment-job application))
+                       (= (length (getf (funcall statistics) :requests)) 2)
+                       (not
+                        (application-input-controller-active-p
+                         (application-input-controller application)))))
+                15)
+               "terminal settlement permits exactly one ordinary queued follow-up")
+              (test-assert
+               (and (eq (job-state job) ':completed)
+                    (eq (getf (job-result job) :status) ':success)
+                    (eq endpoint (application-channel-endpoint application))
+                    (eq (world-host-application host) application)
+                    (eq (application-participant-state application) state)
+                    (not (typep (application-agent application) 'task-child-agent)))
+               "the same host and endpoint adopt ordinary execution")
+              (dolist (events seen)
                 (test-assert
                  (task-tests--wait-until
                   (lambda ()
-                    (and (job-terminal-p job)
-                         (null (application-assignment-job application))
-                         (= (length (getf (funcall statistics) :requests)) 2)
-                         (not (application-input-controller-active-p
-                               (application-input-controller application)))))
-                  15)
-                 "terminal settlement permits exactly one ordinary queued follow-up")
-                (test-assert (and (eq (job-state job) ':completed)
-                                  (eq (getf (job-result job) :status) ':success)
-                                  (eq endpoint (application-channel-endpoint application))
-                                  (eq (world-host-application host) application)
-                                  (eq (application-participant-state application) state)
-                                  (not (typep (application-agent application) 'task-child-agent))
-                                  (equal (config :child-role (application-configuration application)) "task"))
-                             "the same host and endpoint adopt ordinary role execution")
-                (dolist (events seen)
-                  (test-assert
-                   (task-tests--wait-until
-                    (lambda ()
-                      (let ((all (funcall events)))
-                        (and (find-if (lambda (event)
-                                        (and (eq (first event) ':ui)
-                                             (eq (getf (rest event) :operation) ':markdown)
-                                             (equal (getf (rest event) :source) "assignment-live-result"))) all)
-                             (find-if (lambda (event)
-                                        (and (eq (first event) ':ui)
-                                             (eq (getf (rest event) :operation) ':markdown)
-                                             (equal (getf (rest event) :source) "ordinary-follow-up-result"))) all))))
-                    10)
-                   "each original client sees live assignment and follow-up output without reattaching"))
-                (let ((later (test-world-terminal--present endpoint :client-pid 424250)))
-                  (unwind-protect
-                       (progn
-                         (world-terminal-client-call later ':submit :text "attached after settlement")
-                         (test-assert
-                          (task-tests--wait-until
-                           (lambda () (= (length (getf (funcall statistics) :requests)) 3)) 10)
-                          "a client joining after settlement can submit an ordinary turn"))
-                    (world-terminal-client-close later)))
-                (world-terminal-client-close (first connections))
-                (test-assert (and (application-clients-controlled-p application)
-                                  (getf (world-terminal-client-call (second connections) ':state) :state))
-                             "detaching the first controller leaves the second connected and usable")
-                (world-terminal-client-call (second connections) ':submit
-                                        :text "(settings :turn-timestamps-p t)")
+                    (let ((all (funcall events)))
+                      (and
+                       (find-if
+                        (lambda (event)
+                          (and (eq (first event) ':ui)
+                               (eq (getf (rest event) :operation) ':markdown)
+                               (equal (getf (rest event) :source)
+                                      "assignment-live-result")))
+                        all)
+                       (find-if
+                        (lambda (event)
+                          (and (eq (first event) ':ui)
+                               (eq (getf (rest event) :operation) ':markdown)
+                               (equal (getf (rest event) :source)
+                                      "ordinary-follow-up-result")))
+                        all))))
+                  10)
+                 "each original client sees live assignment and follow-up output without reattaching"))
+              (let ((later (test-world-terminal--present endpoint :client-pid 424250)))
+                (unwind-protect
+                    (progn
+                     (world-terminal-client-call later ':submit :text
+                                                 "attached after settlement")
+                     (test-assert
+                      (task-tests--wait-until
+                       (lambda () (= (length (getf (funcall statistics) :requests)) 3))
+                       10)
+                      "a client joining after settlement can submit an ordinary turn"))
+                  (world-terminal-client-close later)))
+              (world-terminal-client-close (first connections))
+              (test-assert
+               (and (application-clients-controlled-p application)
+                    (getf (world-terminal-client-call (second connections) ':state)
+                          :state))
+               "detaching the first controller leaves the second connected and usable")
+              (world-terminal-client-call (second connections) ':submit :text
+                                          "(settings :turn-timestamps-p t)")
+              (test-assert
+               (task-tests--wait-until
+                (lambda ()
+                  (config :turn-timestamps-p (application-configuration application)))
+                10)
+               "the remaining controlling client can execute an ordinary command")
+              (let ((observed (funcall statistics)))
                 (test-assert
-                 (task-tests--wait-until
-                  (lambda () (config :turn-timestamps-p (application-configuration application))) 10)
-                 "the remaining controlling client can execute an ordinary command")
-                (let ((observed (funcall statistics)))
-                  (test-assert (and (= (getf observed :maximum-active) 1)
-                                    (eq (first (getf observed :requests)) thread)
-                                    (every (lambda (owner) (eq owner (world-host-thread host)))
-                                           (rest (getf observed :requests))))
-                               "one provider owner runs at a time, with the initial request on the original job thread")))
-           (dolist (connection connections) (world-terminal-client-close connection)))))))
+                 (and (= (getf observed :maximum-active) 1)
+                      (eq (first (getf observed :requests)) thread)
+                      (every (lambda (owner) (eq owner (world-host-thread host)))
+                             (rest (getf observed :requests))))
+                 "one provider owner runs at a time, with the initial request on the original job thread")))
+           (dolist (connection connections)
+             (world-terminal-client-close connection)))))))
   nil)
 
 (-> test-world-server-running-child-close () null)

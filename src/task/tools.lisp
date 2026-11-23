@@ -56,106 +56,52 @@
     (t &key (:shared-context (option string)) (:top-completion-policy keyword))
     list)
 (defun task--normalize-item
-    (object &key shared-context (top-completion-policy ':continue))
+       (object &key shared-context (top-completion-policy ':continue))
   "Validate and normalize one flat task OBJECT."
   (unless (json-object-p object)
-    (error 'task-error :message "Every tasks item must be a JSON object."
-           :tool-name           "child.spawn"))
-  (task--validate-json-fields
-   object '("name" "agent" "task" "context" "isolation"
-            "completion-policy")
-   "a task item")
+    (error 'task-error :message "Every tasks item must be a JSON object." :tool-name
+           "child.spawn"))
+  (task--validate-json-fields object
+                              '("name" "task" "context" "isolation" "completion-policy")
+                              "a task item")
   (let ((task    (task--repair-prose (json-get object "task")))
         (name    (json-get object "name"))
-        (agent   (or (json-get object "agent") "task"))
         (context (task--repair-prose (json-get object "context"))))
     (unless (non-empty-string-p task)
-      (error 'task-error :message
-             "Every child requires a non-empty task assignment." :tool-name
-             "child.spawn"))
+      (error 'task-error :message "Every child requires a non-empty task assignment."
+             :tool-name           "child.spawn"))
     (when (and name (not (non-empty-string-p name)))
+      (error 'task-error :message "A supplied task name must be a non-empty string."
+             :tool-name           "child.spawn"))
+    (when (and name (> (length name) *task-identifier-maximum-characters*))
       (error 'task-error :message
-             "A supplied task name must be a non-empty string." :tool-name
-             "child.spawn"))
-    (when (and name
-               (> (length name) *task-identifier-maximum-characters*))
-      (error 'task-error
-             :message
              (format nil "A task name may contain at most ~D characters."
                      *task-identifier-maximum-characters*)
              :tool-name "child.spawn"))
-    (unless (non-empty-string-p agent)
-      (error 'task-error :message "A task agent must be a non-empty string."
-             :tool-name           "child.spawn"))
-    (when (and (nth-value 1 (gethash "context" object))
-               (not (stringp context)))
-      (error 'task-error :message
-             "A supplied task context must be a string."
-             :tool-name "child.spawn"))
-    (list :name      name
-          :agent     (string-downcase agent)
-          :task      task
-          :context   (task--combine-context shared-context context)
+    (when (and (nth-value 1 (gethash "context" object)) (not (stringp context)))
+      (error 'task-error :message "A supplied task context must be a string." :tool-name
+             "child.spawn"))
+    (list :name name :task task :context (task--combine-context shared-context context)
           :isolation (task-worktree-normalize-options (json-get object "isolation"))
           :completion-policy
-          (tool-completion-policy-argument
-           object :tool-name "child.spawn" :default top-completion-policy))))
+          (tool-completion-policy-argument object :tool-name "child.spawn" :default
+                                           top-completion-policy))))
 
 (-> task-normalize-arguments (hash-table) list)
 (defun task-normalize-arguments (arguments)
   "Return the validated single child description shared by execution and presentation."
-  (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "isolation" "completion-policy")
-   "the top-level call")
-  (list (append (task--normalize-item arguments)
-                (list :index 1 :mode ':detached))))
+  (task--validate-json-fields arguments
+                              '("name" "task" "context" "isolation" "completion-policy")
+                              "the top-level call")
+  (list (append (task--normalize-item arguments) (list :index 1 :mode ':detached))))
 
-(-> task--resolve-items
-    (agent task-orchestrator list
-     &key (:items list) (:diagnostics list) (:registry tool-registry))
-    list)
-(defun task--resolve-items
-    (parent orchestrator definitions &key items diagnostics registry)
-  "Resolve ITEMS to definitions after enforcing parent policy and names."
-  (let* ((can-spawn-p (task-parent-spawn-predicate parent orchestrator))
-         (selectable-definitions
-           (remove-if-not (lambda (definition)
-                            (funcall can-spawn-p (task-agent-definition-name definition)))
-                          definitions))
-         (selectable-diagnostics
-           (remove-if-not (lambda (diagnostic)
-                            (task--agent-diagnostic-visible-p diagnostic can-spawn-p))
-                          diagnostics))
-         (selectable-names
-           (mapcar #'task-agent-definition-name selectable-definitions)))
-    (mapcar
-     (lambda (item)
-       (let ((name (getf item :agent)))
-        (unless (funcall can-spawn-p name)
-           (error 'task-error
-                  :message   "The current agent may not spawn the requested role."
-                  :code      ':authority
-                  :tool-name "child.spawn"))
-        (let ((definition
-                (task-find-agent-definition selectable-definitions name)))
-          (unless definition
-            (if-let ((diagnostic
-                       (task-find-agent-diagnostic selectable-diagnostics name)))
-                (error diagnostic)
-                (error 'task-error
-                       :message
-                       (if selectable-names
-                           (format nil
-                                   "Unknown task agent ~S. Available agents: ~{~A~^, ~}."
-                                   name selectable-names)
-                           (format nil
-                                   "Unknown task agent ~S. No task agents are available."
-                                   name))
-                       :tool-name "child.spawn")))
-          (task-agent-definition-validate-tools-available definition registry)
-          (list :item item :definition definition :detached
-                (eq (getf item :mode) ':detached)))))
-     items)))
+(-> task--admit-items (agent task-orchestrator list) list)
+(defun task--admit-items (parent orchestrator items)
+  "Admit generic assignments subject to structural nesting depth."
+  (unless (< (task-parent-depth parent) (task-orchestrator-maximum-depth orchestrator))
+    (error 'task-error :message "The current child depth does not permit nested delegation."
+                      :code ':authority :tool-name "child.spawn"))
+  (mapcar (lambda (item) (list :item item :detached (eq (getf item :mode) ':detached))) items))
 
 (-> task-tool-result
     (t t &key (:success-p t) (:code (option keyword)) (:denied-p t))
@@ -427,92 +373,63 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
                (:include-progress-p boolean))
     list)
 (defun task--job-native-record
-    (snapshot &key artifact-path (preview-limit 0) include-progress-p)
+       (snapshot &key artifact-path (preview-limit 0) include-progress-p)
   "Return one bounded native job record from SNAPSHOT."
-  (let* ((state      (getf snapshot :state))
-         (terminal-p (task--terminal-state-p state))
-         (result     (getf snapshot :result))
-         (progress   (getf snapshot :progress))
-         (artifact-available-p
-           (and terminal-p result (getf result :output-path) t))
+  (let* ((state                (getf snapshot :state))
+         (terminal-p           (task--terminal-state-p state))
+         (result               (getf snapshot :result))
+         (progress             (getf snapshot :progress))
+         (artifact-available-p (and terminal-p result (getf result :output-path) t))
          (artifact
-           (list :path        artifact-path
-                 :format      :sexp
-                 :available-p (and artifact-available-p t)))
+          (list :path artifact-path :format :sexp :available-p
+                (and artifact-available-p t)))
          (result-record
-           (and result
-                (list
-                 :status                 (getf result :status)
-                 :error
-                 (task--retained-result-field
-                  result :error
-                  :preview-limit preview-limit
-                  :artifact-available-p artifact-available-p)
-                 :label
-                 (task--retained-result-field
-                  result :label
-                  :preview-limit preview-limit
-                  :artifact-available-p artifact-available-p)
-                 :output
-                 (task--retained-result-field
-                  result :output
-                  :preview-limit preview-limit
-                  :artifact-available-p artifact-available-p)
-                 :usage
-                 (task--retained-result-field
-                  result :usage
-                  :preview-limit preview-limit
-                  :artifact-available-p artifact-available-p)
-                 :duration-ms            (getf result :duration-ms)
-                 :model                  (getf result :model)
-                 :agent-definition
-                 (task--artifact-field
-                  (getf result :agent-definition)
-                  :agent-definition
-                  :preview-limit preview-limit
-                  :artifact-available-p artifact-available-p)
-                 :worktree               (getf result :worktree)
-                 :worktree-artifact-path (getf result :worktree-artifact-path)
-                 :worktree-error
-                 (task--retained-result-field result :worktree-error
-                                              :preview-limit preview-limit
-                                              :artifact-available-p artifact-available-p)
-                 :artifact               artifact))))
+          (and result
+               (list :status (getf result :status) :error
+                     (task--retained-result-field result :error :preview-limit
+                                                  preview-limit :artifact-available-p
+                                                  artifact-available-p)
+                     :label
+                     (task--retained-result-field result :label :preview-limit
+                                                  preview-limit :artifact-available-p
+                                                  artifact-available-p)
+                     :output
+                     (task--retained-result-field result :output :preview-limit
+                                                  preview-limit :artifact-available-p
+                                                  artifact-available-p)
+                     :usage
+                     (task--retained-result-field result :usage :preview-limit
+                                                  preview-limit :artifact-available-p
+                                                  artifact-available-p)
+                     :duration-ms (getf result :duration-ms) :model (getf result :model)
+                     :worktree (getf result :worktree) :worktree-artifact-path
+                     (getf result :worktree-artifact-path) :worktree-error
+                     (task--retained-result-field result :worktree-error :preview-limit
+                                                  preview-limit :artifact-available-p
+                                                  artifact-available-p)
+                     :artifact artifact))))
     (append
-     (list :id                  (getf snapshot :job-id)
-           :execution-id        (getf snapshot :execution-id)
-           :type                :task
-           :agent               (getf snapshot :agent)
-           :state               state
-           :detached            (and (getf snapshot :detached) t)
-           :owner               (getf snapshot :owner)
-           :completion-policy   (getf snapshot :completion-policy)
-           :result              result-record
-           :cleanup-descendants (getf snapshot :cleanup-descendants)
-           :cleanup-worktree    (getf snapshot :cleanup-worktree)
-           :cleanup-tool-waves  (getf snapshot :cleanup-tool-waves)
-           :cancellation-reason (getf snapshot :cancellation-reason))
+     (list :id (getf snapshot :job-id) :execution-id (getf snapshot :execution-id) :type
+           :task :state state :detached (and (getf snapshot :detached) t) :owner
+           (getf snapshot :owner) :completion-policy (getf snapshot :completion-policy)
+           :result result-record :cleanup-descendants
+           (getf snapshot :cleanup-descendants) :cleanup-worktree
+           (getf snapshot :cleanup-worktree) :cleanup-tool-waves
+           (getf snapshot :cleanup-tool-waves) :cancellation-reason
+           (getf snapshot :cancellation-reason))
      (when include-progress-p
-       (list
-        :progress
-        (list :status        (getf progress :status)
-              :current-tool  (getf progress :current-tool)
-              :recent-tools  (getf progress :recent-tools)
-              :recent-output
-              (task--artifact-field
-               (getf progress :recent-output)
-               :progress-output
-               :preview-limit preview-limit
-               :artifact-available-p nil)
-              :request-count (getf progress :request-count)
-               :usage
-               (task--artifact-field
-                (getf progress :usage)
-                :usage
-                :preview-limit preview-limit
-                :artifact-available-p nil)
-              :duration-ms   (getf progress :duration-ms)
-              :model         (getf progress :model)))))))
+       (list :progress
+             (list :status (getf progress :status) :current-tool
+                   (getf progress :current-tool) :recent-tools
+                   (getf progress :recent-tools) :recent-output
+                   (task--artifact-field (getf progress :recent-output) :progress-output
+                                         :preview-limit preview-limit
+                                         :artifact-available-p nil)
+                   :request-count (getf progress :request-count) :usage
+                   (task--artifact-field (getf progress :usage) :usage       :preview-limit
+                                         preview-limit :artifact-available-p nil)
+                   :duration-ms (getf progress :duration-ms) :model
+                   (getf progress :model)))))))
 
 (defgeneric session-job-native-record
     (job snapshot viewer &key preview-limit include-progress-p)
@@ -671,38 +588,37 @@ Only the current primary conversation's artifact root is searched."
     (task-orchestrator agent &key (:identifier string) (:tool-name string)
      (:execution-alias-p boolean))
     (values (option list) (option session-job) (option pathname)))
-(defun task-query-job (orchestrator viewer &key identifier tool-name (execution-alias-p t))
+(defun task-query-job
+       (orchestrator viewer &key identifier tool-name (execution-alias-p t))
   "Return a canonical snapshot, retained job and durable result pathname.
 
 Live jobs take precedence. Durable lookup uses only VIEWER's primary artifact
 root. EXECUTION-ALIAS-P also accepts a live job's execution identifier. Missing
 jobs return three NIL values; each frontend owns its error and presentation."
-  (if-let ((job (if execution-alias-p
-                    (task-orchestrator-visible-job-named orchestrator viewer identifier)
-                    (find identifier (task-orchestrator-list-visible-jobs orchestrator viewer)
-                          :key #'session-job-identifier :test #'string=))))
-      (values (session-job-snapshot job) job nil)
-      (multiple-value-bind (result path)
-          (task--durable-job-result viewer identifier tool-name)
-        (values
-         (when result
-           (list :job-id       (or (getf result :id) identifier)
-                 :execution-id identifier
-                 :parent-id    (getf result :parent-id)
-                 :agent        (getf result :agent)
-                 :tool         (getf result :tool)
-                 :state        (case (getf result :status)
-                                 (:success
-                                  ':completed)
-                                 (:aborted
-                                  ':aborted)
-                                 (otherwise
-                                  ':failed))
-                 :detached     (and (getf result :detached) t)
-                 :progress     (list :duration-ms (getf result :duration-ms)
-                                     :usage       (getf result :usage))
-                 :result       result))
-         nil path))))
+  (if-let ((job
+            (if execution-alias-p
+                (task-orchestrator-visible-job-named orchestrator viewer identifier)
+                (find identifier
+                      (task-orchestrator-list-visible-jobs orchestrator viewer) :key
+                      #'session-job-identifier :test #'string=))))
+    (values (session-job-snapshot job) job nil)
+    (multiple-value-bind (result path)
+        (task--durable-job-result viewer identifier tool-name)
+      (values
+       (when result
+         (list :job-id (or (getf result :id) identifier) :execution-id identifier
+               :parent-id (getf result :parent-id) :tool (getf result :tool) :state
+               (case (getf result :status)
+                 (:success
+                  ':completed)
+                 (:aborted
+                  ':aborted)
+                 (otherwise
+                  ':failed))
+               :detached (and (getf result :detached) t) :progress
+               (list :duration-ms (getf result :duration-ms) :usage (getf result :usage))
+               :result result))
+       nil path))))
 
 (-> session-job-handoff-form (tool-execution-job agent keyword) (values list string))
 (defun session-job-handoff-form (job viewer reason)
@@ -781,59 +697,6 @@ poll a job whose completion will wake it."
               (task--tool-execution-handoff-result
                job parent ':grace-expired))))))
 
-(-> task--agent-policy-presentation (t) t)
-(defun task--agent-policy-presentation (value)
-  "Return bounded policy VALUE for child.roles discovery."
-  (task--compact-native-value value 1000))
-
-(-> task--agent-native-record (task-agent-definition) list)
-(defun task--agent-native-record (definition)
-  "Return model-visible native metadata for one child role."
-  (list :kind   ':agent
-        :name   (task-agent-definition-name definition)
-        :description
-        (task--retained-prefix
-         (task-agent-definition-description definition) 1000)
-        :source (task-agent-definition-source definition)
-        :pathname
-        (let ((pathname (task-agent-definition-pathname definition)))
-          (and pathname (namestring pathname)))
-        :models
-        (task--agent-policy-presentation
-         (task-agent-definition-models definition))
-        :reasoning-effort
-        (task-agent-definition-reasoning-effort definition)
-        :tools
-        (task--agent-policy-presentation
-         (task-agent-definition-tools definition))
-        :spawns
-        (task--agent-policy-presentation
-         (task-agent-definition-spawns definition))))
-
-(-> task--agent-diagnostic-native-record (condition) list)
-(defun task--agent-diagnostic-native-record (diagnostic)
-  "Return bounded typed native metadata for one rejected role."
-  (let ((pathname (task-agent-definition-error-pathname diagnostic)))
-    (list :kind     ':diagnostic
-          :type     :task-agent-definition-error
-          :name     (task-agent-definition-error-definition-name diagnostic)
-          :source   (task-agent-definition-error-source diagnostic)
-          :pathname (and pathname (namestring pathname))
-          :line     (task-agent-definition-error-line diagnostic)
-          :field    (task-agent-definition-error-field diagnostic)
-          :cause
-          (task--retained-prefix
-           (princ-to-string (task-agent-definition-error-cause diagnostic))
-           1000))))
-
-(-> task--agent-diagnostic-visible-p
-    (condition function)
-    boolean)
-(defun task--agent-diagnostic-visible-p (diagnostic can-spawn-p)
-  "Return true when the spawn policy permits DIAGNOSTIC's reserved role name."
-  (let ((name (task-agent-definition-error-definition-name diagnostic)))
-    (and name (funcall can-spawn-p name))))
-
 (-> task--bounded-page (list integer integer
                          &key (:tag keyword) (:entry-key keyword) (:project function)
                          (:tool-name string) (:message string))
@@ -862,29 +725,14 @@ poll a job whose completion will wake it."
       (let ((form (page-form selected)))
         (values form (task--write-readable-sexp form :pretty-p t))))))
 
-(-> task--agents-page (list integer integer) (values list string))
-(defun task--agents-page (entries offset limit)
-  "Return a bounded native page of ENTRIES starting at OFFSET."
-  (task--bounded-page entries offset limit
-                      :tag       ':task-agents
-                      :entry-key ':entries
-                      :tool-name "child.roles"
-                      :message   "One task agent discovery record exceeds the native result bound."))
-
 (-> task--job-list-summary (list) list)
 (defun task--job-list-summary (snapshot)
   "Return the compact job-list summary of SNAPSHOT."
-  (append
-   (list :id   (getf snapshot :job-id)
-         :type (getf snapshot :type))
-   (when (getf snapshot :agent)
-     (list :agent (getf snapshot :agent)))
-   (when (getf snapshot :tool)
-     (list :tool    (getf snapshot :tool)
-           :summary (getf snapshot :summary)))
-   (list :state    (getf snapshot :state)
-         :detached (and (getf snapshot :detached) t)
-         :status   (getf (getf snapshot :result) :status))))
+  (append (list :id (getf snapshot :job-id) :type (getf snapshot :type))
+          (when (getf snapshot :tool)
+            (list :tool (getf snapshot :tool) :summary (getf snapshot :summary)))
+          (list :state (getf snapshot :state) :detached (and (getf snapshot :detached) t)
+                :status (getf (getf snapshot :result) :status))))
 
 (-> task--job-list-page (list integer integer) (values list string))
 (defun task--job-list-page (snapshots offset limit)
@@ -896,6 +744,14 @@ poll a job whose completion will wake it."
                       :tool-name "job.list"
                       :message   "One job summary exceeds the native result bound."))
 
+(defgeneric task-context-spawn-items (context arguments)
+  (:documentation "Normalize child assignments with the originating execution context."))
+
+(defmethod task-context-spawn-items ((context tool-context) arguments)
+  "Normalize the ordinary model-visible child assignment."
+  (declare (ignore context))
+  (task-normalize-arguments arguments))
+
 (defmethod tool-execute ((tool task-run-tool) (context tool-context) arguments)
   "Validate, admit, and detach one child agent."
   (let ((parent (tool-context-agent context)))
@@ -903,98 +759,33 @@ poll a job whose completion will wake it."
       (error 'task-error :message
              "child.spawn requires an executing parent agent context." :tool-name
              "child.spawn"))
-    (multiple-value-bind (definitions diagnostics)
-        (task-discover-agents (agent-configuration parent))
-      (let* ((orchestrator
-              (task-orchestrator-refresh (task-run-tool-orchestrator tool)))
-             (items     (task-normalize-arguments arguments))
-             (resolved
-              (task--resolve-items
-               parent orchestrator definitions
-               :items       items
-               :diagnostics diagnostics
-               :registry    (agent-tool-registry parent)))
-             (jobs
-              (task-orchestrator-start-jobs
-               orchestrator parent resolved
-               :parent-call-id (tool-context-call-id context)
-               :command-authorization-function
-               (tool-context-command-authorization-function context)
-               :tool-authorization-function
-               (tool-context-tool-authorization-function context)))
-             (snapshots (mapcar #'task-job-snapshot jobs))
-             (duration
-              (if jobs
-                  (task--milliseconds-between
-                   (reduce #'min jobs :key #'job-created-at)
-                   (get-internal-real-time))
-                  0))
-             (artifact-root
-              (namestring
-               (task--artifact-group-root
-                (agent-configuration parent)
-                (task-parent-root-conversation-identifier parent)))))
-        (multiple-value-bind (form content)
-            (task--task-run-native-form
-             jobs snapshots
-             :duration-milliseconds duration
-             :artifact-root         artifact-root
-             :success-p             t)
-          (task-tool-result content form))))))
-
-(defmethod tool-execute
-    ((tool task-agents-tool) (context tool-context) arguments)
-  "Return the effective policy-filtered child roles as native data."
-  (let* ((parent       (tool-context-agent context))
-         (orchestrator (task-agents-tool-orchestrator tool)))
-    (unless (typep parent 'agent)
-      (error 'task-error
-             :message   "child.roles requires an executing parent agent context."
-             :tool-name "child.roles"))
-    (task--validate-tool-arguments arguments '("offset" "limit")
-                                   "child.roles")
-    (let ((offset (or (tool-argument arguments "offset") 0))
-          (limit  (or (tool-argument arguments "limit")
-                      *task-agent-page-default*)))
-      (unless (and (integerp offset) (<= 0 offset 1000000))
-        (error 'task-error
-               :message   "child.roles offset must be an integer from 0 to 1000000."
-               :tool-name "child.roles"))
-      (unless (and (integerp limit)
-                   (<= 1 limit *task-agent-page-maximum*))
-        (error 'task-error
-               :message
-               (format nil "child.roles limit must be an integer from 1 to ~D."
-                       *task-agent-page-maximum*)
-               :tool-name "child.roles"))
-      (multiple-value-bind (definitions diagnostics)
-          (task-discover-agents (agent-configuration parent))
-        (let ((agent-records      nil)
-              (diagnostic-records nil)
-              (registry           (agent-tool-registry parent))
-              (can-spawn-p        (task-parent-spawn-predicate parent orchestrator)))
-          (dolist (definition definitions)
-            (when (funcall can-spawn-p (task-agent-definition-name definition))
-              (handler-case
-                  (progn
-                    (task-agent-definition-validate-tools-available
-                     definition registry)
-                    (push (task--agent-native-record definition)
-                          agent-records))
-                (task-agent-definition-error (diagnostic)
-                  (push (task--agent-diagnostic-native-record diagnostic)
-                        diagnostic-records)))))
-          (dolist (diagnostic diagnostics)
-            (when (task--agent-diagnostic-visible-p diagnostic can-spawn-p)
-              (push (task--agent-diagnostic-native-record diagnostic)
-                    diagnostic-records)))
-          (multiple-value-bind (form content)
-              (task--agents-page
-               (nconc (nreverse agent-records)
-                      (nreverse diagnostic-records))
-               offset
-               limit)
-            (task-tool-result content form)))))))
+    (let* ((orchestrator (task-orchestrator-refresh (task-run-tool-orchestrator tool)))
+           (items        (task-context-spawn-items context arguments))
+           (resolved     (task--admit-items parent orchestrator items))
+           (jobs
+            (task-orchestrator-start-jobs orchestrator parent resolved :parent-call-id
+                                          (tool-context-call-id context)
+                                          :command-authorization-function
+                                          (tool-context-command-authorization-function
+                                           context)
+                                          :tool-authorization-function
+                                          (tool-context-tool-authorization-function
+                                           context)))
+           (snapshots    (mapcar #'task-job-snapshot jobs))
+           (duration
+            (if jobs
+                (task--milliseconds-between (reduce #'min jobs :key #'job-created-at)
+                                            (get-internal-real-time))
+                0))
+           (artifact-root
+            (namestring
+             (task--artifact-group-root (agent-configuration parent)
+                                        (task-parent-root-conversation-identifier
+                                         parent)))))
+      (multiple-value-bind (form content)
+          (task--task-run-native-form jobs snapshots :duration-milliseconds duration
+                                      :artifact-root artifact-root :success-p t)
+        (task-tool-result content form)))))
 
 (defmethod tool-execute ((tool task-job-tool) (context tool-context) arguments)
   "Execute the job operation named by TOOL."
@@ -1127,28 +918,11 @@ poll a job whose completion will wake it."
 (defun task-run-parameters-schema ()
   "Return the flat schema advertised by child.spawn."
   (tool-object-schema
-   (json-object
-    "name" (tool-string-property "Optional stable child name.")
-    "agent" (tool-string-property
-             "Agent type, including scout, designer, reviewer, librarian, task, or sonic.")
-    "task" (tool-string-property "Self-contained child assignment.")
-    "context" (tool-string-property "Optional background for this child.")
-    "isolation" (task-worktree-options-schema)
-    "completion-policy" (tool-completion-policy-property))
-   nil))
-
-(-> task-agents-parameters-schema () hash-table)
-(defun task-agents-parameters-schema ()
-  "Return the pagination schema advertised by child.roles."
-  (tool-object-schema
-   (json-object
-    "offset"
-    (tool-integer-property "Zero-based discovery offset; defaults to 0.")
-    "limit"
-    (tool-integer-property
-     (format nil "Page size from 1 to ~D; defaults to ~D."
-             *task-agent-page-maximum*
-             *task-agent-page-default*)))
+   (json-object "name" (tool-string-property "Optional stable child name.") "task"
+                (tool-string-property "Self-contained child assignment.") "context"
+                (tool-string-property "Optional background for this child.") "isolation"
+                (task-worktree-options-schema) "completion-policy"
+                (tool-completion-policy-property))
    nil))
 
 (-> task-augment-tool-registry (tool-registry) tool-registry)
@@ -1156,61 +930,41 @@ poll a job whose completion will wake it."
   "Register one session-scoped task orchestrator and its task/job tools."
   (when (tool-registry-find registry "child" "spawn")
     (return-from task-augment-tool-registry registry))
-  (tool-registry-describe-namespace
-   registry "child"
-   "Your child agents: spawn them with roles and manage them.")
-  (tool-registry-describe-namespace
-   registry "job"
-   "Inspection, waiting, cancellation, and durable result lookup for jobs.")
+  (tool-registry-describe-namespace registry "child"
+                                    "Spawn and manage your child agents.")
+  (tool-registry-describe-namespace registry "job"
+                                    "Inspection, waiting, cancellation, and durable result lookup for jobs.")
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
-           (tool-object-schema
-            (json-object "id" (task-job-identifier-property))
-            '("id")))
+          (tool-object-schema (json-object "id" (task-job-identifier-property)) '("id")))
          (job-list-schema
-           (tool-object-schema
-            (json-object
-             "offset"
-             (tool-integer-property "Zero-based job offset; defaults to 0.")
-             "limit"
-             (tool-integer-property
-              (format nil "Page size from 1 to ~D; defaults to ~D."
-                      *task-job-page-maximum*
-                      *task-job-page-default*)))
-            nil)))
+          (tool-object-schema
+           (json-object "offset"
+                        (tool-integer-property "Zero-based job offset; defaults to 0.")
+                        "limit"
+                        (tool-integer-property
+                         (format nil "Page size from 1 to ~D; defaults to ~D."
+                                 *task-job-page-maximum* *task-job-page-default*)))
+           nil)))
     (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (tool-registry-register registry
-                            (make-instance 'task-run-tool :orchestrator
-                                           orchestrator :namespace "child" :name
-                                           "spawn" :description
-                                          "Spawn one detached in-process child agent with explicit identity, restricted tools, recursion policy, progress, and artifacts."
-                                           :parameters
-                                           (task-run-parameters-schema)))
+                            (make-instance 'task-run-tool :orchestrator orchestrator
+                                           :namespace "child" :name "spawn" :description
+                                           "Spawn one detached in-process child agent with explicit identity, restricted tools, recursion policy, progress, and artifacts."
+                                           :parameters                  (task-run-parameters-schema)))
     (tool-registry-register registry
-                            (make-instance
-                             'task-agents-tool
-                             :orchestrator orchestrator
-                             :namespace    "child"
-                             :name         "roles"
-                             :description
-                             "List child-agent roles allowed by the current depth and spawn policy, plus typed diagnostics for unavailable definitions."
-                             :parameters   (task-agents-parameters-schema)))
-    (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
-                                           "list" :description
+                            (make-instance 'task-job-tool :orchestrator orchestrator
+                                           :namespace "job" :name "list" :description
                                            "List child and tool execution jobs in this session."
-                                           :parameters job-list-schema))
+                                           :parameters                  job-list-schema))
     (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
-                                           "get" :description
+                            (make-instance 'task-job-tool :orchestrator orchestrator
+                                           :namespace "job" :name "get" :description
                                            "Inspect one live session job or a completed task result persisted for the current primary conversation."
-                                           :parameters identifier-schema))
+                                           :parameters                  identifier-schema))
     (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
-                                           "wait" :description
+                            (make-instance 'task-job-tool :orchestrator orchestrator
+                                           :namespace "job" :name "wait" :description
                                            "Wait up to a bounded timeout for one session job and return its current or terminal result."
                                            :parameters
                                            (tool-object-schema
@@ -1221,17 +975,16 @@ poll a job whose completion will wake it."
                                                           "Maximum wait in seconds; defaults to 0."))
                                             '("id"))))
     (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
-                                           "cancel" :description
+                            (make-instance 'task-job-tool :orchestrator orchestrator
+                                           :namespace "job" :name "cancel" :description
                                            "Request interruption of one queued or running session job."
-                                           :parameters identifier-schema))
-    (tool-registry-register
-     registry
-     (make-instance 'task-continuity-tool :orchestrator orchestrator
-                    :namespace "job" :name "continuity"
-                    :description                        "Classify owned durable jobs and explicitly reattach, reconstruct, safely restart, or abandon unfinished work. Recovery requires primary-owner authorization and a durable replay claim."
-                    :parameters                         (task-continuity-parameters)))
+                                           :parameters                  identifier-schema))
+    (tool-registry-register registry
+                            (make-instance 'task-continuity-tool :orchestrator
+                                           orchestrator :namespace "job" :name
+                                           "continuity" :description
+                                           "Classify owned durable jobs and explicitly reattach, reconstruct, safely restart, or abandon unfinished work. Recovery requires primary-owner authorization and a durable replay claim."
+                                           :parameters (task-continuity-parameters)))
     (task-worktree-register-tool registry orchestrator)
     (task-children-register-tools registry orchestrator)
     registry))

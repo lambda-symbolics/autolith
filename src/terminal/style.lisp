@@ -4,29 +4,23 @@
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *terminal-style-names*
-    '(:plain :brand
-      :brand-gradient-1 :brand-gradient-2 :brand-gradient-3
-      :brand-gradient-4 :brand-gradient-5 :brand-gradient-6
-      :recovery-gradient-1 :recovery-gradient-2 :recovery-gradient-3
-      :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6
-      :lambda-logo-1 :lambda-logo-2 :lambda-logo-3
-      :lambda-logo-4 :lambda-logo-5 :lambda-logo-6
-      :user :tool :success :failure :notice :dim :annotation :hint :selected
-      :surface :surface-code :surface-diff-add :surface-diff-remove
-      :strong :emphasis :code :code-copy :link :lisp-prompt :plan-active :timestamp-time
-      :mermaid-box :mermaid-edge :mermaid-arrow :mermaid-label
-      :agent-spinner :agent-name :child-name :agent-role :agent-tool
-      :command-spinner :command-id :command-tool
-      :status-plain :status-dim :status-accent
-      :legend-plain :legend-dim :legend-accent :sidebar-action :sidebar-workspace
-      :status-model :status-effort :status-branch :model :effort
-      :compaction-label :progress-track :progress-fill
-      :status-progress-track :status-progress-fill
-      :syntax-comment :syntax-keyword :syntax-string :syntax-escape
-      :syntax-number :syntax-type :syntax-function :syntax-property
-      :syntax-parenthesis-1 :syntax-parenthesis-2 :syntax-parenthesis-3
-      :syntax-parenthesis-4 :syntax-parenthesis-5 :syntax-parenthesis-6
-      :syntax-heading :heading-emphasis :syntax-link)
+    '(:plain :brand :brand-gradient-1 :brand-gradient-2 :brand-gradient-3
+      :brand-gradient-4 :brand-gradient-5 :brand-gradient-6 :recovery-gradient-1
+      :recovery-gradient-2 :recovery-gradient-3 :recovery-gradient-4 :recovery-gradient-5
+      :recovery-gradient-6 :lambda-logo-1 :lambda-logo-2 :lambda-logo-3 :lambda-logo-4
+      :lambda-logo-5 :lambda-logo-6 :user :tool :success :failure :notice :dim
+      :annotation :hint :selected :surface :surface-code :surface-diff-add
+      :surface-diff-remove :strong :emphasis :code :code-copy :link :lisp-prompt
+      :plan-active :timestamp-time :mermaid-box :mermaid-edge :mermaid-arrow
+      :mermaid-label :agent-spinner :agent-name :child-name :agent-tool :command-spinner
+      :command-id :command-tool :status-plain :status-dim :status-accent :legend-plain
+      :legend-dim :legend-accent :sidebar-action :sidebar-workspace :status-model
+      :status-effort :status-branch :model :effort :compaction-label :progress-track
+      :progress-fill :status-progress-track :status-progress-fill :syntax-comment
+      :syntax-keyword :syntax-string :syntax-escape :syntax-number :syntax-type
+      :syntax-function :syntax-property :syntax-parenthesis-1 :syntax-parenthesis-2
+      :syntax-parenthesis-3 :syntax-parenthesis-4 :syntax-parenthesis-5
+      :syntax-parenthesis-6 :syntax-heading :heading-emphasis :syntax-link)
     "Every semantic style a theme must render."))
 
 (deftype terminal-style ()
@@ -96,88 +90,64 @@ name, and status background opt into indexed colors. Surface fills use the
 neutral bright black because basic terminals cannot tint a row."
   (append
    (terminal--style-table
-    '((:plain ())
-      (:brand (:foreground :magenta :bold t))
-      (:user (:foreground :cyan :bold t))
-      (:tool (:foreground :yellow :bold t))
-      (:success (:foreground :green))
-      (:failure (:foreground :red :bold t))
-      (:notice (:foreground :yellow))
-      (:dim (:faint t))
-      (:annotation (:faint t))
-      (:hint (:faint t :italic t))
-      (:selected (:reverse t))
-      (:surface (:background :bright-black))
-      (:surface-code (:background :bright-black))
+    '((:plain nil) (:brand (:foreground :magenta :bold t))
+      (:user (:foreground :cyan :bold t)) (:tool (:foreground :yellow :bold t))
+      (:success (:foreground :green)) (:failure (:foreground :red :bold t))
+      (:notice (:foreground :yellow)) (:dim (:faint t)) (:annotation (:faint t))
+      (:hint (:faint t :italic t)) (:selected (:reverse t))
+      (:surface (:background :bright-black)) (:surface-code (:background :bright-black))
       (:surface-diff-add (:background :bright-black))
-      (:surface-diff-remove (:background :bright-black))
-      (:strong (:bold t))
-      (:emphasis (:italic t))
-      (:code (:foreground :cyan))
-      (:code-copy (:faint t :underline t))
-      (:mermaid-box (:foreground :cyan))
+      (:surface-diff-remove (:background :bright-black)) (:strong (:bold t))
+      (:emphasis (:italic t)) (:code (:foreground :cyan))
+      (:code-copy (:faint t :underline t)) (:mermaid-box (:foreground :cyan))
       (:mermaid-edge (:foreground :yellow))
       (:mermaid-arrow (:foreground :magenta :bold t))
-      (:mermaid-label (:foreground :green))
-      (:lisp-prompt (:foreground :red :bold t))
-      (:plan-active (:foreground :cyan :bold t))
-      (:timestamp-time (:foreground :cyan))
+      (:mermaid-label (:foreground :green)) (:lisp-prompt (:foreground :red :bold t))
+      (:plan-active (:foreground :cyan :bold t)) (:timestamp-time (:foreground :cyan))
       (:model (:foreground :bright-cyan :bold t))
       (:effort (:foreground :bright-red :bold t))
       (:agent-spinner (:foreground :bright-green :bold t))
       (:agent-name (:foreground :bright-cyan :bold t))
-      (:agent-role (:foreground :bright-magenta))
       (:agent-tool (:foreground :bright-yellow))
       (:command-spinner (:foreground :bright-green :bold t))
       (:command-id (:foreground :bright-cyan :bold t))
       (:command-tool (:foreground :bright-yellow))
-      (:legend-plain (:foreground :bright-white))
-      (:legend-dim (:foreground :white))
+      (:legend-plain (:foreground :bright-white)) (:legend-dim (:foreground :white))
       (:legend-accent (:foreground :bright-magenta :bold t))
       (:sidebar-action (:foreground :bright-cyan :underline t))
       (:sidebar-workspace (:foreground :bright-blue :bold t))
-      (:progress-track (:faint t))
-      (:progress-fill (:foreground :bright-yellow :bold t))
-      (:syntax-comment (:faint t))
-      (:syntax-keyword (:foreground :magenta))
-      (:syntax-string (:foreground :green))
-      (:syntax-escape (:foreground :yellow))
-      (:syntax-number (:foreground :yellow))
-      (:syntax-type (:foreground :cyan))
-      (:syntax-function (:foreground :blue))
-      (:syntax-property (:foreground :cyan))
+      (:progress-track (:faint t)) (:progress-fill (:foreground :bright-yellow :bold t))
+      (:syntax-comment (:faint t)) (:syntax-keyword (:foreground :magenta))
+      (:syntax-string (:foreground :green)) (:syntax-escape (:foreground :yellow))
+      (:syntax-number (:foreground :yellow)) (:syntax-type (:foreground :cyan))
+      (:syntax-function (:foreground :blue)) (:syntax-property (:foreground :cyan))
       (:syntax-heading (:foreground :magenta :bold t))
       (:heading-emphasis (:foreground :magenta :bold t :italic t))
       (:link (:foreground :cyan :underline t))
       (:syntax-link (:foreground :cyan :underline t))))
    (list
-    (cons ':child-name
-          (make-style
-           :foreground (indexed-color 78 :fallback ':green))))
+    (cons ':child-name (make-style :foreground (indexed-color 78 :fallback ':green))))
    (loop for name in *terminal-brand-gradient-names*
          for index in '(193 157 121 85 84 83)
-         collect (cons name (make-style
-                             :foreground (indexed-color index :fallback ':green)
-                             :bold       t)))
-   (terminal--parenthesis-styles)
-   (terminal--recovery-gradient-styles)
-   (terminal--lambda-logo-styles)
-   (loop for (name foreground arguments) in
-         '((:status-plain :bright-white ())
-           (:status-dim :white ())
-           (:status-accent :bright-magenta (:bold t))
-           (:status-model :bright-cyan (:bold t))
-           (:status-effort :bright-red (:bold t))
-           (:status-branch :bright-green (:bold t))
-           (:compaction-label :bright-yellow (:bold t))
-           (:status-progress-track nil (:faint t))
-           (:status-progress-fill :bright-yellow (:bold t)))
          collect (cons name
-                       (apply #'make-style
-                              :foreground foreground
-                              :background
-                              (indexed-color 236 :fallback ':black)
-                              arguments)))))
+                       (make-style :foreground (indexed-color index :fallback ':green)
+                                   :bold       t)))
+   (terminal--parenthesis-styles) (terminal--recovery-gradient-styles)
+   (terminal--lambda-logo-styles)
+   (loop for (name foreground arguments) in '((:status-plain :bright-white nil)
+                                              (:status-dim :white nil)
+                                              (:status-accent :bright-magenta (:bold t))
+                                              (:status-model :bright-cyan (:bold t))
+                                              (:status-effort :bright-red (:bold t))
+                                              (:status-branch :bright-green (:bold t))
+                                              (:compaction-label :bright-yellow
+                                               (:bold t))
+                                              (:status-progress-track nil (:faint t))
+                                              (:status-progress-fill :bright-yellow
+                                               (:bold t)))
+         collect (cons name
+                       (apply #'make-style :foreground foreground :background
+                              (indexed-color 236 :fallback ':black) arguments)))))
 
 (defparameter *almighty-palette*
   '((:ink . "#eff6ff")
@@ -220,54 +190,39 @@ quiet text uses soft blue."
         (canvas-darker (almighty-color ':canvas-darker)))
     (append
      (terminal--style-table
-      `((:plain ())
-        (:brand (:foreground ,accent :bold t))
-        (:user (:foreground ,secondary :bold t))
-        (:tool (:foreground ,accent :bold t))
-        (:success (:foreground ,safe))
-        (:failure (:foreground ,danger :bold t))
-        (:notice (:foreground ,accent))
-        (:dim (:foreground ,soft))
-        (:annotation (:foreground ,soft))
-        (:hint (:foreground ,soft :italic t))
-        (:selected (:reverse t))
-        (:surface (:background ,canvas-darker))
+      `((:plain nil) (:brand (:foreground ,accent :bold t))
+        (:user (:foreground ,secondary :bold t)) (:tool (:foreground ,accent :bold t))
+        (:success (:foreground ,safe)) (:failure (:foreground ,danger :bold t))
+        (:notice (:foreground ,accent)) (:dim (:foreground ,soft))
+        (:annotation (:foreground ,soft)) (:hint (:foreground ,soft :italic t))
+        (:selected (:reverse t)) (:surface (:background ,canvas-darker))
         (:surface-code (:background ,canvas-darker))
         (:surface-diff-add (:background ,canvas-darker))
         (:surface-diff-remove (:background ,canvas-darker))
-        (:strong (:foreground ,accent :bold t))
-        (:emphasis (:italic t))
-        (:code (:foreground ,secondary))
-        (:code-copy (:foreground ,soft :underline t))
+        (:strong (:foreground ,accent :bold t)) (:emphasis (:italic t))
+        (:code (:foreground ,secondary)) (:code-copy (:foreground ,soft :underline t))
         (:mermaid-box (:foreground ,secondary))
         (:mermaid-edge (:foreground ,accent-soft))
         (:mermaid-arrow (:foreground ,accent :bold t))
-        (:mermaid-label (:foreground ,ink))
-        (:lisp-prompt (:foreground ,accent :bold t))
+        (:mermaid-label (:foreground ,ink)) (:lisp-prompt (:foreground ,accent :bold t))
         (:plan-active (:foreground ,secondary :bold t))
-        (:timestamp-time (:foreground ,soft))
-        (:model (:foreground ,secondary :bold t))
+        (:timestamp-time (:foreground ,soft)) (:model (:foreground ,secondary :bold t))
         (:effort (:foreground ,danger :bold t))
         (:agent-spinner (:foreground ,accent :bold t))
         (:agent-name (:foreground ,secondary :bold t))
-        (:agent-role (:foreground ,soft))
         (:agent-tool (:foreground ,accent))
         (:command-spinner (:foreground ,accent :bold t))
         (:command-id (:foreground ,secondary :bold t))
-        (:command-tool (:foreground ,accent))
-        (:child-name (:foreground ,safe :bold t))
-        (:legend-plain (:foreground ,ink))
-        (:legend-dim (:foreground ,soft))
+        (:command-tool (:foreground ,accent)) (:child-name (:foreground ,safe :bold t))
+        (:legend-plain (:foreground ,ink)) (:legend-dim (:foreground ,soft))
         (:legend-accent (:foreground ,accent :bold t))
         (:sidebar-action (:foreground ,secondary :underline t))
         (:sidebar-workspace (:foreground ,accent-soft :bold t))
         (:progress-track (:foreground ,soft))
         (:progress-fill (:foreground ,accent :bold t))
-        (:syntax-comment (:foreground ,soft))
-        (:syntax-keyword (:foreground ,accent))
+        (:syntax-comment (:foreground ,soft)) (:syntax-keyword (:foreground ,accent))
         (:syntax-string (:foreground ,secondary))
-        (:syntax-escape (:foreground ,accent-soft))
-        (:syntax-number (:foreground ,ink))
+        (:syntax-escape (:foreground ,accent-soft)) (:syntax-number (:foreground ,ink))
         (:syntax-type (:foreground ,secondary))
         (:syntax-function (:foreground ,accent-light))
         (:syntax-property (:foreground ,secondary))
@@ -278,24 +233,21 @@ quiet text uses soft blue."
      (loop for name in *terminal-brand-gradient-names*
            for hex in *almighty-gradient*
            collect (cons name (make-style :foreground (hex-color hex) :bold t)))
-     (terminal--parenthesis-styles)
-     (terminal--recovery-gradient-styles)
+     (terminal--parenthesis-styles) (terminal--recovery-gradient-styles)
      (terminal--lambda-logo-styles)
-     (loop for (name foreground arguments) in
-           `((:status-plain ,ink ())
-             (:status-dim ,soft ())
-             (:status-accent ,accent (:bold t))
-             (:status-model ,secondary (:bold t))
-             (:status-effort ,danger (:bold t))
-             (:status-branch ,safe (:bold t))
-             (:compaction-label ,accent (:bold t))
-             (:status-progress-track ,soft ())
-             (:status-progress-fill ,accent (:bold t)))
+     (loop for (name foreground arguments) in `((:status-plain ,ink nil)
+                                                (:status-dim ,soft nil)
+                                                (:status-accent ,accent (:bold t))
+                                                (:status-model ,secondary (:bold t))
+                                                (:status-effort ,danger (:bold t))
+                                                (:status-branch ,safe (:bold t))
+                                                (:compaction-label ,accent (:bold t))
+                                                (:status-progress-track ,soft nil)
+                                                (:status-progress-fill ,accent
+                                                 (:bold t)))
            collect (cons name
-                         (apply #'make-style
-                                :foreground foreground
-                                :background canvas-darker
-                                arguments))))))
+                         (apply #'make-style :foreground foreground :background
+                                canvas-darker arguments))))))
 
 
 ;;;; -- Themes --

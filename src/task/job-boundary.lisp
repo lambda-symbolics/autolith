@@ -31,22 +31,20 @@
 (defparameter *run-job-failure-message-limit* 2000
   "The largest human-readable failure message written to a result artifact.")
 
-(defparameter *run-job-default-role* "task"
-  "The default child role for an inline prompt job.")
+(defparameter *run-job-maximum-prompt-characters* 32768
+  "The largest assignment prompt accepted by the headless job boundary.")
 
 (defclass run-job-request nil
-  ((identifier :initarg :identifier :reader run-job-request-identifier
-               :type non-empty-string :documentation "The caller's stable job identifier.")
-   (role :initarg :role :reader run-job-request-role
-         :type non-empty-string :documentation "The discovered task role name.")
-   (prompt :initarg :prompt :reader run-job-request-prompt
-           :type non-empty-string :documentation "The job assignment prompt.")
-   (input :initarg :input :reader run-job-request-input
-          :type t :documentation "The caller-owned opaque data tree.")
-   (input-present-p :initarg :input-present-p :initform t
-                    :reader run-job-request-input-present-p :type boolean
-                    :documentation "Whether the caller supplied opaque input, including NIL."))
-  (:documentation "One validated version-one non-interactive job request."))
+          ((identifier :initarg :identifier :reader run-job-request-identifier :type
+            non-empty-string :documentation "The caller's stable job identifier.")
+           (prompt :initarg :prompt :reader run-job-request-prompt :type non-empty-string
+            :documentation "The job assignment prompt.")
+           (input :initarg :input :reader run-job-request-input :type t :documentation
+            "The caller-owned opaque data tree.")
+           (input-present-p :initarg :input-present-p :initform t :reader
+            run-job-request-input-present-p :type boolean :documentation
+            "Whether the caller supplied opaque input, including NIL."))
+          (:documentation "One validated version-one non-interactive job request."))
 
 (-> run-job--error (keyword string &rest t) null)
 (defun run-job--error (category control &rest arguments)
@@ -95,79 +93,61 @@
     (stream &key (:maximum-characters (integer 1)))
     string)
 (defun run-job-read-prompt-stream
-    (stream &key (maximum-characters *task-agent-instructions-maximum-characters*))
+       (stream &key (maximum-characters *run-job-maximum-prompt-characters*))
   "Read one inline prompt from STREAM, preserving newlines and bounding its size."
-  (let ((output (make-string-output-stream))
-        (count  0))
+  (let ((output (make-string-output-stream)) (count 0))
     (loop for character = (read-char stream nil nil)
           while character
           do (when (>= count maximum-characters)
-               (run-job--error
-                ':invalid-input
-                "The inline prompt exceeds the ~D-character limit."
-                maximum-characters))
-             (write-char character output)
-             (incf count))
+               (run-job--error ':invalid-input
+                               "The inline prompt exceeds the ~D-character limit."
+                               maximum-characters)) (write-char character output) (incf
+                                                                                   count))
     (get-output-stream-string output)))
 
-(-> run-job-prompt-form
-    (string &key
-            (:role string)
-            (:identifier string))
-    list)
-(defun run-job-prompt-form
-    (prompt &key (role *run-job-default-role*)
-                 (identifier (make-user-identifier)))
-  "Return one version-one job form for an inline PROMPT."
-  (list :autolith-job
-        :version         1
-        :id     identifier
-        :role   role
-        :prompt prompt
-        :input  nil))
+(-> run-job-prompt-form (string &key (:identifier string)) list)
+(defun run-job-prompt-form (prompt &key (identifier (make-user-identifier)))
+                           "Return one version-one job form for an inline PROMPT."
+                           (list :autolith-job :version 1 :id identifier :prompt prompt :input nil))
 
 (-> run-job--envelope-pairs (t) list)
 (defun run-job--envelope-pairs (form)
-  "Validate FORM's version-one envelope shape and return field pairs."
+  "Validate the bounded job envelope, including unique supported property keys."
   (unless (and (proper-list-p form) (eq (first form) :autolith-job))
     (run-job--error ':invalid-envelope "The input must begin with :AUTOLITH-JOB."))
-  (handler-case
-      (task--plist-alist
-       (rest form)
-       '(:version :id :role :prompt :input)
-       :source ':programmatic)
-    (task-agent-definition-error (condition)
-      (run-job--error ':invalid-envelope "~A" condition))))
+  (multiple-value-bind (problem key)
+      (plist-schema-problem (rest form) :allowed-keys '(:version :id :prompt :input))
+    (when problem
+      (run-job--error ':invalid-envelope "Invalid job envelope property ~S (~S)." key problem)))
+  (loop for (key value) on (rest form) by (partial #'nthcdr 2)
+        collect (cons key value)))
 
 (-> run-job-validate-envelope (t &key (:input-present-p boolean)) run-job-request)
 (defun run-job-validate-envelope (form &key (input-present-p t))
   "Validate FORM, recording whether its opaque input was supplied by the caller."
   (let ((pairs (run-job--envelope-pairs form)))
     (flet ((required (key)
-             (multiple-value-bind (value present-p) (task--alist-value key pairs)
+             (multiple-value-bind (value present-p)
+                 (task--alist-value key pairs)
                (unless present-p
                  (run-job--error ':invalid-envelope "Required field ~S is missing." key))
                value)))
       (let ((version    (required :version))
             (identifier (required :id))
-            (role       (required :role))
             (prompt     (required :prompt))
             (input      (required :input)))
         (unless (eql version 1)
           (run-job--error ':unsupported-version "Unsupported job version ~S." version))
         (unless (and (non-empty-string-p identifier) (<= (length identifier) 256))
-          (run-job--error ':invalid-envelope ":ID must be a non-empty string of at most 256 characters."))
-        (unless (task-agent-name-p role)
-          (run-job--error ':invalid-envelope ":ROLE is not a portable task-agent name."))
-        (unless (and (non-empty-string-p prompt)
-                     (<= (length prompt) *task-agent-instructions-maximum-characters*))
-          (run-job--error ':invalid-envelope ":PROMPT must be a bounded non-empty string."))
-        (make-instance 'run-job-request
-                       :identifier      identifier
-                       :role            (string-downcase role)
-                       :prompt          prompt
-                       :input           input
-                       :input-present-p input-present-p)))))
+          (run-job--error ':invalid-envelope
+                          ":ID must be a non-empty string of at most 256 characters."))
+        (unless
+            (and (non-empty-string-p prompt)
+                 (<= (length prompt) *run-job-maximum-prompt-characters*))
+          (run-job--error ':invalid-envelope
+                          ":PROMPT must be a bounded non-empty string."))
+        (make-instance 'run-job-request :identifier identifier :prompt prompt :input
+                       input :input-present-p input-present-p)))))
 
 (-> run-job--recover-identifier (t) string)
 (defun run-job--recover-identifier (form)
@@ -294,23 +274,6 @@
     (declare (ignore tool arguments))
     (if (eq permission-mode :full-access) ':allow ':deny)))
 
-(-> run-job--resolve-definition (configuration run-job-request) task-agent-definition)
-(defun run-job--resolve-definition (configuration request)
-  "Discover REQUEST's role and return its definition."
-  (multiple-value-bind (definitions diagnostics)
-      (task-discover-agents configuration)
-    (let ((definition
-            (task-find-agent-definition definitions
-                                        (run-job-request-role request))))
-      (unless definition
-        (if-let ((diagnostic
-                   (task-find-agent-diagnostic diagnostics
-                                               (run-job-request-role request))))
-            (error diagnostic)
-            (run-job--error ':unknown-role "Unknown task role ~S."
-                            (run-job-request-role request))))
-      definition)))
-
 (-> run-job--close-application ((option application)) null)
 (defun run-job--close-application (application)
   "Best-effort release one headless APPLICATION's runtime resources."
@@ -356,96 +319,90 @@
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job--execute-with-application (configuration request permission-mode)
   "Execute a child while its caller owns telemetry through result publication."
-  (let ((application        nil)
-        (event-orchestrator nil)
-        (event-listener     nil))
+  (let ((application nil) (event-orchestrator nil) (event-listener nil))
     (unwind-protect
-         (progn
-           (setf application
-                 (application-create configuration
-                                     :permission-mode                permission-mode
+        (progn
+         (setf application
+                 (application-create configuration :permission-mode  permission-mode
                                      :ignore-saved-permission-mode-p t))
-           (let* ((definition
-                    (run-job--resolve-definition
-                     (application-configuration application) request))
-                  (orchestrator (application--task-orchestrator application))
-                  (assignment   (run-job-assignment request)))
-             (unless orchestrator
-               (run-job--error ':runtime-unavailable
-                               "The task runtime is unavailable."))
-             (task-agent-definition-validate-tools-available
-              definition (application-tool-registry application))
-             (when *run-job-event-emitter*
-               (handler-case
-                   (setf event-orchestrator orchestrator
-                         event-listener
-                         (task-orchestrator-add-listener
-                          orchestrator
-                          (run-job-event-observer-create
-                           orchestrator *run-job-event-emitter*
-                           :configuration (application-configuration application)
-                           :registry      (application-tool-registry application)
-                           :root-conversation
-                           (task-parent-root-conversation-identifier
-                            (application-agent application))
-                           :root-name     *run-job-event-root-name*)))
-                 (serious-condition ()
-                   (run-job-event-emit *run-job-event-emitter* ':warning
-                                       (list :code ':invalid-event)))))
-             (multiple-value-bind (jobs inline)
-                 (task-orchestrator-start-jobs
-                  orchestrator
-                  (application-agent application)
-                  (list
-                   (list :item
-                         (append
-                           (list :agent (run-job-request-role request)
-                                 :task  assignment)
-                          (when *run-job-event-root-name*
-                            (list :name *run-job-event-root-name*)))
-                         :definition    definition
-                         :telemetry-run *telemetry-run*
-                         :detached      nil))
-                  :command-authorization-function
-                  (run-job-headless-command-authorization
-                   application permission-mode request)
-                  :tool-authorization-function
-                  (run-job-headless-tool-authorization permission-mode))
-               (dolist (job inline)
-                 (job-run-inline job))
-               (let ((job (first jobs)))
-                  (multiple-value-bind (snapshot terminal-p) (task-job-await job nil)
-                    (declare (ignore terminal-p))
-                   (let* ((compact-result (getf snapshot :result))
-                          (trace-id       (task-job-execution-identifier job))
-                          (usage          (run-job--usage compact-result))
-                          (artifact-path  (getf compact-result :output-path))
-                          (result
-                            (if artifact-path
-                                (handler-case
-                                    (run-job--read-task-result-artifact artifact-path)
-                                  (run-job-error (condition)
-                                    (return-from run-job--execute-with-application
-                                      (values
-                                       ':failed nil trace-id usage
-                                       (run-job-error-category condition)
-                                       (princ-to-string condition)))))
-                                compact-result))
-                          (status         (getf result :status)))
-                     (setf usage (run-job--usage result))
-                     (cond
-                       ((eq status ':success)
-                        (values ':succeeded (getf result :output) trace-id usage nil nil))
-                       ((eq status ':aborted)
-                        (values ':cancelled nil trace-id usage ':cancelled
-                                (or (getf result :error) "The job was cancelled.")))
-                       (t
-                        (values ':failed nil trace-id usage
-                                (if (member (getf compact-result :error-type)
-                                            '(:provider :authentication :rate-limit :transport))
-                                    ':provider-failure
-                                    ':child-failure)
-                                (or (getf result :error) "The child failed."))))))))))
+         (let* ((orchestrator (application--task-orchestrator application))
+                (assignment   (run-job-assignment request)))
+           (unless orchestrator
+             (run-job--error ':runtime-unavailable "The task runtime is unavailable."))
+           (when *run-job-event-emitter*
+             (handler-case
+              (setf event-orchestrator orchestrator
+                    event-listener
+                      (task-orchestrator-add-listener orchestrator
+                                                      (run-job-event-observer-create
+                                                       orchestrator
+                                                       *run-job-event-emitter*
+                                                       :configuration
+                                                       (application-configuration
+                                                        application)
+                                                       :registry
+                                                       (application-tool-registry
+                                                        application)
+                                                       :root-conversation
+                                                       (task-parent-root-conversation-identifier
+                                                        (application-agent application))
+                                                       :root-name
+                                                       *run-job-event-root-name*)))
+              (serious-condition nil
+               (run-job-event-emit *run-job-event-emitter* ':warning
+                                   (list :code ':invalid-event)))))
+           (multiple-value-bind (jobs inline)
+               (task-orchestrator-start-jobs orchestrator (application-agent application)
+                                             (list
+                                              (list :item
+                                                    (append (list :task assignment)
+                                                            (when
+                                                                *run-job-event-root-name*
+                                                              (list :name
+                                                                    *run-job-event-root-name*)))
+                                                    :telemetry-run *telemetry-run*
+                                                    :detached      nil))
+                                             :command-authorization-function
+                                             (run-job-headless-command-authorization
+                                              application permission-mode request)
+                                             :tool-authorization-function
+                                             (run-job-headless-tool-authorization
+                                              permission-mode))
+             (dolist (job inline) (job-run-inline job))
+             (let ((job (first jobs)))
+               (multiple-value-bind (snapshot terminal-p)
+                   (task-job-await job nil)
+                 (declare (ignore terminal-p))
+                 (let* ((compact-result (getf snapshot :result))
+                        (trace-id       (task-job-execution-identifier job))
+                        (usage          (run-job--usage compact-result))
+                        (artifact-path  (getf compact-result :output-path))
+                        (result
+                         (if artifact-path
+                             (handler-case
+                              (run-job--read-task-result-artifact artifact-path)
+                              (run-job-error (condition)
+                               (return-from run-job--execute-with-application
+                                 (values ':failed nil trace-id usage
+                                         (run-job-error-category condition)
+                                         (princ-to-string condition)))))
+                             compact-result))
+                        (status         (getf result :status)))
+                   (setf usage (run-job--usage result))
+                   (cond
+                    ((eq status ':success)
+                     (values ':succeeded (getf result :output) trace-id usage nil nil))
+                    ((eq status ':aborted)
+                     (values ':cancelled nil trace-id usage ':cancelled
+                             (or (getf result :error) "The job was cancelled.")))
+                    (t
+                     (values ':failed nil trace-id usage
+                             (if (member (getf compact-result :error-type)
+                                         '(:provider :authentication :rate-limit
+                                           :transport))
+                                 ':provider-failure
+                                 ':child-failure)
+                             (or (getf result :error) "The child failed."))))))))))
       (when (and event-orchestrator event-listener)
         (task-orchestrator-remove-listener event-orchestrator event-listener))
       (run-job--close-application application))))
@@ -652,36 +609,30 @@ Observation failure never changes execution or result publication."
    :events events :event-output event-output))
 
 (-> run-job-run-prompt
-    ((or string stream) (or pathname string) keyword
-     &key (:role string) (:identifier string)
-          (:executor function) (:configuration (option configuration))
-          (:events (member nil :sexp)) (:event-output stream))
+    ((or string stream) (or pathname string) keyword &key (:identifier string)
+     (:executor function) (:configuration (option configuration))
+     (:events (member nil :sexp)) (:event-output stream))
     integer)
 (defun run-job-run-prompt
-    (prompt-source output-path permission-mode
-     &key (role *run-job-default-role*)
-          (identifier (make-user-identifier))
-          (executor #'run-job-execute-with-application) configuration
-          events (event-output *standard-output*))
-  "Run one inline prompt job, reading PROMPT-SOURCE inside the job boundary.
+             (prompt-source output-path permission-mode
+              &key (identifier (make-user-identifier))
+              (executor #'run-job-execute-with-application) configuration events
+              (event-output *standard-output*))
+             "Run one inline prompt job, reading PROMPT-SOURCE inside the job boundary.
 
 PROMPT-SOURCE is a prompt string or a stream read to end. The output artifact
 is authoritative and observes the same events and errors as RUN-JOB-RUN."
-  (setf output-path (uiop:ensure-absolute-pathname output-path (uiop:getcwd)))
-  (run-job--run-observed
-   (lambda ()
-     (run-job--run-artifact
-      nil output-path permission-mode
-      :job-identifier  identifier
-      :input-present-p nil
-      :form-function
-      (lambda ()
-         (run-job-prompt-form
-          (if (streamp prompt-source)
-              (run-job-read-prompt-stream prompt-source)
-              prompt-source)
-          :role       role
-          :identifier identifier))
-      :executor        executor
-      :configuration   configuration))
-   :events events :event-output event-output))
+             (setf output-path
+                     (uiop/pathname:ensure-absolute-pathname output-path (uiop/os:getcwd)))
+             (run-job--run-observed
+              (lambda ()
+                (run-job--run-artifact nil output-path permission-mode :job-identifier identifier
+                                       :input-present-p nil :form-function
+                                       (lambda ()
+                                         (run-job-prompt-form
+                                          (if (streamp prompt-source)
+                                              (run-job-read-prompt-stream prompt-source)
+                                              prompt-source)
+                                          :identifier identifier))
+                                       :executor executor :configuration configuration))
+              :events events :event-output event-output))

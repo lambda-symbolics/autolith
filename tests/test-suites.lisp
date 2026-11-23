@@ -131,7 +131,6 @@
   test-telemetry-duplicate-consent-transition
   test-telemetry-tool-report-link
   test-telemetry-flushed-tool-report-link
-  test-telemetry-role-papercut-report
   test-telemetry-papercut-metadata-hooks
   test-telemetry-issue-correlation
   ;; telemetry-hook-repair-tests.lisp
@@ -719,7 +718,6 @@
   test-world-child-participants
   test-world-child-sync
   test-world-child-loadable
-  test-world-child-role
   test-world-agent-children
   test-world-channel-designation-and-list
   test-world-channel-paths
@@ -1314,7 +1312,6 @@
 (define-test-suite prompt
   test-system-prompt
   test-system-prompt-structured-knowledge
-  test-system-prompt-child-role
   test-system-prompt-session-date
   test-request-context-agenda-selection)
 
@@ -1449,9 +1446,6 @@
   test-agent-tool-search-round)
 
 (define-test-suite task-agent
-  test-task-agent-native-reader
-  test-task-agent-discovery-precedence
-  test-task-agents-tool
   test-task-tool-default-argument-types
   test-task-child-steering-mailbox
   test-task-child-messaging)
@@ -1733,7 +1727,7 @@
   test-forced-exit-without-durable-conversation
   test-graceful-shutdown-retains-interrupt-escape
   test-active-turn-interrupt-events
-   test-detach-control-event-dispatch
+  test-detach-control-event-dispatch
   test-active-turn-cancellation-side-effects
   test-idle-interrupt-exits-without-force-hint
   test-recalled-follow-up-interrupt
@@ -1752,7 +1746,7 @@
   test-transcript-schema-interruptions
   test-tool-call-inline-arguments
   test-native-tool-result-presentation
-  test-native-role-and-continuity-presentation
+  test-native-continuity-presentation
   test-native-tool-result-presentation-bounds
   test-lisp-rainbow-parentheses
   test-lisp-rainbow-display-scope

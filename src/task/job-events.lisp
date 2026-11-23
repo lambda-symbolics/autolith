@@ -38,10 +38,9 @@
   "Approved lifecycle and progress status values.")
 
 (defparameter *run-job-event-categories*
-  '(:invalid-input :invalid-envelope :input-not-found :unknown-role
-    :runtime-unavailable :provider-failure :child-failure
-    :artifact-failure :process-failure :timeout :cancelled
-    :result-publication-failed :stream-failure)
+  '(:invalid-input :invalid-envelope :input-not-found :runtime-unavailable
+    :provider-failure :child-failure :artifact-failure :process-failure :timeout
+    :cancelled :result-publication-failed :stream-failure)
   "Approved machine-readable failure categories.")
 
 (defparameter *run-job-event-warning-codes*

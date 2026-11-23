@@ -93,108 +93,136 @@
   (dolist (cleanup-failure-p '(nil t))
     (channel-deletion-tests--call
      (lambda (application configuration)
-       (let* ((identifier (conversation-identifier (application-conversation application)))
-              (path       (conversation-pathname (application-conversation application)))
-              (inbox      (channel-identifier (world-inbox-channel (world-load configuration)))))
-         (channel-deletion-tests--choose
-          ':remove
-          (lambda ()
-            (flet ((invoke ()
-                     "Invoke deletion through the real local input lifecycle on success."
-                     (if cleanup-failure-p
-                         (application-operation-call application "delete")
-                         (let ((controller (application-input-controller-create application :start-reader-p nil)))
-                           (unwind-protect
-                                (progn
-                                  (application-input-controller-enqueue-work controller (list :lisp "(delete)"))
-                                  (let ((work (application-input-controller--next-work controller)))
-                                    (unwind-protect
-                                         (application-input-controller--run-work controller work)
-                                      (application-input-controller--finish-work controller))))
-                             (application-input-controller-stop controller))))))
-              (if cleanup-failure-p
-                  (test-call-with-function-replacements
-                   (list (list 'task-worktree-discard
-                               (lambda (&rest arguments)
-                                 (declare (ignore arguments))
-                                 (error 'configuration-error :message "injected cleanup failure"))))
-                   (lambda ()
-                     (test-assert (handler-case (progn (invoke) nil)
-                                    (channel-removal-pending () t))
-                                  "a published deletion retains its real cleanup failure")))
-                  (invoke)))))
-         (test-assert (and (equal inbox (conversation-identifier (application-conversation application)))
-                           (conversation-lease-busy-p configuration inbox)
-                           (not (conversation-lease-busy-p configuration identifier))
-                           (null (world-channel-find (world-load configuration) identifier)))
-                      "the standalone application holds a usable inbox, not the deleted channel's lease")
+       (let* ((identifier
+               (conversation-identifier (application-conversation application)))
+              (path (conversation-pathname (application-conversation application)))
+              (inbox
+               (channel-identifier (world-inbox-channel (world-load configuration)))))
+         (channel-deletion-tests--choose ':remove
+                                         (lambda ()
+                                           (flet ((invoke ()
+                                                    "Invoke deletion through the real local input lifecycle on success."
+                                                    (if cleanup-failure-p
+                                                        (application-operation-call
+                                                         application "delete")
+                                                        (let ((controller
+                                                               (application-input-controller-create
+                                                                application
+                                                                :start-reader-p nil)))
+                                                          (unwind-protect
+                                                              (progn
+                                                               (application-input-controller-enqueue-work
+                                                                controller
+                                                                (list :lisp "(delete)"))
+                                                               (let ((work
+                                                                      (application-input-controller--next-work
+                                                                       controller)))
+                                                                 (unwind-protect
+                                                                     (application-input-controller--run-work
+                                                                      controller work)
+                                                                   (application-input-controller--finish-work
+                                                                    controller))))
+                                                            (application-input-controller-stop
+                                                             controller))))))
+                                             (if cleanup-failure-p
+                                                 (test-call-with-function-replacements
+                                                  (list
+                                                   (list 'task-worktree-discard
+                                                         (lambda (&rest arguments)
+                                                           (declare (ignore arguments))
+                                                           (error 'configuration-error
+                                                                  :message
+                                                                  "injected cleanup failure"))))
+                                                  (lambda ()
+                                                    (test-assert
+                                                     (handler-case (progn (invoke) nil)
+                                                                   (channel-removal-pending
+                                                                    nil t))
+                                                     "a published deletion retains its real cleanup failure")))
+                                                 (invoke)))))
+         (test-assert
+          (and
+           (equal inbox (conversation-identifier (application-conversation application)))
+           (conversation-lease-busy-p configuration inbox)
+           (not (conversation-lease-busy-p configuration identifier))
+           (null (world-channel-find (world-load configuration) identifier)))
+          "the standalone application holds a usable inbox, not the deleted channel's lease")
          (when cleanup-failure-p
-           (test-assert (uiop:directory-files (channel--removal-root configuration) "*.sexp")
-                        "failed cleanup retains a durable intent")
+           (test-assert
+            (uiop/filesystem:directory-files (channel--removal-root configuration)
+                                             "*.sexp")
+            "failed cleanup retains a durable intent")
            (channel-remove-recover configuration))
-         (test-assert (and (null (conversation-storage-active-pathname path))
-                           (null (uiop:directory-files (channel--removal-root configuration) "*.sexp")))
-                      "history cleanup completes and its durable intent is retired")))))
+         (test-assert
+          (and (null (conversation-storage-active-pathname path))
+               (null
+                (uiop/filesystem:directory-files (channel--removal-root configuration)
+                                                 "*.sexp")))
+          "history cleanup completes and its durable intent is retired")))))
   (dolist (ancestor-p '(nil t))
     (channel-deletion-tests--call
      (lambda (application configuration)
-       (let* ((root  (conversation-identifier (application-conversation application)))
-              (child (world-tests--child-conversation
-                      configuration "delete-role-child" :root root :parent root
-                      :name "helper" :role "task" :created-at 1001))
-              (inbox (channel-identifier (world-inbox-channel (world-load configuration)))))
+       (let* ((root (conversation-identifier (application-conversation application)))
+              (child
+               (world-tests--child-conversation configuration "delete-role-child" :root
+                                                root :parent root :name "helper"
+                                                :created-at 1001))
+              (inbox
+               (channel-identifier (world-inbox-channel (world-load configuration)))))
          (setf (application-configuration application)
                (application--configuration-for-conversation configuration child))
          (application-install-conversation application child)
          (let ((lease (application-conversation-lease application))
                (roled (application-configuration application)))
            (test-assert
-            (handler-case (progn (application-resume-conversation application inbox) nil)
-              (application-role-change-error () t))
-            "ordinary resume still refuses a child-to-inbox role change")
-           (test-assert
             (handler-case
-                (progn (application--resume-deletion-inbox application root) nil)
-              (configuration-error () t))
+             (progn (application--resume-deletion-inbox application root) nil)
+             (configuration-error nil t))
             "the deletion handoff cannot install an ordinary roleless conversation")
            (test-call-with-function-replacements
-            (list (list 'application--prepare-runtime-replacement
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (error 'configuration-error :message "injected inbox runtime failure"))))
+            (list
+             (list 'application--prepare-runtime-replacement
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (error 'configuration-error :message
+                            "injected inbox runtime failure"))))
             (lambda ()
               (test-assert
-               (handler-case (progn (application--resume-deletion-inbox application inbox) nil)
-                 (configuration-error () t))
+               (handler-case
+                (progn (application--resume-deletion-inbox application inbox) nil)
+                (configuration-error nil t))
                "a failed inbox runtime preparation aborts the handoff")))
-           (test-assert (and (eq child (application-conversation application))
-                             (eq lease (application-conversation-lease application))
-                             (eq roled (application-configuration application))
-                             (conversation-lease-busy-p configuration "delete-role-child")
-                             (not (conversation-lease-busy-p configuration inbox)))
-                        "failed handoffs retain the child runtime and release the inbox lease")
-           (channel-deletion-tests--choose
-            ':remove
-            (lambda ()
-              (test-assert
-               (eq (application-lisp-evaluation-status
-                    (application-lisp-evaluate
-                     (if ancestor-p (format nil "(delete ~S)" root) "(delete)")
-                     :application application))
-                   ':ok)
-               "a standalone child can delete itself or its displayed ancestor")))
            (test-assert
-            (and (equal inbox (conversation-identifier (application-conversation application)))
-                 (string= "" (config :child-role (application-configuration application)))
-                 (string= "" (config :child-role-instructions (application-configuration application)))
-                 (eq (agent-configuration (application-agent application))
-                     (application-configuration application))
-                 (conversation-lease-busy-p configuration inbox)
-                 (not (conversation-lease-busy-p configuration "delete-role-child"))
-                 (null (world-channel-find (world-load configuration) "delete-role-child"))
-                 (if ancestor-p
-                     (null (world-channel-find (world-load configuration) root))
-                     (world-channel-find (world-load configuration) root)))
+            (and (eq child (application-conversation application))
+                 (eq lease (application-conversation-lease application))
+                 (eq roled (application-configuration application))
+                 (conversation-lease-busy-p configuration "delete-role-child")
+                 (not (conversation-lease-busy-p configuration inbox)))
+            "failed handoffs retain the child runtime and release the inbox lease")
+           (channel-deletion-tests--choose ':remove
+                                           (lambda ()
+                                             (test-assert
+                                              (eq
+                                               (application-lisp-evaluation-status
+                                                (application-lisp-evaluate
+                                                 (if ancestor-p
+                                                     (format nil "(delete ~S)" root)
+                                                     "(delete)")
+                                                 :application application))
+                                               ':ok)
+                                              "a standalone child can delete itself or its displayed ancestor")))
+           (test-assert
+            (and
+             (equal inbox
+                    (conversation-identifier (application-conversation application)))
+             (eq (agent-configuration (application-agent application))
+                 (application-configuration application))
+             (conversation-lease-busy-p configuration inbox)
+             (not (conversation-lease-busy-p configuration "delete-role-child"))
+             (null (world-channel-find (world-load configuration) "delete-role-child"))
+             (if ancestor-p
+                 (null (world-channel-find (world-load configuration) root))
+                 (world-channel-find (world-load configuration) root)))
             "the roleless inbox has a fresh runtime and sole lease after child subtree removal"))))))
   nil)
 
@@ -205,82 +233,105 @@
    (lambda (server configuration root)
      (declare (ignore root))
      (world-tests--persisted-conversation configuration "delete-root" 1000)
-     (world-tests--child-conversation configuration "delete-child" :root "delete-root" :parent "delete-root"
-                                                                :name "delete-helper" :role "general" :created-at 1001)
+     (world-tests--child-conversation configuration "delete-child" :root "delete-root"
+                                      :parent "delete-root" :name "delete-helper"
+                                      :created-at                        1001)
      (world-server-open server (list :channel "delete-child" :switch-p t))
      (let* ((host        (world-server--find-host server "delete-child"))
             (application (world-host-application host))
             (inbox       (channel-identifier (world-inbox-channel (world-load configuration)))))
        (multiple-value-bind (connection seen await)
-           (test-world-terminal--present (world-server-tests--session server "delete-child"))
+           (test-world-terminal--present
+            (world-server-tests--session server "delete-child"))
          (declare (ignore seen))
          (unwind-protect
-              (let ((client (application-controlling-client application)))
-                (test-assert client "the invoking client controls its original channel")
-                (channel-deletion-tests--choose
-                 nil
-                 (lambda ()
-                   (application-clients-call-as-work
-                    application
-                    (lambda () (application-operation-call application "delete")))))
-                (test-assert (and (application-client-attached-p application client)
-                                  (world-channel-find (world-load configuration) "delete-child")
-                                  (null (world-server--find-host server inbox)))
-                             "hosted cancellation neither opens an inbox nor changes the client's attachment")
-                (let ((cancelled-p nil))
-                  (test-call-with-function-replacements
-                   (list (list 'world-server-open
-                               (lambda (candidate request)
-                                 (declare (ignore candidate request))
-                                 (error 'configuration-error :message "Destination unavailable.")))
-                         (list 'application-input-controller--request-active-turn-cancellation
-                               (lambda (controller &key pause-queued-work-p)
-                                 (declare (ignore controller pause-queued-work-p))
-                                 (setf cancelled-p t))))
-                   (lambda ()
-                     (channel-deletion-tests--choose
-                      ':remove
-                      (lambda ()
-                        (test-assert (handler-case
-                                         (progn (application-operation-call application "delete") nil)
-                                       (configuration-error ()
-                                         t))
-                                     "an unavailable destination prevents deletion")))))
-                  (test-assert (and (not cancelled-p)
-                                    (application-client-attached-p application client))
-                               "a failed handoff does not cancel source work or move its terminal"))
-                (channel-deletion-tests--choose
-                 ':remove
-                 (lambda ()
-                   (application-clients-call-as-work
-                    application
-                    (lambda () (application-operation-call application "delete" "delete-root")))))
-                (test-assert (and (world-channel-find (world-load configuration) "delete-child")
-                                  (application-client-attached-p application client))
-                             "sending a switch request does not delete a channel before the client leaves")
-                (test-assert (funcall await ':switch
-                                      (lambda (event)
-                                        (equal (getf (rest event) :session-id) inbox)))
-                             "the invoking client is asked to move to the inbox")
-                (world-terminal-client-close connection)
-                (let ((destination (world-host-application (world-server--find-host server inbox)))
-                      (moved       (test-world-terminal--present (world-server-tests--session server inbox))))
-                  (unwind-protect
-                       (progn
-                         (test-assert (application-controlling-client destination)
-                                      "the client can attach to its usable destination")
-                         (test-assert
-                          (task-tests--wait-until
-                           (lambda () (null (world-channel-find (world-load configuration) "delete-root"))) 30)
-                          "destination work deletes the selected ancestor and its formerly displayed child")
-                         (test-assert (and (null (world-channel-find (world-load configuration) "delete-child"))
-                                           (null (world-server--find-host server "delete-child"))
-                                           (application-controlling-client destination)
-                                           (not (world-terminal-client-connection-closed-p moved))
-                                           (not (application-input-controller-stopping-p
-                                                 (application-input-controller destination))))
-                                      "the old host releases its lease while the invoking client keeps a live inbox"))
-                    (world-terminal-client-close moved))))
+             (let ((client (application-controlling-client application)))
+               (test-assert client "the invoking client controls its original channel")
+               (channel-deletion-tests--choose nil
+                                               (lambda ()
+                                                 (application-clients-call-as-work
+                                                  application
+                                                  (lambda ()
+                                                    (application-operation-call
+                                                     application "delete")))))
+               (test-assert
+                (and (application-client-attached-p application client)
+                     (world-channel-find (world-load configuration) "delete-child")
+                     (null (world-server--find-host server inbox)))
+                "hosted cancellation neither opens an inbox nor changes the client's attachment")
+               (let ((cancelled-p nil))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'world-server-open
+                         (lambda (candidate request)
+                           (declare (ignore candidate request))
+                           (error 'configuration-error :message
+                                  "Destination unavailable.")))
+                   (list 'application-input-controller--request-active-turn-cancellation
+                         (lambda (controller &key pause-queued-work-p)
+                           (declare (ignore controller pause-queued-work-p))
+                           (setf cancelled-p t))))
+                  (lambda ()
+                    (channel-deletion-tests--choose ':remove
+                                                    (lambda ()
+                                                      (test-assert
+                                                       (handler-case
+                                                        (progn
+                                                         (application-operation-call
+                                                          application "delete")
+                                                         nil)
+                                                        (configuration-error nil t))
+                                                       "an unavailable destination prevents deletion")))))
+                 (test-assert
+                  (and (not cancelled-p)
+                       (application-client-attached-p application client))
+                  "a failed handoff does not cancel source work or move its terminal"))
+               (channel-deletion-tests--choose ':remove
+                                               (lambda ()
+                                                 (application-clients-call-as-work
+                                                  application
+                                                  (lambda ()
+                                                    (application-operation-call
+                                                     application "delete"
+                                                     "delete-root")))))
+               (test-assert
+                (and (world-channel-find (world-load configuration) "delete-child")
+                     (application-client-attached-p application client))
+                "sending a switch request does not delete a channel before the client leaves")
+               (test-assert
+                (funcall await ':switch
+                         (lambda (event) (equal (getf (rest event) :session-id) inbox)))
+                "the invoking client is asked to move to the inbox")
+               (world-terminal-client-close connection)
+               (let ((destination
+                      (world-host-application (world-server--find-host server inbox)))
+                     (moved
+                      (test-world-terminal--present
+                       (world-server-tests--session server inbox))))
+                 (unwind-protect
+                     (progn
+                      (test-assert (application-controlling-client destination)
+                                   "the client can attach to its usable destination")
+                      (test-assert
+                       (task-tests--wait-until
+                        (lambda ()
+                          (null
+                           (world-channel-find (world-load configuration)
+                                               "delete-root")))
+                        30)
+                       "destination work deletes the selected ancestor and its formerly displayed child")
+                      (test-assert
+                       (and
+                        (null
+                         (world-channel-find (world-load configuration) "delete-child"))
+                        (null (world-server--find-host server "delete-child"))
+                        (application-controlling-client destination)
+                        (not (world-terminal-client-connection-closed-p moved))
+                        (not
+                         (application-input-controller-stopping-p
+                          (application-input-controller destination))))
+                       "the old host releases its lease while the invoking client keeps a live inbox"))
+                   (world-terminal-client-close moved))))
            (world-terminal-client-close connection))))))
   nil)
 

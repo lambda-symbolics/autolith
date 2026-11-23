@@ -52,54 +52,60 @@
 
 (-> test-telemetry-hooks--run-job
     (configuration model-provider
-      &key (:publish-p boolean) (:tools list))
+      &key (:publish-p boolean))
     (values list list))
-(defun test-telemetry-hooks--run-job (configuration provider &key publish-p tools)
+(defun test-telemetry-hooks--run-job (configuration provider &key publish-p)
   "Run a real headless child with offline uploads and deterministic application wiring."
   (let* ((application (mission-test--application configuration))
          (request     (run-job-validate-envelope (run-job-tests--request-form)))
-         (definition  (task-agent-definition-create
-                       :name "custom-runner" :description "Exercise terminal telemetry."
-                       :instructions "Return the answer." :tools tools :source ':test))
          (bodies      nil)
          (results     nil)
-         (lock        (bt:make-lock "captured job telemetry")))
+         (lock        (make-lock "captured job telemetry")))
     (setf (config :telemetry-enabled-p configuration) t)
     (telemetry-attach configuration)
     (setf (application-provider application) provider
           (agent-provider (application-agent application)) provider)
     (task-augment-tool-registry (application-tool-registry application))
     (test-call-with-function-replacements
-     (list (list 'application-create
-                 (lambda (&rest arguments) (declare (ignore arguments)) application))
-           (list 'run-job--resolve-definition
-                 (lambda (&rest arguments) (declare (ignore arguments)) definition))
-            ;; Keep headless fixtures independent of installed user skills.
-           (list 'skill-roots
-                 (lambda (configuration)
-                   (list (merge-pathnames "skills/" (config :config-root configuration)))))
-           (list 'telemetry--process
-                 (lambda (run request)
-                   (declare (ignore run))
-                   (when (eq (first request) ':upload)
-                     (bt:with-lock-held (lock)
-                       (push (third request) bodies)))
-                   t)))
+     (list
+      (list 'application-create
+            (lambda (&rest arguments) (declare (ignore arguments)) application))
+      ;; Keep headless fixtures independent of installed user skills.
+      (list 'skill-roots
+            (lambda (configuration)
+              (list (merge-pathnames "skills/" (config :config-root configuration)))))
+      (list 'telemetry--process
+            (lambda (run request)
+              (declare (ignore run))
+              (when (eq (first request) ':upload)
+                (with-lock-held (lock)
+                  (push (third request) bodies)))
+              t)))
      (lambda ()
-       (setf results (multiple-value-list
-                      (if publish-p
-                          (let* ((input  (merge-pathnames "job-input.sexp" (config :cache-root configuration)))
-                                 (output (merge-pathnames "job-output.sexp" (config :cache-root configuration)))
-                                 (events (make-string-output-stream)))
-                            (test-write-text input (run-job--write-data-sexp (run-job-tests--request-form)))
-                            (values (run-job-run input output ':full-access :configuration configuration
-                                                :events ':sexp :event-output events)
-                                    (when (probe-file output) (run-job-read-file output))
-                                    (run-job-event-tests--records (get-output-stream-string events))))
-                          (run-job-execute-with-application configuration request ':full-access))))))
-    (values (loop for body in (nreverse bodies)
-                  append (coerce (test-telemetry--spans body) 'list))
-            results)))
+       (setf results
+               (multiple-value-list
+                (if publish-p
+                    (let* ((input
+                            (merge-pathnames "job-input.sexp"
+                                             (config :cache-root configuration)))
+                           (output
+                            (merge-pathnames "job-output.sexp"
+                                             (config :cache-root configuration)))
+                           (events (make-string-output-stream)))
+                      (test-write-text input
+                                       (run-job--write-data-sexp
+                                        (run-job-tests--request-form)))
+                      (values
+                       (run-job-run input output ':full-access :configuration
+                                    configuration :events ':sexp :event-output events)
+                       (when (probe-file output) (run-job-read-file output))
+                       (run-job-event-tests--records (get-output-stream-string events))))
+                    (run-job-execute-with-application configuration request
+                                                      ':full-access))))))
+    (values
+     (loop for body in (nreverse bodies)
+           append (coerce (test-telemetry--spans body) 'list))
+     results)))
 
 (-> test-telemetry-hooks--assert-attempts (string (integer 0)) null)
 (defun test-telemetry-hooks--assert-attempts (body count)

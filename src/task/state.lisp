@@ -89,12 +89,6 @@
 (defparameter *task-tool-content-limit* 16000
   "The maximum provider-visible characters returned by task and job tools.")
 
-(defparameter *task-agent-page-default* 16
-  "The default number of task-agent discovery records returned at once.")
-
-(defparameter *task-agent-page-maximum* 32
-  "The largest task-agent discovery page accepted by the provider tool.")
-
 (defparameter *task-job-wait-maximum-seconds* 3600
   "The longest blocking wait accepted by job.wait.")
 
@@ -299,127 +293,76 @@ nesting depth, and lifecycle listeners."))
     (agent-steering-input-content entry))))
 
 (defclass task-job (session-job)
-  ((execution-metadata
-    :initform      nil
-    :accessor      task-job-execution-metadata
-    :type          list
-    :documentation "Portable identity and attempted model captured before child execution.")
-   (telemetry-run
-    :initarg       :telemetry-run
-    :initform      nil
-    :accessor      task-job-telemetry-run
-    :type          (option telemetry-run)
-    :documentation "The run observed by this job, borrowed or created locally.")
-   (telemetry-owner
-    :initform      nil
-    :accessor      task-job-telemetry-owner
-    :documentation "Opaque finish token retained only when this job creates its run.")
-   (telemetry-terminal
-    :initform      nil
-    :accessor      task-job-telemetry-terminal
-    :type          list
-    :documentation "Execution failure metadata retained until terminal publication finishes.")
-   (definition :initarg :definition :accessor task-job-definition :type
-               (option task-agent-definition) :documentation
-               "The full child role while this job remains live.")
-   (definition-summary
-    :initform      nil
-    :accessor      task-job-definition-summary
-    :type          (option list)
-    :documentation "Compact non-instruction role metadata retained at terminal state.")
-   (item :initarg :item :accessor task-job-item :type list :documentation
-         "The normalized assignment plist.")
-   (participant-state
-    :initform      nil
-    :accessor      task-job-participant-state
-    :type          (option participant-state)
-    :documentation "The child's live participant, retained through execution settlement.")
-   (parent-agent
-    :initarg       :parent-agent
-    :accessor      task-job-parent-agent
-    :type          (option agent)
-    :documentation "The parent session while this job remains live.")
-   (assignment-origin
-    :initarg       :assignment-origin
-    :initform      nil
-    :reader        task-job-assignment-origin
-    :type          list
-    :documentation "Sender identity, name and source channel captured when this assignment is admitted.")
-   (mission-context
-    :initarg       :mission-context
-    :initform      nil
-    :reader        task-job-mission-context
-    :type          t
-    :documentation "Exact mission authority captured at admission, before any queue delay.")
-   (review-checkpoint
-    :initarg       :review-checkpoint
-    :initform      nil
-    :reader        task-job-review-checkpoint
-    :type          t
-    :documentation "Optional mission reviewer budget captured before the child starts.")
-   (inherited-reference-p
-    :initarg       :inherited-reference-p
-    :initform      nil
-    :accessor      task-job-inherited-reference-p
-    :type          boolean
-    :documentation "Whether this job may receive its captured parent reference.")
-   (inherited-reference-items
-    :initarg       :inherited-reference-items
-    :initform      nil
-    :accessor      task-job-inherited-reference-items
-    :type          list
-    :documentation "The filtered parent reference messages captured at admission.")
-   (command-authorization-function
-    :initarg       :command-authorization-function
-    :initform      nil
-    :accessor      task-job-command-authorization-function
-    :type          (option function)
-    :documentation "The parent capability used to authorize child shell commands.")
-   (tool-authorization-function
-    :initarg  :tool-authorization-function
-    :initform nil
-    :accessor task-job-tool-authorization-function
-    :type     (option function)
-    :documentation
-    "The parent capability used to authorize child external tool calls.")
-   (steering-lock
-    :initform (make-lock "Autolith task steering")
-    :reader   task-job-steering-lock
-    :documentation
-    "The lock serializing steering, response promotion, and terminal claims.")
-   (steering-items
-    :initform      (make-deque :weight-function #'task-job--steering-entry-characters)
-    :reader        task-job-steering-items
-    :type          deque
-    :documentation "Accepted steering entries waiting for the next safe boundary.")
-   (steering-in-flight-items
-    :initform      (make-deque :weight-function #'task-job--steering-entry-characters)
-    :reader        task-job-steering-in-flight-items
-    :type          deque
-    :documentation "Steering entries drained but not yet durably acknowledged.")
-   (response-promotion-pending-identifiers
-    :initform      (make-deque)
-    :reader        task-job-response-promotion-pending-identifiers
-    :type          deque
-    :documentation "Promoted steering identifiers waiting for durable acknowledgment.")
-   (response-promotion-identifiers
-    :initform      (make-deque)
-    :reader        task-job-response-promotion-identifiers
-    :type          deque
-    :documentation "FIFO steering identifiers awaiting one durable verbal response.")
-   (steering-closed-p
-    :initform      nil
-    :accessor      task-job-steering-closed-p
-    :type          boolean
-    :documentation "Whether this child has atomically stopped accepting steering.")
-   (progress :initform (make-instance 'task-progress) :reader
-             task-job-progress :type task-progress :documentation
-             "The normalized progress visible to job inspection."))
-  (:documentation
-   "One synchronous or detached child-agent execution.
+          ((execution-metadata :initform nil :accessor task-job-execution-metadata :type
+            list :documentation
+            "Portable identity and attempted model captured before child execution.")
+           (telemetry-run :initarg :telemetry-run :initform nil :accessor
+            task-job-telemetry-run :type (option telemetry-run) :documentation
+            "The run observed by this job, borrowed or created locally.")
+           (telemetry-owner :initform nil :accessor task-job-telemetry-owner
+            :documentation
+            "Opaque finish token retained only when this job creates its run.")
+           (telemetry-terminal :initform nil :accessor task-job-telemetry-terminal :type
+            list :documentation
+            "Execution failure metadata retained until terminal publication finishes.")
+           (item :initarg :item :accessor task-job-item :type list :documentation
+            "The normalized assignment plist.")
+           (participant-state :initform nil :accessor task-job-participant-state :type
+            (option participant-state) :documentation
+            "The child's live participant, retained through execution settlement.")
+           (parent-agent :initarg :parent-agent :accessor task-job-parent-agent :type
+            (option agent) :documentation
+            "The parent session while this job remains live.")
+           (assignment-origin :initarg :assignment-origin :initform nil :reader
+            task-job-assignment-origin :type list :documentation
+            "Sender identity, name and source channel captured when this assignment is admitted.")
+           (mission-context :initarg :mission-context :initform nil :reader
+            task-job-mission-context :type t :documentation
+            "Exact mission authority captured at admission, before any queue delay.")
+           (review-checkpoint :initarg :review-checkpoint :initform nil :reader
+            task-job-review-checkpoint :type t :documentation
+            "Optional mission reviewer budget captured before the child starts.")
+           (inherited-reference-p :initarg :inherited-reference-p :initform nil :accessor
+            task-job-inherited-reference-p :type boolean :documentation
+            "Whether this job may receive its captured parent reference.")
+           (inherited-reference-items :initarg :inherited-reference-items :initform nil
+            :accessor task-job-inherited-reference-items :type list :documentation
+            "The filtered parent reference messages captured at admission.")
+           (command-authorization-function :initarg :command-authorization-function
+            :initform nil :accessor task-job-command-authorization-function :type
+            (option function) :documentation
+            "The parent capability used to authorize child shell commands.")
+           (tool-authorization-function :initarg :tool-authorization-function :initform
+            nil :accessor task-job-tool-authorization-function :type (option function)
+            :documentation
+            "The parent capability used to authorize child external tool calls.")
+           (steering-lock :initform (make-lock "Autolith task steering") :reader
+            task-job-steering-lock :documentation
+            "The lock serializing steering, response promotion, and terminal claims.")
+           (steering-items :initform
+            (make-deque :weight-function #'task-job--steering-entry-characters) :reader
+            task-job-steering-items :type deque :documentation
+            "Accepted steering entries waiting for the next safe boundary.")
+           (steering-in-flight-items :initform
+            (make-deque :weight-function #'task-job--steering-entry-characters) :reader
+            task-job-steering-in-flight-items :type deque :documentation
+            "Steering entries drained but not yet durably acknowledged.")
+           (response-promotion-pending-identifiers :initform (make-deque) :reader
+            task-job-response-promotion-pending-identifiers :type deque :documentation
+            "Promoted steering identifiers waiting for durable acknowledgment.")
+           (response-promotion-identifiers :initform (make-deque) :reader
+            task-job-response-promotion-identifiers :type deque :documentation
+            "FIFO steering identifiers awaiting one durable verbal response.")
+           (steering-closed-p :initform nil :accessor task-job-steering-closed-p :type
+            boolean :documentation
+            "Whether this child has atomically stopped accepting steering.")
+           (progress :initform (make-instance 'task-progress) :reader task-job-progress
+            :type task-progress :documentation
+            "The normalized progress visible to job inspection."))
+          (:documentation "One synchronous or detached child-agent execution.
 
 The lifecycle lock, state, publication claim, worker thread, run token, result,
-deadline, and timings are inherited from CL-JOBPOND:JOB. Child role, assignment,
+deadline, and timings are inherited from CL-JOBPOND:JOB. The child assignment,
 parent, and borrowed capabilities are released at terminal state."))
 
 (defclass tool-execution-job (session-job)
@@ -503,26 +446,19 @@ parent, and borrowed capabilities are released at terminal state."))
           t))))))
 
 (defclass task-child-agent (agent)
-  ((definition :initarg :definition :reader task-child-agent-definition
-               :type task-agent-definition :documentation
-               "The role and policy configuring this child.")
-   (identity :initarg :identity :reader task-child-agent-identity :type
-             list :documentation "The stable identity of this child.")
-   (peer-endpoint :initform nil :accessor task-child-agent-peer-endpoint
-                  :documentation "Immutable peer endpoint captured when this child is initialized.")
-   (depth :initarg :depth :reader task-child-agent-depth :type
-          (integer 1) :documentation
-          "The explicit child depth below the primary agent.")
-   (orchestrator
-    :initarg       :orchestrator
-    :reader        task-child-agent-orchestrator
-    :type          task-orchestrator
-    :documentation "The shared session task orchestrator.")
-   (job :initarg :job :reader task-child-agent-job :type task-job
-        :documentation
-        "The lifecycle and progress record for this child."))
-  (:documentation
-   "A real in-process agent session."))
+          ((identity :initarg :identity :reader task-child-agent-identity :type list
+                     :documentation "The stable identity of this child.")
+           (peer-endpoint :initform nil :accessor task-child-agent-peer-endpoint
+            :documentation
+            "Immutable peer endpoint captured when this child is initialized.")
+           (depth :initarg :depth :reader task-child-agent-depth :type (integer 1)
+            :documentation "The explicit child depth below the primary agent.")
+           (orchestrator :initarg :orchestrator :reader task-child-agent-orchestrator
+            :type task-orchestrator :documentation
+            "The shared session task orchestrator.")
+           (job :initarg :job :reader task-child-agent-job :type task-job :documentation
+            "The lifecycle and progress record for this child."))
+          (:documentation "A real in-process agent session."))
 
 (defmethod agent-hurry-up-p ((agent task-child-agent))
   "Return the live hurry-up policy shared by AGENT's task orchestrator."
@@ -566,23 +502,11 @@ parent, and borrowed capabilities are released at terminal state."))
   (:documentation
    "Spawn one child agent or a concurrency-limited batch."))
 
-(defclass task-agents-tool (task-orchestrator-tool) nil
-  (:documentation "Discover effective child roles and rejected role files."))
-
 (defclass task-job-tool (task-orchestrator-tool) nil
   (:documentation "Inspect, wait for, or cancel child and tool execution jobs."))
 
-(defmethod tool-storm-guard-exempt-p ((tool task-agents-tool))
-  "Exempt child-role discovery from the mutating-call storm guard."
-  t)
-
 (-> task-run-tool-orchestrator (task-run-tool) task-orchestrator)
 (defun task-run-tool-orchestrator (tool)
-  "Return TOOL's shared task orchestrator."
-  (task-orchestrator-tool-orchestrator tool))
-
-(-> task-agents-tool-orchestrator (task-agents-tool) task-orchestrator)
-(defun task-agents-tool-orchestrator (tool)
   "Return TOOL's shared task orchestrator."
   (task-orchestrator-tool-orchestrator tool))
 
@@ -591,18 +515,9 @@ parent, and borrowed capabilities are released at terminal state."))
   "Return TOOL's shared task orchestrator."
   (task-orchestrator-tool-orchestrator tool))
 
-(defmethod tool-decode-arguments ((tool task-agents-tool) source)
-  "Decode child.roles values without conflating JSON false and null."
-  (declare (ignore tool))
-  (task-json-decode source :tool-name "child.roles"))
-
 (defmethod tool-decode-arguments ((tool task-job-tool) source)
   "Decode job tool values without conflating JSON false and null."
   (task-json-decode source :tool-name (tool-canonical-name tool)))
-
-(defmethod tool-decode-native-arguments ((tool task-agents-tool) arguments)
-  "Detach child.roles values with its textual decoder's marker policy."
-  (task-json-normalize arguments :tool-name (tool-canonical-name tool)))
 
 (defmethod tool-decode-native-arguments ((tool task-job-tool) arguments)
   "Detach job values with their textual decoder's marker policy."

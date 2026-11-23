@@ -13,134 +13,9 @@
   (:documentation
    "A task request, child run, or task job violated its contract."))
 
-(define-condition task-agent-definition-error
-    (task-error)
-  ((pathname
-    :initarg       :pathname
-    :initform      nil
-    :reader        task-agent-definition-error-pathname
-    :type          (option pathname)
-    :documentation "The external role file containing the invalid definition, when any.")
-   (source
-    :initarg       :source
-    :reader        task-agent-definition-error-source
-    :type          keyword
-    :documentation "The project, user, site, bundled, or programmatic definition origin.")
-   (line
-    :initarg       :line
-    :initform      nil
-    :reader        task-agent-definition-error-line
-    :type          (option (integer 1))
-    :documentation "The source line nearest the invalid value, when known.")
-   (field
-    :initarg       :field
-    :initform      nil
-    :reader        task-agent-definition-error-field
-    :type          (option keyword)
-    :documentation "The native plist field whose contract was violated, when known.")
-   (cause
-    :initarg       :cause
-    :reader        task-agent-definition-error-cause
-    :type          t
-    :documentation "The original condition or concise structural failure.")
-   (definition-name
-    :initarg       :definition-name
-    :initform      nil
-    :reader        task-agent-definition-error-definition-name
-    :type          (option string)
-    :documentation "The normalized role basename reserved by this diagnostic."))
-  (:documentation "A native child-role definition is unsafe or malformed.")
-  (:report
-   (lambda (condition stream)
-     (format stream "Invalid ~A task agent~@[ ~S~]~@[ in ~A~]~@[ at line ~D~]~@[, field ~S~]: ~A"
-             (string-downcase
-              (symbol-name (task-agent-definition-error-source condition)))
-             (task-agent-definition-error-definition-name condition)
-             (task-agent-definition-error-pathname condition)
-             (task-agent-definition-error-line condition)
-             (task-agent-definition-error-field condition)
-             (task-agent-definition-error-cause condition)))))
-
-
-;;;; -- Native Definition Bounds --
-
-(defparameter *task-agent-file-maximum-bytes* 131072
-  "The largest external child-role file accepted by the native reader.")
-
-(defparameter *task-agent-form-maximum-nodes* 8192
-  "The largest readable object tree accepted from one role file.")
-
-(defparameter *task-agent-form-maximum-depth* 128
-  "The deepest list nesting accepted in a native child-role file.")
-
-(defparameter *task-agent-string-maximum-characters* 32768
-  "The largest individual string accepted in a role form.")
-
-(defparameter *task-agent-name-maximum-characters* 64
-  "The maximum normalized child-role name length.")
-
-(defparameter *task-agent-description-maximum-characters* 512
-  "The maximum child-role description length.")
-
-(defparameter *task-agent-instructions-maximum-characters* 32768
-  "The maximum child-role instruction body length.")
-
-(defparameter *task-agent-definition-fields*
-  '(:name :description :instructions :tools :spawns :models
-    :reasoning-effort)
-  "The complete native child-role plist vocabulary.")
-
 (defparameter *task-forbidden-child-tool-namespaces*
   '("self" "child")
-  "Tool namespaces structurally unavailable to ordinary child-role grants.")
-
-(defparameter *task-model-aliases*
-  '("@task" "@parent" "@auto" "@smol" "@slow" "@designer")
-  "The model aliases accepted by child-role definitions.")
-
-(defparameter *task-agent-native-keyword-names*
-  '("name" "description" "instructions" "tools" "spawns" "models"
-    "reasoning-effort" "type" "enum" "properties"
-    "required" "additional-properties" "items" "min-items" "max-items"
-    "all" "auto" "object" "array" "string" "number" "integer" "boolean"
-    "null")
-  "Native child-role keywords other than live reasoning-effort names.")
-
-(-> task-agent-native-keyword-name-p (string) boolean)
-(defun task-agent-native-keyword-name-p (name)
-  "Return true when NAME is accepted by the native child-role reader."
-  (not
-   (null
-    (or (member name *task-agent-native-keyword-names* :test #'string-equal)
-        (member name *supported-reasoning-efforts* :test #'string-equal)))))
-
-
-;;;; -- Contract Diagnostics --
-
-(-> task-agent-definition--error
-    (&key (:pathname (option pathname))
-          (:source keyword)
-          (:line (option (integer 1)))
-          (:field (option keyword))
-          (:cause t)
-          (:definition-name (option string)))
-    null)
-(defun task-agent-definition--error
-    (&key pathname source line field cause definition-name)
-  "Signal a structured child-role diagnostic with source context."
-  (let ((message
-          (format nil "Invalid ~A task agent~@[ ~S~]~@[ in ~A~]~@[ at line ~D~]~@[, field ~S~]: ~A"
-                  (string-downcase (symbol-name source))
-                  definition-name pathname line field cause)))
-    (error 'task-agent-definition-error
-           :message         message
-           :tool-name       "child.spawn"
-           :pathname        pathname
-           :source          source
-           :line            line
-           :field           field
-           :cause           cause
-           :definition-name definition-name)))
+  "Tool namespaces unavailable to explicit child tool grants.")
 
 (-> task--trim (string) string)
 (defun task--trim (text)
@@ -157,35 +32,6 @@
                  (subseq text start (or end (length text))))
         while end
         do (setf start (1+ end))))
-
-(-> task--plist-alist
-    (t list &key (:pathname (option pathname))
-                 (:source keyword)
-                 (:line (option (integer 1)))
-                 (:definition-name (option string)))
-    list)
-(defun task--plist-alist
-    (value allowed-fields &key pathname source line definition-name)
-  "Validate native plist VALUE and return its ordered key-value pairs."
-  (multiple-value-bind (problem key)
-      (plist-schema-problem value :allowed-keys allowed-fields)
-    (when problem
-      (task-agent-definition--error
-       :pathname pathname :source source :line line
-       :field           (and (member problem '(:unknown :duplicate)) key)
-       :cause           (case problem
-                          (:improper
-                           "The value must be a proper list.")
-                          (:odd
-                           "The property list has a key without a value.")
-                          (:non-keyword
-                           (format nil "Property key ~S is not a keyword." key))
-                          (:unknown
-                           "The property is not part of the native role contract.")
-                          (:duplicate
-                           "The property occurs more than once."))
-       :definition-name definition-name)))
-  (loop for (key child) on value by (partial #'nthcdr 2) collect (cons key child)))
 
 (-> task--alist-value (keyword list) (values t boolean))
 (defun task--alist-value (key pairs)
@@ -204,26 +50,18 @@
 
 (-> task-output--json-number-p (t) boolean)
 (defun task-output--json-number-p (value)
-  "Check numeric values at native role and task-result boundaries."
+  "Check numeric values at task-result boundaries."
   (cl-llm-provider-api:output-json-number-p value))
 
-(-> task-output-schema-normalize
-    (t &key (:pathname (option pathname)) (:source keyword)
-       (:definition-name (option string))) list)
-(defun task-output-schema-normalize
-    (schema &key pathname (source ':programmatic) definition-name)
-  "Validate native output SCHEMA with child-role provenance."
+(-> task-output-schema-normalize (t &key (:source keyword)) list)
+(defun task-output-schema-normalize (schema &key (source ':programmatic))
+  "Validate a native output schema and retain structured boundary failures."
+  (declare (ignore source))
   (handler-case
       (cl-llm-provider-api:output-schema-normalize
-       schema
-       :maximum-nodes       *task-agent-form-maximum-nodes*
-       :maximum-depth       *task-agent-form-maximum-depth*
-       :property-name-limit *task-agent-string-maximum-characters*)
+       schema :maximum-nodes 8192 :maximum-depth 128 :property-name-limit 32768)
     (cl-llm-provider-api:output-contract-error (condition)
-      (task-agent-definition--error
-       :pathname pathname :source source :definition-name definition-name
-       :field (cl-llm-provider-api:output-contract-error-field condition)
-       :cause (cl-llm-provider-api:provider-api-error-message condition)))))
+      (error 'task-error :message (princ-to-string condition)))))
 
 (-> task-output-schema->json (list) json-object)
 (defun task-output-schema->json (schema)

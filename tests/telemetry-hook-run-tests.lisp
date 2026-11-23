@@ -246,12 +246,10 @@
    (lambda (configuration)
      (let* ((orchestrator  (task-orchestrator-create))
             (parent        (task-tests--primary-agent configuration "telemetry-parent"))
-            (definition    (task-agent-definition-create
-                            :name "telemetry-detached" :description "Exercise detached telemetry."
-                            :instructions "Complete after the parent." :source ':test))
-            (started       (bt:make-semaphore))
-            (released      (bt:make-semaphore))
-            (lock          (bt:make-lock "detached telemetry capture"))
+            (definition    (list))
+            (started       (bordeaux-threads:make-semaphore))
+            (released      (bordeaux-threads:make-semaphore))
+            (lock          (make-lock "detached telemetry capture"))
             (bodies        nil)
             (job           nil)
             (parent-run    nil)
@@ -260,48 +258,70 @@
        (setf (config :telemetry-enabled-p configuration) t)
        (telemetry-attach configuration)
        (unwind-protect
-            (test-call-with-function-replacements
-             (list (list 'telemetry--process
-                         (lambda (run request)
-                           (declare (ignore run))
-                           (when (eq (first request) ':upload)
-                             (bt:with-lock-held (lock) (push (third request) bodies)))
-                           t))
-                   (list 'task-run-child
-                         (lambda (candidate)
-                           (setf child-run (task-job-telemetry-run candidate)
-                                 worker-thread (bt:current-thread))
-                           (bt:signal-semaphore started)
-                           (bt:wait-on-semaphore released)
-                           (telemetry-note-model :run child-run :provider "local")
-                           (list :status ':success :request-count 1))))
-             (lambda ()
-               (telemetry-call-with-run
-                configuration
-                (lambda ()
-                  (setf parent-run *telemetry-run*
-                        job (first (task-orchestrator-start-jobs
-                                    orchestrator parent
-                                    (list (list :definition definition :detached t
-                                                :telemetry-run parent-run
-                                                :item          (list :name "detached" :task "Wait for release."))))))
-                  (test-assert (bt:wait-on-semaphore started :timeout 10) "The child starts on the pool.")))
-               (test-assert (not (telemetry-run-active parent-run)) "The parent has finished first.")
-               (test-assert (and child-run (not (eq worker-thread (bt:current-thread)))
-                                 (telemetry-run-active child-run)
-                                 (not (equal (telemetry-run-trace-id parent-run) (telemetry-run-trace-id child-run)))
-                                 (= (telemetry-run-attempt child-run) 1))
-                            "A detached pool child owns a fresh live trace, ignoring even an explicit borrowed run.")
-               (bt:signal-semaphore released)
-               (multiple-value-bind (snapshot terminal-p) (task-job-await job 10)
-                 (test-assert (and terminal-p (eq (getf snapshot :state) ':completed)) "The child completes."))
-               (let* ((spans (loop for body in bodies append (test-telemetry-hooks--kind body "run")))
-                      (child (find (telemetry-run-trace-id child-run) spans
-                                   :key (lambda (span) (json-get span "traceId")) :test #'equal)))
-                 (test-assert (= (length spans) 2) "Both owners export one terminal root.")
-                 (test-assert (equal (test-telemetry--attribute child "autolith.run.model_calls") "1")
-                              "Post-parent child telemetry is retained in its own root."))))
-         (bt:signal-semaphore released)
+           (test-call-with-function-replacements
+            (list
+             (list 'telemetry--process
+                   (lambda (run request)
+                     (declare (ignore run))
+                     (when (eq (first request) ':upload)
+                       (with-lock-held (lock)
+                         (push (third request) bodies)))
+                     t))
+             (list 'task-run-child
+                   (lambda (candidate)
+                     (setf child-run (task-job-telemetry-run candidate)
+                           worker-thread (current-thread))
+                     (bordeaux-threads:signal-semaphore started)
+                     (bordeaux-threads:wait-on-semaphore released)
+                     (telemetry-note-model :run child-run :provider "local")
+                     (list :status ':success :request-count 1))))
+            (lambda ()
+              (telemetry-call-with-run configuration
+                                       (lambda ()
+                                         (setf parent-run *telemetry-run*
+                                               job
+                                                 (first
+                                                  (task-orchestrator-start-jobs
+                                                   orchestrator parent
+                                                   (list
+                                                    (list :detached t :telemetry-run
+                                                          parent-run :item
+                                                          (append
+                                                           (list :name "detached" :task
+                                                                 "Wait for release.")
+                                                           definition))))))
+                                         (test-assert
+                                          (bordeaux-threads:wait-on-semaphore started
+                                                                              :timeout
+                                                                              10)
+                                          "The child starts on the pool.")))
+              (test-assert (not (telemetry-run-active parent-run))
+                           "The parent has finished first.")
+              (test-assert
+               (and child-run (not (eq worker-thread (current-thread)))
+                    (telemetry-run-active child-run)
+                    (not
+                     (equal (telemetry-run-trace-id parent-run)
+                            (telemetry-run-trace-id child-run)))
+                    (= (telemetry-run-attempt child-run) 1))
+               "A detached pool child owns a fresh live trace, ignoring even an explicit borrowed run.")
+              (bordeaux-threads:signal-semaphore released)
+              (multiple-value-bind (snapshot terminal-p)
+                  (task-job-await job 10)
+                (test-assert (and terminal-p (eq (getf snapshot :state) ':completed))
+                             "The child completes."))
+              (let* ((spans
+                      (loop for body in bodies
+                            append (test-telemetry-hooks--kind body "run")))
+                     (child
+                      (find (telemetry-run-trace-id child-run) spans :key
+                            (lambda (span) (json-get span "traceId")) :test #'equal)))
+                (test-assert (= (length spans) 2)
+                             "Both owners export one terminal root.")
+                (test-assert
+                 (equal (test-telemetry--attribute child "autolith.run.model_calls") "1")
+                 "Post-parent child telemetry is retained in its own root."))))
+         (bordeaux-threads:signal-semaphore released)
          (task-orchestrator-close orchestrator)))))
   nil)
 
@@ -313,62 +333,106 @@
       (test-telemetry--call
        (lambda (configuration)
          (let* ((orchestrator (task-orchestrator-create))
-                (parent       (agent-create :configuration configuration :provider (make-instance 'model-provider)
-                                            :conversation (conversation-create configuration)
-                                            :tool-registry (make-instance 'tool-registry) :worker nil))
-                (job          (task-tests--make-job orchestrator :identifier "ownership" :parent-agent parent
-                                                    :definition (task-agent-definition-create
-                                                                 :name "ownership" :description "Exercise ownership."
-                                                                 :instructions "Complete." :source ':test)
-                                                    :item       (list :task "Exercise ownership.")))
+                (parent
+                 (agent-create :configuration configuration :provider
+                               (make-instance 'model-provider) :conversation
+                               (conversation-create configuration) :tool-registry
+                               (make-instance 'tool-registry) :worker nil))
+                (job
+                 (task-tests--make-job orchestrator :identifier "ownership" :parent-agent
+                                       parent :item
+                                       (append (list :task "Exercise ownership.")
+                                               (list))))
                 (bodies       nil))
            (unwind-protect
-                (test-telemetry-hooks--capture
-                 configuration
-                 (lambda ()
-                   (multiple-value-bind (borrowed token)
-                       (when borrow-p (telemetry--begin-run configuration))
-                     (setf (task-job-telemetry-run job) borrowed)
-                     (let ((*telemetry-process-function*
-                             (lambda (run request)
-                               (declare (ignore run))
-                               (push (third request) bodies)
-                               t)))
-                       (test-call-with-function-replacements
-                        (append
-                         (list (list 'task-continuity-record-job (lambda (&rest arguments) (declare (ignore arguments)) nil))
-                               (list 'task-run-child
-                                     (lambda (job)
-                                       (telemetry-report-terminal (task-job-telemetry-run job) '(:state :completed))
-                                       (case exit
-                                         (:throw
-                                          (throw 'leave t))
-                                         (:error
-                                          (error "Injected child failure."))
-                                         (otherwise
-                                            (list :status ':success :request-count 0))))))
-                         (when (eq exit ':publication-throw)
-                           (list (list 'task-job--publish-terminal-record
-                                       (lambda (&rest arguments) (declare (ignore arguments)) (throw 'leave t))))))
-                        (lambda ()
-                          (catch 'leave
-                            (handler-case
-                                (let ((result (task-job--run job)))
-                                  (task-job--terminal-record job :state  ':completed
-                                                                 :result result))
-                              (error (condition)
-                                (task-job--terminal-record job :state  ':failed
-                                                               :report (princ-to-string condition)))))))
-                       (when borrow-p
-                         (test-assert (and (telemetry-run-active borrowed) (null bodies))
-                                      "The scheduler never exports a borrowed root on any exit.")
-                         (telemetry-finish-run borrowed token))
-                       (test-assert (= (length bodies) 1) "Only the creator exports the root.")
-                       (test-assert (null (telemetry-controller-runs *telemetry-controller*)) "Every owner scope closes its run.")
-                       (when (and (not borrow-p) (member exit '(:throw :publication-throw)))
-                         (let ((root (first (test-telemetry-hooks--kind (first bodies) "run"))))
-                           (test-assert (equal "unfinished-run" (test-telemetry--attribute root "autolith.run.error_code"))
-                                        "Unreported execution and publication exits have a dedicated code.")))))))
+               (test-telemetry-hooks--capture configuration
+                                              (lambda ()
+                                                (multiple-value-bind (borrowed token)
+                                                    (when borrow-p
+                                                      (telemetry--begin-run
+                                                       configuration))
+                                                  (setf (task-job-telemetry-run job)
+                                                        borrowed)
+                                                  (let ((*telemetry-process-function*
+                                                         (lambda (run request)
+                                                           (declare (ignore run))
+                                                           (push (third request) bodies)
+                                                           t)))
+                                                    (test-call-with-function-replacements
+                                                     (append
+                                                      (list
+                                                       (list 'task-continuity-record-job
+                                                             (lambda (&rest arguments)
+                                                               (declare
+                                                                (ignore arguments))
+                                                               nil))
+                                                       (list 'task-run-child
+                                                             (lambda (job)
+                                                               (telemetry-report-terminal
+                                                                (task-job-telemetry-run
+                                                                 job)
+                                                                '(:state :completed))
+                                                               (case exit
+                                                                 (:throw
+                                                                  (throw 'leave t))
+                                                                 (:error
+                                                                  (error
+                                                                   "Injected child failure."))
+                                                                 (otherwise
+                                                                  (list :status ':success
+                                                                        :request-count
+                                                                        0))))))
+                                                      (when (eq exit ':publication-throw)
+                                                        (list
+                                                         (list
+                                                          'task-job--publish-terminal-record
+                                                          (lambda (&rest arguments)
+                                                            (declare (ignore arguments))
+                                                            (throw 'leave t))))))
+                                                     (lambda ()
+                                                       (catch 'leave
+                                                         (handler-case
+                                                          (let ((result
+                                                                 (task-job--run job)))
+                                                            (task-job--terminal-record
+                                                             job :state ':completed
+                                                             :result    result))
+                                                          (error (condition)
+                                                                 (task-job--terminal-record
+                                                                  job :state ':failed
+                                                                  :report
+                                                                  (princ-to-string
+                                                                   condition)))))))
+                                                    (when borrow-p
+                                                      (test-assert
+                                                       (and
+                                                        (telemetry-run-active borrowed)
+                                                        (null bodies))
+                                                       "The scheduler never exports a borrowed root on any exit.")
+                                                      (telemetry-finish-run borrowed
+                                                                            token))
+                                                    (test-assert (= (length bodies) 1)
+                                                                 "Only the creator exports the root.")
+                                                    (test-assert
+                                                     (null
+                                                      (telemetry-controller-runs
+                                                       *telemetry-controller*))
+                                                     "Every owner scope closes its run.")
+                                                    (when
+                                                        (and (not borrow-p)
+                                                             (member exit
+                                                                     '(:throw
+                                                                       :publication-throw)))
+                                                      (let ((root
+                                                             (first
+                                                              (test-telemetry-hooks--kind
+                                                               (first bodies) "run"))))
+                                                        (test-assert
+                                                         (equal "unfinished-run"
+                                                                (test-telemetry--attribute
+                                                                 root
+                                                                 "autolith.run.error_code"))
+                                                         "Unreported execution and publication exits have a dedicated code.")))))))
              (task-orchestrator-close orchestrator)))))))
   nil)
 
@@ -606,58 +670,81 @@
 (-> test-telemetry-scheduler-cancellation-publication () null)
 (defun test-telemetry-scheduler-cancellation-publication ()
   "An escaping cancellation finishes after the real pool's artifact publication."
-  (dolist (case '((:cancelled nil "cancelled" "cancelled")
-                  (:cancelled t "error" "internal")
-                  (:timeout nil "error" "timeout")
-                  (:timeout t "error" "internal")))
+  (dolist
+      (case
+       '((:cancelled nil "cancelled" "cancelled") (:cancelled t "error" "internal")
+         (:timeout nil "error" "timeout") (:timeout t "error" "internal")))
     (test-telemetry--call
      (lambda (configuration)
        (let* ((publication-fails-p (second case))
               (orchestrator        (task-orchestrator-create))
               (parent              (task-tests--primary-agent configuration "cancel-publication"))
-              (definition          (task-agent-definition-create
-                                    :name "cancel-publication" :description "Cancel before publication."
-                                    :instructions "Cancel." :source ':test))
+              (definition          (list))
               (write-artifact      (symbol-function 'task--write-result-artifact))
               (bodies              nil))
          (unwind-protect
-              (test-telemetry-hooks--capture
-               configuration
-               (lambda ()
-                 (test-call-with-function-replacements
-                  (list (list 'task-run-child
-                              (lambda (job)
-                                (error 'job-aborted :reason (first case) :identifier (job-identifier job)
-                                                   :message "Injected cancellation.")))
-                        (list 'task--write-result-artifact
-                              (lambda (job result)
-                                (test-assert (telemetry-run-active (task-job-telemetry-run job))
-                                             "The root remains live until publication resolves.")
-                                (if publication-fails-p
-                                    (error "Injected publication failure.")
-                                    (funcall write-artifact job result))))
-                        (list 'telemetry--process
-                              (lambda (run request)
-                                (declare (ignore run))
-                                (when (eq (first request) ':upload) (push (third request) bodies))
-                                t)))
-                  (lambda ()
-                    (let ((job (first (task-orchestrator-start-jobs
-                                       orchestrator parent
-                                       (list (list :definition definition :item (list :task "Cancel.")))))))
-                      (multiple-value-bind (snapshot terminal-p) (task-job-await job 10)
-                        (test-assert (and terminal-p (eq (getf snapshot :state)
-                                                        (if publication-fails-p ':failed ':aborted)))
-                                     "Publication decides the final pool state.")))))))
+             (test-telemetry-hooks--capture configuration
+                                            (lambda ()
+                                              (test-call-with-function-replacements
+                                               (list
+                                                (list 'task-run-child
+                                                      (lambda (job)
+                                                        (error 'job-aborted :reason
+                                                               (first case) :identifier
+                                                               (job-identifier job)
+                                                               :message
+                                                               "Injected cancellation.")))
+                                                (list 'task--write-result-artifact
+                                                      (lambda (job result)
+                                                        (test-assert
+                                                         (telemetry-run-active
+                                                          (task-job-telemetry-run job))
+                                                         "The root remains live until publication resolves.")
+                                                        (if publication-fails-p
+                                                            (error
+                                                             "Injected publication failure.")
+                                                            (funcall write-artifact job
+                                                                     result))))
+                                                (list 'telemetry--process
+                                                      (lambda (run request)
+                                                        (declare (ignore run))
+                                                        (when
+                                                            (eq (first request) ':upload)
+                                                          (push (third request) bodies))
+                                                        t)))
+                                               (lambda ()
+                                                 (let ((job
+                                                        (first
+                                                         (task-orchestrator-start-jobs
+                                                          orchestrator parent
+                                                          (list
+                                                           (list :item
+                                                                 (append
+                                                                  (list :task "Cancel.")
+                                                                  definition)))))))
+                                                   (multiple-value-bind
+                                                       (snapshot terminal-p)
+                                                       (task-job-await job 10)
+                                                     (test-assert
+                                                      (and terminal-p
+                                                           (eq (getf snapshot :state)
+                                                               (if publication-fails-p
+                                                                   ':failed
+                                                                   ':aborted)))
+                                                      "Publication decides the final pool state.")))))))
            (task-orchestrator-close orchestrator))
-         (let ((roots (loop for body in bodies append (test-telemetry-hooks--kind body "run"))))
-           (test-assert (= (length roots) 1) "The scheduler owner exports exactly one root.")
-           (test-assert (equal (test-telemetry--attribute (first roots) "autolith.run.outcome")
-                               (third case))
-                        "A publication failure overrides the earlier cancellation.")
-           (test-assert (equal (test-telemetry--attribute (first roots) "error.type")
-                               (fourth case))
-                        "Failure metadata includes publication status."))))))
+         (let ((roots
+                (loop for body in bodies
+                      append (test-telemetry-hooks--kind body "run"))))
+           (test-assert (= (length roots) 1)
+                        "The scheduler owner exports exactly one root.")
+           (test-assert
+            (equal (test-telemetry--attribute (first roots) "autolith.run.outcome")
+                   (third case))
+            "A publication failure overrides the earlier cancellation.")
+           (test-assert
+            (equal (test-telemetry--attribute (first roots) "error.type") (fourth case))
+            "Failure metadata includes publication status."))))))
   nil)
 
 (-> test-telemetry-launch-context-atomic-claim () null)

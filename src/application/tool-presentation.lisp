@@ -1024,51 +1024,39 @@ structural discriminator as a readable heading instead."
 (defun application--task-run-compact-item-rows (application items)
   "Return concise aligned rows for normalized presentation ITEMS."
   (let* ((values
-           (loop for item in items
-                 collect
-                 (list
-                  (princ-to-string (getf item :index))
-                  (or (getf item :name) "(unnamed)")
-                  (getf item :agent)
-                  (case (getf item :mode)
-                    (:detached
-                     "detached")
-                    (otherwise
-                     ""))
-                  (application--task-run-summary-text
-                   (getf item :task)))))
-         (columns
-           (application--transcript-columns application))
+          (loop for item in items
+                collect (list (princ-to-string (getf item :index))
+                              (or (getf item :name) "(unnamed)")
+                              (case (getf item :mode)
+                                (:detached
+                                 "detached")
+                                (otherwise
+                                 ""))
+                              (application--task-run-summary-text (getf item :task)))))
+         (columns (application--transcript-columns application))
          (widths
-           (termdown:column-widths
-            values
-            (max 0 (- columns 3))
-            :gap-width      2
-            :minimum-widths '(1 4 4 0 4)))
-         (styles
-           '(:dim :agent-name :agent-role :dim :plain)))
+          (termdown:column-widths values (max 0 (- columns 3)) :gap-width 2
+                                  :minimum-widths                         '(1 4 0 4)))
+         (styles  '(:dim :agent-name :dim :plain)))
     (loop for item in items
           for row-values in values
-          append
-          (append
-           (list
-            (loop for value in row-values
-                  for width in widths
-                  for style in styles
-                  for first-p = t then nil
-                  append
-                  (append
-                   (unless first-p
-                     (list (terminal-span ':plain "  ")))
-                   (list
-                    (terminal-span
-                     style
-                     (application--fit-ellipsized value width))))))
-           (when (getf item :context)
-             (list
-              (application--task-run-compact-context-row
-               application
-               (getf item :context))))))))
+          append (append
+                  (list
+                   (loop for value in row-values
+                         for width in widths
+                         for style in styles
+                         for first-p = t then nil
+                         append (append
+                                 (unless first-p (list (terminal-span ':plain "  ")))
+                                 (list
+                                  (terminal-span style
+                                                 (application--fit-ellipsized value
+                                                                              width))))))
+                  (when (getf item :context)
+                    (list
+                     (application--task-run-compact-context-row application
+                                                                (getf item
+                                                                      :context))))))))
 
 (-> application--task-run-rows
     (application json-object)

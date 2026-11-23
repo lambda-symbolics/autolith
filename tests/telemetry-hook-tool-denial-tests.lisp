@@ -367,7 +367,7 @@
                                        :arguments "{\"uri\":\"papercut:current\",\"base-revision\":\"\",\"operations\":[]}")))
                (agent-test-result "terminal" (list (agent-test-message "Done.")))))))
        (multiple-value-bind (spans results)
-           (test-telemetry-hooks--run-job configuration provider :tools '("resource.read" "resource.edit"))
+            (test-telemetry-hooks--run-job configuration provider)
          (let ((tools (remove-if-not
                        (lambda (span) (equal (test-telemetry--attribute span "autolith.event.kind") "tool"))
                        spans)))

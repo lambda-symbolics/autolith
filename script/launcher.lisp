@@ -43,7 +43,7 @@
 
 (defparameter *launcher-value-options*
   '("--permissions" "--world-startup" "--id" "--input"
-    "--prompt" "--role" "--timeout-seconds" "--output" "--events" "--generation"
+    "--prompt" "--timeout-seconds" "--output" "--events" "--generation"
     "--status" "--capsule" "--original-argument" "--workspace" "--token"
     "--days" "--examples")
   "Options whose next argument is forwarded verbatim, as script/launcher-cli.sh does.")

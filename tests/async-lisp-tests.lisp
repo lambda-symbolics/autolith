@@ -242,39 +242,46 @@
            (content nil)
            (fixture nil))
        (test-call-with-function-replacements
-        (list (list 'tool-execute
-                    (lambda (&rest arguments)
-                      (let ((result (or fixture (apply execute arguments))))
-                        (setf native (if (typep result 'mission-tool-result)
-                                         (getf (rest (tool-result-details result)) :goal)
-                                         (tool-result-details result))
-                              content (tool-result-content result))
-                        result))))
+        (list
+         (list 'tool-execute
+               (lambda (&rest arguments)
+                 (let ((result (or fixture (apply execute arguments))))
+                   (setf native
+                           (if (typep result 'mission-tool-result)
+                               (getf (rest (tool-result-details result)) :goal)
+                               (tool-result-details result))
+                         content (tool-result-content result))
+                   result))))
         (lambda ()
-          (dolist (result (list nil
-                                (application-operation-tests--native-result
-                                 '(:goal :id "async" :status :active :gates nil) :mission-p t)
-                                (application-operation-tests--native-result nil)))
+          (dolist
+              (result
+               (list nil
+                     (application-operation-tests--native-result
+                      '(:goal :id "async" :status :active :gates nil) :mission-p t)
+                     (application-operation-tests--native-result nil)))
             (setf fixture result)
-            (dolist (source '("? (child.roles :limit 1)"
-                              "? (list (child.roles :limit 1))"
-                              "? (copy-seq (child.roles :limit 1))"))
+            (dolist
+                (source
+                 '("? (job.list :limit 1)" "? (list (job.list :limit 1))"
+                   "? (copy-seq (job.list :limit 1))"))
               (application-run-async-lisp-input application source)
               (let* ((job    (async-lisp-tests--last-job application))
                      (record (async-lisp-tests--wait job))
                      (text   (getf record :content))
-                     (value  (let ((*read-eval* nil))
-                               (read-from-string (subseq text (+ 2 (search "⇒ " text)))))))
+                     (value
+                      (let ((*read-eval* nil))
+                        (read-from-string (subseq text (+ 2 (search "⇒ " text)))))))
                 (test-assert (eq ':completed (job-state job))
                              "Native formatting completes its asynchronous job.")
-                (test-assert (equal value
-                                    (cond ((search "(list " source)
-                                           (list content))
-                                          ((search "copy-seq" source)
-                                           content)
-                                          (t
-                                           native)))
-                             "Async readback preserves every native field or the returned string contract.")))))))))
+                (test-assert
+                 (equal value
+                        (cond ((search "(list " source)
+                               (list content))
+                              ((search "copy-seq" source)
+                               content)
+                              (t
+                               native)))
+                 "Async readback preserves every native field or the returned string contract.")))))))))
   nil)
 
 (-> test-application-async-lisp-styled-reports () null)
@@ -300,30 +307,35 @@
                  (funcall present application conversation entry))))
         (lambda ()
           (dolist (plain '(nil t))
-            (setf plain-p plain entries nil)
-            (application-run-async-lisp-input application "? (child.roles :limit 1)")
+            (setf plain-p plain
+                  entries nil)
+            (application-run-async-lisp-input application "? (job.list :limit 1)")
             (let* ((job    (async-lisp-tests--last-job application))
                    (record (async-lisp-tests--wait job))
-                   (entry  (find-if (lambda (entry)
-                                      (search "⇒ " (terminal--spans-text entry)))
-                                    entries)))
+                   (entry
+                    (find-if (lambda (entry) (search "⇒ " (terminal--spans-text entry)))
+                             entries)))
               (test-assert (eq ':completed (job-state job))
                            "Styled asynchronous results complete successfully.")
               (test-assert entry "The completion includes a returned-value entry.")
               (if plain
                   (progn
-                    (test-assert (search (concatenate 'string "⇒ " report)
-                                         (getf record :content))
-                                 "Async report text retains quotes and line breaks without wrapping.")
-                    (test-assert (find-if (lambda (span)
-                                           (and (eq ':plain (terminal-span-style span))
-                                                (string= report (terminal-span-text span))))
-                                         entry)
-                                 "Async report text uses plain presentation."))
+                   (test-assert
+                    (search (concatenate 'string "⇒ " report) (getf record :content))
+                    "Async report text retains quotes and line breaks without wrapping.")
+                   (test-assert
+                    (find-if
+                     (lambda (span)
+                       (and (eq ':plain (terminal-span-style span))
+                            (string= report (terminal-span-text span))))
+                     entry)
+                    "Async report text uses plain presentation."))
                   (test-assert
-                   (some (lambda (span)
-                           (not (member (terminal-span-style span)
-                                        '(:plain :success :notice :dim))))
-                         entry)
+                   (some
+                    (lambda (span)
+                      (not
+                       (member (terminal-span-style span)
+                               '(:plain :success :notice :dim))))
+                    entry)
                    "Async Lisp completion retains its code or syntax styles.")))))))))
   nil)

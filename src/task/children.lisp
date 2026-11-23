@@ -148,16 +148,16 @@
 
 (-> task-child--agent (child-tool tool-context string) agent)
 (defun task-child--agent (tool context channel)
-  "Return an agent over the child CHANNEL's history, in its role, as its runs see it."
+  "Create an agent over the child's history and its recorded direct tool grants."
   (let* ((parent        (tool-context-agent context))
          (conversation  (conversation-load-by-id (tool-context-configuration context) channel))
-         (definition    (task-role-definition (agent-configuration parent)
-                                              (or (conversation-role conversation) "task")))
-         (configuration (task-configuration-for-definition (agent-configuration parent) definition)))
+         (item          (list :tools (conversation-tool-grants conversation)))
+         (configuration (task-child-configuration (agent-configuration parent) item)))
     (agent-create :configuration configuration
                   :provider      (provider-with-configuration (agent-provider parent) configuration)
                   :conversation  conversation
-                  :tool-registry (task-child-tool-registry (agent-tool-registry parent) definition
-                                                           :orchestrator (child-tool-orchestrator tool)
-                                                            :depth       (task-conversation-depth configuration conversation))
+                  :tool-registry (task-child-tool-registry
+                                  (agent-tool-registry parent) item
+                                  :orchestrator (child-tool-orchestrator tool)
+                                  :depth        (task-conversation-depth configuration conversation))
                   :worker        nil)))

@@ -2324,83 +2324,112 @@
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (application  (application-tests--ui-application :columns 100)))
-      (dolist (case '((:running :notice) (:failed :failure)
-                      (:cancelled :notice) (:completed :success)))
-        (let* ((details (list :job-get :durable-p nil
-                              :job     (list :id "worker-1" :agent "reviewer" :state (first case)
-                                             :summary "Review complete" :progress '(:duration-ms 42))))
-               (record  (list :tool-result :tool "job.get" :status ':ok
-                              :output "#.(error \"never read output\")" :details details))
-               (live    (application-tests--render-tool-result application record)))
+      (dolist
+          (case
+           '((:running :notice) (:failed :failure) (:cancelled :notice)
+             (:completed :success)))
+        (let* ((details
+                (list :job-get :durable-p nil :job
+                      (list :id "worker-1" :state (first case) :summary "Review complete"
+                            :progress '(:duration-ms 42))))
+               (record
+                (list :tool-result :tool "job.get" :status ':ok :output
+                      "#.(error \"never read output\")" :details details))
+               (live (application-tests--render-tool-result application record)))
           (test-assert (null (conversation-record-entry application record))
                        "a successful job lookup has no standalone transcript row")
-          (test-assert (and (search "worker-1" (test-terminal-row-text live))
-                            (search "reviewer" (test-terminal-row-text live))
-                            (search "42 ms" (test-terminal-row-text live))
-                            (search "Review complete" (test-terminal-row-text live))
-                            (find (second case) (rest live) :key #'terminal-span-style))
-                       "native job state, role, duration and summary have semantic spans")
-          (conversation-append-tool-result conversation (make-identifier) :tool-name "job.get"
-                                           :output                                   (getf (rest record) :output)
+          (test-assert
+           (and (search "worker-1" (test-terminal-row-text live))
+                (search "42 ms" (test-terminal-row-text live))
+                (search "Review complete" (test-terminal-row-text live))
+                (find (second case) (rest live) :key #'terminal-span-style))
+           "native job state, duration and summary have semantic spans")
+          (conversation-append-tool-result conversation (make-identifier) :tool-name
+                                           "job.get" :output (getf (rest record) :output)
                                            :success-p t :details details)
-          (let* ((loaded   (conversation-load (conversation-pathname conversation)))
-                 (replayed (application-tests--render-tool-result
-                            application (first (conversation-records-newest loaded 1)))))
+          (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                 (replayed
+                  (application-tests--render-tool-result application
+                                                         (first
+                                                          (conversation-records-newest
+                                                           loaded 1)))))
             (test-assert (equal live replayed)
                          "durable replay uses retained native details with the same spans"))))
       (let* ((output   "{\"shape\":[1,2]}")
-             (details  (list :exit-code 0 :output-streams
-                             (list (list :stream ':stdout :head output :complete-p t))))
+             (details
+              (list :exit-code 0 :output-streams
+                    (list (list :stream ':stdout :head output :complete-p t))))
              (envelope "(:TOOL-EXECUTION :JOB (:RESULT NIL))"))
-        (dolist (case (list (list "test.output" output nil output)
-                            (list "shell.run" envelope details output)
-                            (list "shell.run" envelope nil "result details unavailable")))
-          (destructuring-bind (tool text metadata expected) case
+        (dolist
+            (case
+             (list (list "test.output" output nil output)
+                   (list "shell.run" envelope details output)
+                   (list "shell.run" envelope nil "result details unavailable")))
+          (destructuring-bind
+              (tool text metadata expected)
+              case
             (let* ((success-p (equal tool "shell.run"))
-                   (record    (list :tool-result :tool tool :status (if success-p ':ok ':error)
-                                    :output text :details metadata)))
-              (conversation-append-tool-result conversation (make-identifier) :tool-name tool
-                                               :output text :success-p success-p :details metadata)
+                   (record
+                    (list :tool-result :tool tool :status
+                          (if success-p
+                              ':ok
+                              ':error)
+                          :output text :details metadata)))
+              (conversation-append-tool-result conversation (make-identifier) :tool-name
+                                               tool :output text :success-p success-p
+                                               :details metadata)
               (let* ((loaded (conversation-load (conversation-pathname conversation)))
                      (replay (first (conversation-records-newest loaded 1))))
                 (dolist (source (list record replay))
-                  (let ((shown (test-terminal-row-text (conversation-record-entry application source))))
-                    (test-assert (and (search expected shown) (not (search envelope shown)))
-                                 "live and replay preserve literal text without displaying a missing native envelope")))))))
-        (let* ((entry (conversation-record-entry
-                       application
-                       (list :message :role ':user :automatic-p t :content envelope
-                             :job-completion (list :job-id "exec:19" :outcome ':success :summary envelope
-                                                   :transcript-shell (list :details details)))))
+                  (let ((shown
+                         (test-terminal-row-text
+                          (conversation-record-entry application source))))
+                    (test-assert
+                     (and (search expected shown) (not (search envelope shown)))
+                     "live and replay preserve literal text without displaying a missing native envelope")))))))
+        (let* ((entry
+                (conversation-record-entry application
+                                           (list :message :role ':user :automatic-p t
+                                                 :content envelope :job-completion
+                                                 (list :job-id "exec:19" :outcome
+                                                       ':success :summary envelope
+                                                       :transcript-shell
+                                                       (list :details details)))))
                (shown (test-terminal-row-text entry)))
-          (test-assert (and (search "completed" shown)
-                            (not (search output shown)) (not (search envelope shown)))
-                       "a successful background shell completion omits capture and envelope"))))))
+          (test-assert
+           (and (search "completed" shown) (not (search output shown))
+                (not (search envelope shown)))
+           "a successful background shell completion omits capture and envelope"))))))
 
-(-> test-native-role-and-continuity-presentation () null)
-(defun test-native-role-and-continuity-presentation ()
-  "Show rejected roles and completed jobs with failed retained outcomes."
-  (let ((application (application-tests--ui-application :columns 100)))
-    (dolist (case (list (list "child.roles"
-                              (task--agents-page '((:kind :diagnostic :name "broken" :cause "invalid role")) 0 20)
-                              "broken" "invalid role")
-                        (list "job.continuity"
-                              '(:classification :completed :job-id "completed-worker"
-                                :result (:status :failure :error "gate rejected"))
-                              "completed-worker" "gate rejected")))
-      (let* ((record (list :tool-result :tool (first case) :status ':error
-                           :output "native output" :details (second case)))
-             (entry  (conversation-record-entry application record))
-             (text   (test-terminal-row-text entry)))
-        (test-assert (and (search (third case) text) (search (fourth case) text)
-                          (find ':failure (rest entry) :key #'terminal-span-style))
-                     "native discovery and continuity outcomes retain typed failure information")))
-    (let ((snapshot (list :job-id "json-progress" :state ':running
-                          :progress (list :request-count 2 :usage (json-object "total_tokens" 10)))))
-      (test-assert (search "json-progress"
-                           (test-terminal-row-text
-                            (apply #'append (application--native-snapshot-rows application snapshot))))
-                   "native snapshot projection accepts nested JSON usage objects"))))
+(-> test-native-continuity-presentation nil null)
+(defun test-native-continuity-presentation ()
+                                           "Show completed jobs with failed retained outcomes."
+                                           (let ((application (application-tests--ui-application :columns 100)))
+                                             (dolist
+                                                 (case
+                                                  (list
+                                                   (list "job.continuity"
+                                                         '(:classification :completed :job-id "completed-worker" :result
+                                                           (:status :failure :error "gate rejected"))
+                                                         "completed-worker" "gate rejected")))
+                                               (let* ((record
+                                                       (list :tool-result :tool (first case) :status ':error :output
+                                                             "native output" :details (second case)))
+                                                      (entry (conversation-record-entry application record))
+                                                      (text  (test-terminal-row-text entry)))
+                                                 (test-assert
+                                                  (and (search (third case) text) (search (fourth case) text)
+                                                       (find ':failure (rest entry) :key #'terminal-span-style))
+                                                  "native continuity outcomes retain typed failure information")))
+                                             (let ((snapshot
+                                                    (list :job-id "json-progress" :state ':running :progress
+                                                          (list :request-count 2 :usage (json-object "total_tokens" 10)))))
+                                               (test-assert
+                                                (search "json-progress"
+                                                        (test-terminal-row-text
+                                                         (apply #'append
+                                                                (application--native-snapshot-rows application snapshot))))
+                                                "native snapshot projection accepts nested JSON usage objects"))))
 
 (-> test-native-tool-result-presentation-bounds () null)
 (defun test-native-tool-result-presentation-bounds ()
@@ -4479,43 +4508,40 @@
   (flet ((skip (source reason)
            "Return a replay skip for SOURCE under REASON."
            (let ((definition (self-read-form source :read-eval nil)))
-             (make-instance 'image-replay-skip
-                            :definition definition
-                            :key        (definition-key definition)
-                            :reason     reason
-                            :message    "skipped"))))
+             (make-instance 'image-replay-skip :definition definition :key
+                            (definition-key definition) :reason reason :message
+                            "skipped"))))
     (test-assert (null (application--replay-skips-entry nil))
                  "an image without skips presents no notice")
     (let* ((skips
-             (list (skip "(defun zeta-wrapper () 0)" ':tracked-changed)
-                   (skip "(defmethod tool-execute :around ((tool shell-run-tool) context arguments) nil)"
-                         ':revision-moved)
-                   (skip "(defun alpha-wrapper () 0)" ':tracked-changed)))
-           (entry         (application--replay-skips-entry
-                           skips
-                           :commit-identifier     "c3ec5281-3622-4c30-9bc9-a223fecccd47"
-                           :lineage-source-commit "07f0e1b86da2be055f1e836a4e62e57fbf9e4b7b"
-                           :image-source-commit   nil))
-           (text          (terminal--spans-text entry))
-           (changed-title (position-if
-                           (lambda (span)
-                             (search "changed since" (terminal-span-text span)))
-                           entry))
-           (moved-title   (position-if
-                           (lambda (span)
-                             (search "moved on" (terminal-span-text span)))
-                           entry)))
+            (list (skip "(defun zeta-wrapper () 0)" ':tracked-changed)
+                  (skip
+                   "(defmethod tool-execute :around ((tool shell-run-tool) context arguments) nil)"
+                   ':revision-moved)
+                  (skip "(defun alpha-wrapper () 0)" ':tracked-changed)))
+           (entry
+            (application--replay-skips-entry skips :commit-identifier
+                                             "c3ec5281-3622-4c30-9bc9-a223fecccd47"
+                                             :lineage-source-commit
+                                             "07f0e1b86da2be055f1e836a4e62e57fbf9e4b7b"
+                                             :image-source-commit nil))
+           (text (terminal--spans-text entry))
+           (changed-title
+            (position-if
+             (lambda (span) (search "changed since" (terminal-span-text span))) entry))
+           (moved-title
+            (position-if (lambda (span) (search "moved on" (terminal-span-text span)))
+                         entry)))
       (test-assert
-       (and (search "skipped 3 definitions" text)
-            (search "c3ec5281" text)
-            (search "07f0e1b8" text)
-            (search "alpha-wrapper" text)
+       (and (search "skipped 3 definitions" text) (search "c3ec5281" text)
+            (search "07f0e1b8" text) (search "alpha-wrapper" text)
             (search "tool-execute" text)
             (search "self.commit drops any still skipped" text))
        "the notice names the commit, revisions, and every skipped definition")
       (test-assert
-       (let ((command (find "(fix-skipped-definitions)" entry
-                            :key #'terminal-span-text :test #'string=)))
+       (let ((command
+              (find "(fix-skipped-definitions)" entry :key #'terminal-span-text :test
+                    #'string=)))
          (and command (eq (terminal-span-style command) ':code)))
        "the notice offers the repair operation as a Lisp command")
       (test-assert
@@ -8929,413 +8955,330 @@
   (let* ((configuration            (test-configuration))
          (root                     (test-configuration-root configuration))
          (conversation
-           (conversation-create
-            configuration :identifier "task-presentation-primary-window"))
-         (registry
-           (task-augment-tool-registry
-            (make-default-tool-registry)))
+          (conversation-create configuration :identifier
+                               "task-presentation-primary-window"))
+         (registry                 (task-augment-tool-registry (make-default-tool-registry)))
          (run-tool                 (tool-registry-find registry "child" "spawn"))
          (orchestrator             (task-run-tool-orchestrator run-tool))
          (clock                    65)
-         (terminal
-           (make-instance 'recording-terminal :columns 72 :styled-p t))
-         (ui
-           (terminal-ui-create
-            :terminal       terminal
-            :clock-function (lambda () clock)))
+         (terminal                 (make-instance 'recording-terminal :columns 72 :styled-p t))
+         (ui                       (terminal-ui-create :terminal terminal :clock-function (lambda () clock)))
          (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation  conversation
-                          :tool-registry registry
-                          :ui            ui))
+          (make-instance 'application :configuration configuration :conversation
+                         conversation :tool-registry registry :ui ui))
          (primary
-           (task-tests--primary-agent
-            configuration "task-presentation-primary" registry))
-         (definition
-           (task-agent-definition-create
-            :name         "presenter"
-            :description  "Exercise task presentation events."
-            :instructions "Remain visible while the test inspects the UI."
-            :source       ':test))
+          (task-tests--primary-agent configuration "task-presentation-primary" registry))
+         (definition               (list))
          (queued                   nil)
          (running                  nil)
          (replacement-registry     nil)
          (replacement-orchestrator nil))
     (unwind-protect
-         (progn
-           (dolist (arguments
-                    (list (json-object "task" "Default request")
-                          (json-object "task" "Context request" "context" "Background context")))
-             (let* ((item (first (task-normalize-arguments arguments)))
-                    (call (json-object "type" "function_call"
-                                       "namespace" (tool-namespace run-tool)
-                                       "name" (tool-name run-tool)
-                                       "arguments" (json-encode arguments))))
-               (test-assert (eq ':detached (getf item :mode))
-                            "normalized requests describe detached execution")
-               (dolist (restored-call (list call (json-decode (json-encode call))))
-                 (let ((text (test-terminal-row-text (response-item-entry application restored-call))))
-                   (test-assert
-                    (and (search "detached" text)
-                         (search (getf item :task) text)
-                         (or (not (getf item :context)) (search (getf item :context) text)))
-                    "live and restored task rows show normalized assignments and context")))))
-           (dolist (arguments
-                    (list (json-object "task" "Invalid context" "context" 7)
-                          (json-object "task" "Invalid policy" "completion-policy" "invalid")))
-             (let ((call (json-object "type" "function_call"
-                                      "namespace" (tool-namespace run-tool)
-                                      "name" (tool-name run-tool)
-                                      "arguments" (json-encode arguments))))
-               (dolist (restored-call (list call (json-decode (json-encode call))))
+        (progn
+         (dolist
+             (arguments
+              (list (json-object "task" "Default request")
+                    (json-object "task" "Context request" "context"
+                                 "Background context")))
+           (let* ((item (first (task-normalize-arguments arguments)))
+                  (call
+                   (json-object "type" "function_call" "namespace"
+                                (tool-namespace run-tool) "name" (tool-name run-tool)
+                                "arguments" (json-encode arguments))))
+             (test-assert (eq ':detached (getf item :mode))
+                          "normalized requests describe detached execution")
+             (dolist (restored-call (list call (json-decode (json-encode call))))
+               (let ((text
+                      (test-terminal-row-text
+                       (response-item-entry application restored-call))))
                  (test-assert
-                  (search "invalid task request"
-                          (test-terminal-row-text (response-item-entry application restored-call)))
-                  "live and restored presentations use execution's request validation"))))
-           (application-connect-task-presentation application)
-           (application-connect-task-presentation application)
-           (test-assert
-            (= (length (task-orchestrator-listeners orchestrator)) 1)
-            "reconnection retains exactly one task presentation listener")
-           (let ((stale-command
-                   (list :id "exec:stale" :type ':tool :index 1
-                         :tool "shell.run" :description "Old session command"
-                         :state ':running :duration-ms 0 :detached nil)))
-             (terminal-ui-set-command-activities ui (list stale-command))
-             (terminal-ui-set-command-activities ui nil)
-             (test-assert
-              (terminal-ui-command-pending-completions ui)
-              "a command completed before paint is pending presentation")
-             (application-disconnect-task-presentation application)
-             (test-assert
-              (and (null (terminal-ui-command-activities ui))
-                   (null (terminal-ui-command-unpainted-identifiers ui))
-                   (null (terminal-ui-command-pending-completions ui)))
-              "disconnect discards every old-session command presentation")
-             (application-connect-task-presentation application)
-             (recording-terminal-reset terminal)
-             (terminal-ui-refresh-status ui)
-             (test-assert
-              (not (search "exec:stale" (recording-terminal-output terminal)))
-              "reconnect cannot paint a command retained by the old session"))
-           (let* ((original-add-listener
-                    (symbol-function 'task-orchestrator-add-listener))
-                  (gate-lock
-                    (make-lock "Autolith task presentation connect race"))
-                  (gate-condition      (make-condition-variable))
-                  (first-add-entered-p nil)
-                  (release-first-add-p nil)
-                  (second-started-p    nil)
-                  (add-call-count      0)
-                  (first-condition     nil)
-                  (second-condition    nil)
-                  (first-thread        nil)
-                  (second-thread       nil))
-             (test-call-with-function-replacements
-              (list
-               (list
-                'task-orchestrator-add-listener
-                (lambda (target listener)
-                  (let ((block-p nil))
-                    (with-lock-held (gate-lock)
-                      (incf add-call-count)
-                      (unless first-add-entered-p
-                        (setf first-add-entered-p t
-                              block-p t)
-                        (task--condition-broadcast gate-condition)))
-                    (when block-p
-                      (with-lock-held (gate-lock)
-                        (loop until release-first-add-p
-                              unless
-                              (condition-wait
-                               gate-condition gate-lock :timeout 2)
-                              do (error
-                                  "Timed out holding the first presentation listener add."))))
-                    (funcall original-add-listener target listener)))))
-              (lambda ()
-                (unwind-protect
-                     (progn
-                       (setf first-thread
-                             (make-thread
-                              (lambda ()
-                                (handler-case
-                                    (application-connect-task-presentation
-                                     application)
-                                  (condition (condition)
-                                    (setf first-condition condition))))
-                              :name "Autolith first task presentation connect"))
-                       (with-lock-held (gate-lock)
-                         (loop until first-add-entered-p
-                               unless
-                               (condition-wait
-                                gate-condition gate-lock :timeout 2)
-                               do (error
-                                   "Timed out waiting for the first listener add.")))
-                       (let ((acquired-p
-                               (bordeaux-threads:acquire-lock
-                                (application-task-presentation-lock application)
-                                nil)))
-                         (when acquired-p
-                           (bordeaux-threads:release-lock
-                            (application-task-presentation-lock application)))
-                         (test-assert
-                          (not acquired-p)
-                          "listener registration remains inside the presentation transaction"))
-                       (setf second-thread
-                             (make-thread
-                              (lambda ()
-                                (with-lock-held (gate-lock)
-                                  (setf second-started-p t)
-                                  (task--condition-broadcast gate-condition))
-                                (handler-case
-                                    (application-connect-task-presentation
-                                     application)
-                                  (condition (condition)
-                                    (setf second-condition condition))))
-                              :name "Autolith second task presentation connect"))
-                       (with-lock-held (gate-lock)
-                         (loop until second-started-p
-                               unless
-                               (condition-wait
-                                gate-condition gate-lock :timeout 2)
-                               do (error
-                                   "Timed out starting the second listener connect."))
-                         (setf release-first-add-p t)
-                         (task--condition-broadcast gate-condition))
-                       (join-thread first-thread)
-                       (setf first-thread nil)
-                       (join-thread second-thread)
-                       (setf second-thread nil)
-                       (let ((listeners
-                               (task-orchestrator-listeners orchestrator)))
-                         (test-assert
-                          (and (null first-condition)
-                               (null second-condition)
-                               (= add-call-count 2)
-                               (= (length listeners) 1)
-                               (member
-                                (application-task-presentation-listener
-                                 application)
-                                listeners
-                                :test #'eq))
-                          "overlapping reconnects retain one exact active listener")))
-                  (with-lock-held (gate-lock)
-                    (setf release-first-add-p t)
-                    (task--condition-broadcast gate-condition))
-                  (when first-thread
-                    (ignore-errors (join-thread first-thread)))
-                  (when second-thread
-                     (ignore-errors (join-thread second-thread)))))))
-           (setf queued
-                 (task-tests--register-job
-                  orchestrator primary definition :name "queued-agent")
-                 running
-                 (task-tests--register-job
-                  orchestrator primary definition :name "running-agent"))
-           (with-lock-held ((cl-jobpond::job--lock running))
-             (setf (job-state running) ':running)
-             (task-job--set-progress-state running ':running))
-           (task-progress-note-status
-            running ':tool-call-started
-            (list :tool "search.content"))
-           (let* ((progress (task-job-progress running))
-                  (now      (get-internal-real-time)))
-             (with-lock-held ((task-progress-lock progress))
-               (setf (task-progress-started-at progress)
-                     (- now (* 65 internal-time-units-per-second))
-                     (task-progress-current-tool-started-at progress)
-                     (- now (* 60 internal-time-units-per-second)))))
-           (task-orchestrator-emit
-            orchestrator
-            ':task-subagent-progress
-            (list :id (job-identifier running)))
-           (let ((activities (terminal-ui-agent-activities ui)))
-             (test-assert
-              (and (= (length activities) 2)
-                   (eq (getf (first activities) :state) ':queued)
-                   (eq (getf (second activities) :state) ':running)
-                   (string= (getf (second activities) :current-tool)
-                            "search.content")
-                   (typep (getf (second activities) :current-tool-duration-ms)
-                          '(integer 60000))
-                   (typep (getf (second activities) :duration-ms)
-                          '(integer 65000)))
-              "one progress event projects every queued and running child"))
-           (multiple-value-bind (text display cursor)
-               (terminal-ui--live-content ui clock)
-             (declare (ignore display cursor))
-             (test-assert
-              (and (search "running-agent" text)
-                   (search "queued-agent" text)
-                   (search "search.content 01:00" text))
-              "named jobs project their names and render runtime durations"))
-           (task-tests--publish-terminal
-            queued
-            ':completed
-            (task-tests--terminal-result
-             queued :status ':success :output "queued complete"))
-           (test-assert
-            (equal
-             (mapcar (lambda (activity)
-                       (getf activity :id))
-                     (terminal-ui-agent-activities ui))
-             (list (job-identifier running)))
-            "terminal lifecycle events remove only their finished child")
-           (task-tests--publish-terminal
-            running
-            ':completed
-            (task-tests--terminal-result
-             running :status ':success :output "running complete"))
-           (task-orchestrator-emit
-            orchestrator
-            ':task-subagent-progress
-            (list :id (job-identifier running)))
-           (test-assert
-            (null (terminal-ui-agent-activities ui))
-            "late progress cannot resurrect a terminal child")
-           (let* ((timestamp
-                    (encode-universal-time 0 53 22 10 8 2026))
-                  (payload
-                    (list :id           "child-1"
-                          :execution-id "execution-1"
-                          :child-name   "shared-diff-final-review"
-                          :steering-id  "steering-1"
-                          :text         "Use careful context."
-                          :time         timestamp))
-                  (entry
-                    (application--child-response-entry application payload))
-                  (records-before
-                     (copy-tree
-                      (application-tests--conversation-records conversation)))
-                  (stale-listener
-                    (application-task-presentation-listener application)))
-              (test-assert
-               (and (find
-                     (terminal-span ':child-name "shared-diff-final-review")
-                     entry
-                     :test #'equal)
-                    (not (application-turn-timestamps-p application)))
-               "child response entries retain semantic child names")
-             (application-connect-task-presentation application)
-             (test-assert
-              (and (= (length (task-orchestrator-listeners orchestrator)) 1)
-                   (not
-                    (eq stale-listener
-                        (application-task-presentation-listener application))))
-              "same-orchestrator reconnection replaces the exact listener")
-             (recording-terminal-reset terminal)
-             (funcall stale-listener
-                      ':task-subagent-verbal-response
-                      payload)
-             (test-assert
-              (string= (recording-terminal-output terminal) "")
-              "a snapshotted stale listener cannot present after reconnection")
-             (recording-terminal-reset terminal)
-             (let ((cl-colorist:*color-level* ':indexed))
-               (task-orchestrator-emit
-                orchestrator ':task-subagent-verbal-response payload))
-             (let* ((output       (recording-terminal-output terminal))
-                    (plain-output (cl-colorist:strip-ansi output))
-                    (child-style  (terminal-style-sequence ':child-name t))
-                    (basic-child-style
-                      (terminal-style-sequence ':child-name nil)))
+                  (and (search "detached" text) (search (getf item :task) text)
+                       (or (not (getf item :context))
+                           (search (getf item :context) text)))
+                  "live and restored task rows show normalized assignments and context")))))
+         (dolist
+             (arguments
+              (list (json-object "task" "Invalid context" "context" 7)
+                    (json-object "task" "Invalid policy" "completion-policy" "invalid")))
+           (let ((call
+                  (json-object "type" "function_call" "namespace"
+                               (tool-namespace run-tool) "name" (tool-name run-tool)
+                               "arguments" (json-encode arguments))))
+             (dolist (restored-call (list call (json-decode (json-encode call))))
                (test-assert
-                (and
-                 (search
-                  "● autolith [shared-diff-final-review] 2026-08-10 22:53"
-                  plain-output)
-                 (= (test-substring-count
-                     "● autolith [shared-diff-final-review]" plain-output)
-                    1)
-                 (search "Use careful context." plain-output)
-                 (search child-style output)
-                 (string= basic-child-style
-                          (terminal-style-sequence ':success nil)))
-                "one child response is presented once with its configured style"))
-             (test-assert
-              (and
-                (equal records-before
-                       (application-tests--conversation-records conversation))
-               (null (conversation-input-items conversation)))
-              "promoted child presentation does not mutate primary conversation state")
-             (application-disconnect-task-presentation application)
-             (recording-terminal-reset terminal)
-             (task-orchestrator-emit
-              orchestrator ':task-subagent-verbal-response payload)
-             (test-assert
-              (string= (recording-terminal-output terminal) "")
-              "a disconnected orchestrator cannot present child responses")
-             (setf replacement-registry
-                   (task-augment-tool-registry
-                    (make-default-tool-registry))
-                   replacement-orchestrator
-                   (task-run-tool-orchestrator
-                    (tool-registry-find replacement-registry "child" "spawn"))
-                   (application-tool-registry application)
-                   replacement-registry)
-             (application-connect-task-presentation application)
-             (test-assert
-              (and (zerop (length (task-orchestrator-listeners orchestrator)))
-                   (= (length
-                       (task-orchestrator-listeners replacement-orchestrator))
-                      1))
-              "runtime replacement moves the exact presentation listener")
-             (recording-terminal-reset terminal)
-             (task-orchestrator-emit
-              orchestrator ':task-subagent-verbal-response payload)
-             (test-assert
-              (string= (recording-terminal-output terminal) "")
-              "the retired orchestrator cannot present after replacement")
-             (let ((replacement-payload
-                     (list :id           "child-2"
-                           :execution-id "execution-2"
-                           :child-name   "replacement-review"
-                           :steering-id  "steering-2"
-                           :text         "Replacement response."
-                           :time         timestamp)))
-               (let ((cl-colorist:*color-level* ':indexed))
-                 (task-orchestrator-emit
-                  replacement-orchestrator
-                  ':task-subagent-verbal-response
-                  replacement-payload))
-               (let ((plain-output
-                       (cl-colorist:strip-ansi
-                        (recording-terminal-output terminal))))
-                 (test-assert
-                  (and
-                   (search
-                    "● autolith [replacement-review] 2026-08-10 22:53"
-                    plain-output)
-                   (= (test-substring-count
-                       "● autolith [replacement-review]" plain-output)
-                      1)
-                   (not (search "shared-diff-final-review" plain-output)))
-                  "only the active orchestrator presents its current child response"))))
+                (search "invalid task request"
+                        (test-terminal-row-text
+                         (response-item-entry application restored-call)))
+                "live and restored presentations use execution's request validation"))))
+         (application-connect-task-presentation application)
+         (application-connect-task-presentation application)
+         (test-assert (= (length (task-orchestrator-listeners orchestrator)) 1)
+                      "reconnection retains exactly one task presentation listener")
+         (let ((stale-command
+                (list :id "exec:stale" :type ':tool :index 1 :tool "shell.run"
+                      :description "Old session command" :state ':running :duration-ms 0
+                      :detached nil)))
+           (terminal-ui-set-command-activities ui (list stale-command))
+           (terminal-ui-set-command-activities ui nil)
+           (test-assert (terminal-ui-command-pending-completions ui)
+                        "a command completed before paint is pending presentation")
            (application-disconnect-task-presentation application)
            (test-assert
+            (and (null (terminal-ui-command-activities ui))
+                 (null (terminal-ui-command-unpainted-identifiers ui))
+                 (null (terminal-ui-command-pending-completions ui)))
+            "disconnect discards every old-session command presentation")
+           (application-connect-task-presentation application)
+           (recording-terminal-reset terminal)
+           (terminal-ui-refresh-status ui)
+           (test-assert (not (search "exec:stale" (recording-terminal-output terminal)))
+                        "reconnect cannot paint a command retained by the old session"))
+         (let* ((original-add-listener (symbol-function 'task-orchestrator-add-listener))
+                (gate-lock             (make-lock "Autolith task presentation connect race"))
+                (gate-condition        (make-condition-variable))
+                (first-add-entered-p   nil)
+                (release-first-add-p   nil)
+                (second-started-p      nil)
+                (add-call-count        0)
+                (first-condition       nil)
+                (second-condition      nil)
+                (first-thread          nil)
+                (second-thread         nil))
+           (test-call-with-function-replacements
+            (list
+             (list 'task-orchestrator-add-listener
+                   (lambda (target listener)
+                     (let ((block-p nil))
+                       (with-lock-held (gate-lock)
+                         (incf add-call-count)
+                         (unless first-add-entered-p
+                           (setf first-add-entered-p t
+                                 block-p t)
+                           (task--condition-broadcast gate-condition)))
+                       (when block-p
+                         (with-lock-held (gate-lock)
+                           (loop until release-first-add-p
+                                 unless (condition-wait gate-condition gate-lock :timeout
+                                                        2)
+                                 do (error
+                                     "Timed out holding the first presentation listener add."))))
+                       (funcall original-add-listener target listener)))))
+            (lambda ()
+              (unwind-protect
+                  (progn
+                   (setf first-thread
+                           (make-thread
+                            (lambda ()
+                              (handler-case
+                               (application-connect-task-presentation application)
+                               (condition (condition) (setf first-condition condition))))
+                            :name "Autolith first task presentation connect"))
+                   (with-lock-held (gate-lock)
+                     (loop until first-add-entered-p
+                           unless (condition-wait gate-condition gate-lock :timeout 2)
+                           do (error "Timed out waiting for the first listener add.")))
+                   (let ((acquired-p
+                          (bordeaux-threads:acquire-lock
+                           (application-task-presentation-lock application) nil)))
+                     (when acquired-p
+                       (bordeaux-threads:release-lock
+                        (application-task-presentation-lock application)))
+                     (test-assert (not acquired-p)
+                                  "listener registration remains inside the presentation transaction"))
+                   (setf second-thread
+                           (make-thread
+                            (lambda ()
+                              (with-lock-held (gate-lock)
+                                (setf second-started-p t)
+                                (task--condition-broadcast gate-condition))
+                              (handler-case
+                               (application-connect-task-presentation application)
+                               (condition (condition)
+                                (setf second-condition condition))))
+                            :name "Autolith second task presentation connect"))
+                   (with-lock-held (gate-lock)
+                     (loop until second-started-p
+                           unless (condition-wait gate-condition gate-lock :timeout 2)
+                           do (error "Timed out starting the second listener connect."))
+                     (setf release-first-add-p t)
+                     (task--condition-broadcast gate-condition))
+                   (join-thread first-thread)
+                   (setf first-thread nil)
+                   (join-thread second-thread)
+                   (setf second-thread nil)
+                   (let ((listeners (task-orchestrator-listeners orchestrator)))
+                     (test-assert
+                      (and (null first-condition) (null second-condition)
+                           (= add-call-count 2) (= (length listeners) 1)
+                           (member (application-task-presentation-listener application)
+                                   listeners :test #'eq))
+                      "overlapping reconnects retain one exact active listener")))
+                (with-lock-held (gate-lock)
+                  (setf release-first-add-p t)
+                  (task--condition-broadcast gate-condition))
+                (when first-thread (ignore-errors (join-thread first-thread)))
+                (when second-thread (ignore-errors (join-thread second-thread)))))))
+         (setf queued
+                 (task-tests--register-job orchestrator primary definition :name
+                                           "queued-agent")
+               running
+                 (task-tests--register-job orchestrator primary definition :name
+                                           "running-agent"))
+         (with-lock-held ((cl-jobpond::job--lock running))
+           (setf (job-state running) ':running)
+           (task-job--set-progress-state running ':running))
+         (task-progress-note-status running ':tool-call-started
+                                    (list :tool "search.content"))
+         (let* ((progress (task-job-progress running)) (now (get-internal-real-time)))
+           (with-lock-held ((task-progress-lock progress))
+             (setf (task-progress-started-at progress)
+                   (- now (* 65 internal-time-units-per-second))
+                   (task-progress-current-tool-started-at progress)
+                   (- now (* 60 internal-time-units-per-second)))))
+         (task-orchestrator-emit orchestrator ':task-subagent-progress
+                                 (list :id (job-identifier running)))
+         (let ((activities (terminal-ui-agent-activities ui)))
+           (test-assert
+            (and (= (length activities) 2) (eq (getf (first activities) :state) ':queued)
+                 (eq (getf (second activities) :state) ':running)
+                 (string= (getf (second activities) :current-tool) "search.content")
+                 (typep (getf (second activities) :current-tool-duration-ms)
+                        '(integer 60000))
+                 (typep (getf (second activities) :duration-ms) '(integer 65000)))
+            "one progress event projects every queued and running child"))
+         (multiple-value-bind (text display cursor)
+             (terminal-ui--live-content ui clock)
+           (declare (ignore display cursor))
+           (test-assert
+            (and (search "running-agent" text) (search "queued-agent" text)
+                 (search "search.content 01:00" text))
+            "named jobs project their names and render runtime durations"))
+         (task-tests--publish-terminal queued ':completed
+                                       (task-tests--terminal-result queued :status
+                                                                    ':success :output
+                                                                    "queued complete"))
+         (test-assert
+          (equal
+           (mapcar (lambda (activity) (getf activity :id))
+                   (terminal-ui-agent-activities ui))
+           (list (job-identifier running)))
+          "terminal lifecycle events remove only their finished child")
+         (task-tests--publish-terminal running ':completed
+                                       (task-tests--terminal-result running :status
+                                                                    ':success :output
+                                                                    "running complete"))
+         (task-orchestrator-emit orchestrator ':task-subagent-progress
+                                 (list :id (job-identifier running)))
+         (test-assert (null (terminal-ui-agent-activities ui))
+                      "late progress cannot resurrect a terminal child")
+         (let* ((timestamp      (encode-universal-time 0 53 22 10 8 2026))
+                (payload
+                 (list :id "child-1" :execution-id "execution-1" :child-name
+                       "shared-diff-final-review" :steering-id "steering-1" :text
+                       "Use careful context." :time timestamp))
+                (entry          (application--child-response-entry application payload))
+                (records-before
+                 (copy-tree (application-tests--conversation-records conversation)))
+                (stale-listener (application-task-presentation-listener application)))
+           (test-assert
             (and
-             (null (application-task-presentation-orchestrator application))
-             (null (application-task-presentation-listener application))
-             (or (null replacement-orchestrator)
-                 (zerop
-                  (length
-                   (task-orchestrator-listeners replacement-orchestrator)))))
-            "disconnect removes the exact observer and retained scheduler link"))
+             (find (terminal-span ':child-name "shared-diff-final-review") entry :test
+                   #'equal)
+             (not (application-turn-timestamps-p application)))
+            "child response entries retain semantic child names")
+           (application-connect-task-presentation application)
+           (test-assert
+            (and (= (length (task-orchestrator-listeners orchestrator)) 1)
+                 (not
+                  (eq stale-listener
+                      (application-task-presentation-listener application))))
+            "same-orchestrator reconnection replaces the exact listener")
+           (recording-terminal-reset terminal)
+           (funcall stale-listener ':task-subagent-verbal-response payload)
+           (test-assert (string= (recording-terminal-output terminal) "")
+                        "a snapshotted stale listener cannot present after reconnection")
+           (recording-terminal-reset terminal)
+           (let ((cl-colorist:*color-level* ':indexed))
+             (task-orchestrator-emit orchestrator ':task-subagent-verbal-response
+                                     payload))
+           (let* ((output            (recording-terminal-output terminal))
+                  (plain-output      (cl-colorist:strip-ansi output))
+                  (child-style       (terminal-style-sequence ':child-name t))
+                  (basic-child-style (terminal-style-sequence ':child-name nil)))
+             (test-assert
+              (and
+               (search "● autolith [shared-diff-final-review] 2026-08-10 22:53"
+                       plain-output)
+               (=
+                (test-substring-count "● autolith [shared-diff-final-review]"
+                                      plain-output)
+                1)
+               (search "Use careful context." plain-output) (search child-style output)
+               (string= basic-child-style (terminal-style-sequence ':success nil)))
+              "one child response is presented once with its configured style"))
+           (test-assert
+            (and
+             (equal records-before
+                    (application-tests--conversation-records conversation))
+             (null (conversation-input-items conversation)))
+            "promoted child presentation does not mutate primary conversation state")
+           (application-disconnect-task-presentation application)
+           (recording-terminal-reset terminal)
+           (task-orchestrator-emit orchestrator ':task-subagent-verbal-response payload)
+           (test-assert (string= (recording-terminal-output terminal) "")
+                        "a disconnected orchestrator cannot present child responses")
+           (setf replacement-registry
+                   (task-augment-tool-registry (make-default-tool-registry))
+                 replacement-orchestrator
+                   (task-run-tool-orchestrator
+                    (tool-registry-find replacement-registry "child" "spawn"))
+                 (application-tool-registry application) replacement-registry)
+           (application-connect-task-presentation application)
+           (test-assert
+            (and (zerop (length (task-orchestrator-listeners orchestrator)))
+                 (= (length (task-orchestrator-listeners replacement-orchestrator)) 1))
+            "runtime replacement moves the exact presentation listener")
+           (recording-terminal-reset terminal)
+           (task-orchestrator-emit orchestrator ':task-subagent-verbal-response payload)
+           (test-assert (string= (recording-terminal-output terminal) "")
+                        "the retired orchestrator cannot present after replacement")
+           (let ((replacement-payload
+                  (list :id "child-2" :execution-id "execution-2" :child-name
+                        "replacement-review" :steering-id "steering-2" :text
+                        "Replacement response." :time timestamp)))
+             (let ((cl-colorist:*color-level* ':indexed))
+               (task-orchestrator-emit replacement-orchestrator
+                                       ':task-subagent-verbal-response
+                                       replacement-payload))
+             (let ((plain-output
+                    (cl-colorist:strip-ansi (recording-terminal-output terminal))))
+               (test-assert
+                (and
+                 (search "● autolith [replacement-review] 2026-08-10 22:53" plain-output)
+                 (= (test-substring-count "● autolith [replacement-review]" plain-output)
+                    1)
+                 (not (search "shared-diff-final-review" plain-output)))
+                "only the active orchestrator presents its current child response"))))
+         (application-disconnect-task-presentation application)
+         (test-assert
+          (and (null (application-task-presentation-orchestrator application))
+               (null (application-task-presentation-listener application))
+               (or (null replacement-orchestrator)
+                   (zerop
+                    (length (task-orchestrator-listeners replacement-orchestrator)))))
+          "disconnect removes the exact observer and retained scheduler link"))
       (application-disconnect-task-presentation application)
       (dolist (job (remove nil (list queued running)))
         (unless (job-terminal-p job)
-          (task-tests--publish-terminal
-           job
-           ':aborted
-           (task-tests--terminal-result
-            job :status ':aborted :output "test cleanup"))))
+          (task-tests--publish-terminal job ':aborted
+                                        (task-tests--terminal-result job :status
+                                                                     ':aborted :output
+                                                                     "test cleanup"))))
       (when replacement-registry
-        (ignore-errors
-          (tool-registry-close-runtime-state replacement-registry)))
+        (ignore-errors (tool-registry-close-runtime-state replacement-registry)))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (platform-delete-directory-tree *platform* root :validate t
-                                           :if-does-not-exist   ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
+                                      ':ignore)))
   nil)
 
 (-> test-working-directory-command () null)
@@ -10463,49 +10406,50 @@
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
-         (orchestrator  (task-run-tool-orchestrator
-                         (tool-registry-find registry "child" "spawn")))
+         (orchestrator
+          (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
          (conversation  (conversation-create configuration :identifier "status-owner"))
          (terminal      (make-instance 'scripted-terminal))
          (ui            (terminal-ui-create :terminal terminal))
-         (application   (make-instance 'application :configuration configuration
-                                       :conversation conversation :tool-registry registry :ui ui))
+         (application
+          (make-instance 'application :configuration configuration :conversation
+                         conversation :tool-registry registry :ui ui))
          (primary       (task-tests--primary-agent configuration "status-owner" registry))
-         (definition    (task-agent-definition-create
-                         :name "status-child" :description "Status test"
-                         :instructions "Private assignment" :source ':test))
+         (definition    (list))
          (owned         nil))
     (unwind-protect
-         (progn
-           (application-connect-program-status application)
-           (with-terminal-ui (active ui)
-             (let ((*active-application* application))
-               (dolist (title '("First title" "Changed title"))
-                 (setf (conversation-title conversation) title)
-                 (recording-terminal-reset terminal)
-                 (terminal-ui-report-program-status active ':working)
-                 (test-assert
-                  (search (format nil ":title=~A" (clinedi:program-status-text title 192))
-                          (recording-terminal-output terminal))
-                  "each root report reads the current conversation title")))
-             (setf owned (task-tests--register-job orchestrator primary definition
-                                                   :name                         "Owned child"
-                                                   :root-conversation-identifier "status-owner"))
-             (recording-terminal-reset terminal)
-             (application-connect-task-presentation application)
-             (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                          "job presentation publishes no records")
-             (recording-terminal-reset terminal)
-             (task-tests--publish-terminal owned ':completed "Private result")
-             (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                          "a pool completion publishes no record")
-             (recording-terminal-reset terminal)
-             (application-disconnect-task-presentation application)
-             (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                          "disconnect publishes no record")))
+        (progn
+         (application-connect-program-status application)
+         (with-terminal-ui (active ui)
+           (let ((*active-application* application))
+             (dolist (title '("First title" "Changed title"))
+               (setf (conversation-title conversation) title)
+               (recording-terminal-reset terminal)
+               (terminal-ui-report-program-status active ':working)
+               (test-assert
+                (search (format nil ":title=~A" (clinedi:program-status-text title 192))
+                        (recording-terminal-output terminal))
+                "each root report reads the current conversation title")))
+           (setf owned
+                   (task-tests--register-job orchestrator primary definition :name
+                                             "Owned child" :root-conversation-identifier
+                                             "status-owner"))
+           (recording-terminal-reset terminal)
+           (application-connect-task-presentation application)
+           (test-assert (not (search "7501" (recording-terminal-output terminal)))
+                        "job presentation publishes no records")
+           (recording-terminal-reset terminal)
+           (task-tests--publish-terminal owned ':completed "Private result")
+           (test-assert (not (search "7501" (recording-terminal-output terminal)))
+                        "a pool completion publishes no record")
+           (recording-terminal-reset terminal)
+           (application-disconnect-task-presentation application)
+           (test-assert (not (search "7501" (recording-terminal-output terminal)))
+                        "disconnect publishes no record")))
       (application-disconnect-task-presentation application)
       (tool-registry-close-runtime-state registry)
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
+                                      ':ignore)))
   nil)
 
 (-> test-provider-exhaustion-presentation () null)

@@ -212,36 +212,6 @@
                                           (map 'vector #'json-decode bodies)))))
   nil)
 
-(-> test-telemetry-role-papercut-report () null)
-(defun test-telemetry-role-papercut-report ()
-  "Grant papercut reporting to a role and export a report from its restricted agent."
-  (test-telemetry--call
-   (lambda (configuration)
-     (let* ((registry       (make-default-tool-registry))
-            (definition     (task-agent-definition-create
-                             :name "reporter" :description "Report a fixture problem."
-                             :instructions "Report once." :tools '("papercut.report") :source ':test))
-            (child-registry (task-child-tool-registry registry definition :depth 1))
-            (conversation   (conversation-create configuration))
-            (provider       (make-instance
-                             'scripted-provider
-                             :results (list (agent-test-result
-                                             "report"
-                                             (list (agent-test-call
-                                                    :call-id "report" :namespace "papercut" :name "report"
-                                                    :arguments "{\"title\":\"Fixture defect\",\"content\":\"Fixture details\",\"tool\":\"shell.run\",\"issue-kind\":\"broken_tool\"}")))
-                                            (agent-test-result "done" (list (agent-test-message "done"))))))
-            (agent          (agent-create :configuration configuration :conversation conversation
-                                          :provider provider :tool-registry child-registry :worker :unused)))
-       (task-agent-definition-validate-tools-available definition registry)
-       (let* ((bodies (test-telemetry-hooks--capture
-                       configuration (lambda () (agent-run-user-turn agent "Report fixture"))))
-              (report (first (test-telemetry-hooks--kind (first bodies) "report"))))
-         (test-assert report "A granted role exports the report event.")
-         (test-assert (equal (test-telemetry--attribute report "gen_ai.tool.name") "shell.run")
-                      "The report preserves its structured affected tool.")))))
-  nil)
-
 (-> test-telemetry-papercut-metadata-hooks () null)
 (defun test-telemetry-papercut-metadata-hooks ()
   "Classified reports and resource edits retain metadata through durable replay."

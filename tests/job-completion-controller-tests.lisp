@@ -459,32 +459,40 @@
 (defun test-job-completion-yield-presentation ()
   "Finalize empty turns using owned wakeup authority and replay the historical snapshot."
   (with-test-configuration (configuration root)
-    (setf configuration (configuration-copy configuration :working-directory        root
-                                                        :session-title-generation-p nil))
-    (let* ((application (mission-test--application
-                         configuration
-                         :results (list (mission-test--result "")
-                                        (mission-test--result "ordinary reply")
-                                        (mission-test--result "")
-                                        (mission-test--result ""))))
-           (parent      (application-agent application))
-           (registry    (task-augment-tool-registry (application-tool-registry application)))
-           (runtime     (task-completion--runtime parent))
-           (controller  (application-input-controller-create
-                         application :start-reader-p nil :load-pending-p nil))
-           (terminal    (terminal-ui-terminal (application-ui application)))
-           (release     (sb-thread:make-semaphore))
-           (held-jobs   nil))
+    (setf configuration
+            (configuration-copy configuration :working-directory root
+                                :session-title-generation-p      nil))
+    (let* ((application
+            (mission-test--application configuration :results
+                                       (list (mission-test--result "")
+                                             (mission-test--result "ordinary reply")
+                                             (mission-test--result "")
+                                             (mission-test--result ""))))
+           (parent    (application-agent application))
+           (registry
+            (task-augment-tool-registry (application-tool-registry application)))
+           (runtime   (task-completion--runtime parent))
+           (controller
+            (application-input-controller-create application :start-reader-p nil
+                                                 :load-pending-p             nil))
+           (terminal  (terminal-ui-terminal (application-ui application)))
+           (release   (sb-thread:make-semaphore))
+           (held-jobs nil))
       (declare (ignore registry))
       (labels ((hold-job (owner &key (policy ':continue))
                  "Start and watch one real job held until fixture cleanup."
-                 (let ((job (task-orchestrator-start-execution-job
-                             runtime owner :tool-name "completion.fixture" :summary "held work"
-                             :operation-function
-                             (lambda ()
-                               (sb-thread:wait-on-semaphore release)
-                               (tool-success "done"))
-                             :detached-p t :completion-policy policy)))
+                 (let ((job
+                        (task-orchestrator-start-execution-job runtime owner :tool-name
+                                                               "completion.fixture"
+                                                               :summary    "held work"
+                                                               :operation-function
+                                                               (lambda ()
+                                                                 (sb-thread:wait-on-semaphore
+                                                                  release)
+                                                                 (tool-success "done"))
+                                                               :detached-p t
+                                                               :completion-policy
+                                                               policy)))
                    (task-completion-watch job owner)
                    (push job held-jobs)
                    job))
@@ -492,91 +500,111 @@
                (yield-records ()
                  "Return durable presentation snapshots without provider text."
                  (remove-if-not (lambda (record) (eq (first record) ':assistant-yield))
-                                (conversation-records-newest (application-conversation application) 100))))
+                                (conversation-records-newest
+                                 (application-conversation application) 100))))
         (unwind-protect
-             (progn
-               (hold-job parent)
-               (hold-job parent :policy ':notify)
-               (hold-job (make-instance 'agent :configuration configuration
-                                              :conversation   (conversation-create configuration)
-                                              :provider       (application-provider application)
-                                              :tool-registry  (application-tool-registry application)))
-               ;; Keep a genuine detached child queued, without starting another model.
-               (let ((submit (symbol-function 'job-pool-submit-batch)))
-                 (test-call-with-function-replacements
-                  (list (list 'job-pool-submit-batch
-                              (lambda (pool entries)
-                                (funcall submit pool
-                                         (mapcar (lambda (entry) (list* :inline-only-p t entry)) entries)))))
-                  (lambda ()
-                    (task-orchestrator-start-jobs
-                     runtime parent
-                     (list (list :definition
-                                 (task-agent-definition-create
-                                  :name "yield-fixture" :description "Queued wakeup fixture"
-                                  :instructions "Wait for fixture release" :source ':test)
-                                 :detached t
-                                 :item     (list :name "yield-child" :agent "yield-fixture" :task "Wait")))))))
-               (let ((finished (job-completion-tests--start parent runtime)))
-                 (test-assert (job-terminal-p finished) "a published outcome is already terminal"))
-               (test-assert (= 2 (application-job-completions-awaited-count application))
-                            "only the owned continue tool and child are unfinished wakeups")
+            (progn
+             (hold-job parent)
+             (hold-job parent :policy ':notify)
+             (hold-job
+              (make-instance 'agent :configuration configuration :conversation
+                             (conversation-create configuration) :provider
+                             (application-provider application) :tool-registry
+                             (application-tool-registry application)))
+             ;; Keep a genuine detached child queued, without starting another model.
+             (let ((submit (symbol-function 'job-pool-submit-batch)))
+               (test-call-with-function-replacements
+                (list
+                 (list 'job-pool-submit-batch
+                       (lambda (pool entries)
+                         (funcall submit pool
+                                  (mapcar (lambda (entry) (list* :inline-only-p t entry))
+                                          entries)))))
+                (lambda ()
+                  (task-orchestrator-start-jobs runtime parent
+                                                (list
+                                                 (list :detached t :item
+                                                       (append
+                                                        (list :name "yield-child" :agent
+                                                              "yield-fixture" :task
+                                                              "Wait")
+                                                        (list))))))))
+             (let ((finished (job-completion-tests--start parent runtime)))
+               (test-assert (job-terminal-p finished)
+                            "a published outcome is already terminal"))
+             (test-assert (= 2 (application-job-completions-awaited-count application))
+                          "only the owned continue tool and child are unfinished wakeups")
+             (recording-terminal-reset terminal)
+             (application-run-message application "Wait for asynchronous work.")
+             (let* ((record (first (yield-records)))
+                    (entry  (conversation-record-entry application record)))
+               (test-assert
+                (and (= 1 (length (yield-records))) (= 2 (getf (rest record) :job-count))
+                     (application--record-visible-p application record))
+                "an empty final response persists one exact wakeup snapshot")
+               (test-assert
+                (equal (first entry)
+                       (first
+                        (response-item-entry application
+                                             (agent-test-message "ordinary"))))
+                "the notice uses the normal assistant header style")
+               (test-assert
+                (null (response-item-entry application (agent-test-message "")))
+                "an empty provider message has no blank assistant header")
+               (test-assert
+                (find (json-encode (agent-test-message ""))
+                      (conversation-input-items (application-conversation application))
+                      :key #'json-encode :test #'string=)
+                "presentation metadata does not replace the raw empty provider message")
+               (test-assert
+                (search (terminal--spans-text entry)
+                        (recording-terminal-output terminal))
+                "the finalized presentation includes the snapshot")
                (recording-terminal-reset terminal)
-               (application-run-message application "Wait for asynchronous work.")
-               (let* ((record (first (yield-records)))
-                      (entry  (conversation-record-entry application record)))
-                 (test-assert (and (= 1 (length (yield-records)))
-                                   (= 2 (getf (rest record) :job-count))
-                                   (application--record-visible-p application record))
-                              "an empty final response persists one exact wakeup snapshot")
-                 (test-assert (equal (first entry)
-                                     (first (response-item-entry application (agent-test-message "ordinary"))))
-                              "the notice uses the normal assistant header style")
-                 (test-assert (null (response-item-entry application (agent-test-message "")))
-                              "an empty provider message has no blank assistant header")
-                 (test-assert
-                  (find (json-encode (agent-test-message ""))
-                        (conversation-input-items (application-conversation application))
-                        :key #'json-encode :test #'string=)
-                  "presentation metadata does not replace the raw empty provider message")
-                 (test-assert (search (terminal--spans-text entry) (recording-terminal-output terminal))
-                              "the finalized presentation includes the snapshot")
-                 (recording-terminal-reset terminal)
-                 (application-render-records application)
-                 (test-assert (zerop (length (recording-terminal-output terminal)))
-                              "finalization prevents duplicate presentation")
-                 (application-run-message application "Give an ordinary reply.")
-                 (test-assert (= 1 (length (yield-records)))
-                              "nonempty replies do not create yield metadata")
-                 (setf (application-input-controller-queued-work-paused-p controller) t)
-                 (test-assert (zerop (application-job-completions-awaited-count application))
-                              "paused automatic work has no wakeup authority")
-                 (application-run-message application "Finish silently while paused.")
-                 (test-assert (= 1 (length (yield-records)))
-                              "an empty response with no admitted wakeups stays invisible")
-                 (setf (application-input-controller-queued-work-paused-p controller) nil)
-                 ;; Finish between the provider's final persistence and turn finalization.
-                 (let ((present (symbol-function 'application-job-completions-present-yield)))
-                   (test-call-with-function-replacements
-                    (list (list 'application-job-completions-present-yield
-                                (lambda (application details)
-                                  (dotimes (index (length held-jobs))
-                                    (declare (ignorable index))
-                                    (sb-thread:signal-semaphore release))
-                                  (dolist (job held-jobs) (session-job-await job 5))
-                                  (dolist (job (task-completion-awaited-jobs parent))
-                                    (session-job-cancel job ':test)
-                                    (test-assert (nth-value 1 (session-job-await job 5))
-                                                 "queued wakeup cancellation finishes publication"))
-                                  (funcall present application details))))
-                    (lambda () (application-run-message application "Finish as the jobs complete."))))
-                 (test-assert (and (zerop (application-job-completions-awaited-count application))
-                                   (= 1 (length (yield-records))))
-                              "completion before the snapshot cannot invent a running wakeup")
-                 (test-assert (equal entry (conversation-record-entry application record))
-                              "historical replay does not consult completed jobs")
-                 (test-assert (null (conversation-record-entry application '(:assistant-yield :job-count 0)))
-                              "invalid or zero snapshots are invisible")))
+               (application-render-records application)
+               (test-assert (zerop (length (recording-terminal-output terminal)))
+                            "finalization prevents duplicate presentation")
+               (application-run-message application "Give an ordinary reply.")
+               (test-assert (= 1 (length (yield-records)))
+                            "nonempty replies do not create yield metadata")
+               (setf (application-input-controller-queued-work-paused-p controller) t)
+               (test-assert
+                (zerop (application-job-completions-awaited-count application))
+                "paused automatic work has no wakeup authority")
+               (application-run-message application "Finish silently while paused.")
+               (test-assert (= 1 (length (yield-records)))
+                            "an empty response with no admitted wakeups stays invisible")
+               (setf (application-input-controller-queued-work-paused-p controller) nil)
+               ;; Finish between the provider's final persistence and turn finalization.
+               (let ((present
+                      (symbol-function 'application-job-completions-present-yield)))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'application-job-completions-present-yield
+                         (lambda (application details)
+                           (dotimes (index (length held-jobs))
+                             (declare (ignorable index))
+                             (sb-thread:signal-semaphore release))
+                           (dolist (job held-jobs) (session-job-await job 5))
+                           (dolist (job (task-completion-awaited-jobs parent))
+                             (session-job-cancel job ':test)
+                             (test-assert (nth-value 1 (session-job-await job 5))
+                                          "queued wakeup cancellation finishes publication"))
+                           (funcall present application details))))
+                  (lambda ()
+                    (application-run-message application
+                                             "Finish as the jobs complete."))))
+               (test-assert
+                (and (zerop (application-job-completions-awaited-count application))
+                     (= 1 (length (yield-records))))
+                "completion before the snapshot cannot invent a running wakeup")
+               (test-assert (equal entry (conversation-record-entry application record))
+                            "historical replay does not consult completed jobs")
+               (test-assert
+                (null
+                 (conversation-record-entry application
+                                            '(:assistant-yield :job-count 0)))
+                "invalid or zero snapshots are invisible")))
           (dotimes (index (length held-jobs))
             (declare (ignorable index))
             (sb-thread:signal-semaphore release))

@@ -26,43 +26,43 @@
 (defun task-job--compact-result (result &key artifact-available-p)
   "Return a bounded terminal summary of RESULT and its artifact availability."
   (let ((retained
-          (loop for field in
-                  '(:id :name :agent :agent-source :assignment :status
-                    :output :error
-                    :label
-                    :request-count :usage :unknown-usage :duration-ms :model
-                    :reservation-charged-tokens :reservation-charge-requests
-                    :conversation-file :detached :output-path
-                    :undelivered-prompt-count :agent-definition
-                    :worktree :worktree-artifact-path :worktree-error)
-                append (list field (getf result field))))
-        (storage (if artifact-available-p :artifact :omitted)))
-    (flet ((compact-string
-              (field limit &key storage-field characters-field)
+         (loop for field in '(:id :name :assignment :status :output :error :label
+                              :request-count :usage :unknown-usage :duration-ms :model
+                              :reservation-charged-tokens :reservation-charge-requests
+                              :conversation-file :detached :output-path
+                              :undelivered-prompt-count :worktree :worktree-artifact-path
+                              :worktree-error)
+               append (list field (getf result field))))
+        (storage
+         (if artifact-available-p
+             :artifact
+             :omitted)))
+    (flet ((compact-string (field limit &key storage-field characters-field)
              (let ((value (getf retained field)))
                (when (and (stringp value) (> (length value) limit))
-                 (setf (getf retained field)
-                       (task--retained-prefix value limit)
+                 (setf (getf retained field) (task--retained-prefix value limit)
                        (getf retained storage-field) storage
                        (getf retained characters-field) (length value))))))
-      (compact-string :assignment       *task-retained-assignment-limit*
-                      :storage-field    ':assignment-storage
-                      :characters-field ':assignment-characters)
-      (compact-string :output           *task-retained-output-limit*
-                      :storage-field    ':output-storage
-                      :characters-field ':output-characters)
-      (compact-string :error            *task-retained-output-limit*
-                      :storage-field    ':error-storage
-                      :characters-field ':error-characters)
-      (compact-string :worktree-error   *task-retained-output-limit*
-                      :storage-field    ':worktree-error-storage
-                      :characters-field ':worktree-error-characters)
-      (compact-string :label            *task-result-label-maximum-characters*
-                      :storage-field    ':label-storage
-                      :characters-field ':label-characters))
-    (setf (getf retained :usage)
-          (task-progress--usage-summary (getf retained :usage)))
+      (compact-string :assignment *task-retained-assignment-limit* :storage-field
+       ':assignment-storage :characters-field ':assignment-characters)
+      (compact-string :output *task-retained-output-limit* :storage-field
+       ':output-storage :characters-field ':output-characters)
+      (compact-string :error *task-retained-output-limit* :storage-field ':error-storage
+       :characters-field ':error-characters)
+      (compact-string :worktree-error *task-retained-output-limit* :storage-field
+       ':worktree-error-storage :characters-field ':worktree-error-characters)
+      (compact-string :label *task-result-label-maximum-characters* :storage-field
+       ':label-storage :characters-field ':label-characters))
+    (setf (getf retained :usage) (task-progress--usage-summary (getf retained :usage)))
     retained))
+
+(-> task--compact-native-value (t integer) t)
+(defun task--compact-native-value (value limit)
+  "Return native VALUE or a descriptor when its readable form exceeds LIMIT."
+  (let ((characters (length (task--write-readable-sexp value))))
+    (if (<= characters limit)
+        value
+        (list :omitted :characters characters))))
 
 (-> task-job--compact-progress (task-job keyword) null)
 (defun task-job--compact-progress (job state)
@@ -87,53 +87,19 @@
 (defun task-job--compact-item (job)
   "Return the bounded assignment metadata retained for terminal JOB."
   (let ((item (task-job-item job)))
-    (list :name  (getf item :name)
-          :agent (getf item :agent)
-          :task  (task--retained-prefix
-                  (or (getf item :task) "")
-                  *task-retained-assignment-limit*)
+    (list :name (getf item :name) :task
+          (task--retained-prefix (or (getf item :task) "")
+                                 *task-retained-assignment-limit*)
           :async (getf item :async))))
-
-(-> task--compact-native-value (t integer) t)
-(defun task--compact-native-value (value limit)
-  "Return native VALUE or a descriptor when its readable form exceeds LIMIT."
-  (let ((characters (length (task--write-readable-sexp value))))
-    (if (<= characters limit)
-        value
-        (list :omitted :characters characters))))
-
-(-> task--agent-definition-summary (task-agent-definition) list)
-(defun task--agent-definition-summary (definition)
-  "Return compact non-instruction metadata for DEFINITION."
-    (let ((pathname (task-agent-definition-pathname definition)))
-     (list :name     (task-agent-definition-name definition)
-           :source   (task-agent-definition-source definition)
-           :pathname (and pathname (namestring pathname))
-           :tools
-           (task--compact-native-value
-            (task-agent-definition-tools definition) 1000)
-           :spawns
-           (task--compact-native-value
-            (task-agent-definition-spawns definition) 1000)
-           :models
-           (task--compact-native-value
-            (task-agent-definition-models definition) 1000)
-           :reasoning-effort
-           (task-agent-definition-reasoning-effort definition))))
 
 (-> task-job--lifecycle-event (task-job keyword list) list)
 (defun task-job--lifecycle-event (job state result)
   "Return JOB's portable terminal lifecycle event."
-  (list :id                  (job-identifier job)
-        :root                (task-job-root-conversation-identifier job)
-        :execution           (task-job-execution-identifier job)
-        :agent               (task-job-agent-name job)
-        :agent-source        (task-job-agent-source job)
-        :status              state
-        :session-file        (getf result :conversation-file)
-        :parent-tool-call-id (task-job-parent-call-id job)
-        :index               (job-index job)
-        :detached            (task-job-detached-p job)))
+  (list :id (job-identifier job) :root (task-job-root-conversation-identifier job)
+        :execution (task-job-execution-identifier job) :status state :session-file
+        (getf result :conversation-file) :parent-tool-call-id
+        (task-job-parent-call-id job) :index (job-index job) :detached
+        (task-job-detached-p job)))
 
 (-> task-job--terminal-record
     (task-job &key (:state keyword) (:result t) (:report (option string)))
@@ -176,7 +142,7 @@
 
 Runs inside the pool's publication claim, so the result artifact is written exactly
 once however many writers raced for the job. The order matters: a missing result is
-rebuilt while the role is still available, the artifact is written before the result
+rebuilt while the assignment is available, the artifact is written before the result
 is compacted, and the parent session and borrowed capabilities are dropped last.
 
 The child's reported status decides the terminal state, since the pool only sees
@@ -184,35 +150,36 @@ that a body returned. An artifact that cannot be written downgrades the state to
 :FAILED rather than claiming a success whose output nobody can find."
   (let* ((undelivered-prompt-count (task-job-close-steering job))
          (reported                 (and (listp result) (getf result :status)))
-         (final-state              (case reported
-                                     (:success
-                                      :completed)
-                                     (:aborted
-                                      :aborted)
-                                     (:failed
-                                      :failed)
-                                     (otherwise
-                                      state)))
+         (final-state
+          (case reported
+            (:success
+             :completed)
+            (:aborted
+             :aborted)
+            (:failed
+             :failed)
+            (otherwise
+             state)))
          (final-result             (and (listp result) (copy-list result)))
-         (final-report             report)
-         (definition-summary
-           (or (task-job-definition-summary job)
-               (and (task-job-definition job)
-                    (task--agent-definition-summary (task-job-definition job))))))
+         (final-report             report))
     (unless final-result
       (setf final-result
-            (task--failed-result job
-                                 (if (eq final-state :completed)
-                                     :failed
-                                     final-state)
-                                 (or final-report "The child produced no result."))
+              (task--failed-result job
+                                   (if (eq final-state :completed)
+                                       :failed
+                                       final-state)
+                                   (or final-report "The child produced no result."))
             final-state
-            (if (eq final-state :completed) :failed final-state)))
-    (loop for (key value) on (mission-task-job-accounting-summary job) by (lambda (tail) (rest (rest tail)))
+              (if (eq final-state :completed)
+                  :failed
+                  final-state)))
+    (loop for (key value) on (mission-task-job-accounting-summary job) by (lambda (tail)
+                                                                            (rest
+                                                                             (rest
+                                                                              tail)))
           do (setf (getf final-result key) value))
     (when (plusp undelivered-prompt-count)
-      (setf (getf final-result :undelivered-prompt-count)
-            undelivered-prompt-count))
+      (setf (getf final-result :undelivered-prompt-count) undelivered-prompt-count))
     (setf (getf final-result :status)
           (case final-state
             (:completed
@@ -220,45 +187,38 @@ that a body returned. An artifact that cannot be written downgrades the state to
             (:aborted
              :aborted)
             (otherwise
-             :failed))
-          (getf final-result :agent-definition) definition-summary)
+             :failed)))
     (setf final-result (task-worktree-finalize-result job final-result))
-    (when (and (eq final-state ':completed)
-               (eq (getf final-result :status) ':failed))
+    (when (and (eq final-state ':completed) (eq (getf final-result :status) ':failed))
       (setf final-state ':failed))
     (handler-case
-        (setf final-result
-              (append final-result
-                      (list :output-path
-                            (namestring
-                             (task--write-result-artifact job final-result)))))
-      (error (condition)
-        (setf final-state :failed
-              (getf final-result :status) :failed
-              (getf final-result :error)
-              (format nil "Could not persist task artifact: ~A" condition)
-              final-report
-              (or final-report
-                  (bounded-string (princ-to-string condition)
-                                  :limit *task-retained-output-limit*)))))
+     (setf final-result
+             (append final-result
+                     (list :output-path
+                           (namestring (task--write-result-artifact job final-result)))))
+     (error (condition)
+            (setf final-state :failed
+                  (getf final-result :status) :failed
+                  (getf final-result :error)
+                  (format nil "Could not persist task artifact: ~A" condition)
+                  final-report
+                  (or final-report
+                      (bounded-string (princ-to-string condition) :limit
+                                      *task-retained-output-limit*)))))
     (setf final-result
-          (task-job--compact-result final-result
-                                    :artifact-available-p
-                                    (and (getf final-result :output-path) t))
+            (task-job--compact-result final-result :artifact-available-p
+                                      (and (getf final-result :output-path) t))
           final-report
-          (and final-report
-               (bounded-string final-report
-                               :limit *task-retained-output-limit*)))
+            (and final-report
+                 (bounded-string final-report :limit *task-retained-output-limit*)))
     (when (session-job-completion-owner-conversation job)
-      (task-continuity-record-terminal
-       job (task-job-parent-agent job)
-       (list :status      (getf final-result :status)
-             :output-path (getf final-result :output-path))
-       :state final-state))
+      (task-continuity-record-terminal job (task-job-parent-agent job)
+                                       (list :status (getf final-result :status)
+                                             :output-path
+                                             (getf final-result :output-path))
+                                       :state final-state))
     (task-job--compact-progress job final-state)
     (setf (task-job-item job) (task-job--compact-item job)
-          (task-job-definition-summary job) definition-summary
-          (task-job-definition job) nil
           (task-job-parent-agent job) nil
           (task-job-participant-state job) nil
           (task-job-inherited-reference-p job) nil
@@ -715,10 +675,8 @@ live runs for AGENT count too."
        (:tool-authorization-function (option function)))
     (values list list))
 (defun task-orchestrator-start-jobs
-    (orchestrator parent-agent entries
-     &key parent-call-id
-       command-authorization-function
-       tool-authorization-function)
+       (orchestrator parent-agent entries
+        &key parent-call-id command-authorization-function tool-authorization-function)
   "Atomically admit ENTRIES and return jobs plus nested synchronous inline jobs.
 
 A cancelled parent is refused here so the asking agent gets a prompt error.
@@ -726,118 +684,102 @@ Pool admission checks the parent again under the shared ownership lock, making
 that check atomic with cascading cancellation."
   (when (typep parent-agent 'task-child-agent)
     (let ((parent-job (task-child-agent-job parent-agent)))
-      (when (or (job-cancellation-requested-p parent-job)
-                (job-terminal-p parent-job))
+      (when (or (job-cancellation-requested-p parent-job) (job-terminal-p parent-job))
         (task-orchestrator--refuse-cancelled-parent parent-job))))
   (task-orchestrator--check-children-limit orchestrator parent-agent (length entries))
   (let* ((mission-context
-           (let ((context (mission--agent-context parent-agent)))
-             ;; Refuse new work before consuming any session or pool identity.
-             (when context
-               (mission--admit context :inference-p nil :new-work-p t))
-             context))
+          (let ((context (mission--agent-context parent-agent)))
+            ;; Refuse new work before consuming any session or pool identity.
+            (when context (mission--admit context :inference-p nil :new-work-p t))
+            context))
          (count                     (length entries))
-         (session-orders
-           (task-orchestrator-reserve-session-orders orchestrator count))
+         (session-orders            (task-orchestrator-reserve-session-orders orchestrator count))
          (root-conversation-identifier
-           (task-parent-root-conversation-identifier parent-agent))
+          (task-parent-root-conversation-identifier parent-agent))
          (owner-identifiers         (task-parent-owner-identifiers parent-agent))
          (assignment-origin         (task-assignment-origin parent-agent))
          (reference-enabled-entries (make-hash-table :test #'eq))
          (reference-byte-limit      nil)
          (inherited-reference-items nil))
     (dolist (entry entries)
-      (let* ((definition (getf entry :definition))
+      (let* ((item (getf entry :item))
              (child-configuration
-               (task-configuration-for-definition
-                (agent-configuration parent-agent) definition)))
-        (when (and (not (getf entry :independent-context-p))
-                   (task-child-reference-history-p parent-agent child-configuration))
+              (task-child-configuration (agent-configuration parent-agent) item)))
+        (when
+            (and (not (getf entry :independent-context-p))
+                 (task-child-reference-history-p parent-agent child-configuration))
           (when-let ((limit
-                       (task-child-reference-history-byte-limit
-                        child-configuration)))
+                      (task-child-reference-history-byte-limit child-configuration)))
             (setf (gethash entry reference-enabled-entries) t
                   reference-byte-limit
-                  (if reference-byte-limit
-                      (min reference-byte-limit limit)
-                      limit))))))
+                    (if reference-byte-limit
+                        (min reference-byte-limit limit)
+                        limit))))))
     (when reference-byte-limit
       (setf inherited-reference-items
-            (conversation-inherited-reference-snapshot
-             (agent-conversation parent-agent) reference-byte-limit)))
+              (conversation-inherited-reference-snapshot
+               (agent-conversation parent-agent) reference-byte-limit)))
     (let ((pool-entries
-            (mapcar
-             (lambda (entry session-order)
-                (let* ((item (getf entry :item))
-                       (inherited-p
-                         (not (null (gethash entry reference-enabled-entries))))
-                       (nested-synchronous-p
-                         (and (typep parent-agent 'task-child-agent)
-                              (not (getf entry :detached)))))
-                 (list :function                  #'mission-task-job-run
-                        :terminal-result-function (lambda (job state result report)
-                                                    (task-job--terminal-record
-                                                     job :state  state
-                                                         :result result
-                                                         :report report))
-                        :name                     (task-child-name item (getf entry :definition))
-                        ;; A child a child agent waits for runs on the waiting
-                        ;; worker rather than occupying a second one, so a deep
-                        ;; synchronous chain cannot starve the pool.
-                        :inline-only-p            nested-synchronous-p
-                        :owner-identifiers        owner-identifiers
-                        :parent-job               (and (typep parent-agent 'task-child-agent)
-                                                       (task-child-agent-job parent-agent))
-                        :root-identifier          root-conversation-identifier
-                        :initargs
-                        (list :orchestrator          orchestrator
-                              :telemetry-run         (unless (getf entry :detached)
-                                                       (or (getf entry :telemetry-run) *telemetry-run*))
-                              :execution-identifier  (task-execution-identifier-generate
-                                                      (agent-configuration parent-agent)
-                                                      root-conversation-identifier)
-                              :session-order         session-order
-                              :definition            (getf entry :definition)
-                              :item                  item
-                              :parent-agent          parent-agent
-                              :assignment-origin     assignment-origin
-                              :mission-context       mission-context
-                              :review-checkpoint     (getf entry :review-checkpoint)
-                              :inherited-reference-p inherited-p
-                              :inherited-reference-items
-                              (and inherited-p inherited-reference-items)
-                              :parent-call-id        parent-call-id
-                              :completion-owner-conversation
-                              (conversation-identifier (agent-conversation parent-agent))
-                              :completion-owner-participant
-                              (conversation-adopted-participant (agent-conversation parent-agent))
-                              :completion-policy     (or (getf item :completion-policy) ':continue)
-                              :completion-mission-id
-                              (task-completion-mission-identifier parent-agent)
-                              :detached-p            (getf entry :detached)
-                              :command-authorization-function
-                              command-authorization-function
-                              :tool-authorization-function
-                              tool-authorization-function))))
-             entries
-             session-orders)))
+           (mapcar
+            (lambda (entry session-order)
+              (let* ((item        (getf entry :item))
+                     (inherited-p (not (null (gethash entry reference-enabled-entries))))
+                     (nested-synchronous-p
+                      (and (typep parent-agent 'task-child-agent)
+                           (not (getf entry :detached)))))
+                (list :function #'mission-task-job-run :terminal-result-function
+                      (lambda (job state result report)
+                        (task-job--terminal-record job :state state :result result
+                                                   :report report))
+                      ;; A child a child agent waits for runs on the waiting
+                      ;; worker rather than occupying a second one, so a deep
+                      ;; synchronous chain cannot starve the pool.
+                      :name (task-child-name item) :inline-only-p nested-synchronous-p
+                      :owner-identifiers owner-identifiers :parent-job
+                      (and (typep parent-agent 'task-child-agent)
+                           (task-child-agent-job parent-agent))
+                      :root-identifier root-conversation-identifier :initargs
+                      (list :orchestrator orchestrator :telemetry-run
+                            (unless (getf entry :detached)
+                              (or (getf entry :telemetry-run) *telemetry-run*))
+                            :execution-identifier
+                            (task-execution-identifier-generate
+                             (agent-configuration parent-agent)
+                             root-conversation-identifier)
+                            :session-order session-order :item item :parent-agent
+                            parent-agent :assignment-origin assignment-origin
+                            :mission-context mission-context :review-checkpoint
+                            (getf entry :review-checkpoint) :inherited-reference-p
+                            inherited-p :inherited-reference-items
+                            (and inherited-p inherited-reference-items) :parent-call-id
+                            parent-call-id :completion-owner-conversation
+                            (conversation-identifier (agent-conversation parent-agent))
+                            :completion-owner-participant
+                            (conversation-adopted-participant
+                             (agent-conversation parent-agent))
+                            :completion-policy
+                            (or (getf item :completion-policy) ':continue)
+                            :completion-mission-id
+                            (task-completion-mission-identifier parent-agent) :detached-p
+                            (getf entry :detached) :command-authorization-function
+                            command-authorization-function :tool-authorization-function
+                            tool-authorization-function))))
+            entries session-orders)))
       (let ((jobs
-              (with-lock-held ((task-orchestrator-lock orchestrator))
-                (let ((reserved-count
-                        (task-orchestrator--reserve-hurry-up-admission-locked
-                         orchestrator count)))
-                  (handler-case
-                      (job-pool-submit-batch
-                       (task-orchestrator-pool orchestrator) pool-entries)
-                    (job-pool-error (condition)
-                      (task-orchestrator--rollback-hurry-up-admission-locked
-                       orchestrator reserved-count)
-                      (task-orchestrator--refuse-admission
-                       orchestrator condition)))))))
+             (with-lock-held ((task-orchestrator-lock orchestrator))
+               (let ((reserved-count
+                      (task-orchestrator--reserve-hurry-up-admission-locked orchestrator
+                                                                            count)))
+                 (handler-case
+                  (job-pool-submit-batch (task-orchestrator-pool orchestrator)
+                                         pool-entries)
+                  (job-pool-error (condition)
+                   (task-orchestrator--rollback-hurry-up-admission-locked orchestrator
+                                                                          reserved-count)
+                   (task-orchestrator--refuse-admission orchestrator condition)))))))
         (dolist (job jobs)
           (task-continuity-record-job job parent-agent)
-          (when (session-job-detached-p job)
-            (task-completion-watch job parent-agent)))
+          (when (session-job-detached-p job) (task-completion-watch job parent-agent)))
         (values jobs
                 (if (typep parent-agent 'task-child-agent)
                     (remove-if #'task-job-detached-p jobs)

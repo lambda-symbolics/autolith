@@ -578,11 +578,6 @@ Autolith can start *child agents* for implementation, research, design, or revie
 @@brand:you -> primary Autolith -> named children
                         <- results and evidence@@
 
-Use =(child.roles)= to browse available roles.
-
-=.autolith/agents/=       project roles
-=<config-root>/agents/=   user roles
-
 Each child has its own channel. Use =(open)= to visit it.
 
 Steer a running child with =(channel.send :channel "@child-name" :text "...")=. If it has a response for you, you will see it.
@@ -594,7 +589,7 @@ Steer a running child with =(channel.send :channel "@child-name" :text "...")=. 
 :END:
 Ask Autolith to give children *meaningful names*, such as =parser-review= or =release-tests=.
 
-Ask it to *reuse a suitable idle child* for related work. A child keeps its name, role, channel and history between assignments.
+Ask it to *reuse a suitable idle child* for related work. A child keeps its name, channel and history between assignments.
 
 *Remove finished children you no longer need.* Ask Autolith to remove them explicitly.
 Removal deletes the child's channel, history and children nested under it.
@@ -602,25 +597,6 @@ Each agent can have up to 32 children.
 
 =Name the reviewer parser-review and reuse it for later parser changes.=
 =Remove parser-review when we finish this review.=
-
-* Define an agent
-:PROPERTIES:
-:ID: agent-definition
-:VERSION: 1
-:END:
-Here is an example of a custom agent.
-
-You could use this as =.autolith/agents/code-reader.sexp=:
-
-=(:name         "code-reader"
- :description  "Read and explain code."
- :instructions "Read relevant code. Cite files and line numbers."
- :tools        ("resource.read" "search.*"))=
-
-Use =(child.roles)= to find your new role.
-Ask Autolith to start a child with that role.
-
-Customize the role's models, reasoning effort, or spawn policy in the same file.
 
 * Connect external tools and services
 :PROPERTIES:

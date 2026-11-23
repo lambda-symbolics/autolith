@@ -92,7 +92,7 @@
          (opted-in   (make-instance 'tool-test-native-decoder
                                     :namespace "native" :name "opted-in"
                                     :description "Capture custom native input." :parameters schema))
-         (role-input (json-object "limit" 1))
+         (job-input  (json-object "limit" 1))
          (received   nil)
          (executions 0))
     (dolist (tool (list ordinary textual opted-in))
@@ -109,7 +109,7 @@
                    (tool-success "executed")))
            (list 'task-json-normalize
                  (lambda (arguments &key tool-name)
-                   (when (and (eq arguments role-input) (equal tool-name "child.roles"))
+                  (when (and (eq arguments job-input) (equal tool-name "job.list"))
                      (json-object "limit" 2)))))
      (lambda ()
         (let* ((arguments (json-object "label" "input" "corrects_previous" t))
@@ -155,10 +155,10 @@
        (test-assert
         (and (tool-result-success-p
               (tool-registry-execute-native-call
-               registry (json-object "namespace" "child" "name" "roles"
-                                     "arguments" role-input) context))
+               registry (json-object "namespace" "job" "name" "list"
+                                     "arguments" job-input) context))
              (eql (gethash "limit" received) 2))
-        "native child.roles dispatch forwards the arguments through the task JSON policy"))))
+        "native job dispatch forwards arguments through the task JSON policy"))))
   nil)
 
 (-> test-tool-native-result-boundaries () null)

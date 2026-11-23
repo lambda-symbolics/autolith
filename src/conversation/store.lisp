@@ -142,387 +142,225 @@
          (and normalized (string= value normalized)))
        t))
 
-(defclass conversation ()
-  ((identifier
-    :initarg       :identifier
-    :reader        conversation-identifier
-    :type          non-empty-string
-    :documentation "The stable conversation identifier.")
-   (prompt-cache-key
-    :initarg       :prompt-cache-key
-    :initform      nil
-    :accessor      conversation-prompt-cache-key
-    :type          (option non-empty-string)
-    :documentation "The root-lineage key shared by provider prompt caches.")
-   (parent-identifier
-    :initarg       :parent-identifier
-    :initform      nil
-    :reader        conversation-parent-identifier
-    :type          (option non-empty-string)
-    :documentation "The conversation of the agent that created this child agent's conversation, or NIL for a top-level one.")
-   (agent-name
-    :initarg       :agent-name
-    :initform      nil
-    :reader        conversation-agent-name
-    :type          (option non-empty-string)
-    :documentation "The readable name the parent gave this child agent, or NIL for a top-level one.")
-   (role
-    :initarg       :role
-    :initform      nil
-    :reader        conversation-role
-    :type          (option non-empty-string)
-    :documentation "The role this child agent was spawned with, or NIL for a top-level one.")
-   (inbox-p
-    :initarg       :inbox-p
-    :initform      nil
-    :reader        conversation-inbox-p
-    :type          boolean
-    :documentation "Whether this is the history of the person's inbox channel, which no agent ever reads.")
-   (pathname
-    :initarg       :pathname
-    :reader        conversation-pathname
-    :type          pathname
-    :documentation "The stable top-level identity pathname for this conversation.")
-   (log-pathname
-    :initarg       :log-pathname
-    :accessor      conversation-log-pathname
-    :type          pathname
-    :documentation "The active legacy log or deterministic chunk file.")
-   (persisted-p
-    :initarg       :persisted-p
-    :accessor      conversation-persisted-p
-    :type          boolean
-    :documentation "True after the header and first durable record are published.")
-   (incomplete-tail-p
-    :initarg       :incomplete-tail-p
-    :initform      nil
-    :accessor      conversation-incomplete-tail-p
-    :type          boolean
-    :documentation "Whether the next append must repair an interrupted final form.")
-   (log-generation
-    :initform      0
-    :accessor      conversation-log-generation
-    :type          (integer 0)
-    :documentation "The count of active-log replacements since this object loaded.")
-   (append-lock
-    :initform      (make-recursive-lock "Autolith conversation append")
-    :reader        conversation-append-lock
-    :type          t
-    :documentation "The lock serializing durable record sequence assignment.")
-   (created-at
-    :initarg       :created-at
-    :reader        conversation-created-at
-    :type          timestamp
-    :documentation "The creation time as Common Lisp universal time.")
-   (origin-directory
-    :initarg       :origin-directory
-    :initform      nil
-    :reader        conversation-origin-directory
-    :type          (option string)
-    :documentation "The workspace directory in which this conversation began.")
-   (title
-    :initarg       :title
-    :initform      nil
-    :accessor      conversation-title
-    :type          (option non-empty-string)
-    :documentation "The current human-readable session title.")
-   (title-source
-    :initarg       :title-source
-    :initform      nil
-    :accessor      conversation-title-source
-    :type          (member nil :initial :generated)
-    :documentation "Whether the title came from the initial prompt or a later model pass.")
-   (title-refresh-in-progress-p
-    :initform      nil
-    :accessor      conversation-title-refresh-in-progress-p
-    :type          boolean
-    :documentation "Whether this object has reserved the automatic generated-title request.")
-   (model
-    :initarg       :model
-    :initform      nil
-    :accessor      conversation-model
-    :type          (option non-empty-string)
-    :documentation "The provider model most recently selected for this conversation.")
-   (model-provider
-    :initarg       :model-provider
-    :initform      nil
-    :accessor      conversation-model-provider
-    :type          (option non-empty-string)
-    :documentation "The explicit provider selected with this conversation's model.")
-   (reasoning-effort
-    :initarg       :reasoning-effort
-    :initform      nil
-    :accessor      conversation-reasoning-effort
-    :type          (option non-empty-string)
-    :documentation "The reasoning effort most recently selected for this conversation.")
-   (next-sequence
-    :initarg       :next-sequence
-    :accessor      conversation-next-sequence
-    :type          integer
-    :documentation "The sequence number assigned to the next appended event.")
-   (last-aborted-turn-start-sequence
-    :initform      nil
-    :accessor      conversation-last-aborted-turn-start-sequence
-    :type          (option integer)
-    :documentation "The start sequence of the latest turn-aborted marker in memory.")
-   (projection
-    :initarg       :projection
-    :initform      (clinker-transcript:make-projection)
-    :reader        conversation-projection
-    :type          clinker-transcript:projection
-    :documentation "The ordered provider projection and its item metadata.")
-   (adopted-participant
-    :initform      nil
-    :accessor      conversation-adopted-participant
-    :type          (option string)
-    :documentation "The agent whose context the latest context adoption installed, or NIL while the channel's first agent speaks.")
-   (adopted-transition
-    :initform      nil
-    :accessor      conversation-adopted-transition
-    :type          (option string)
-    :documentation "The move whose context the latest context adoption installed, so a retried adoption happens once.")
-   (record-listener
-    :initform      nil
-    :accessor      conversation-record-listener
-    :type          (option function)
-    :documentation "Called with each record this conversation appends, once it is durable; a channel publishes it to its clients.")
-   (ephemeral-input-entries
-    :initform nil
-    :accessor conversation-ephemeral-input-entries
-    :type     list
-    :documentation
-    "Request-local provider items and owned attachments awaiting one response.")
-   (context-anchors
-    :initform nil
-    :accessor conversation-context-anchors
-    :type     list
-    :documentation
-    "Context anchor identities and history boundaries as digests, without instruction bodies.")
-   (context-anchors-loaded-p
-    :initform      nil
-    :accessor      conversation-context-anchors-loaded-p
-    :type          boolean
-    :documentation "Whether the durable context anchors have been read into this object.")
-   (failed-call-ids
-    :initform      (make-hash-table :test #'equal)
-    :reader        conversation-failed-call-ids
-    :type          hash-table
-    :documentation "The call identifiers whose durable tool result failed, for mechanical precompaction.")
-   (request-identity
-    :initform      nil
-    :accessor      conversation-request-identity
-    :type          list
-    :documentation "The provider family and model of the latest provider request in this process.")
-   (prompt-processed-at
-    :initform nil
-    :accessor conversation-prompt-processed-at
-    :type     (option integer)
-    :documentation
-    "When a provider last processed this conversation's prompt in this process, as universal time.")
-   (last-response
-    :initform nil
-    :accessor conversation-last-response
-    :type     list
-    :documentation
-    "The request identity and universal time of the latest durable completed response.")
-   (image-artifact-names
-    :initform      (make-hash-table :test #'equal)
-    :reader        conversation-image-artifact-names
-    :type          hash-table
-    :documentation "The basenames of image artifacts referenced by durable records.")
-   (image-artifact-manifest-complete-p
-    :initform      t
-    :accessor      conversation-image-artifact-manifest-complete-p
-    :type          boolean
-    :documentation "Whether image references cover every retained durable segment.")
-   (image-artifact-repair-pending-p
-    :initform      nil
-    :accessor      conversation-image-artifact-repair-pending-p
-    :type          boolean
-    :documentation "Whether optional maintenance must repair archival image references.")
-   (image-artifact-maintenance-diagnostics
-    :initform      nil
-    :accessor      conversation-image-artifact-maintenance-diagnostics
-    :type          list
-    :documentation "Local failures from optional image maintenance, separate from loading.")
-   (resource-observations
-    :initform (make-fifo-cache
-               :test            #'equal
-               :weight-function #'resource-observation-state-weight)
-    :reader   conversation-resource-observations
-    :type     fifo-cache
-    :documentation
-    "Transient model-visible resource revisions in FIFO insertion order.")
-   (resource-observation-lock
-    :initform (make-recursive-lock "Autolith resource observations")
-    :reader   conversation-resource-observation-lock
-    :type     t
-    :documentation
-    "The lock serializing transient resource observations and gated edits.")
-   (resumed-p
-    :initform nil
-    :accessor conversation-resumed-p
-    :type     boolean
-    :documentation
-    "Whether this object was loaded from durable storage and the model has
+(defclass conversation nil
+          ((identifier :initarg :identifier :reader conversation-identifier :type
+            non-empty-string :documentation "The stable conversation identifier.")
+           (prompt-cache-key :initarg :prompt-cache-key :initform nil :accessor
+            conversation-prompt-cache-key :type (option non-empty-string) :documentation
+            "The root-lineage key shared by provider prompt caches.")
+           (parent-identifier :initarg :parent-identifier :initform nil :reader
+            conversation-parent-identifier :type (option non-empty-string) :documentation
+            "The conversation of the agent that created this child agent's conversation, or NIL for a top-level one.")
+           (agent-name :initarg :agent-name :initform nil :reader conversation-agent-name
+            :type (option non-empty-string) :documentation
+            "The readable name the parent gave this child agent, or NIL for a top-level one.")
+           (tool-grants :initarg :tool-grants :initform ':all :reader
+            conversation-tool-grants :type t :documentation
+            "Direct tool grants recorded for this conversation's execution.")
+           (inbox-p :initarg :inbox-p :initform nil :reader conversation-inbox-p :type
+            boolean :documentation
+            "Whether this is the history of the person's inbox channel, which no agent ever reads.")
+           (pathname :initarg :pathname :reader conversation-pathname :type pathname
+                     :documentation
+                     "The stable top-level identity pathname for this conversation.")
+           (log-pathname :initarg :log-pathname :accessor conversation-log-pathname :type
+            pathname :documentation "The active legacy log or deterministic chunk file.")
+           (persisted-p :initarg :persisted-p :accessor conversation-persisted-p :type
+            boolean :documentation
+            "True after the header and first durable record are published.")
+           (incomplete-tail-p :initarg :incomplete-tail-p :initform nil :accessor
+            conversation-incomplete-tail-p :type boolean :documentation
+            "Whether the next append must repair an interrupted final form.")
+           (log-generation :initform 0 :accessor conversation-log-generation :type
+            (integer 0) :documentation
+            "The count of active-log replacements since this object loaded.")
+           (append-lock :initform (make-recursive-lock "Autolith conversation append")
+            :reader conversation-append-lock :type t :documentation
+            "The lock serializing durable record sequence assignment.")
+           (created-at :initarg :created-at :reader conversation-created-at :type
+            timestamp :documentation "The creation time as Common Lisp universal time.")
+           (origin-directory :initarg :origin-directory :initform nil :reader
+            conversation-origin-directory :type (option string) :documentation
+            "The workspace directory in which this conversation began.")
+           (title :initarg :title :initform nil :accessor conversation-title :type
+            (option non-empty-string) :documentation
+            "The current human-readable session title.")
+           (title-source :initarg :title-source :initform nil :accessor
+            conversation-title-source :type (member nil :initial :generated)
+            :documentation
+            "Whether the title came from the initial prompt or a later model pass.")
+           (title-refresh-in-progress-p :initform nil :accessor
+            conversation-title-refresh-in-progress-p :type boolean :documentation
+            "Whether this object has reserved the automatic generated-title request.")
+           (model :initarg :model :initform nil :accessor conversation-model :type
+            (option non-empty-string) :documentation
+            "The provider model most recently selected for this conversation.")
+           (model-provider :initarg :model-provider :initform nil :accessor
+            conversation-model-provider :type (option non-empty-string) :documentation
+            "The explicit provider selected with this conversation's model.")
+           (reasoning-effort :initarg :reasoning-effort :initform nil :accessor
+            conversation-reasoning-effort :type (option non-empty-string) :documentation
+            "The reasoning effort most recently selected for this conversation.")
+           (next-sequence :initarg :next-sequence :accessor conversation-next-sequence
+            :type integer :documentation
+            "The sequence number assigned to the next appended event.")
+           (last-aborted-turn-start-sequence :initform nil :accessor
+            conversation-last-aborted-turn-start-sequence :type (option integer)
+            :documentation
+            "The start sequence of the latest turn-aborted marker in memory.")
+           (projection :initarg :projection :initform
+            (clinker-transcript:make-projection) :reader conversation-projection :type
+            clinker-transcript:projection :documentation
+            "The ordered provider projection and its item metadata.")
+           (adopted-participant :initform nil :accessor conversation-adopted-participant
+            :type (option string) :documentation
+            "The agent whose context the latest context adoption installed, or NIL while the channel's first agent speaks.")
+           (adopted-transition :initform nil :accessor conversation-adopted-transition
+            :type (option string) :documentation
+            "The move whose context the latest context adoption installed, so a retried adoption happens once.")
+           (record-listener :initform nil :accessor conversation-record-listener :type
+            (option function) :documentation
+            "Called with each record this conversation appends, once it is durable; a channel publishes it to its clients.")
+           (ephemeral-input-entries :initform nil :accessor
+            conversation-ephemeral-input-entries :type list :documentation
+            "Request-local provider items and owned attachments awaiting one response.")
+           (context-anchors :initform nil :accessor conversation-context-anchors :type
+            list :documentation
+            "Context anchor identities and history boundaries as digests, without instruction bodies.")
+           (context-anchors-loaded-p :initform nil :accessor
+            conversation-context-anchors-loaded-p :type boolean :documentation
+            "Whether the durable context anchors have been read into this object.")
+           (failed-call-ids :initform (make-hash-table :test #'equal) :reader
+            conversation-failed-call-ids :type hash-table :documentation
+            "The call identifiers whose durable tool result failed, for mechanical precompaction.")
+           (request-identity :initform nil :accessor conversation-request-identity :type
+            list :documentation
+            "The provider family and model of the latest provider request in this process.")
+           (prompt-processed-at :initform nil :accessor conversation-prompt-processed-at
+            :type (option integer) :documentation
+            "When a provider last processed this conversation's prompt in this process, as universal time.")
+           (last-response :initform nil :accessor conversation-last-response :type list
+            :documentation
+            "The request identity and universal time of the latest durable completed response.")
+           (image-artifact-names :initform (make-hash-table :test #'equal) :reader
+            conversation-image-artifact-names :type hash-table :documentation
+            "The basenames of image artifacts referenced by durable records.")
+           (image-artifact-manifest-complete-p :initform t :accessor
+            conversation-image-artifact-manifest-complete-p :type boolean :documentation
+            "Whether image references cover every retained durable segment.")
+           (image-artifact-repair-pending-p :initform nil :accessor
+            conversation-image-artifact-repair-pending-p :type boolean :documentation
+            "Whether optional maintenance must repair archival image references.")
+           (image-artifact-maintenance-diagnostics :initform nil :accessor
+            conversation-image-artifact-maintenance-diagnostics :type list :documentation
+            "Local failures from optional image maintenance, separate from loading.")
+           (resource-observations :initform
+            (make-fifo-cache :test #'equal :weight-function
+                             #'resource-observation-state-weight)
+            :reader conversation-resource-observations :type fifo-cache :documentation
+            "Transient model-visible resource revisions in FIFO insertion order.")
+           (resource-observation-lock :initform
+            (make-recursive-lock "Autolith resource observations") :reader
+            conversation-resource-observation-lock :type t :documentation
+            "The lock serializing transient resource observations and gated edits.")
+           (resumed-p :initform nil :accessor conversation-resumed-p :type boolean
+            :documentation
+            "Whether this object was loaded from durable storage and the model has
 not yet been told that work from the previous process is gone.")
-   (resume-note-turn
-    :initform nil
-    :accessor conversation-resume-note-turn
-    :type     (option (integer 0))
-    :documentation
-    "The user-turn count during which the resume note is being delivered.")
-   (anthropic-request-state
-    :initform      nil
-    :accessor      conversation-anthropic-request-state
-    :type          list
-    :documentation "Transient candidate and dispatched prefix for one uninterrupted Anthropic tool loop.")
-   (anthropic-rejected-thinking
-    :initform      nil
-    :accessor      conversation-anthropic-rejected-thinking
-    :type          list
-    :documentation "At most 32 signature digests specifically rejected by Anthropic prefix binding.")
-   (context-usage-sample
-    :initform       nil
-    :accessor       conversation-context-usage-sample
-    :type           list
-     :documentation "Portable ordinary usage evidence, revalidated against retained history and encoded request fingerprints before reuse.")
-   (last-total-tokens
-    :initform      0
-    :accessor      conversation-last-total-tokens
-    :type          (integer 0)
-    :documentation "The total token usage reported by the newest provider step.")
-   (last-activity-at
-    :initform      nil
-    :accessor      conversation-last-activity-at
-    :type          (option timestamp)
-    :documentation "The newest timestamp observed in a durable record.")
-   (user-turn-count
-    :initform      0
-    :accessor      conversation-user-turn-count
-    :type          (integer 0)
-    :documentation "The number of durable user message records.")
-   (message-count
-    :initform      0
-    :accessor      conversation-message-count
-    :type          (integer 0)
-    :documentation "The number of durable messages: user input, channel deliveries and assistant replies.")
-   (channel-mention-counts
-    :initform      (make-hash-table :test #'equal)
-    :reader        conversation-channel-mention-counts
-    :type          hash-table
-    :documentation "How many channel deliveries mentioned each participant, by identifier.")
-   (working-seconds
-    :initform 0
-    :accessor conversation-working-seconds
-    :type     (integer 0)
-    :documentation
-    "Accumulated seconds of agent work, excluding gaps before user messages.")
-   (picker-search-message-count
-    :initform      0
-    :accessor      conversation-picker-search-message-count
-    :type          (integer 0)
-    :documentation "The count of durable user and assistant search messages.")
-   (pending-input-identifiers
-    :initform      nil
-    :accessor      conversation-durable-pending-input-identifiers
-    :type          list
-    :documentation "Durable pending-input identifiers, newest first.")
-   (pending-input-identifier-index
-    :initform      (make-hash-table :test #'equal :synchronized t)
-    :reader        conversation-pending-input-identifier-index
-    :type          hash-table
-    :documentation "The durable pending-input identifiers as a set, for constant-time checks.")
-   (picker-preview
-    :initform      nil
-    :accessor      conversation-picker-preview
-    :type          (option string)
-    :documentation "The newest user or assistant text retained for conversation pickers.")
-   (user-operation-records
-    :initform (make-deque
-               :maximum-count  16
-               :weight-function
-               (lambda (record)
-                 (let ((properties (rest record)))
-                   (+ (length (getf properties :source))
-                      (length (getf properties :result)))))
-               :maximum-weight 32000)
-    :reader   conversation-user-operation-records
-    :type     deque
-    :documentation
-    "Recent bounded local user operations in chronological durable order.")
-   (maintenance-running-p
-    :initform      nil
-    :accessor      conversation-maintenance-running-p
-    :type          boolean
-    :documentation "Whether a managed optimistic projection repair owns cache publication.")
-   (input-history-index-metadata
-    :initform      nil
-    :accessor      conversation-input-history-index-metadata
-    :type          list
-    :documentation "The constant-size manifest for maintained sparse input offsets.")
-   (input-history-repair-pending-p
-    :initform      nil
-    :accessor      conversation-input-history-repair-pending-p
-    :type          boolean
-    :documentation "Whether optional maintenance must rebuild editable input recall.")
-   (input-history-prior-sequence
-    :initform      0
-    :accessor      conversation-input-history-prior-sequence
-    :type          (integer 0)
-    :documentation "The authoritative last input sequence before the latest observed input.")
-   (input-history-loaded-p
-    :initform      nil
-    :initarg       :input-history-loaded-p
-    :accessor      conversation-input-history-loaded-p
-    :type          boolean
-    :documentation "Whether this heap validated the complete input-only sidecar.")
-   (input-history-indexed-sequence
-    :initform      0
-    :accessor      conversation-input-history-indexed-sequence
-    :type          (integer 0)
-    :documentation "Newest editable input durably indexed in the sidecar.")
-   (input-history-last-sequence
-    :initform      0
-    :accessor      conversation-input-history-last-sequence
-    :type          (integer 0)
-    :documentation "Newest editable input observed in authoritative conversation records.")
-   (prompt-cache-usage
-    :initform      nil
-    :accessor      conversation-prompt-cache-usage
-    :type          list
-    :documentation "Newest numeric prompt and cached-input usage, or NIL when unknown.")
-   (usage-totals
-    :initform      (list 0 0 0 0 0 nil)
-    :accessor      conversation-usage-totals
-    :type          list
-    :documentation "Summed provider usage as (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), or NIL when unknown.")
-   (usage-lock
-    :initform      (make-lock "Autolith conversation usage migration")
-    :reader        conversation--usage-lock
-    :type          t
-    :documentation "Serializes legacy usage scans without blocking durable appends.")
-   (usage-since
-    :initform      nil
-    :accessor      conversation--usage-since
-    :type          list
-    :documentation "Usage noted while a history scan computes the totals, or NIL when no scan runs.")
-   (usage-sources
-    :initform      nil
-    :accessor      conversation--usage-sources
-    :type          list
-    :documentation "Filesystem identities captured for the running legacy usage scan.")
-   (pending-async-lisp-events
-    :initform      (make-deque)
-    :accessor      conversation-pending-async-lisp-events
-    :type          deque
-    :documentation "Durable asynchronous Lisp events awaiting provider projection.")
-   (latest-goal-record
-    :initform      nil
-    :accessor      conversation-latest-goal-record
-    :type          (option list)
-    :documentation "The newest durable goal record observed in this conversation."))
-  (:documentation "An append-only conversation and its provider projection."))
+           (resume-note-turn :initform nil :accessor conversation-resume-note-turn :type
+            (option (integer 0)) :documentation
+            "The user-turn count during which the resume note is being delivered.")
+           (anthropic-request-state :initform nil :accessor
+            conversation-anthropic-request-state :type list :documentation
+            "Transient candidate and dispatched prefix for one uninterrupted Anthropic tool loop.")
+           (anthropic-rejected-thinking :initform nil :accessor
+            conversation-anthropic-rejected-thinking :type list :documentation
+            "At most 32 signature digests specifically rejected by Anthropic prefix binding.")
+           (context-usage-sample :initform nil :accessor
+            conversation-context-usage-sample :type list :documentation
+            "Portable ordinary usage evidence, revalidated against retained history and encoded request fingerprints before reuse.")
+           (last-total-tokens :initform 0 :accessor conversation-last-total-tokens :type
+            (integer 0) :documentation
+            "The total token usage reported by the newest provider step.")
+           (last-activity-at :initform nil :accessor conversation-last-activity-at :type
+            (option timestamp) :documentation
+            "The newest timestamp observed in a durable record.")
+           (user-turn-count :initform 0 :accessor conversation-user-turn-count :type
+            (integer 0) :documentation "The number of durable user message records.")
+           (message-count :initform 0 :accessor conversation-message-count :type
+            (integer 0) :documentation
+            "The number of durable messages: user input, channel deliveries and assistant replies.")
+           (channel-mention-counts :initform (make-hash-table :test #'equal) :reader
+            conversation-channel-mention-counts :type hash-table :documentation
+            "How many channel deliveries mentioned each participant, by identifier.")
+           (working-seconds :initform 0 :accessor conversation-working-seconds :type
+            (integer 0) :documentation
+            "Accumulated seconds of agent work, excluding gaps before user messages.")
+           (picker-search-message-count :initform 0 :accessor
+            conversation-picker-search-message-count :type (integer 0) :documentation
+            "The count of durable user and assistant search messages.")
+           (pending-input-identifiers :initform nil :accessor
+            conversation-durable-pending-input-identifiers :type list :documentation
+            "Durable pending-input identifiers, newest first.")
+           (pending-input-identifier-index :initform
+            (make-hash-table :test #'equal :synchronized t) :reader
+            conversation-pending-input-identifier-index :type hash-table :documentation
+            "The durable pending-input identifiers as a set, for constant-time checks.")
+           (picker-preview :initform nil :accessor conversation-picker-preview :type
+            (option string) :documentation
+            "The newest user or assistant text retained for conversation pickers.")
+           (user-operation-records :initform
+            (make-deque :maximum-count 16 :weight-function
+                        (lambda (record)
+                          (let ((properties (rest record)))
+                            (+ (length (getf properties :source))
+                               (length (getf properties :result)))))
+                        :maximum-weight 32000)
+            :reader conversation-user-operation-records :type deque :documentation
+            "Recent bounded local user operations in chronological durable order.")
+           (maintenance-running-p :initform nil :accessor
+            conversation-maintenance-running-p :type boolean :documentation
+            "Whether a managed optimistic projection repair owns cache publication.")
+           (input-history-index-metadata :initform nil :accessor
+            conversation-input-history-index-metadata :type list :documentation
+            "The constant-size manifest for maintained sparse input offsets.")
+           (input-history-repair-pending-p :initform nil :accessor
+            conversation-input-history-repair-pending-p :type boolean :documentation
+            "Whether optional maintenance must rebuild editable input recall.")
+           (input-history-prior-sequence :initform 0 :accessor
+            conversation-input-history-prior-sequence :type (integer 0) :documentation
+            "The authoritative last input sequence before the latest observed input.")
+           (input-history-loaded-p :initform nil :initarg :input-history-loaded-p
+            :accessor conversation-input-history-loaded-p :type boolean :documentation
+            "Whether this heap validated the complete input-only sidecar.")
+           (input-history-indexed-sequence :initform 0 :accessor
+            conversation-input-history-indexed-sequence :type (integer 0) :documentation
+            "Newest editable input durably indexed in the sidecar.")
+           (input-history-last-sequence :initform 0 :accessor
+            conversation-input-history-last-sequence :type (integer 0) :documentation
+            "Newest editable input observed in authoritative conversation records.")
+           (prompt-cache-usage :initform nil :accessor conversation-prompt-cache-usage
+            :type list :documentation
+            "Newest numeric prompt and cached-input usage, or NIL when unknown.")
+           (usage-totals :initform (list 0 0 0 0 0 nil) :accessor
+            conversation-usage-totals :type list :documentation
+            "Summed provider usage as (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), or NIL when unknown.")
+           (usage-lock :initform (make-lock "Autolith conversation usage migration")
+            :reader conversation--usage-lock :type t :documentation
+            "Serializes legacy usage scans without blocking durable appends.")
+           (usage-since :initform nil :accessor conversation--usage-since :type list
+            :documentation
+            "Usage noted while a history scan computes the totals, or NIL when no scan runs.")
+           (usage-sources :initform nil :accessor conversation--usage-sources :type list
+            :documentation
+            "Filesystem identities captured for the running legacy usage scan.")
+           (pending-async-lisp-events :initform (make-deque) :accessor
+            conversation-pending-async-lisp-events :type deque :documentation
+            "Durable asynchronous Lisp events awaiting provider projection.")
+           (latest-goal-record :initform nil :accessor conversation-latest-goal-record
+            :type (option list) :documentation
+            "The newest durable goal record observed in this conversation."))
+          (:documentation "An append-only conversation and its provider projection."))
 
 (defmethod initialize-instance
     :after ((conversation conversation) &key (input-items nil supplied-p) &allow-other-keys)
@@ -1062,61 +900,53 @@ the participants it mentions."
 (-> conversation--header-record
     (conversation &key (:chunk-start-sequence (integer 1)))
     list)
-(defun conversation--header-record
-    (conversation &key (chunk-start-sequence 1))
+(defun conversation--header-record (conversation &key (chunk-start-sequence 1))
   "Return a self-contained portable chunk header for CONVERSATION.
 
 Only a child agent's conversation names its parent and itself, and only the
 person's inbox says it is one."
-  (list* :conversation
-        :version 2
-        :id                   (conversation-identifier conversation)
-        :created-at           (conversation-created-at conversation)
-        :directory            (conversation-origin-directory conversation)
-        :prompt-cache-key     (conversation-prompt-cache-key conversation)
-        :title                (conversation-title conversation)
-        :title-source         (conversation-title-source conversation)
-        :model                (conversation-model conversation)
-        :model-provider       (conversation-model-provider conversation)
-        :reasoning-effort     (conversation-reasoning-effort conversation)
-        :chunk-start-sequence chunk-start-sequence
-        :image-artifact-manifest
-        (when (conversation-image-artifact-manifest-complete-p conversation)
-          (list :complete-p t
-                :names      (loop for name being the hash-keys
-                                    of (conversation-image-artifact-names conversation)
-                                  collect name)))
-        :working-seconds      (conversation-working-seconds conversation)
-        :user-turn-count      (conversation-user-turn-count conversation)
-        :last-activity-at     (conversation-last-activity-at conversation)
-        :picker-search-message-count
-        (conversation-picker-search-message-count conversation)
-        :picker-preview
-        (let ((preview (conversation-picker-preview conversation)))
-          (and preview (copy-seq preview)))
-        :pending-input-identifiers
-        (reverse (mapcar #'copy-seq
-                         (conversation-durable-pending-input-identifiers conversation)))
-        :user-operation-records
-        (copy-tree (deque->list
-                    (conversation-user-operation-records conversation)))
-        :input-history-last-sequence
-        (if (= chunk-start-sequence 1)
-            0
-            (conversation-input-history-last-sequence conversation))
-        :prompt-cache-usage   (copy-tree (conversation-prompt-cache-usage conversation))
-        :usage-totals         (copy-list (conversation-usage-totals conversation))
-        :pending-async-lisp-events
-        (copy-tree (deque->list
-                    (conversation-pending-async-lisp-events conversation)))
-        :latest-goal-record
-        (copy-tree (conversation-latest-goal-record conversation))
-        (append (and (conversation-parent-identifier conversation)
-                     (list :parent     (conversation-parent-identifier conversation)
-                           :agent-name (conversation-agent-name conversation)
-                           :role       (conversation-role conversation)))
-                (and (conversation-inbox-p conversation)
-                     (list :inbox-p t)))))
+  (list* :conversation :version 2 :id (conversation-identifier conversation) :created-at
+         (conversation-created-at conversation) :directory
+         (conversation-origin-directory conversation) :prompt-cache-key
+         (conversation-prompt-cache-key conversation) :title
+         (conversation-title conversation) :title-source
+         (conversation-title-source conversation) :model
+         (conversation-model conversation) :model-provider
+         (conversation-model-provider conversation) :reasoning-effort
+         (conversation-reasoning-effort conversation) :chunk-start-sequence
+         chunk-start-sequence :image-artifact-manifest
+         (when (conversation-image-artifact-manifest-complete-p conversation)
+           (list :complete-p t :names
+                 (loop for name being the hash-keys of (conversation-image-artifact-names
+                                                        conversation)
+                       collect name)))
+         :working-seconds (conversation-working-seconds conversation) :user-turn-count
+         (conversation-user-turn-count conversation) :last-activity-at
+         (conversation-last-activity-at conversation) :picker-search-message-count
+         (conversation-picker-search-message-count conversation) :picker-preview
+         (let ((preview (conversation-picker-preview conversation)))
+           (and preview (copy-seq preview)))
+         :pending-input-identifiers
+         (reverse
+          (mapcar #'copy-seq
+                  (conversation-durable-pending-input-identifiers conversation)))
+         :user-operation-records
+         (copy-tree (deque->list (conversation-user-operation-records conversation)))
+         :input-history-last-sequence
+         (if (= chunk-start-sequence 1)
+             0
+             (conversation-input-history-last-sequence conversation))
+         :prompt-cache-usage (copy-tree (conversation-prompt-cache-usage conversation))
+         :usage-totals       (copy-list (conversation-usage-totals conversation))
+         :pending-async-lisp-events
+         (copy-tree (deque->list (conversation-pending-async-lisp-events conversation)))
+         :latest-goal-record (copy-tree (conversation-latest-goal-record conversation))
+         (append
+          (and (conversation-parent-identifier conversation)
+               (list :parent (conversation-parent-identifier conversation) :agent-name
+                     (conversation-agent-name conversation) :tool-grants
+                     (conversation-tool-grants conversation)))
+          (and (conversation-inbox-p conversation) (list :inbox-p t)))))
 
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
 (defun conversation--initial-publication-lock-pathname (conversation)
@@ -1440,69 +1270,50 @@ The revision is durable source coordination, not a regenerable search payload."
   index)
 
 (-> conversation-create
-    (configuration &key (:identifier (option string))
-                        (:prompt-cache-key (option string))
-                        (:storage-root (option pathname))
-                        (:created-at (option timestamp))
-                        (:parent-identifier (option string))
-                        (:agent-name (option string))
-                        (:role (option string))
-                        (:inbox-p boolean)
-                        (:origin-directory (option string)))
+    (configuration &key (:identifier (option string)) (:prompt-cache-key (option string))
+     (:storage-root (option pathname)) (:created-at (option timestamp))
+     (:parent-identifier (option string)) (:agent-name (option string)) (:tool-grants t)
+     (:inbox-p boolean) (:origin-directory (option string)))
     conversation)
 (defun conversation-create
-    (configuration &key identifier prompt-cache-key storage-root created-at
-                        parent-identifier agent-name role inbox-p origin-directory)
-  "Create an in-memory conversation that persists under optional STORAGE-ROOT.
+                  (configuration
+                   &key identifier prompt-cache-key storage-root created-at parent-identifier
+                   agent-name (tool-grants ':all) inbox-p origin-directory)
+                  "Create an in-memory conversation that persists under optional STORAGE-ROOT.
 
-A child agent's conversation records PARENT-IDENTIFIER, the conversation of
-the agent that created it, AGENT-NAME, the name it was given, and ROLE, the
-role it was spawned with. INBOX-P
-marks the history of the person's inbox channel. ORIGIN-DIRECTORY replaces
-the configured working directory as the directory it began in."
-  (let* ((created-at       (or created-at (get-universal-time)))
-         (root             (conversation-cache-register-root
-                            (uiop:ensure-directory-pathname
-                             (or storage-root
-                                 (configuration-conversation-root configuration)))
-                            (config :cache-root configuration)))
-         (conversation-id
-           (conversation-identifier-validate-path-component
-            (or identifier
-                (conversation-identifier-generate root :timestamp created-at))))
-         (origin-directory (or origin-directory
-                               (namestring (config :working-directory configuration))))
-         (identity         (merge-pathnames
-                            (make-pathname :name conversation-id :type "sexp")
-                            root))
-         (log-pathname     (conversation-chunk-pathname identity 1)))
-    (when (conversation-storage-occupied-p identity)
-      (error 'conversation-error
-             :message  (format nil "Conversation ~A already exists." conversation-id)
-             :pathname identity
-             :sequence nil))
-    (make-instance 'conversation
-                   :identifier             conversation-id
-                   :prompt-cache-key       prompt-cache-key
-                   :parent-identifier      parent-identifier
-                   :agent-name             agent-name
-                   :role                   role
-                   :inbox-p                inbox-p
-                   :pathname               identity
-                   :log-pathname           log-pathname
-                   :persisted-p            nil
-                   :input-history-loaded-p t
-                   :incomplete-tail-p      nil
-                   :created-at             created-at
-                   :origin-directory       origin-directory
-                   :model                  (config :model configuration)
-                   :model-provider
-                   (let ((name (config :model-provider configuration)))
-                     (and (non-empty-string-p name) name))
-                   :reasoning-effort
-                   (config :reasoning-effort configuration)
-                   :next-sequence          1
-                   :input-items            nil)))
+A child's conversation records its PARENT-IDENTIFIER, AGENT-NAME, and direct
+TOOL-GRANTS. INBOX-P marks the history of the person's inbox channel.
+ORIGIN-DIRECTORY replaces the configured working directory as the directory
+it began in."
+                  (let* ((created-at   (or created-at (get-universal-time)))
+                         (root
+                          (conversation-cache-register-root
+                           (uiop/pathname:ensure-directory-pathname
+                            (or storage-root (configuration-conversation-root configuration)))
+                           (config :cache-root configuration)))
+                         (conversation-id
+                          (conversation-identifier-validate-path-component
+                           (or identifier
+                               (conversation-identifier-generate root :timestamp created-at))))
+                         (origin-directory
+                          (or origin-directory (namestring (config :working-directory configuration))))
+                         (identity
+                          (merge-pathnames (make-pathname :name conversation-id :type "sexp") root))
+                         (log-pathname (conversation-chunk-pathname identity 1)))
+                    (when (conversation-storage-occupied-p identity)
+                      (error 'conversation-error :message
+                             (format nil "Conversation ~A already exists." conversation-id) :pathname
+                             identity :sequence nil))
+                    (make-instance 'conversation :identifier conversation-id :prompt-cache-key
+                                   prompt-cache-key :parent-identifier parent-identifier :agent-name
+                                   agent-name :inbox-p inbox-p :pathname identity :log-pathname
+                                   log-pathname :persisted-p nil :input-history-loaded-p t
+                                   :incomplete-tail-p nil :created-at created-at :origin-directory
+                                   origin-directory :model (config :model configuration) :model-provider
+                                   (let ((name (config :model-provider configuration)))
+                                     (and (non-empty-string-p name) name))
+                                   :reasoning-effort (config :reasoning-effort configuration)
+                                   :next-sequence 1 :input-items nil :tool-grants tool-grants)))
 
 (-> conversation--repair-incomplete-tail (conversation) null)
 (defun conversation--repair-incomplete-tail (conversation)
@@ -3894,15 +3705,13 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
 (defun conversation--from-header (identity log-pathname header)
   "Validate HEADER and return its empty resumable conversation projection."
   (flet ((invalid (message)
-           (error 'conversation-invariant-error
-                  :message  message
-                  :pathname identity
+           (error 'conversation-invariant-error :message message :pathname identity
                   :sequence nil)))
-    (unless (and (conversation--record-form-p header)
-                 (eq (first header) :conversation)
-                 (member (getf (rest header) :version) '(1 2))
-                 (non-empty-string-p (getf (rest header) :id))
-                 (typep (getf (rest header) :created-at) 'timestamp))
+    (unless
+        (and (conversation--record-form-p header) (eq (first header) :conversation)
+             (member (getf (rest header) :version) '(1 2))
+             (non-empty-string-p (getf (rest header) :id))
+             (typep (getf (rest header) :created-at) 'timestamp))
       (invalid "The conversation header is missing or unsupported."))
     (let* ((properties          (rest header))
            (version             (getf properties :version))
@@ -3910,131 +3719,111 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
            (identity-identifier (pathname-name identity))
            (directory           (getf properties :directory))
            (title               (and (= version 2) (getf properties :title)))
-           (normalized-title
-             (and (stringp title)
-                  (conversation-title-normalize title)))
+           (normalized-title    (and (stringp title) (conversation-title-normalize title)))
            (title-source        (and (= version 2) (getf properties :title-source)))
            (model               (getf properties :model))
            (model-provider      (getf properties :model-provider))
            (reasoning-effort    (getf properties :reasoning-effort))
            (prompt-cache-key    (getf properties :prompt-cache-key))
            (chunk-start-sequence
-             (if (= version 2)
-                 (getf properties :chunk-start-sequence)
-                 1))
+            (if (= version 2)
+                (getf properties :chunk-start-sequence)
+                1))
            (working-seconds
-             (if (= version 2)
-                 (getf properties :working-seconds)
-                 0))
+            (if (= version 2)
+                (getf properties :working-seconds)
+                0))
            (user-turn-count
-             (if (= version 2)
-                 (getf properties :user-turn-count)
-                 0))
-           (last-activity-at
-             (and (= version 2)
-                  (getf properties :last-activity-at)))
+            (if (= version 2)
+                (getf properties :user-turn-count)
+                0))
+           (last-activity-at    (and (= version 2) (getf properties :last-activity-at)))
            (search-message-count
-             (if (= version 2)
-                 (getf properties :picker-search-message-count)
-                 0))
-           (preview
-             (and (= version 2)
-                  (getf properties :picker-preview)))
+            (if (= version 2)
+                (getf properties :picker-search-message-count)
+                0))
+           (preview             (and (= version 2) (getf properties :picker-preview)))
            (pending-identifiers
-             (if (= version 2)
-                 (getf properties :pending-input-identifiers)
-                 nil))
+            (if (= version 2)
+                (getf properties :pending-input-identifiers)
+                nil))
            (user-operation-records
-             (if (= version 2)
-                 (getf properties :user-operation-records)
-                 nil))
+            (if (= version 2)
+                (getf properties :user-operation-records)
+                nil))
            (pending-async-lisp-events
-             (if (= version 2)
-                 (getf properties :pending-async-lisp-events)
-                 nil))
-           (latest-goal-record
-             (and (= version 2)
-                  (getf properties :latest-goal-record)))
+            (if (= version 2)
+                (getf properties :pending-async-lisp-events)
+                nil))
+           (latest-goal-record  (and (= version 2) (getf properties :latest-goal-record)))
            (input-history-last-sequence
-             (if (= version 2) (getf properties :input-history-last-sequence 0) 0))
-           (prompt-cache-usage
-             (and (= version 2) (getf properties :prompt-cache-usage)))
-           (usage-totals
-             (and (= version 2) (getf properties :usage-totals))))
-      (unless (or (and (null title) (null title-source))
-                  (and normalized-title
-                       (member title-source '(:initial :generated))))
+            (if (= version 2)
+                (getf properties :input-history-last-sequence 0)
+                0))
+           (prompt-cache-usage  (and (= version 2) (getf properties :prompt-cache-usage)))
+           (usage-totals        (and (= version 2) (getf properties :usage-totals))))
+      (unless
+          (or (and (null title) (null title-source))
+              (and normalized-title (member title-source '(:initial :generated))))
         (invalid "The conversation header has an invalid title."))
-      (unless (and (stringp identity-identifier)
-                   (string= identifier identity-identifier))
+      (unless
+          (and (stringp identity-identifier) (string= identifier identity-identifier))
         (invalid
          "The conversation header identifier disagrees with its storage identity."))
-      (unless (and (or (null model-provider) (non-empty-string-p model-provider))
-                   (or (and (null model) (null reasoning-effort) (null model-provider))
-                       (conversation--persisted-model-selection-p model reasoning-effort)))
+      (unless
+          (and (or (null model-provider) (non-empty-string-p model-provider))
+               (or (and (null model) (null reasoning-effort) (null model-provider))
+                   (conversation--persisted-model-selection-p model reasoning-effort)))
         (invalid "The conversation header has an invalid model selection."))
-      (when (and prompt-cache-key
-                 (not (non-empty-string-p prompt-cache-key)))
+      (when (and prompt-cache-key (not (non-empty-string-p prompt-cache-key)))
         (invalid "The conversation header has an invalid prompt cache key."))
       (if (= version 1)
           (unless (equal log-pathname identity)
             (invalid "A legacy conversation header is not in its identity file."))
-          (unless (and (typep chunk-start-sequence '(integer 1))
-                       (equal log-pathname
-                              (conversation-chunk-pathname
-                               identity chunk-start-sequence))
-                       (typep working-seconds '(integer 0))
-                       (typep user-turn-count '(integer 0))
-                       (or (null last-activity-at)
-                           (typep last-activity-at 'timestamp))
-                       (typep search-message-count '(integer 0))
-                       (or (null preview) (stringp preview))
-                       (conversation--header-string-list-p pending-identifiers)
-                       (conversation--header-record-list-p
-                        user-operation-records ':user-operation)
-                       (conversation--header-record-list-p
-                        pending-async-lisp-events ':async-lisp-event)
-                       (typep input-history-last-sequence '(integer 0))
-                       (< input-history-last-sequence chunk-start-sequence)
-                       (or (null prompt-cache-usage)
-                           (conversation--prompt-cache-usage-p prompt-cache-usage))
-                       (or (null usage-totals)
-                           (conversation--usage-totals-p usage-totals))
-                       (or (null latest-goal-record)
-                           (and (conversation--record-form-p latest-goal-record)
-                                (eq (first latest-goal-record) :goal))))
-            (invalid
-             "The conversation chunk header contains invalid resumable state.")))
+          (unless
+              (and (typep chunk-start-sequence '(integer 1))
+                   (equal log-pathname
+                          (conversation-chunk-pathname identity chunk-start-sequence))
+                   (typep working-seconds '(integer 0))
+                   (typep user-turn-count '(integer 0))
+                   (or (null last-activity-at) (typep last-activity-at 'timestamp))
+                   (typep search-message-count '(integer 0))
+                   (or (null preview) (stringp preview))
+                   (conversation--header-string-list-p pending-identifiers)
+                   (conversation--header-record-list-p user-operation-records
+                                                       ':user-operation)
+                   (conversation--header-record-list-p pending-async-lisp-events
+                                                       ':async-lisp-event)
+                   (typep input-history-last-sequence '(integer 0))
+                   (< input-history-last-sequence chunk-start-sequence)
+                   (or (null prompt-cache-usage)
+                       (conversation--prompt-cache-usage-p prompt-cache-usage))
+                   (or (null usage-totals) (conversation--usage-totals-p usage-totals))
+                   (or (null latest-goal-record)
+                       (and (conversation--record-form-p latest-goal-record)
+                            (eq (first latest-goal-record) :goal))))
+            (invalid "The conversation chunk header contains invalid resumable state.")))
       (let ((conversation
-              (make-instance 'conversation
-                             :identifier        identifier
-                             :prompt-cache-key  prompt-cache-key
-                             :parent-identifier (let ((parent (getf properties :parent)))
-                                                  (and (non-empty-string-p parent) parent))
-                             :agent-name        (let ((name (getf properties :agent-name)))
-                                                  (and (non-empty-string-p name) name))
-                             :role              (let ((role (getf properties :role)))
-                                                  (and (non-empty-string-p role) role))
-                             :inbox-p           (eq (getf properties :inbox-p) t)
-                             :pathname          identity
-                             :log-pathname      log-pathname
-                             :persisted-p       t
-                             :incomplete-tail-p nil
-                             :created-at        (getf properties :created-at)
-                             :origin-directory
-                             (and (stringp directory) directory)
-                             :title             (and normalized-title
-                                                     (copy-seq normalized-title))
-                             :title-source      title-source
-                             :model             (and (non-empty-string-p model) model)
-                             :model-provider    model-provider
-                             :reasoning-effort
-                             (and (non-empty-string-p reasoning-effort)
-                                  reasoning-effort)
-                             :next-sequence     chunk-start-sequence
-                             :input-items       nil)))
-        (conversation--restore-image-manifest
-         conversation (getf properties :image-artifact-manifest))
+             (make-instance 'conversation :identifier identifier :prompt-cache-key
+                            prompt-cache-key :parent-identifier
+                            (let ((parent (getf properties :parent)))
+                              (and (non-empty-string-p parent) parent))
+                            :agent-name
+                            (let ((name (getf properties :agent-name)))
+                              (and (non-empty-string-p name) name))
+                            :inbox-p (eq (getf properties :inbox-p) t) :pathname identity
+                            :log-pathname log-pathname :persisted-p t :incomplete-tail-p
+                            nil :created-at (getf properties :created-at)
+                            :origin-directory (and (stringp directory) directory) :title
+                            (and normalized-title (copy-seq normalized-title))
+                            :title-source title-source :model
+                            (and (non-empty-string-p model) model) :model-provider
+                            model-provider :reasoning-effort
+                            (and (non-empty-string-p reasoning-effort) reasoning-effort)
+                            :next-sequence chunk-start-sequence :input-items nil
+                            :tool-grants (getf properties :tool-grants ':all))))
+        (conversation--restore-image-manifest conversation
+                                              (getf properties :image-artifact-manifest))
         (when (= chunk-start-sequence 1)
           (setf (conversation-image-artifact-manifest-complete-p conversation) t
                 (conversation-image-artifact-repair-pending-p conversation) nil))
@@ -4050,17 +3839,17 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
                 (and preview (copy-seq preview))
                 (conversation-latest-goal-record conversation)
                 (copy-tree latest-goal-record))
-          (conversation--restore-pending-input-identifiers conversation pending-identifiers)
+          (conversation--restore-pending-input-identifiers conversation
+                                                           pending-identifiers)
           (setf (conversation-prompt-cache-usage conversation)
                 (copy-tree prompt-cache-usage)
                 (conversation-input-history-last-sequence conversation)
                 input-history-last-sequence)
           (dolist (record user-operation-records)
-            (conversation--project-record
-             ':user-operation conversation (rest record)))
+            (conversation--project-record ':user-operation conversation (rest record)))
           (dolist (record pending-async-lisp-events)
-            (conversation--project-record
-             ':async-lisp-event conversation (rest record))))
+            (conversation--project-record ':async-lisp-event conversation
+                                          (rest record))))
         conversation))))
 
 (-> conversation--validate-segment-first-record (pathname list list) null)

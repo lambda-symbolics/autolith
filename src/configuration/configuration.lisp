@@ -554,22 +554,6 @@ exist yet, and is only put in directory form."
   :group                     :process
   :documentation             "Whether mutation-capable active-image tools are disabled.")
 
-(define-setting :child-role (string-setting)
-  :label                    "Child role"
-  :group                    :process
-  :documentation            "The role this agent works in as another agent's child; empty for an agent nobody spawned."
-  :scope                    :session
-  :visible-p                nil
-  :default                  "")
-
-(define-setting :child-role-instructions (string-setting)
-  :label                                 "Child role instructions"
-  :group                                 :process
-  :documentation                         "The instructions of the child role, which the system prompt carries."
-  :scope                                 :session
-  :visible-p                             nil
-  :default                               "")
-
 (define-setting :channel-idle-minutes (real-setting)
   :label                              "Idle channel unloading"
   :group                              :process

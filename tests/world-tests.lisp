@@ -1464,20 +1464,19 @@
   nil)
 
 (-> world-tests--child-conversation
-    (configuration string &key (:root string) (:parent string) (:name string) (:role (option string))
+    (configuration string &key (:root string) (:parent string) (:name string)
                                (:created-at timestamp))
     conversation)
-(defun world-tests--child-conversation (configuration identifier &key root parent name role created-at)
-  "Create child agent conversation IDENTIFIER named NAME in ROLE under PARENT, stored below ROOT, with one durable message."
-  (let ((conversation (conversation-create configuration
-                                           :identifier        identifier
-                                           :storage-root      (merge-pathnames
-                                                               (format nil "tasks/~A/~A/" root identifier)
-                                                               (config :data-root configuration))
-                                           :created-at        created-at
-                                           :parent-identifier parent
-                                           :agent-name        name
-                                           :role              role)))
+(defun world-tests--child-conversation
+       (configuration identifier &key root parent name created-at)
+  "Create a named child conversation below ROOT with one durable message."
+  (let ((conversation
+         (conversation-create configuration :identifier identifier :storage-root
+                              (merge-pathnames
+                               (format nil "tasks/~A/~A/" root identifier)
+                               (config :data-root configuration))
+                              :created-at created-at :parent-identifier parent
+                              :agent-name name)))
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
     (world-register-conversation configuration conversation)
     conversation))
@@ -1488,14 +1487,12 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "broot11" 1000)
     (world-tests--child-conversation configuration "e5a1b2c3-0000-4000-8000-000000000001"
-                                     :root "broot11" :parent "broot11" :name "helper" :role "reviewer"
+                                     :root "broot11" :parent "broot11" :name "helper"
                                      :created-at 1500)
     (let ((conversation (conversation-load-by-id configuration "e5a1b2c3-0000-4000-8000-000000000001")))
       (test-assert (search "work for broot11"
                            (format nil "~S" (conversation--read-records (conversation-pathname conversation))))
-                   "a child's conversation is found below its root and loads with its history")
-      (test-assert (equal (conversation-role conversation) "reviewer")
-                   "a child's conversation keeps the role it was spawned with"))
+                   "a child's conversation is found below its root and loads with its history"))
     (test-assert (handler-case (progn (conversation-load-by-id configuration "bnone11") nil)
                    (conversation-error () t))
                  "an unknown identifier still does not exist"))
@@ -1811,23 +1808,16 @@
   "Test an agent's children are the channels nested in its own, counted once, and its channel lists them."
   (with-test-configuration (configuration)
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
-      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
-                                                             :name "helper" :role "scout" :created-at 1500)
-      (let ((text (world-tests--read configuration root "current")))
-        (test-assert (and (search "Children, 1 of the 32" text)
-                          (search (format nil "helper (scout) channel ~A, idle"
-                                          (world-channel-path (world-load configuration)
-                                                              (world-channel-find (world-load configuration) "bkid11"))) text))
-                     "the parent's channel lists each child with its role, channel and state"))
-      (let ((agent        (agent-create :configuration configuration
-                                        :provider      (make-instance 'model-provider)
-                                        :conversation  root
-                                        :tool-registry (make-instance 'tool-registry)
-                                        :worker        nil))
+      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent
+                                       "broot11" :name "helper" :created-at 1500)
+      (let ((agent
+             (agent-create :configuration configuration :provider
+                           (make-instance 'model-provider) :conversation root
+                           :tool-registry (make-instance 'tool-registry) :worker nil))
             (orchestrator (task-tests--orchestrator)))
         (unwind-protect
-             (test-assert (equal (task-agent-children orchestrator agent) '("bkid11"))
-                          "the child's nested channel is the agent's one child")
+            (test-assert (equal (task-agent-children orchestrator agent) '("bkid11"))
+                         "the child's nested channel is the agent's one child")
           (task-orchestrator-close orchestrator)))))
   nil)
 
@@ -1836,78 +1826,80 @@
   "Test a parent renames, compacts and removes its children, and waits while one is busy."
   (with-test-configuration (configuration)
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
-      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
-                                                             :name "helper" :role "scout" :created-at 1500)
-      (world-tests--child-conversation configuration "bgrand11" :root "broot11" :parent "bkid11"
-                                                               :name "aide" :created-at 1600)
-      (world-tests--child-conversation configuration "bsib11" :root "broot11" :parent "broot11"
-                                                             :name "sibling" :created-at 1700)
+      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent
+                                       "broot11" :name "helper" :created-at 1500)
+      (world-tests--child-conversation configuration "bgrand11" :root "broot11" :parent
+                                       "bkid11" :name "aide" :created-at 1600)
+      (world-tests--child-conversation configuration "bsib11" :root "broot11" :parent
+                                       "broot11" :name "sibling" :created-at 1700)
       (let* ((orchestrator (task-tests--orchestrator))
-             (parent       (agent-create :configuration configuration
-                                         :provider      (make-instance 'model-provider)
-                                         :conversation  root
-                                         :tool-registry (make-instance 'tool-registry)
-                                         :worker        nil))
-             (context      (make-instance 'tool-context :configuration configuration
-                                                        :worker        nil
-                                                        :conversation  root
-                                                        :agent         parent
-                                                        :registry      (make-instance 'tool-registry))))
+             (parent
+              (agent-create :configuration configuration :provider
+                            (make-instance 'model-provider) :conversation root
+                            :tool-registry (make-instance 'tool-registry) :worker nil))
+             (context
+              (make-instance 'tool-context :configuration configuration :worker nil
+                             :conversation root :agent parent :registry
+                             (make-instance 'tool-registry))))
         (flet ((call (class arguments)
                  "Run the child tool of CLASS with ARGUMENTS for the root agent."
-                 (tool-execute (make-instance class :orchestrator orchestrator
-                                                    :namespace    "child"
-                                                    :name         "test"
-                                                    :description  "Exercise child lifecycle."
-                                                    :parameters   (tool-object-schema (json-object) nil))
-                               context arguments))
+                 (tool-execute
+                  (make-instance class :orchestrator orchestrator :namespace "child"
+                                 :name "test" :description "Exercise child lifecycle."
+                                 :parameters (tool-object-schema (json-object) nil))
+                  context arguments))
                (refused-p (thunk)
                  "Return true when THUNK signals a task error."
-                 (handler-case (progn (funcall thunk) nil)
-                   (task-error ()
-                     t))))
+                 (handler-case (progn (funcall thunk) nil) (task-error nil t))))
           (unwind-protect
-               (progn
-                 (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
-                 (test-assert (string= (participant-name (world-participant-find (world-load configuration)
-                                                                                 "bkid11"))
-                                       "keeper")
-                              "a parent renames its child by its name")
-                 (let ((lease (conversation-lease-acquire configuration "bkid11")))
-                   (unwind-protect
-                        (test-assert
-                         (refused-p (lambda ()
-                                      (call 'child-remove-tool
-                                            (json-object "children" (vector "keeper")))))
-                         "a busy child cannot be removed")
-                     (conversation-lease-release lease)))
-                 (let ((compacted nil))
-                   (test-call-with-function-replacements
-                    (list (list 'agent-compact-conversation
-                                (lambda (agent observer &rest options)
-                                  (declare (ignore observer options))
-                                  (setf compacted
-                                        (list (conversation-identifier (agent-conversation agent))
-                                              (config :child-role (agent-configuration agent))
-                                              (conversation-lease-busy-p configuration "bkid11")))
-                                  (values 1 nil))))
-                    (lambda ()
-                      (call 'child-compact-tool (json-object "child" "keeper"))))
-                   (test-assert (equal compacted '("bkid11" "scout" t))
-                                "compaction runs on the child's history, in its role, while holding its lease"))
-                 (test-assert (search "Removed @keeper, @sibling, and the 1 channels below them"
-                                      (tool-result-content
-                                       (call 'child-remove-tool (json-object "children" (vector "keeper" "sibling")))))
-                              "one call removes several children and the children below them")
-                 (let ((world (world-load configuration)))
-                   (test-assert (and (null (world-channel-find world "bkid11"))
-                                     (null (world-channel-find world "bgrand11"))
-                                     (null (world-channel-find world "bsib11"))
-                                     (null (conversation-task-pathname-for-id configuration "bsib11"))
-                                     (null (conversation-task-pathname-for-id configuration "bkid11"))
-                                     (null (conversation-task-pathname-for-id configuration "bgrand11"))
-                                     (null (world-participant-find world "bkid11")))
-                                "a removed child leaves no channel, agent or history")))
+              (progn
+               (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
+               (test-assert
+                (string=
+                 (participant-name
+                  (world-participant-find (world-load configuration) "bkid11"))
+                 "keeper")
+                "a parent renames its child by its name")
+               (let ((lease (conversation-lease-acquire configuration "bkid11")))
+                 (unwind-protect
+                     (test-assert
+                      (refused-p
+                       (lambda ()
+                         (call 'child-remove-tool
+                          (json-object "children" (vector "keeper")))))
+                      "a busy child cannot be removed")
+                   (conversation-lease-release lease)))
+               (let ((compacted nil))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'agent-compact-conversation
+                         (lambda (agent observer &rest options)
+                           (declare (ignore observer options))
+                           (setf compacted
+                                   (list
+                                    (conversation-identifier (agent-conversation agent))
+                                    (conversation-lease-busy-p configuration "bkid11")))
+                           (values 1 nil))))
+                  (lambda () (call 'child-compact-tool (json-object "child" "keeper"))))
+                 (test-assert (equal compacted '("bkid11" t))
+                              "compaction uses the child's history while holding its lease"))
+               (test-assert
+                (search "Removed @keeper, @sibling, and the 1 channels below them"
+                        (tool-result-content
+                         (call 'child-remove-tool
+                          (json-object "children" (vector "keeper" "sibling")))))
+                "one call removes several children and the children below them")
+               (let ((world (world-load configuration)))
+                 (test-assert
+                  (and (null (world-channel-find world "bkid11"))
+                       (null (world-channel-find world "bgrand11"))
+                       (null (world-channel-find world "bsib11"))
+                       (null (conversation-task-pathname-for-id configuration "bsib11"))
+                       (null (conversation-task-pathname-for-id configuration "bkid11"))
+                       (null
+                        (conversation-task-pathname-for-id configuration "bgrand11"))
+                       (null (world-participant-find world "bkid11")))
+                  "a removed child leaves no channel, agent or history")))
             (task-orchestrator-close orchestrator))))))
   nil)
 
@@ -2076,39 +2068,6 @@
                         (every (lambda (id) (not (conversation-task-pathname-for-id configuration id))) channels)
                         (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels))
                    "server startup retries the on-disk intent and completes history cleanup")))
-  nil)
-
-(-> test-world-child-role () null)
-(defun test-world-child-role ()
-  "Test a child's own channel serves it in its role, and a session refuses to swap in a conversation of another role."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "broot11" 1000)
-    (let* ((child    (world-tests--child-conversation configuration "brole11"
-                                                      :root "broot11" :parent "broot11" :name "looker"
-                                                      :role "scout" :created-at 1500))
-           (roled    (application--configuration-for-conversation configuration child))
-           (registry (application--create-tool-registry roled)))
-      (unwind-protect
-           (progn
-             (test-assert (string= (config :child-role roled) "scout")
-                          "a child's conversation puts its channel in the child's role")
-             (test-assert (search "Stay read-only" (system-prompt roled))
-                          "the channel's prompt carries the role's instructions")
-             (test-assert (and (tool-registry-find registry "resource" "read")
-                               (tool-registry-find registry "search" "content"))
-                          "the channel keeps the tools the role grants")
-             (test-assert (tool-registry-find registry "channel" "send")
-                          "a role that grants no channel tools still talks through channels")
-             (test-assert (notany (lambda (name)
-                                    (tool-registry-find registry (first name) (second name)))
-                                  '(("resource" "edit") ("shell" "run") ("self" "status") ("child" "spawn")))
-                          "the channel drops the tools the role lacks, and a role that spawns nobody cannot spawn"))
-        (tool-registry-close-runtime-state registry))
-      (let ((application (make-instance 'application :configuration configuration)))
-        (test-assert (handler-case (progn (application--check-same-role application child) nil)
-                       (application-role-change-error ()
-                         t))
-                     "a session in no role refuses to swap in a child's conversation in place"))))
   nil)
 
 (-> test-world-child-sync () null)
@@ -2281,101 +2240,92 @@ A parent that writes @parent to its own child reaches nobody but the child."
 (defun test-world-child-participants ()
   "Test child task conversations become nested channels with steerable participants."
   (with-test-configuration (configuration)
-    (let* ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
-           (child (conversation-create configuration
-                                       :identifier        "exec-one"
-                                       :parent-identifier "broot11"
-                                       :storage-root      (merge-pathnames
-                                                           "tasks/broot11/exec-one/"
-                                                           (config :data-root configuration))
-                                       :created-at        1500)))
+    (let* ((root (world-tests--persisted-conversation configuration "broot11" 1000))
+           (child
+            (conversation-create configuration :identifier "exec-one" :parent-identifier
+                                 "broot11" :storage-root
+                                 (merge-pathnames "tasks/broot11/exec-one/"
+                                                  (config :data-root configuration))
+                                 :created-at 1500)))
       (conversation-append-user-message child "do the task")
       (world-register-conversation configuration child)
       (let ((world (world-load configuration)))
-        (let ((root-agent (find ':agent (world-channel-residents world "broot11")
-                                :key #'participant-kind))
+        (let ((root-agent
+               (find ':agent (world-channel-residents world "broot11") :key
+                     #'participant-kind))
               (channel    (world-channel-find world "exec-one"))
               (task-agent (first (world-channel-residents world "exec-one"))))
-          (test-assert (and channel
-                            (equal (channel-parent channel) "broot11")
-                            (string= (channel-owner channel)
-                                     (participant-identifier root-agent)))
-                       "a child channel nests under its root and belongs to the root's agent")
-          (test-assert (and task-agent
-                            (string= (participant-name task-agent) (prezdivka:name-for "exec-one"))
-                            (eq (participant-name-source task-agent) ':initial)
-                            (equal (participant-parent task-agent)
-                                   (participant-identifier root-agent)))
-                       "an unnamed child agent starts with a readable handle under the root's agent")
-          (test-assert (string= (participant-residence (world-human-participant world))
-                                (world-tests--inbox configuration))
-                       "the person resides in the inbox")
+          (test-assert
+           (and channel (equal (channel-parent channel) "broot11")
+                (string= (channel-owner channel) (participant-identifier root-agent)))
+           "a child channel nests under its root and belongs to the root's agent")
+          (test-assert
+           (and task-agent
+                (string= (participant-name task-agent) (prezdivka:name-for "exec-one"))
+                (eq (participant-name-source task-agent) ':initial)
+                (equal (participant-parent task-agent)
+                       (participant-identifier root-agent)))
+           "an unnamed child agent starts with a readable handle under the root's agent")
+          (test-assert
+           (string= (participant-residence (world-human-participant world))
+                    (world-tests--inbox configuration))
+           "the person resides in the inbox")
           (let ((text (world-tests--read configuration root "id/exec-one")))
-            (test-assert (and (search "Channel exec-one" text)
-                              (search "nested under b-root11" text)
-                              (search "do the task" text))
-                         "channel:id/<execution> reads a child's history"))
-          (world-message-send configuration
-                              :sender   (participant-identifier root-agent)
-                              :channel  "exec-one"
-                              :text     "stop and report"
-                              :notify-p nil)
-          (let* ((taken   (make-hash-table :test #'equal))
-                 (entries (world-inbox-steering-take configuration
-                                                     :channel      "exec-one"
-                                                     :conversation child
-                                                     :taken        taken)))
-            (test-assert (and (= (length entries) 1)
-                              (search "stop and report"
-                                      (agent-steering-input-content (first entries))))
-                         "a message to a child's channel becomes a labeled steer")
-            (test-assert (null (world-inbox-steering-take configuration
-                                                          :channel      "exec-one"
-                                                          :conversation child
-                                                          :taken        taken))
-                         "a taken message is not taken twice")
-            (test-assert (world-inbox-steering-ack configuration
-                                                   :channel    "exec-one"
-                                                   :identifier (agent-steering-input-identifier
-                                                                (first entries))
-                                                   :taken      taken)
-                         "the steer's receipt settles the delivery")
+            (test-assert
+             (and (search "Channel exec-one" text) (search "nested under b-root11" text)
+                  (search "do the task" text))
+             "channel:id/<execution> reads a child's history"))
+          (world-message-send configuration :sender (participant-identifier root-agent)
+                              :channel "exec-one" :text "stop and report" :notify-p nil)
+          (let* ((taken (make-hash-table :test #'equal))
+                 (entries
+                  (world-inbox-steering-take configuration :channel "exec-one"
+                                             :conversation child :taken taken)))
+            (test-assert
+             (and (= (length entries) 1)
+                  (search "stop and report"
+                          (agent-steering-input-content (first entries))))
+             "a message to a child's channel becomes a labeled steer")
+            (test-assert
+             (null
+              (world-inbox-steering-take configuration :channel "exec-one" :conversation
+                                         child :taken taken))
+             "a taken message is not taken twice")
+            (test-assert
+             (world-inbox-steering-ack configuration :channel "exec-one" :identifier
+                                       (agent-steering-input-identifier (first entries))
+                                       :taken taken)
+             "the steer's receipt settles the delivery")
             (test-assert (null (world-inbox-deliveries configuration "exec-one"))
                          "the settled delivery leaves the inbox"))
           (let* ((registry   (channel-register-tools (make-instance 'tool-registry)))
-                 (definition (make-instance 'task-agent-definition
-                                            :name "worker" :description "worker"
-                                            :instructions "work" :source ':test :tools ':all))
-                 (agent      (agent-create :configuration configuration
-                                           :conversation  child
-                                           :provider      (make-instance 'model-provider)
-                                           :tool-registry registry
-                                           :worker        nil))
-                 (context    (make-instance 'tool-context
-                                            :configuration configuration
-                                            :conversation  child
-                                            :agent         agent
-                                            :registry      registry
-                                            :worker        nil)))
-            (test-assert (every (lambda (tool) (task--definition-allows-tool-p definition tool))
-                                (tool-registry-tools registry))
-                         "a child definition with every tool admits the channel tools")
-            (test-assert (tool-result-success-p
-                          (tool-registry-execute-call
-                           registry
-                           (agent-test-call :namespace "channel"
-                                            :name      "send"
-                                            :arguments (json-encode (json-object "channel" "b-root11"
-                                                                                 "text"    "done here")))
-                           context))
-                         "a child sends to its parent's channel through the channel tool")
-            (let ((delivery (first (last (world-inbox-deliveries configuration "broot11")))))
-              (test-assert (and delivery
-                                (string= (world-delivery-sender delivery)
-                                         (participant-identifier task-agent))
-                                (string= (world-delivery-text delivery) "done here"))
-                           "the message arrives as the child's own participant")))))))
-
+                 (agent
+                  (agent-create :configuration configuration :conversation child
+                                :provider (make-instance 'model-provider) :tool-registry
+                                registry :worker nil))
+                 (context
+                  (make-instance 'tool-context :configuration configuration :conversation
+                                 child :agent agent :registry registry :worker nil)))
+            (test-assert
+             (tool-result-success-p
+              (tool-registry-execute-call registry
+                                          (agent-test-call :namespace "channel" :name
+                                                           "send" :arguments
+                                                           (json-encode
+                                                            (json-object "channel"
+                                                                         "b-root11"
+                                                                         "text"
+                                                                         "done here")))
+                                          context))
+             "a child sends to its parent's channel through the channel tool")
+            (let ((delivery
+                   (first (last (world-inbox-deliveries configuration "broot11")))))
+              (test-assert
+               (and delivery
+                    (string= (world-delivery-sender delivery)
+                             (participant-identifier task-agent))
+                    (string= (world-delivery-text delivery) "done here"))
+               "the message arrives as the child's own participant")))))))
   nil)
 
 (-> test-world-channel-catalogue nil null)

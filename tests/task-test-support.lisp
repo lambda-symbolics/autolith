@@ -244,92 +244,89 @@
    :compaction-p    compaction-p))
 
 (defmethod provider-stream-turn
-    ((provider task-test-provider)
-     (conversation conversation)
-     &key tool-namespaces event-callback goal-context compaction-p)
+           ((provider task-test-provider) (conversation conversation)
+            &key tool-namespaces event-callback goal-context compaction-p)
   "Return a deterministic final response or nested task call for PROVIDER."
   (declare (ignore tool-namespaces goal-context compaction-p))
   (let* ((request-number nil)
          (inputs         (conversation-input-items-for-request conversation))
          (spawn-output
-           (find-if (lambda (item)
-                      (and (equal (json-get item "type") "function_call_output")
-                           (equal (json-get item "call_id") "nested-task")))
-                    inputs))
+          (find-if
+           (lambda (item)
+             (and (equal (json-get item "type") "function_call_output")
+                  (equal (json-get item "call_id") "nested-task")))
+           inputs))
          (wait-output
-           (find-if (lambda (item)
-                      (and (equal (json-get item "type") "function_call_output")
-                           (equal (json-get item "call_id") "nested-wait")))
-                    inputs)))
+          (find-if
+           (lambda (item)
+             (and (equal (json-get item "type") "function_call_output")
+                  (equal (json-get item "call_id") "nested-wait")))
+           inputs)))
     (with-lock-held ((task-test-provider-lock provider))
       (incf (task-test-provider-request-count provider))
       (incf (task-test-provider-active-count provider))
       (push (conversation-identifier conversation)
             (task-test-provider-conversation-identifiers provider))
-      (push
-         (mapcar #'json-normalize inputs)
-       (task-test-provider-request-inputs provider))
+      (push (mapcar #'json-normalize inputs) (task-test-provider-request-inputs provider))
       (pushnew (current-thread) (task-test-provider-threads provider) :test #'eq)
       (setf request-number (task-test-provider-request-count provider)
             (task-test-provider-maximum-active-count provider)
             (max (task-test-provider-maximum-active-count provider)
                  (task-test-provider-active-count provider))))
     (unwind-protect
-         (progn
-           (when (eq (task-test-provider-mode provider) :concurrent)
-             (let ((ready (task-test-provider-concurrency-ready provider)))
-               (cond
-                 ((null ready)
-                  (sleep 0.05))
-                 ((= request-number 1)
-                  (assert (sb-thread:wait-on-semaphore ready :timeout 5)))
-                 ((= request-number 2)
-                  (sb-thread:signal-semaphore ready)))))
-           (funcall event-callback
-                    (make-instance 'assistant-delta-event :text "task test"))
-           (agent-test-result
-            (format nil "task-test-~D" request-number)
-            (list
-             (cond
-               ((and (member (task-test-provider-mode provider)
-                             '(:nested :nested-cancel)
-                             :test #'eq)
-                     (= request-number 1))
-                (agent-test-call
-                 :call-id   "nested-task"
-                 :namespace "child"
-                 :name      "spawn"
-                 :arguments
-                 (json-encode
-                  (json-object "agent" "task"
-                               "task" "Return the nested leaf result."))))
-               ((and spawn-output (not wait-output))
-                (let* ((form  (read-one-form (json-get spawn-output "output")
-                                             :read-eval nil))
-                       (child (first (getf (rest form) :results))))
-                  (agent-test-call
-                   :call-id "nested-wait" :namespace "job" :name "wait"
-                   :arguments (json-encode
-                               (json-object "id" (getf child :id)
-                                            "timeout-seconds" 5)))))
-               ((or (and (eq (task-test-provider-mode provider)
-                             :blocking-tool)
-                         (= request-number 1))
-                    (and (eq (task-test-provider-mode provider)
-                             :nested-cancel)
-                         (not spawn-output)
-                         (not (find-if
-                               (lambda (item)
-                                 (and (equal (json-get item "type") "function_call_output")
+        (progn
+         (when (eq (task-test-provider-mode provider) :concurrent)
+           (let ((ready (task-test-provider-concurrency-ready provider)))
+             (cond ((null ready)
+                    (sleep 0.05))
+                   ((= request-number 1)
+                    (assert (sb-thread:wait-on-semaphore ready :timeout 5)))
+                   ((= request-number 2)
+                    (sb-thread:signal-semaphore ready)))))
+         (funcall event-callback
+                  (make-instance 'assistant-delta-event :text "task test"))
+         (agent-test-result (format nil "task-test-~D" request-number)
+                            (list
+                             (cond
+                              ((and
+                                (member (task-test-provider-mode provider)
+                                        '(:nested :nested-cancel) :test #'eq)
+                                (= request-number 1))
+                               (agent-test-call :call-id "nested-task" :namespace "child"
+                                                :name "spawn" :arguments
+                                                (json-encode
+                                                 (json-object "task"
+                                                              "Return the nested leaf result."))))
+                              ((and spawn-output (not wait-output))
+                               (let* ((form
+                                       (read-one-form (json-get spawn-output "output")
+                                                      :read-eval nil))
+                                      (child (first (getf (rest form) :results))))
+                                 (agent-test-call :call-id "nested-wait" :namespace "job"
+                                                  :name "wait" :arguments
+                                                  (json-encode
+                                                   (json-object "id" (getf child :id)
+                                                                "timeout-seconds" 5)))))
+                              ((or
+                                (and
+                                 (eq (task-test-provider-mode provider) :blocking-tool)
+                                 (= request-number 1))
+                                (and
+                                 (eq (task-test-provider-mode provider) :nested-cancel)
+                                 (not spawn-output)
+                                 (not
+                                  (find-if
+                                   (lambda (item)
+                                     (and
+                                      (equal (json-get item "type")
+                                             "function_call_output")
                                       (equal (json-get item "call_id") "blocking-tool")))
-                               inputs))))
-                (agent-test-call
-                 :call-id   "blocking-tool"
-                 :namespace "test"
-                 :name      "block"
-                 :arguments "{}"))
-               (t
-                (agent-test-message (format nil "result ~D" request-number)))))))
+                                   inputs))))
+                               (agent-test-call :call-id "blocking-tool" :namespace
+                                                "test" :name "block" :arguments "{}"))
+                              (t
+                               (agent-test-message
+                                (format nil "result ~D" request-number)))))))
       (with-lock-held ((task-test-provider-lock provider))
         (decf (task-test-provider-active-count provider))))))
 
@@ -381,81 +378,43 @@
       (terpri stream)))
   pathname)
 
-(-> task-tests--agent-definition-error (pathname keyword)
-    task-agent-definition-error)
-(defun task-tests--agent-definition-error (pathname source)
-  "Parse PATHNAME and return its expected typed role diagnostic."
-  (handler-case
-      (progn
-        (task-parse-agent-file pathname source)
-        (error "Expected a task-agent-definition-error for ~A." pathname))
-    (task-agent-definition-error (condition)
-      condition)))
-
-(-> task-tests--role-form (string string string &rest t) list)
-(defun task-tests--role-form (name description instructions &rest properties)
-  "Return a minimal native role form extended by PROPERTIES."
-  (append (list :name         name
-                :description  description
-                :instructions instructions)
-          properties))
-
-(-> task-tests--child-fixture
-    (configuration task-agent-definition string &key (:state keyword))
-    list)
-(defun task-tests--child-fixture
-    (configuration definition identifier &key (state ':running))
-  "Return a test child and job in STATE."
-  (let* ((orchestrator    (task-tests--orchestrator))
-         (parent-registry (make-instance 'tool-registry))
-         (parent-conversation
-           (conversation-create
-            configuration
-            :identifier (format nil "~A-parent" identifier)))
-         (parent
-           (agent-create
-            :configuration configuration
-            :provider      (make-instance 'model-provider)
-            :conversation  parent-conversation
-            :tool-registry parent-registry
-            :worker        nil))
-         (job
-           (task-tests--make-job
-            orchestrator
-            :identifier      identifier
-            :definition      definition
-            :item            (list :task "Exercise child execution.")
-            :parent-agent    parent
-            :root-identifier (conversation-identifier parent-conversation)))
-         (registry
-           (task-child-tool-registry
-            parent-registry definition :orchestrator orchestrator
-                                       :depth        1))
-         (conversation
-           (conversation-create
-            configuration
-            :identifier (format nil "~A-child" identifier)))
-         (child
-           (make-instance
-            'task-child-agent
-            :configuration configuration
-            :provider      (make-instance 'model-provider)
-            :conversation  conversation
-            :tool-registry registry
-            :worker        nil
-            :definition    definition
-            :identity      (task-job-identity job)
-            :depth         1
-            :orchestrator  orchestrator
-            :job           job)))
-    (ecase state
-      (:queued
-       nil)
-      (:running
-       (with-lock-held ((cl-jobpond::job--lock job))
-         (setf (job-state job) ':running))
-       (task-job--set-progress-state job ':running)))
-    (list :job job :child child :conversation conversation)))
+(-> task-tests--child-fixture (configuration list string &key (:state keyword)) list)
+(defun task-tests--child-fixture (configuration item identifier &key (state ':running))
+                                 "Return a test child and job in STATE."
+                                 (let* ((orchestrator    (task-tests--orchestrator))
+                                        (parent-registry (make-instance 'tool-registry))
+                                        (parent-conversation
+                                         (conversation-create configuration :identifier
+                                                              (format nil "~A-parent" identifier)))
+                                        (parent
+                                         (agent-create :configuration configuration :provider
+                                                       (make-instance 'model-provider) :conversation parent-conversation
+                                                       :tool-registry parent-registry :worker nil))
+                                        (job
+                                         (task-tests--make-job orchestrator :identifier identifier :item
+                                                               (append (list :task "Exercise child execution.") item)
+                                                               :parent-agent parent :root-identifier
+                                                               (conversation-identifier parent-conversation)))
+                                        (registry
+                                         (task-child-tool-registry parent-registry item :orchestrator orchestrator
+                                                                   :depth                             1))
+                                        (conversation
+                                         (conversation-create configuration :identifier
+                                                              (format nil "~A-child" identifier)))
+                                        (child
+                                         (make-instance 'task-child-agent :configuration configuration :provider
+                                                        (make-instance 'model-provider) :conversation conversation
+                                                        :tool-registry registry :worker nil :identity
+                                                        (task-job-identity job) :depth 1 :orchestrator orchestrator :job
+                                                        job)))
+                                   (ecase state
+                                     (:queued
+                                      nil)
+                                     (:running
+                                      (with-lock-held ((cl-jobpond::job--lock job))
+                                        (setf (job-state job) ':running))
+                                      (task-job--set-progress-state job ':running)))
+                                   (list :job job :child child :conversation conversation)))
 
 (-> task-tests--read-exact-native-value (string) t)
 (defun task-tests--read-exact-native-value (source)
@@ -485,66 +444,54 @@
    :worker        nil))
 
 (-> task-tests--register-job
-    (task-orchestrator agent task-agent-definition
-     &key (:name (option string))
-          (:owner-identifiers list)
-          (:root-conversation-identifier (option string))
-          (:detached-p boolean))
+    (task-orchestrator agent list &key (:name (option string)) (:owner-identifiers list)
+     (:root-conversation-identifier (option string)) (:detached-p boolean))
     task-job)
 (defun task-tests--register-job
-    (orchestrator parent definition
-     &key name
-       (owner-identifiers nil owner-identifiers-supplied-p)
-       root-conversation-identifier
-       (detached-p t))
-  "Register one inert queued job with pool accounting for focused tests."
-  (let* ((root
-           (or root-conversation-identifier
-               (task-parent-root-conversation-identifier parent)))
-         (owners
-           (if owner-identifiers-supplied-p
-               owner-identifiers
-               (task-parent-owner-identifiers parent)))
-         (session-order
-           (first (task-orchestrator-reserve-session-orders orchestrator 1))))
-    (task-tests--attach-job
-     orchestrator
-     (lambda (identifier index)
-       (make-instance
-        'task-job
-        :pool                           (task-orchestrator-pool orchestrator)
-        :identifier                     identifier
-        :index                          index
-        :name                           name
-        :payload                        nil
-        :owner-identifiers              owners
-        :root-identifier                root
-        :body-function                  #'task-job--run
-        :terminal-result-function       (lambda (job state result report)
-                                          (task-job--terminal-record
-                                           job :state  state
-                                               :result result
-                                               :report report))
-        :maximum-runtime-milliseconds   0
-        :orchestrator                   orchestrator
-        :execution-identifier           (make-identifier)
-        :session-order                  session-order
-        :definition                     definition
-        :item                           (list :name    name
-                                              :agent   (task-agent-definition-name definition)
-                                              :task
-                                              (format nil "Hold ~A for a scheduler test."
-                                                      (or name "this unnamed job"))
-                                              :context nil
-                                              :async   detached-p)
-        :parent-agent                   parent
-        :parent-call-id                 nil
-        :detached-p                     detached-p
-        :command-authorization-function nil))
-     :name (or name (task-agent-definition-name definition)))))
+              (orchestrator parent item
+               &key name (owner-identifiers nil owner-identifiers-supplied-p)
+               root-conversation-identifier (detached-p t))
+              "Register one inert queued job with pool accounting for focused tests."
+              (let* ((root
+                      (or root-conversation-identifier
+                          (task-parent-root-conversation-identifier parent)))
+                     (owners
+                      (if owner-identifiers-supplied-p
+                          owner-identifiers
+                          (task-parent-owner-identifiers parent)))
+                     (session-order
+                      (first (task-orchestrator-reserve-session-orders orchestrator 1))))
+                (task-tests--attach-job orchestrator
+                                        (lambda (identifier index)
+                                          (make-instance 'task-job :pool
+                                                         (task-orchestrator-pool orchestrator)
+                                                         :identifier identifier :index index :name
+                                                         name :payload nil :owner-identifiers owners
+                                                         :root-identifier root :body-function
+                                                         #'task-job--run :terminal-result-function
+                                                         (lambda (job state result report)
+                                                           (task-job--terminal-record job :state
+                                                                                      state :result
+                                                                                      result :report
+                                                                                      report))
+                                                         :maximum-runtime-milliseconds   0
+                                                         :orchestrator                   orchestrator
+                                                         :execution-identifier           (make-identifier)
+                                                         :session-order session-order :item
+                                                         (append
+                                                          (list :name name :task
+                                                                (format nil
+                                                                        "Hold ~A for a scheduler test."
+                                                                        (or name "this unnamed job"))
+                                                                :context nil :async detached-p)
+                                                          item)
+                                                         :parent-agent parent :parent-call-id nil
+                                                         :detached-p                     detached-p
+                                                         :command-authorization-function nil))
+                                        :name (or name "child"))))
 
 (defvar *task-tests--orchestrators* nil
-  "Orchestrators created by tests, closed when the task suite finishes.")
+                                                                   "Orchestrators created by tests, closed when the task suite finishes.")
 
 (defvar *task-tests--cleanup-failures* nil
   "Process-global (orchestrator . outcome) records after incomplete test shutdown.
@@ -606,40 +553,28 @@ failed handles: later close success cannot establish that old threads stopped."
   (cl-jobpond::job-pool--queue (task-orchestrator-pool orchestrator)))
 
 (-> task-tests--make-job
-    (task-orchestrator
-     &key (:definition (option task-agent-definition)) (:item t) (:parent-agent (option agent))
+    (task-orchestrator &key (:item t) (:parent-agent (option agent))
      (:identifier (option string)) (:index integer) (:detached-p boolean)
      (:owner-identifiers list) (:root-identifier (option string)))
     task-job)
 (defun task-tests--make-job
-    (orchestrator &key definition item parent-agent identifier (index 1)
-                    detached-p owner-identifiers root-identifier)
-  "Return one unregistered job for tests that only need a job object."
-  (make-instance
-   'task-job
-   :pool                         (task-orchestrator-pool orchestrator)
-   :identifier                   identifier
-   :index                        index
-   :name                         identifier
-   :payload                      nil
-   :owner-identifiers            owner-identifiers
-   :root-identifier              (or root-identifier
-                                     (and parent-agent
-                                          (conversation-identifier
-                                           (agent-conversation parent-agent))))
-   :body-function                #'task-job--run
-   :terminal-result-function     (lambda (job state result report)
-                                   (task-job--terminal-record
-                                    job :state  state
-                                        :result result
-                                        :report report))
-   :maximum-runtime-milliseconds 0
-   :orchestrator                 orchestrator
-   :execution-identifier         (make-identifier)
-   :definition                   definition
-   :item                         item
-   :parent-agent                 parent-agent
-   :detached-p                   detached-p))
+              (orchestrator
+               &key item parent-agent identifier (index 1) detached-p owner-identifiers
+               root-identifier)
+              "Return one unregistered job for tests that only need a job object."
+              (make-instance 'task-job :pool (task-orchestrator-pool orchestrator) :identifier
+                             identifier :index index :name identifier :payload nil :owner-identifiers
+                             owner-identifiers :root-identifier
+                             (or root-identifier
+                                 (and parent-agent
+                                      (conversation-identifier (agent-conversation parent-agent))))
+                             :body-function #'task-job--run :terminal-result-function
+                             (lambda (job state result report)
+                               (task-job--terminal-record job :state state :result result :report
+                                                          report))
+                             :maximum-runtime-milliseconds 0 :orchestrator orchestrator
+                             :execution-identifier (make-identifier) :item item :parent-agent
+                             parent-agent :detached-p detached-p))
 
 (-> task-tests--attach-job (task-orchestrator function &key (:name (option string))) task-job)
 (defun task-tests--attach-job (orchestrator build-function &key name)
@@ -669,51 +604,29 @@ admission offers no such thing on purpose."
     (configuration task-job
      &key (:depth (integer 1)) (:registry (option tool-registry)))
     task-child-agent)
-(defun task-tests--child-viewer
-    (configuration job &key (depth 1) registry)
+(defun task-tests--child-viewer (configuration job &key (depth 1) registry)
   "Return a non-running child agent whose identity is JOB."
   (let ((identifier (job-identifier job)))
-    (make-instance
-     'task-child-agent
-     :configuration configuration
-     :provider      (make-instance 'model-provider)
-     :conversation
-     (conversation-create
-      configuration
-      :identifier (format nil "~A-viewer" identifier))
-     :tool-registry (or registry (make-instance 'tool-registry))
-     :worker        nil
-     :definition    (task-job-definition job)
-     :identity      (task-job-identity job)
-     :depth         depth
-     :orchestrator  (task-job-orchestrator job)
-     :job           job)))
+    (make-instance 'task-child-agent :configuration configuration :provider
+                   (make-instance 'model-provider) :conversation
+                   (conversation-create configuration :identifier
+                                        (format nil "~A-viewer" identifier))
+                   :tool-registry (or registry (make-instance 'tool-registry)) :worker
+                   nil :identity (task-job-identity job) :depth depth :orchestrator
+                   (task-job-orchestrator job) :job job)))
 
 (-> task-tests--terminal-result
     (task-job &key (:status keyword) (:output string)
                    (:error (option string)))
     list)
-(defun task-tests--terminal-result
-    (job &key (status :success) (output "done") error)
+(defun task-tests--terminal-result (job &key (status :success) (output "done") error)
   "Return one portable terminal RESULT for JOB."
   (let ((identifier (job-identifier job)))
-    (list :id                identifier
-          :name              identifier
-          :agent             (task-agent-definition-name (task-job-definition job))
-          :agent-source      (task-agent-definition-source
-                              (task-job-definition job))
-          :assignment        (getf (task-job-item job) :task)
-          :status            status
-          :output            output
-          :error             error
-          :label             nil
-          :request-count     1
-          :usage             nil
-          :duration-ms       1
-          :model             (config :model
-                              (agent-configuration (task-job-parent-agent job)))
-          :conversation-file nil
-          :detached          (task-job-detached-p job))))
+    (list :id identifier :name identifier :assignment (getf (task-job-item job) :task)
+          :status status :output output :error error :label nil :request-count 1 :usage
+          nil :duration-ms 1 :model
+          (config :model (agent-configuration (task-job-parent-agent job)))
+          :conversation-file nil :detached (task-job-detached-p job))))
 
 (-> task-tests--job-tool-error-report
     (task-orchestrator agent &key (:operation string) (:identifier string))

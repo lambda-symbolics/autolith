@@ -4,8 +4,8 @@
 
 (-> saved-context-rule-tests--rule (string string) list)
 (defun saved-context-rule-tests--rule (id instruction)
-  "Return a primary-role, turn-lifetime saved rule plist with ID and INSTRUCTION."
-  (list :id id :when '(:roles ("primary")) :instruction instruction
+  "Return a turn-lifetime saved rule plist with ID and INSTRUCTION."
+  (list :id id :when '(:languages ("common-lisp")) :instruction instruction
         :priority 10 :lifetime ':turn))
 
 (-> test-saved-context-rule-persistence-and-replacement () null)

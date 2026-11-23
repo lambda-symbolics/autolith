@@ -557,46 +557,44 @@ complete @ participant names from its world."
     (configuration conversation)
     configuration)
 (defun application--configuration-for-conversation (configuration conversation)
-  "Apply CONVERSATION's child role, then restore its recorded model/provider unless this launch explicitly selected one.
+  "Restore CONVERSATION's child execution settings and recorded model/provider.
 
-A child agent's own channel serves it in the role it was spawned with, so it
-keeps that role's tools, web policy, and instructions there."
-  (setf configuration (application--configuration-for-role configuration
-                                                           (conversation-role conversation)))
+An explicit model selection for this launch overrides the recorded selection."
+  (when (conversation-parent-identifier conversation)
+    (let ((child
+           (task-child-configuration configuration
+            (list :tools (conversation-tool-grants conversation)))))
+      (setf configuration
+              (if (config :model-selection-override-p configuration)
+                  (configuration-copy child :model (config :model configuration)
+                                      :reasoning-effort
+                                      (config :reasoning-effort configuration))
+                  child))))
   (if (config :model-selection-override-p configuration)
       configuration
       (multiple-value-bind (recorded-model registration)
           (handler-case
-              (if (conversation-model conversation)
-                  (provider-resolve-model (conversation-model conversation)
-                                          :provider (conversation-model-provider conversation))
-                  (values nil nil))
-            (model-selection-error () (values nil nil)))
-        (let* ((model     (if registration recorded-model (config :model configuration)))
-               (provider  (if registration (provider-registration-name registration)
-                              (config :model-provider configuration)))
+           (if (conversation-model conversation)
+               (provider-resolve-model (conversation-model conversation) :provider
+                                       (conversation-model-provider conversation))
+               (values nil nil))
+           (model-selection-error nil (values nil nil)))
+        (let* ((model
+                (if registration
+                    recorded-model
+                    (config :model configuration)))
+               (provider
+                (if registration
+                    (provider-registration-name registration)
+                    (config :model-provider configuration)))
                (effort    (conversation-reasoning-effort conversation))
                (overrides (list :model model :model-provider provider)))
-          (when (and effort
-                     (member effort (configuration--reasoning-efforts-for model provider)
-                             :test #'string=))
+          (when
+              (and effort
+                   (member effort (configuration--reasoning-efforts-for model provider)
+                           :test #'string=))
             (setf overrides (append overrides (list :reasoning-effort effort))))
           (apply #'configuration-copy configuration overrides)))))
-
-(-> application--configuration-for-role (configuration (option string)) configuration)
-(defun application--configuration-for-role (configuration role)
-  "Return CONFIGURATION in child ROLE, or CONFIGURATION itself when ROLE is NIL.
-
-A model this launch selected explicitly stays, as it does for any conversation."
-  (if role
-      (let ((child (task-configuration-for-definition configuration
-                                                      (task-role-definition configuration role))))
-        (if (config :model-selection-override-p configuration)
-            (configuration-copy child
-                                :model            (config :model configuration)
-                                :reasoning-effort (config :reasoning-effort configuration))
-            child))
-      configuration))
 
 (-> application--task-orchestrator
     (application)
@@ -614,28 +612,29 @@ A model this launch selected explicitly stays, as it does for any conversation."
 (defun application--job-program-status-report (job)
   "Return JOB's status record plist and whether it is active, without result text."
   (let* ((snapshot (job-snapshot job))
-         (state    (ecase (getf snapshot :state)
-                     ((:queued :running)
-                      ':working)
-                     (:completed
-                      ':done)
-                     (:failed
-                      ':error)
-                     (:aborted
-                      ':idle)))
-         (title    (etypecase job
-                     (task-job
-                      (or (job-name job) (task-job-agent-name job) "Child agent"))
-                     (tool-execution-job
-                      (or (tool-execution-job-description job)
-                          (tool-execution-job-tool-name job)))))
-         (id       (concatenate 'string "jobs/"
-                                (remove #\- (session-job-execution-identifier job)))))
+         (state
+          (ecase (getf snapshot :state)
+            ((:queued :running)
+             ':working)
+            (:completed
+             ':done)
+            (:failed
+             ':error)
+            (:aborted
+             ':idle)))
+         (title
+          (etypecase job
+            (task-job
+             (or (job-name job) "Child agent"))
+            (tool-execution-job
+             (or (tool-execution-job-description job)
+                 (tool-execution-job-tool-name job)))))
+         (id
+          (concatenate 'string "jobs/"
+                       (remove #\- (session-job-execution-identifier job)))))
     (values
-     (list :id      id
-           :state   state
-           :title   title
-           :message (when (eq (getf snapshot :state) ':queued) "Queued"))
+     (list :id id :state state :title title :message
+           (when (eq (getf snapshot :state) ':queued) "Queued"))
      (eq state ':working))))
 
 (-> application--job-program-status-reports (list) list)
@@ -840,44 +839,43 @@ A model this launch selected explicitly stays, as it does for any conversation."
     (configuration &key (:shared-mcp-manager (option mcp-manager))
                         (:conversation (option conversation)))
     (values tool-registry list))
-(defun application--create-tool-registry (configuration &key shared-mcp-manager conversation)
+(defun application--create-tool-registry
+       (configuration &key shared-mcp-manager conversation)
   "Create one complete registry and close its base runtimes on later failure.
 
-A child's channel gets only the tools permitted by its configured role.
+A child's channel gets its recorded tool grants, filtered for child safety and depth.
 When SHARED-MCP-MANAGER serves CONFIGURATION, the registry reuses it rather than
 reconnecting its servers. The second value lists shared runtimes the registry did
 not create: either an empty list or SHARED-MCP-MANAGER alone. The registry's owner
 must neither close nor lose those shared runtimes."
-  (let ((registry    nil)
-        (retained    nil)
-        (completed-p nil))
+  (let ((registry nil) (retained nil) (completed-p nil))
     (unwind-protect
-         (progn
-           (setf registry
-                 (make-default-tool-registry
-                  :immutable-p   (config :immutable-p configuration)
-                  :configuration configuration))
-           (setf registry
-                 (task-augment-tool-registry registry))
-           (multiple-value-bind (augmented manager)
-               (mcp-tool-registry-augment registry configuration
-                                          :shared-manager shared-mcp-manager)
-             (when (and manager (eq manager shared-mcp-manager))
-               (setf retained (list manager)))
-             (setf registry augmented)
-             (task-tool-registry-remember-delegation-tools registry)
-             (when (non-empty-string-p (config :child-role configuration))
-               (task-role-restrict-tool-registry
-                registry configuration
-                :depth (if conversation (task-conversation-depth configuration conversation) 1)))
-             (setf completed-p t)
-             (values registry retained)))
+        (progn
+         (setf registry
+                 (make-default-tool-registry :immutable-p
+                                             (config :immutable-p configuration)
+                                             :configuration configuration))
+         (setf registry (task-augment-tool-registry registry))
+         (multiple-value-bind (augmented manager)
+             (mcp-tool-registry-augment registry configuration :shared-manager
+                                        shared-mcp-manager)
+           (when (and manager (eq manager shared-mcp-manager))
+             (setf retained (list manager)))
+           (setf registry augmented)
+           (task-tool-registry-remember-delegation-tools registry)
+           (when (and conversation (conversation-parent-identifier conversation))
+             (task-child-restrict-tool-registry registry :tools
+              (conversation-tool-grants conversation) :depth
+              (task-conversation-depth configuration conversation)))
+           (setf completed-p t)
+           (values registry retained)))
       (unless completed-p
         (when registry
           ; mallet:suppress no-ignore-errors -- best-effort cleanup of an incomplete registry
           (ignore-errors
-            (tool-registry-close-runtime-state
-             registry :retain (and shared-mcp-manager (list shared-mcp-manager)))))))))
+           (tool-registry-close-runtime-state registry :retain
+                                              (and shared-mcp-manager
+                                                   (list shared-mcp-manager)))))))))
 
 (-> application--extension-registry-snapshot () list)
 (defun application--extension-registry-snapshot ()
@@ -1404,7 +1402,7 @@ RECOVERY-P is true, falling back to a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
 CLIENT-PANE is a plist of the :ROWS and :COLUMNS of the client a hosted
 channel opens for. Without it, use this process's terminal setup.
-TOOL-REGISTRY-FUNCTION receives the role configuration and target conversation.
+TOOL-REGISTRY-FUNCTION receives the conversation configuration and target conversation.
 It builds the registry instead of the ordinary factory, as for an editor's own
 MCP servers. Release acquired resources if construction fails."
   (let* ((recovery-state
@@ -2219,49 +2217,39 @@ The window obeys both of the editor's budgets, so it is also what a client is se
     (application conversation &key (:conversation-lease conversation-lease) (:deletion-inbox-p boolean))
     application)
 (defun application--install-owned-conversation
-    (application conversation &key conversation-lease deletion-inbox-p)
+       (application conversation &key conversation-lease deletion-inbox-p)
   "Atomically install owned CONVERSATION with a fresh tool runtime and agent.
 
-Require the current child role, except for a confirmed deletion's explicit
-roleless inbox handoff. That handoff retires the former child role with its runtime."
-  (if deletion-inbox-p
-      (unless (and (conversation-inbox-p conversation)
-                   (null (conversation-role conversation)))
-        (error 'configuration-error :message "A deletion handoff must lead to the roleless inbox."))
-      (application--check-same-role application conversation))
+A confirmed deletion may hand off to the inbox, retiring the previous runtime."
+  (when deletion-inbox-p
+    (unless (conversation-inbox-p conversation)
+      (error 'configuration-error :message
+             "A deletion handoff must lead to the inbox.")))
   (let* ((configuration
-           (application--configuration-for-conversation
-            (if deletion-inbox-p
-                (configuration-copy (application-configuration application)
-                                    :child-role "" :child-role-instructions "")
-                (application-configuration application))
-            conversation))
+          (application--configuration-for-conversation
+           (application-configuration application) conversation))
          (ui                          (application-ui application))
          (previous-configuration      (application-configuration application))
          (previous-conversation       (application-conversation application))
          (previous-permission-mode    (application-permission-mode application))
          (permission-mode
-           (if (eq previous-conversation conversation)
-               previous-permission-mode
-               (or (application--saved-permission-mode configuration conversation)
-                   (config :permission-mode configuration)
-                   ':ask)))
+          (if (eq previous-conversation conversation)
+              previous-permission-mode
+              (or (application--saved-permission-mode configuration conversation)
+                  (config :permission-mode configuration) ':ask)))
          (previous-conversation-lease
-           (and (slot-boundp application 'conversation-lease)
-                (application-conversation-lease application)))
+          (and (slot-boundp application 'conversation-lease)
+               (application-conversation-lease application)))
          (previous-provider           (application-provider application))
          (previous-registry           (application-tool-registry application))
          (previous-agent              (application-agent application))
-         (previous-rendered-sequence
-           (application-rendered-sequence application))
-         (previous-render-position
-           (application-render-position application))
-         (previous-render-generation
-           (application-render-generation application))
+         (previous-rendered-sequence  (application-rendered-sequence application))
+         (previous-render-position    (application-render-position application))
+         (previous-render-generation  (application-render-generation application))
          (previous-transcript-synchronized-p
-           (application-transcript-synchronized-p application))
+          (application-transcript-synchronized-p application))
          (previous-history-floor-sequence
-           (application-history-floor-sequence application))
+          (application-history-floor-sequence application))
          (previous-goal               (copy-list (application-goal application)))
          (provider                    nil)
          (registry                    nil)
@@ -2276,132 +2264,90 @@ roleless inbox handoff. That handoff retires the former child role with its runt
          (failure-stage               ':retire)
          (rollback-failures           nil))
     (multiple-value-setq (provider registry agent retained)
-      (application--prepare-runtime-replacement
-       application configuration conversation :share-mcp-p t))
+      (application--prepare-runtime-replacement application configuration conversation
+                                                :share-mcp-p t))
     (unwind-protect
-         (handler-case
-             (progn
-               (setf retirement-started-p t
-                     failure-stage ':retire)
-               (application-disconnect-task-presentation application)
-               (setf presentation-disconnected-p t)
-               (multiple-value-bind (completed retirement-failure)
-                   (tool-registry-quiesce-runtime-state
-                    previous-registry :retain retained)
-                 (setf quiesced-tools completed)
-                 (when retirement-failure
-                   (error retirement-failure)))
-               (setf failure-stage ':install
-                     application-swapped-p t)
-               (setf (application-configuration application) configuration
-                     (application-conversation application) conversation
-                     (application-permission-mode application) permission-mode
-                     (application-conversation-lease application)
-                     conversation-lease
-                     (application-provider application) provider
-                     (application-tool-registry application) registry
-                     (application-agent application) agent)
-               (application-connect-task-presentation application)
-               (setf (application-rendered-sequence application) 0
-                     (application-render-position application) 0
-                     (application-render-generation application)
-                     (conversation-log-generation conversation)
-                     (application-transcript-synchronized-p application) nil
-                     (application-history-floor-sequence application) nil)
-               (application--load-goal application)
-               (context-runtime-reset)
-               (when ui
-                 (application--load-conversation-input-history ui conversation))
-               (application-world-terminal-sync-conversation application)
-               (application-publish-recovery-session application)
-               (setf committed-p t))
-           (serious-condition (condition)
-             (setf failure condition)))
+        (handler-case
+         (progn
+          (setf retirement-started-p t
+                failure-stage ':retire)
+          (application-disconnect-task-presentation application)
+          (setf presentation-disconnected-p t)
+          (multiple-value-bind (completed retirement-failure)
+              (tool-registry-quiesce-runtime-state previous-registry :retain retained)
+            (setf quiesced-tools completed)
+            (when retirement-failure (error retirement-failure)))
+          (setf failure-stage ':install
+                application-swapped-p t)
+          (setf (application-configuration application) configuration
+                (application-conversation application) conversation
+                (application-permission-mode application) permission-mode
+                (application-conversation-lease application) conversation-lease
+                (application-provider application) provider
+                (application-tool-registry application) registry
+                (application-agent application) agent)
+          (application-connect-task-presentation application)
+          (setf (application-rendered-sequence application) 0
+                (application-render-position application) 0
+                (application-render-generation application)
+                (conversation-log-generation conversation)
+                (application-transcript-synchronized-p application) nil
+                (application-history-floor-sequence application) nil)
+          (application--load-goal application)
+          (context-runtime-reset)
+          (when ui (application--load-conversation-input-history ui conversation))
+          (application-world-terminal-sync-conversation application)
+          (application-publish-recovery-session application)
+          (setf committed-p t))
+         (serious-condition (condition) (setf failure condition)))
       (unless committed-p
         (when application-swapped-p
-          (handler-case
-              (application-disconnect-task-presentation application)
-            (serious-condition (condition)
-              (push condition rollback-failures)))
-          (setf (application-configuration application)
-                previous-configuration
-                (application-conversation application)
-                previous-conversation
-                (application-permission-mode application)
-                previous-permission-mode
-                (application-conversation-lease application)
-                previous-conversation-lease
-                (application-provider application)
-                previous-provider
-                (application-tool-registry application)
-                previous-registry
-                (application-agent application)
-                previous-agent
-                (application-rendered-sequence application)
-                previous-rendered-sequence
-                (application-render-position application)
-                previous-render-position
-                (application-render-generation application)
-                previous-render-generation
+          (handler-case (application-disconnect-task-presentation application)
+                        (serious-condition (condition)
+                         (push condition rollback-failures)))
+          (setf (application-configuration application) previous-configuration
+                (application-conversation application) previous-conversation
+                (application-permission-mode application) previous-permission-mode
+                (application-conversation-lease application) previous-conversation-lease
+                (application-provider application) previous-provider
+                (application-tool-registry application) previous-registry
+                (application-agent application) previous-agent
+                (application-rendered-sequence application) previous-rendered-sequence
+                (application-render-position application) previous-render-position
+                (application-render-generation application) previous-render-generation
                 (application-transcript-synchronized-p application)
                 previous-transcript-synchronized-p
                 (application-history-floor-sequence application)
                 previous-history-floor-sequence
-                (application-goal application)
-                previous-goal)
-          (handler-case
-              (application-world-terminal-sync-conversation application)
-            (serious-condition (condition)
-              (push condition rollback-failures))))
+                (application-goal application) previous-goal)
+          (handler-case (application-world-terminal-sync-conversation application)
+                        (serious-condition (condition)
+                         (push condition rollback-failures))))
         (when registry
-          (handler-case
-              (tool-registry-close-runtime-state registry :retain retained)
-            (serious-condition (condition)
-              (push condition rollback-failures))))
+          (handler-case (tool-registry-close-runtime-state registry :retain retained)
+                        (serious-condition (condition)
+                         (push condition rollback-failures))))
         (when retirement-started-p
           (setf rollback-failures
-                (nconc
-                 rollback-failures
-                 (application--restore-retired-tool-registry
-                  application
-                  previous-registry
-                  quiesced-tools
-                  :reconnect-p presentation-disconnected-p))))))
+                  (nconc rollback-failures
+                         (application--restore-retired-tool-registry application
+                                                                     previous-registry
+                                                                     quiesced-tools
+                                                                     :reconnect-p
+                                                                     presentation-disconnected-p))))))
     (when failure
-      (application--raise-runtime-replacement-error
-       :operation       ':conversation
-       :stage           failure-stage
-       :cause           failure
-       :rollback-causes rollback-failures))
-    (when (and previous-conversation
-               (not (eq previous-conversation conversation)))
+      (application--raise-runtime-replacement-error :operation ':conversation :stage
+                                                    failure-stage :cause failure
+                                                    :rollback-causes rollback-failures))
+    (when (and previous-conversation (not (eq previous-conversation conversation)))
       (conversation-picker-search-close previous-conversation))
-    (when (and previous-conversation-lease
-               (not
-                (eq previous-conversation-lease conversation-lease)))
+    (when
+        (and previous-conversation-lease
+             (not (eq previous-conversation-lease conversation-lease)))
       (conversation-lease-release previous-conversation-lease))
     (application-world-sync application)
     (application-refresh-context-meter application)
     application))
-
-(-> application--check-same-role (application conversation) null)
-(defun application--check-same-role (application conversation)
-  "Refuse CONVERSATION when its child role differs from the one APPLICATION serves."
-  (let ((role    (or (conversation-role conversation) ""))
-        (current (config :child-role (application-configuration application))))
-    (unless (string= role current)
-      (error 'application-role-change-error
-             :conversation (conversation-identifier conversation)
-             :message      (if (string= role "")
-                               (format nil "This session serves a child agent in its role ~A; open ~A in its own channel."
-                                       current
-                                       (conversation-identifier-display
-                                        (conversation-identifier conversation)))
-                               (format nil "~A is a child agent's conversation in role ~A; it opens in its own channel, where it keeps that role."
-                                       (conversation-identifier-display
-                                        (conversation-identifier conversation))
-                                       role)))))
-  nil)
 
 (-> application-install-conversation (application conversation) application)
 (defun application-install-conversation (application conversation)
