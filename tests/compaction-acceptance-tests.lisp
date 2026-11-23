@@ -277,11 +277,11 @@ it submits a checkpoint."
 
 (-> compaction-gap-test--recover
     (boolean &key (:mode (option keyword)) (:proactive-p boolean)
-                  (:request-limit (integer 1)) (:failure-type symbol)
+                  (:failure-type symbol)
                   (:compactions (integer 0)) (:network-calls (integer 0)))
     null)
 (defun compaction-gap-test--recover
-    (mission-p &key mode proactive-p (request-limit 512) (failure-type 'null)
+    (mission-p &key mode proactive-p (failure-type 'null)
                    (compactions 1) (network-calls 2))
   "Exercise local refusal and recovery, optionally under mission accounting."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
@@ -306,8 +306,6 @@ it submits a checkpoint."
                (make-string 10000 :initial-element #\g))
              (*conversation-compaction-tail-characters*
                1024)
-             (*agent-maximum-provider-requests-per-turn*
-               request-limit)
              (*context-contributors*
                nil)
              (*context-resolver*
@@ -396,11 +394,7 @@ it submits a checkpoint."
     (compaction-gap-test--recover mission-p :mode ':second-refusal
                                  :failure-type 'provider-context-budget-error :network-calls 1)
     (compaction-gap-test--recover mission-p :mode ':refuse :proactive-p t
-                                 :failure-type 'provider-context-budget-error :network-calls 1)
-    (compaction-gap-test--recover mission-p :request-limit 1
-                                 :failure-type 'agent-loop-error :compactions 0 :network-calls 0)
-    (compaction-gap-test--recover mission-p :request-limit 2
-                                 :failure-type 'agent-loop-error :network-calls 1))
+                                 :failure-type 'provider-context-budget-error :network-calls 1))
   (compaction-gap-test--recover nil :mode ':generic :failure-type 'provider-protocol-error
                                :compactions 0 :network-calls 0)
   nil)

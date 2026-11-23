@@ -160,9 +160,6 @@ Every thread hop must carry the same identity; its loss refuses quarantined work
 (defparameter *agent-restricted-maximum-tool-rounds* 4
   "Maximum executed tool rounds within one restricted agent turn.")
 
-(defparameter *agent-maximum-provider-requests-per-turn* 512
-  "Maximum provider requests issued within one ordinary agent turn.")
-
 (defparameter *agent-compaction-maximum-generations* 4
   "Maximum model generations spent on one compaction checkpoint.")
 
@@ -1777,7 +1774,6 @@ that maximum. A refusal and a terminal failure are signaled."
                      (compaction-recovery-call
                       recovery provider view :dispatch
                       (lambda (candidate)
-                        (agent--check-request-budget agent (+ request-number issued))
                         (mission-call-with-request-view
                          request-context candidate
                          (lambda ()
@@ -1870,17 +1866,6 @@ previous one's notes and names the records of VIEW as unsummarized."
   "Return the reasoning retention mode RESULT's response reports, or NIL."
   (let ((metadata (provider-result-metadata result)))
     (and metadata (provider-response-metadata-reasoning-context metadata))))
-
-(-> agent--check-request-budget (agent (integer 0)) null)
-(defun agent--check-request-budget (agent request-number)
-  "Refuse another request when AGENT's turn has used its request budget."
-  (when (>= request-number *agent-maximum-provider-requests-per-turn*)
-    (error 'agent-loop-error
-           :message         (format nil "The turn reached its ~D provider-request safety limit."
-                                    *agent-maximum-provider-requests-per-turn*)
-           :conversation-id (conversation-identifier (agent-conversation agent))
-           :request-number  request-number))
-  nil)
 
 (-> agent--prepare-provider-request (agent) (integer 0))
 (defun agent--prepare-provider-request (agent)
@@ -1987,7 +1972,6 @@ Return issued request count and optional next-request details."
   (compaction-report-call
    (agent-configuration agent)
    (lambda (report)
-     (agent--check-request-budget agent request-number)
      (agent--prepare-provider-request agent)
      (let* ((conversation                 (agent-conversation agent))
             (compaction                   (conversation-compaction-portable-capture
@@ -2082,8 +2066,8 @@ Return issued request count and optional next-request details."
           (request-number 0))
   "Run provider and optional tool rounds until AGENT's turn completes.
 
-REQUEST-NUMBER counts provider requests the turn already issued before the
-loop, so compaction ahead of the user message shares the turn's budget."
+REQUEST-NUMBER counts provider requests already issued in this turn, including
+compaction before the user message."
     (let ((*task-unfinished-work-agent* agent)
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
@@ -2091,8 +2075,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
           (maximum-output-tokens        (agent--configured-max-output-tokens agent))
           (next-request-details         nil))
      (declare (special *task-unfinished-work-agent*))
-     (loop for recovery-used-p = nil
-           do (agent--check-request-budget agent request-number)
+    (loop for recovery-used-p = nil do
        (when (and tools-p (not tool-restriction-p))
          (mcp-tool-registry-refresh
           (agent-tool-registry agent)
@@ -2128,7 +2111,6 @@ loop, so compaction ahead of the user message shares the turn's budget."
               (verified-model  nil)
               (result
                 (loop
-                  (agent--check-request-budget agent request-number)
                   (agent--prepare-provider-request agent)
                   (incf request-number)
                   (let ((output-limit
@@ -2187,7 +2169,6 @@ loop, so compaction ahead of the user message shares the turn's budget."
                       ;; Mission supervision and zero-usage settlement have unwound.
                       (when recovery-used-p (error condition))
                       (setf recovery-used-p t)
-                      (agent--check-request-budget agent request-number)
                       (multiple-value-bind (compaction-requests details)
                           (agent-compact-conversation
                            agent observer

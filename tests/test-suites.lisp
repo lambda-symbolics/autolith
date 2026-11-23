@@ -1419,7 +1419,6 @@
   test-agent-empty-tool-allowlist
   test-agent-steering
   test-agent-explicit-continuation
-  test-agent-provider-request-limit
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
   test-agent-duplicate-call-identity
