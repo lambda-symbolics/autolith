@@ -1944,7 +1944,7 @@ process without releasing the lease, exercising kernel cleanup."
 
 (-> test-conversation--owner-query-cases (pathname string integer) null)
 (defun test-conversation--owner-query-cases (pathname identifier pid)
-  "Table-drive exact-record validation, non-pruning failures and one aggregate deadline."
+  "Table-drive exact-record validation, non-pruning failures and slow responses."
   (let* ((original  (uiop:read-file-string pathname))
          (record    (let ((*read-eval* nil)) (read-from-string original)))
          (directory (uiop:pathname-directory-pathname pathname))
@@ -1952,7 +1952,7 @@ process without releasing the lease, exercising kernel cleanup."
          (open-file (symbol-function 'platform-open-regular-file)))
     (unwind-protect
          (dolist (kind '(:valid :session :record-pid :response-pid :response-session :rejected :transport
-                         :malformed :trailing :trailing-eof :oversized :denied :open-race :timeout :earlier))
+                         :malformed :trailing :trailing-eof :oversized :denied :open-race :slow))
            (let ((copy (copy-tree record)) (calls 0))
              (case kind
                (:session
@@ -1972,15 +1972,14 @@ process without releasing the lease, exercising kernel cleanup."
                      (write-string " :extra" stream))
                     (:trailing-eof
                      (write-string " :eof :extra" stream))))))
-             (let ((before  (uiop:read-file-string pathname))
-                   (started (/ (get-internal-real-time) internal-time-units-per-second)))
+             (let ((before (uiop:read-file-string pathname)))
                (test-call-with-function-replacements
                 (list
                  (list 'platform-open-regular-file
                        (lambda (platform path &key follow-links-p)
                          (when (eq kind ':denied) (error "owned permission failure"))
                          (when (eq kind ':open-race) (error "owned capture race"))
-                         (when (eq kind ':timeout) (sleep 0.6))
+                         (when (eq kind ':slow) (sleep 0.6))
                          (funcall open-file platform path :follow-links-p follow-links-p)))
                  (list 'world-terminal-call
                        (lambda (port token operation &rest arguments)
@@ -1989,10 +1988,8 @@ process without releasing the lease, exercising kernel cleanup."
                          (case kind
                            (:transport
                             (error "owned transport failure"))
-                           (:timeout
-                            (sleep 0.7) (sleep 1.8))
-                           (:earlier
-                            (sleep 1)))
+                           (:slow
+                            (sleep 2.5)))
                          (if (eq kind ':rejected)
                              '(:error :message "owned rejection")
                              (list :ok :status
@@ -2000,20 +1997,13 @@ process without releasing the lease, exercising kernel cleanup."
                                          :pid                   (if (eq kind ':response-pid) (1+ pid) pid)))))))
                 (lambda ()
                   (test-assert
-                   (eq (if (eq kind ':earlier)
-                           (sb-sys:with-deadline (:seconds 0.1)
-                             (world-terminal-owner-reachability pathname identifier pid))
-                           (world-terminal-owner-reachability pathname identifier pid))
-                       (if (eq kind ':valid) ':reachable ':unknown))
+                   (eq (world-terminal-owner-reachability pathname identifier pid)
+                       (if (member kind '(:valid :slow)) ':reachable ':unknown))
                    (format nil "owner query classifies ~A without guessing absence" kind))))
                (test-assert (and (if (eq kind ':trailing-eof) (zerop calls) (<= calls 1))
                                  (equal before (uiop:read-file-string pathname))
                                  (equal entries (sort (platform-list-directory *platform* directory) #'string<)))
-                            "diagnostics leave every record and directory entry unchanged")
-               (when (member kind '(:timeout :earlier))
-                 (test-assert (< (- (/ (get-internal-real-time) internal-time-units-per-second) started)
-                                 (if (eq kind ':earlier) 0.6 2.5))
-                              "the aggregate deadline includes capture and transport phases")))))
+                            "diagnostics leave every record and directory entry unchanged"))))
       (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
         (write-string original stream)))
     (let ((guard (lease-acquire (make-pathname :name "registry" :type "lock" :defaults pathname))))

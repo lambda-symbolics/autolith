@@ -145,31 +145,16 @@
 
 (-> channel-subscription--connect (channel-subscription) world-terminal-client-connection)
 (defun channel-subscription--connect (subscription)
-  "Find SUBSCRIPTION's channel with bounded discovery, or a cancellable switch wait.
+  "Find SUBSCRIPTION's channel, respecting cancellation while waiting.
 
 An endpoint that was replaced while this client connected is discovered again
 and tried once. No channel command has been sent by then."
-  (let ((identifier (channel-subscription-identifier subscription))
-        (deadline   (when image-daemon:*daemon-connect-timeout-seconds*
-                      (+ (get-internal-real-time)
-                         (ceiling (* internal-time-units-per-second
-                                     image-daemon:*daemon-connect-timeout-seconds*))))))
+  (let ((identifier (channel-subscription-identifier subscription)))
     (flet ((discover ()
-             "Find the channel's endpoint in what is left of the deadline."
+             "Find the channel's endpoint after checking cancellation."
              (world-terminal-client-check-cancellation)
-             (handler-case
-                 (sb-sys:with-deadline
-                    (:seconds (and deadline
-                                   (max 0 (/ (- deadline (get-internal-real-time))
-                                             internal-time-units-per-second))))
-                   (world-terminal--find-record (channel-subscription-configuration subscription)
-                                            identifier))
-               (sb-sys:deadline-timeout (condition)
-                 (error 'world-terminal-error
-                        :operation  ':discover
-                        :session-id identifier
-                        :cause      condition
-                        :message    "Channel discovery timed out before attachment."))))
+             (world-terminal--find-record (channel-subscription-configuration subscription)
+                                         identifier))
 
            (connect (entry)
              "Subscribe to the channel at ENTRY."
@@ -189,8 +174,7 @@ and tried once. No channel command has been sent by then."
           (error (condition)
             (world-terminal-client-check-cancellation)
             (let ((replacement (discover)))
-              (when (or (equal replacement entry)
-                        (and deadline (>= (get-internal-real-time) deadline)))
+              (when (equal replacement entry)
                 (error condition))
               (connect replacement))))))))
 

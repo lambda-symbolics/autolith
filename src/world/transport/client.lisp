@@ -115,37 +115,36 @@ A slow answer means the process is alive, so its record stays."
 
 (-> world-terminal-owner-reachability (pathname string (integer 1)) keyword)
 (defun world-terminal-owner-reachability (pathname identifier owner-pid)
-  "Query one matching owner record without pruning, under a single two-second budget.
+  "Query one matching owner record without pruning.
 
 Only definite record absence yields :NO-REACHABLE-ENDPOINT. Errors and identity
 mismatches yield :UNKNOWN; neither read nor transport creates or modifies records."
   (handler-case
-      (sb-sys:with-deadline (:seconds 2)
-        (let ((before (platform-path-status *platform* pathname)))
-          (unless before
-            (return-from world-terminal-owner-reachability ':no-reachable-endpoint))
-          (with-open-stream (stream (platform-open-regular-file *platform* pathname))
-            (unless (platform-file-status-same-object-p
-                     before (platform-stream-status *platform* stream))
+      (let ((before (platform-path-status *platform* pathname)))
+        (unless before
+          (return-from world-terminal-owner-reachability ':no-reachable-endpoint))
+        (with-open-stream (stream (platform-open-regular-file *platform* pathname))
+          (unless (platform-file-status-same-object-p
+                   before (platform-stream-status *platform* stream))
+            (return-from world-terminal-owner-reachability ':unknown))
+          (let ((record (image-daemon:daemon-registry-read-stream
+                         stream :extension-keywords '(:checkpoint-reconnect-id))))
+            (unless (and record
+                         (string= (world-terminal--record-session-id record) identifier)
+                         (eql (getf (rest record) :pid) owner-pid))
               (return-from world-terminal-owner-reachability ':unknown))
-            (let ((record (image-daemon:daemon-registry-read-stream
-                           stream :extension-keywords '(:checkpoint-reconnect-id))))
-              (unless (and record
-                           (string= (world-terminal--record-session-id record) identifier)
-                           (eql (getf (rest record) :pid) owner-pid))
-                (return-from world-terminal-owner-reachability ':unknown))
-              (let* ((response (world-terminal-call (world-terminal--record-port record)
-                                                   (world-terminal--record-token record) ':status))
-                     (status   (and (proper-list-p response)
-                                    (eq (first response) ':ok)
-                                    (getf (rest response) :status))))
-                (if (and (proper-list-p status)
-                         (eq (first status) ':world-terminal-status)
-                         (equal (getf (rest status) :session-id) identifier)
-                         (eql (getf (rest status) :pid) owner-pid))
-                    ':reachable
-                    ':unknown))))))
-    ((or sb-sys:deadline-timeout error) ()
+            (let* ((response (world-terminal-call (world-terminal--record-port record)
+                                                  (world-terminal--record-token record) ':status))
+                   (status   (and (proper-list-p response)
+                                  (eq (first response) ':ok)
+                                  (getf (rest response) :status))))
+              (if (and (proper-list-p status)
+                       (eq (first status) ':world-terminal-status)
+                       (equal (getf (rest status) :session-id) identifier)
+                       (eql (getf (rest status) :pid) owner-pid))
+                  ':reachable
+                  ':unknown)))))
+    (error ()
       ':unknown)))
 
 (-> world-terminal--find-record (configuration string) cons)
