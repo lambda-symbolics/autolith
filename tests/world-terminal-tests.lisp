@@ -833,14 +833,16 @@ Each transcript event takes a line of its own."
                    (test-assert (and condition
                                      (eq (daemon-error-operation condition) operation)
                                      (null calls))
-                                "invalid or ambiguous commands do not perform operations")
+                                (format nil "CLI ~S expected operation ~S and no calls, got condition ~S and calls ~S."
+                                        arguments operation condition calls))
                    (when condition
                      (test-assert
                       (every (lambda (candidate)
                                (search (session-identifier-display candidate)
                                        (autolith-error-message condition)))
                              candidates)
-                      "discovery failures identify the reachable candidate sessions"))
+                      (format nil "CLI ~S expected candidates ~S in ~S."
+                              arguments candidates (autolith-error-message condition))))
                    (when (eq operation ':arguments)
                      (test-assert (null probes)
                                   "argument errors fail before discovering sessions"))))
@@ -856,6 +858,11 @@ Each transcript event takes a line of its own."
         (test-call-with-function-replacements
          (list
           (list 'world-terminal--client-configuration (lambda () configuration))
+          ;; Keep fragment selectors independent of a randomly generated inbox ID.
+          (list 'conversation-identifier-generate
+                (lambda (root &key timestamp)
+                  (declare (ignore root timestamp))
+                  "h777777"))
           ;; Routing tests model already exited fixture processes.
           (list 'ls-compat.posix:process-state
                 (lambda (pid) (declare (ignore pid)) ':dead))
@@ -902,11 +909,7 @@ Each transcript event takes a line of its own."
            (world-tests--persisted-conversation configuration "b6uouHJ" 1000)
            (world-tests--persisted-conversation configuration "c6uouHJ" 2000)
            (world-tests--persisted-conversation configuration "e6uouHJ" 3000)
-           (let ((inbox (conversation-create configuration
-                                             :identifier "h777777" :inbox-p t)))
-             (conversation-append-record inbox
-                                         (list :title  :value *world-inbox-designator*
-                                               :source ':initial)))
+           (world-ensure-inbox configuration)
            (world-participant-rename configuration "b6uouHJ" "builder")
            (world-participant-rename configuration "e6uouHJ" "cold-agent")
            (check-targets nil)
@@ -1365,7 +1368,7 @@ Each transcript event takes a line of its own."
 
 (-> test-world-terminal-checkpoint-reconnect-boundaries () null)
 (defun test-world-terminal-checkpoint-reconnect-boundaries ()
-  "Test bounded rejection of a checkpoint endpoint with another identity or authentication."
+  "Keep checkpoint identity and authentication checks active until cancellation."
   (with-test-configuration (configuration)
    (multiple-value-bind (application controller)
        (test-world-terminal--application configuration)
@@ -1376,8 +1379,7 @@ Each transcript event takes a line of its own."
                 (record                                (world-terminal--registry-record session))
                 (entry
                  (cons (image-daemon:daemon-runtime-registry-pathname session)
-                       record))
-                (*world-startup-start-timeout-seconds* 0.1))
+                       record)))
            (dolist
                (change
                 (list (list :checkpoint-reconnect-id "stale")
@@ -1386,7 +1388,7 @@ Each transcript event takes a line of its own."
                             (1+
                              (image-daemon:daemon-runtime-created-at session)))
                       (list :missing nil) (list :authentication "invalid")))
-             (let ((candidate (copy-list record)) (old-entry entry))
+              (let ((candidate (copy-list record)) (old-entry entry) (polls 0))
                (case (first change)
                  (:missing
                   (setf candidate nil))
@@ -1401,23 +1403,19 @@ Each transcript event takes a line of its own."
                  (list 'image-daemon:daemon-registry-read
                        (lambda (pathname)
                          (declare (ignore pathname))
+                         (incf polls)
                          candidate)))
                 (lambda ()
-                  (let ((start (get-internal-real-time)))
-                    (test-assert
-                     (handler-case
-                      (progn
-                       (world-terminal--wait-for-checkpoint-entry old-entry
-                                                              "expected")
-                       nil)
-                      (world-terminal-error nil t))
-                     "a missing, mismatched or unauthenticated endpoint is rejected")
-                    (test-assert
-                     (<
-                      (/ (- (get-internal-real-time) start)
-                         internal-time-units-per-second)
-                      1)
-                     "endpoint rejection has a bounded wait")))))))
+                  (test-assert
+                   (handler-case
+                       (progn
+                         (world-terminal--wait-for-checkpoint-entry
+                          old-entry "expected" :cancelled-p (lambda () (>= polls 2)))
+                         nil)
+                     (world-terminal-error (condition)
+                        (and (eq (image-daemon:daemon-error-operation condition) ':attach)
+                            (= polls 2))))
+                   "A missing, mismatched or unauthenticated endpoint is never accepted before cancellation."))))))
        (world-terminal-stop application)
        (application-input-controller-stop controller)
        (application-release-conversation-lease application))))

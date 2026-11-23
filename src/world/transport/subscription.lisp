@@ -390,16 +390,13 @@ and tried once. No channel command has been sent by then."
 
 Only the subscription handshake is retried. No channel command has been sent.
 Explicit rejection, including an expired replay cursor, is terminal."
-  (let ((allow-later-p nil)
-        (deadline      (+ (get-internal-real-time)
-                          (* *world-startup-start-timeout-seconds* internal-time-units-per-second))))
+  (let ((allow-later-p nil))
     (flet ((cancelled-p ()
              (or (channel-subscription-closed-p subscription)
                  (channel-subscription-stopping-p subscription))))
       (loop
         (let ((entry (world-terminal--wait-for-checkpoint-entry
                       (world-terminal-client-connection-entry previous) identifier
-                      :configuration (channel-subscription-configuration subscription)
                       :cancelled-p #'cancelled-p :allow-later-p allow-later-p)))
           (handler-case
               (return (world-terminal-client-connect
@@ -410,7 +407,7 @@ Explicit rejection, including an expired replay cursor, is terminal."
                        :after-sequence sequence :cancelled-p #'cancelled-p
                         :event-function (lambda (event) (channel-subscription-receive-event subscription event))))
             (world-terminal-error (condition)
-              (when (or (cancelled-p) (>= (get-internal-real-time) deadline)
+              (when (or (cancelled-p)
                         (and (typep condition 'world-terminal-client-rejected)
                              (not (world-terminal-error-retry-p condition))))
                 (error condition))

@@ -544,24 +544,20 @@ HEADER-P renders field labels rather than status values."
           (error () "CONDITION"))))
 
 (-> world-terminal--wait-for-checkpoint-entry
-    (cons string &key (:configuration (option configuration)) (:cancelled-p (option function))
+    (cons string &key (:cancelled-p (option function))
           (:allow-later-p boolean))
     cons)
-(defun world-terminal--wait-for-checkpoint-entry (entry reconnect-id &key configuration cancelled-p allow-later-p)
-  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID.
+(defun world-terminal--wait-for-checkpoint-entry (entry reconnect-id &key cancelled-p allow-later-p)
+  "Wait for ENTRY's authenticated endpoint for RECONNECT-ID until cancellation.
 
-While CONFIGURATION's world server restarts from its saved heap, the wait
-starts over instead of ending, since the endpoint returns only once the
-saved core boots. ALLOW-LATER-P accepts a later transition with the same
-channel, authentication token and creation time after a verified endpoint
-loses a subscription race to another checkpoint."
-  (let* ((pathname   (first entry))
-         (old-record (rest entry))
-         (session-id (world-terminal--record-session-id old-record))
-         (token      (world-terminal--record-token old-record))
-         (timeout    (* *world-startup-start-timeout-seconds*
-                        internal-time-units-per-second))
-         (deadline   (+ (get-internal-real-time) timeout)))
+ALLOW-LATER-P accepts a later transition with the same channel, authentication
+token and creation time after a verified endpoint loses a subscription race
+to another checkpoint."
+  (let* ((pathname                                      (first entry))
+         (old-record                                    (rest entry))
+         (session-id                                    (world-terminal--record-session-id old-record))
+         (token                                         (world-terminal--record-token old-record))
+         (image-daemon:*daemon-connect-timeout-seconds* nil))
     (loop
       (when (and cancelled-p (funcall cancelled-p))
         (error 'world-terminal-error :message "Checkpoint reconnection was cancelled."
@@ -576,18 +572,9 @@ loses a subscription race to another checkpoint."
                    (string= (world-terminal--record-token record) token)
                    (= (getf (rest record) :created-at) (getf (rest old-record) :created-at))
                    (handler-case
-                       (let ((image-daemon:*daemon-connect-timeout-seconds*
-                               (min image-daemon:*daemon-connect-timeout-seconds*
-                                    (max 0.001 (/ (- deadline (get-internal-real-time))
-                                                  (* 2 internal-time-units-per-second))))))
-                         (eq (first (world-terminal-call (world-terminal--record-port record) token ':status)) ':ok))
+                        (eq (first (world-terminal-call (world-terminal--record-port record) token ':status)) ':ok)
                      (error () nil)))
           (return (cons pathname record))))
-      (when (>= (get-internal-real-time) deadline)
-        (unless (and configuration (world-server-restarting-p configuration))
-          (error 'world-terminal-error :message "The checkpoint endpoint did not become ready."
-                                  :operation ':attach :session-id session-id))
-        (setf deadline (+ (get-internal-real-time) timeout)))
       (sleep 0.05))))
 
 (-> world-terminal-client-screen-create (&key (:panel t)) world-terminal-screen)
