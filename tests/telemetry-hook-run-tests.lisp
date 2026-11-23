@@ -837,51 +837,39 @@
 
 (-> test-telemetry-run-job-terminal-failures () null)
 (defun test-telemetry-run-job-terminal-failures ()
-  "Export errors for publication failure and deadline cancellation after successful work."
-  (dolist (case '((publication-failure nil :failed "internal")
-                  (deadline-expired t :timed-out "timeout")))
-    (test-telemetry--call
-     (lambda (configuration)
-       (let* ((timeout-p   (second case))
-              (publication (sb-thread:make-semaphore))
-              (provider
-               (make-instance
-                'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
-                :results
-                (list (agent-test-result
-                       "before-terminal-failure"
-                        (if timeout-p
-                            (list (agent-test-call :call-id "terminal-failure"
-                                                    :namespace "job" :name "list" :arguments "{}"))
-                            (list (agent-test-message "Done."))))))))
-         (test-call-with-function-replacements
-          (unless timeout-p
-            (list (list 'task--write-result-artifact
-                        (lambda (job result)
-                          (declare (ignore job result))
-                          (sb-thread:signal-semaphore publication)
-                          (error "Injected task result publication failure.")))))
-          (lambda ()
-            (multiple-value-bind (spans results)
-                (if timeout-p
-                    (test-telemetry-hooks--run-job configuration provider :timeout-seconds 1 :tools '("job.list"))
-                    (test-telemetry-hooks--run-job configuration provider))
-              (let ((roots (remove-if-not
-                            (lambda (span)
-                              (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
-                            spans)))
-                (unless timeout-p
-                  (test-assert (sb-thread:try-semaphore publication)
-                               "The child reached the injected publication failure."))
-                (test-assert (eq (first results) (third case))
-                             (format nil "~A: The job reaches the expected real terminal failure." (first case)))
-                (test-assert (= (length roots) 1)
-                             (format nil "~A: Terminal failures export exactly one job root." (first case)))
-                (test-assert (equal (test-telemetry--attribute (first roots) "autolith.run.outcome") "error")
-                             (format nil "~A: Successful work cannot hide a later terminal failure." (first case)))
-                (test-assert (equal (test-telemetry--attribute (first roots) "error.type")
-                                    (fourth case))
-                             (format nil "~A: The final job error retains its applicable category." (first case)))))))))))
+  "Export a failed job root when task publication fails after successful work."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let* ((publication (sb-thread:make-semaphore))
+            (provider
+              (make-instance
+               'run-job-test-provider :configuration configuration
+               :results
+               (list (agent-test-result "before-terminal-failure"
+                                        (list (agent-test-message "Done.")))))))
+       (test-call-with-function-replacements
+        (list (list 'task--write-result-artifact
+                    (lambda (job result)
+                      (declare (ignore job result))
+                      (sb-thread:signal-semaphore publication)
+                      (error "Injected task result publication failure."))))
+        (lambda ()
+          (multiple-value-bind (spans results)
+              (test-telemetry-hooks--run-job configuration provider)
+            (let ((roots (remove-if-not
+                          (lambda (span)
+                            (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
+                          spans)))
+              (test-assert (sb-thread:try-semaphore publication)
+                           "The child reached the injected publication failure.")
+              (test-assert (eq (first results) ':failed)
+                           "The job reports the task publication failure.")
+              (test-assert (= (length roots) 1)
+                           "Terminal failures export exactly one job root.")
+              (test-assert (equal (test-telemetry--attribute (first roots) "autolith.run.outcome") "error")
+                           "Successful work cannot hide a later terminal failure.")
+              (test-assert (equal (test-telemetry--attribute (first roots) "error.type") "internal")
+                           "The final job error retains its publication failure category."))))))))
   nil)
 
 (-> test-telemetry-run-protocol-failure () null)

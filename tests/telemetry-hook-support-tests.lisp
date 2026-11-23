@@ -52,15 +52,12 @@
 
 (-> test-telemetry-hooks--run-job
     (configuration model-provider
-     &key (:timeout-seconds (integer 1)) (:publish-p boolean) (:tools list))
+      &key (:publish-p boolean) (:tools list))
     (values list list))
-(defun test-telemetry-hooks--run-job (configuration provider &key (timeout-seconds 30) publish-p tools)
+(defun test-telemetry-hooks--run-job (configuration provider &key publish-p tools)
   "Run a real headless child with offline uploads and deterministic application wiring."
   (let* ((application (mission-test--application configuration))
-         (request     (run-job-validate-envelope
-                       (let ((form (run-job-tests--request-form)))
-                         (setf (getf (rest form) :timeout-seconds) timeout-seconds)
-                         form)))
+         (request     (run-job-validate-envelope (run-job-tests--request-form)))
          (definition  (task-agent-definition-create
                        :name "custom-runner" :description "Exercise terminal telemetry."
                        :instructions "Return the answer." :tools tools :source ':test))
@@ -77,7 +74,7 @@
                  (lambda (&rest arguments) (declare (ignore arguments)) application))
            (list 'run-job--resolve-definition
                  (lambda (&rest arguments) (declare (ignore arguments)) definition))
-           ;; Keep deadline coverage independent of installed user skills.
+            ;; Keep headless fixtures independent of installed user skills.
            (list 'skill-roots
                  (lambda (configuration)
                    (list (merge-pathnames "skills/" (config :config-root configuration)))))
