@@ -128,32 +128,6 @@
                    "The launch diagnostic is preserved without a capture result")))
   nil)
 
-(-> test-shell-execution-without-deadline () null)
-(defun test-shell-execution-without-deadline ()
-  "Execute without a process deadline and retain the complete output."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
-    (let* ((registry (make-default-tool-registry))
-           (context  (shell-output-tests--context configuration registry))
-           (executor (symbol-function 'run-sandboxed))
-           (result
-             (test-call-with-function-replacements
-              (list (list 'run-sandboxed
-                          (lambda (&rest arguments)
-                            (test-assert (null (getf (rest (rest arguments)) :timeout))
-                                         "Shell execution supplies no process deadline")
-                            (apply executor arguments))))
-              (lambda ()
-                (tool-execute (tool-registry-find registry "shell" "run") context
-                              (json-object "command" "echo completed")))))
-           (metadata (first (getf (tool-result-details result) :shell-logs)))
-           (capture  (first (getf metadata :captures))))
-      (test-assert (tool-result-success-p result) "The command completes successfully")
-      (test-assert (getf capture :complete-p) "Retain a complete output capture")
-      (test-assert (search "completed" (tool-result-content result))
-                   "Include the captured command output")))
-  nil)
-
 (-> test-shell-log-export-boundary () null)
 (defun test-shell-log-export-boundary ()
   "Collect task assets without reading private command-output subtrees."

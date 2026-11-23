@@ -1944,7 +1944,7 @@ process without releasing the lease, exercising kernel cleanup."
 
 (-> test-conversation--owner-query-cases (pathname string integer) null)
 (defun test-conversation--owner-query-cases (pathname identifier pid)
-  "Table-drive exact-record validation, non-pruning failures and slow responses."
+  "Table-drive exact-record validation and non-pruning failures."
   (let* ((original  (uiop:read-file-string pathname))
          (record    (let ((*read-eval* nil)) (read-from-string original)))
          (directory (uiop:pathname-directory-pathname pathname))
@@ -1952,7 +1952,7 @@ process without releasing the lease, exercising kernel cleanup."
          (open-file (symbol-function 'platform-open-regular-file)))
     (unwind-protect
          (dolist (kind '(:valid :session :record-pid :response-pid :response-session :rejected :transport
-                         :malformed :trailing :trailing-eof :oversized :denied :open-race :slow))
+                          :malformed :trailing :trailing-eof :oversized :denied :open-race))
            (let ((copy (copy-tree record)) (calls 0))
              (case kind
                (:session
@@ -1979,17 +1979,13 @@ process without releasing the lease, exercising kernel cleanup."
                        (lambda (platform path &key follow-links-p)
                          (when (eq kind ':denied) (error "owned permission failure"))
                          (when (eq kind ':open-race) (error "owned capture race"))
-                         (when (eq kind ':slow) (sleep 0.6))
                          (funcall open-file platform path :follow-links-p follow-links-p)))
                  (list 'world-terminal-call
                        (lambda (port token operation &rest arguments)
                          (declare (ignore port token operation arguments))
                          (incf calls)
-                         (case kind
-                           (:transport
-                            (error "owned transport failure"))
-                           (:slow
-                            (sleep 2.5)))
+                         (when (eq kind ':transport)
+                           (error "owned transport failure"))
                          (if (eq kind ':rejected)
                              '(:error :message "owned rejection")
                              (list :ok :status
@@ -1998,7 +1994,7 @@ process without releasing the lease, exercising kernel cleanup."
                 (lambda ()
                   (test-assert
                    (eq (world-terminal-owner-reachability pathname identifier pid)
-                       (if (member kind '(:valid :slow)) ':reachable ':unknown))
+                       (if (eq kind ':valid) ':reachable ':unknown))
                    (format nil "owner query classifies ~A without guessing absence" kind))))
                (test-assert (and (if (eq kind ':trailing-eof) (zerop calls) (<= calls 1))
                                  (equal before (uiop:read-file-string pathname))

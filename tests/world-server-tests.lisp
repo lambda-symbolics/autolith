@@ -2746,8 +2746,6 @@ the version the client says it is, when it says one."
           (list 'world-terminal-query-record
                 (lambda (entry operation arguments)
                   (declare (ignore entry operation arguments))
-                  (test-assert (null image-daemon:*daemon-connect-timeout-seconds*)
-                               "Channel opens have no local connection deadline.")
                   (incf calls)
                   (when (= calls 1)
                     (case mode

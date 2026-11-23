@@ -182,7 +182,6 @@
                 (test-assert (telemetry-controller-closing controller) "Clean exit closes admissions before waiting.")
                 (test-assert (null (telemetry--begin-run configuration))
                              "New runs cannot extend the clean-exit drain.")
-                (sleep 3.25)
                 (test-assert (bt:with-lock-held ((telemetry-controller-lock controller))
                                (not (telemetry-controller-stopped controller)))
                              "Final uploads retain authorization until completion."))

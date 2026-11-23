@@ -172,7 +172,6 @@
                        (declare (ignore arguments))
                        (when failure-p
                          (error 'lsp-error :message "Fixture diagnostics failure."))
-                       (sleep 1.1)
                        reports))
                (list 'context-rule-note-diagnostics
                      (lambda (conversation rows &key generation)
