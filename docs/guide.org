@@ -1325,8 +1325,25 @@ fields in =init.lisp= and restart Autolith:
   the key privately. A nonempty environment value takes precedence. Replace
   =my-provider= with your registration name.
 
-Optional =:headers= adds non-secret HTTP headers. If the server supports the
-streaming usage chunk, you can omit =:stream-usage-p= to request it.
+Optional =:headers= adds non-secret HTTP headers. For headers that depend on the
+conversation, set =:request-headers= to a function of one conversation argument.
+Return an alist of non-secret header names and string values. For example, add
+this option to the registration to route each conversation to the same backend:
+
+#+begin_src lisp
+:request-headers
+(lambda (conversation)
+  (list (cons "X-Session-Id" (conversation-identifier conversation))))
+#+end_src
+
+The conversation identifier is durable across resume and compaction. The function
+is called before each completion request, including retries. Its headers replace
+static headers with the same name, ignoring case. Model discovery uses only static
+headers. Authentication, content type, accepted response type and user agent are
+set by Autolith.
+
+If the server supports the streaming usage chunk, you can omit =:stream-usage-p=
+to request it.
 
 For a different wire protocol, use the Lisp extension point =register-provider=
 with a factory that returns a =model-provider=. The Chat Completions helper

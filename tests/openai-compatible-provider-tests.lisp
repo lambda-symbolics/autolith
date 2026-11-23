@@ -1290,3 +1290,75 @@
                 "replacing the API key updates the private credential store"))))
       (provider--registry-restore snapshot)))
   nil)
+
+(-> test-openai-compatible-provider-request-headers () null)
+(defun test-openai-compatible-provider-request-headers ()
+  "Send conversation-specific headers across repeated requests, resume and reconfiguration."
+  (with-test-configuration (configuration)
+    (let ((snapshot  (provider--registry-snapshot))
+          (requests  nil)
+          (count     0)
+          (invalid-p nil))
+      (unwind-protect
+           (progn
+             (register-openai-compatible-provider
+              :name "request-headers" :models '("request-headers/model")
+              :endpoint "https://provider.invalid/v1/chat/completions"
+              :headers  '(("X-Session-Id" . "static") ("X-Static" . "fixed"))
+              :request-headers
+              (lambda (conversation)
+                (if invalid-p
+                    '(("X-Invalid" . 42))
+                    (list (cons "x-session-id" (conversation-identifier conversation))
+                          (cons "X-Request" (write-to-string (incf count)))
+                          (cons "Authorization" "override")))))
+             (let* ((selected (configuration-copy configuration :model "request-headers/model"))
+                    (provider (provider-create selected))
+                    (owner    (conversation-create selected :identifier "headers-one")))
+               (openai-compatible-provider-tests--save-key selected "request-headers" "fixture-key")
+               (conversation-append-user-message owner "Hello.")
+               (test-call-with-function-replacements
+                (list (list 'provider-post-event-stream
+                            (lambda (endpoint content &key headers &allow-other-keys)
+                              (declare (ignore endpoint content))
+                              (push headers requests)
+                              (values (make-string-input-stream "") 200 nil))))
+                (lambda ()
+                  (labels ((send (provider conversation)
+                             (with-credentials (credentials (provider-credential-manager provider))
+                               (close (provider-open-response-stream
+                                       provider (json-object) :credentials credentials
+                                       :conversation                       conversation)))))
+                    (send provider owner)
+                    (send provider owner)
+                    (send (provider-with-configuration provider selected)
+                          (conversation-load (conversation-pathname owner)))
+                    (send provider (conversation-create selected :identifier "headers-two"))
+                    (setf requests (nreverse requests))
+                    (test-assert
+                     (equal (mapcar (lambda (headers)
+                                      (rest (assoc "X-Session-Id" headers :test #'string-equal)))
+                                    requests)
+                            '("headers-one" "headers-one" "headers-one" "headers-two"))
+                     "routing headers identify the durable conversation across resume")
+                    (test-assert
+                     (equal (mapcar (lambda (headers)
+                                      (rest (assoc "X-Request" headers :test #'string-equal)))
+                                    requests)
+                            '("1" "2" "3" "4"))
+                     "the callback supplies fresh headers for each HTTP request")
+                    (test-assert
+                     (every (lambda (headers)
+                              (and (= 1 (count "X-Session-Id" headers :key #'first :test #'string-equal))
+                                   (equal (rest (assoc "X-Static" headers :test #'string-equal)) "fixed")
+                                   (equal (rest (assoc "Authorization" headers :test #'string-equal))
+                                          "Bearer fixture-key")))
+                            requests)
+                     "dynamic headers replace static duplicates while preserving bearer authentication")
+                    (setf invalid-p t)
+                    (test-assert
+                     (handler-case (progn (send provider owner) nil)
+                       (configuration-error () t))
+                     "invalid callback headers signal a configuration error"))))))
+        (provider--registry-restore snapshot))))
+  nil)

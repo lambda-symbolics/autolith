@@ -20,6 +20,12 @@
     :reader        openai-compatible-provider-headers
     :type          list
     :documentation "Additional non-secret HTTP headers for provider requests.")
+   (request-headers
+    :initarg       :request-headers
+    :initform      nil
+    :reader        openai-compatible-provider-request-headers
+    :type          (option function)
+    :documentation "An optional function of the conversation returning additional non-secret request headers.")
    (reasoning-parameter
     :initarg       :reasoning-parameter
     :initform      nil
@@ -95,12 +101,13 @@ service accepts."))
                    (:name non-empty-string)
                    (:family keyword)
                    (:headers list)
+                   (:request-headers (option function))
                    (:reasoning-parameter (option string))
                    (:api-key-environment-variable (option string))
                    (:stream-usage-p boolean))
     openai-compatible-provider)
 (defun openai-compatible-provider-create
-    (configuration &key name family headers reasoning-parameter
+    (configuration &key name family headers request-headers reasoning-parameter
                         api-key-environment-variable
                         (stream-usage-p t))
   "Create one OpenAI-compatible provider from registered endpoint metadata."
@@ -116,6 +123,7 @@ service accepts."))
    :display-name                 name
    :family                       family
    :headers                      (copy-tree headers)
+   :request-headers              request-headers
    :reasoning-parameter          reasoning-parameter
    :api-key-environment-variable api-key-environment-variable
    :stream-usage-p               stream-usage-p))
@@ -123,9 +131,10 @@ service accepts."))
 (defmethod provider-reconfiguration-initargs append
     ((provider openai-compatible-provider))
   "Preserve PROVIDER's display, family, headers, reasoning, key, and usage options."
-  (list :display-name (openai-compatible-provider-display-name provider)
-        :family       (openai-compatible-provider-family provider)
-        :headers      (copy-tree (openai-compatible-provider-headers provider))
+  (list :display-name    (openai-compatible-provider-display-name provider)
+        :family          (openai-compatible-provider-family provider)
+        :headers         (copy-tree (openai-compatible-provider-headers provider))
+        :request-headers (openai-compatible-provider-request-headers provider)
         :reasoning-parameter
         (openai-compatible-provider-reasoning-parameter provider)
         :api-key-environment-variable
@@ -313,6 +322,7 @@ manager from PROVIDER-NAME."
      (:models-endpoint (option string))
      (:endpoint non-empty-string)
      (:headers list)
+     (:request-headers (option function))
      (:reasoning-parameter (option string))
      (:api-key-environment-variable (option string))
      (:stream-usage-p boolean)
@@ -320,7 +330,7 @@ manager from PROVIDER-NAME."
     string)
 (defun register-openai-compatible-provider
     (&key name description family models models-endpoint endpoint
-      headers reasoning-parameter api-key-environment-variable
+      headers request-headers reasoning-parameter api-key-environment-variable
       (stream-usage-p t)
       (source (provider--current-registration-source)))
   "Register an OpenAI-compatible Chat Completions provider.
@@ -330,7 +340,10 @@ is nonempty, then from Autolith's private API-key store using NAME. MODELS conta
 optional static strings or model property lists accepted by REGISTER-PROVIDER.
 MODELS-ENDPOINT discovers additional model identifiers and advertised context
 windows. STREAM-USAGE-P controls whether streaming requests ask for a final usage
-chunk."
+chunk. REQUEST-HEADERS is an optional function called with the conversation before
+each HTTP completion request. It returns an alist of non-secret headers that
+override HEADERS case-insensitively. Authentication and wire-format headers cannot
+be overridden. Model discovery uses only HEADERS."
   (unless (or models models-endpoint)
     (error 'configuration-error
            :message
@@ -349,15 +362,7 @@ chunk."
            :message
            (format nil "Provider ~A has an invalid API-key environment variable."
                    name)))
-  (dolist (header headers)
-    (unless (and (consp header)
-                 (non-empty-string-p (first header))
-                 (stringp (rest header)))
-      (error 'configuration-error
-             :message
-             (format nil
-                     "Provider ~A has an invalid additional HTTP header ~S."
-                     name header))))
+  (openai-compatible--validate-headers name headers)
   (let* ((effective-family (or family (provider-name-family name)))
          (model-discovery
            (and models-endpoint
@@ -390,6 +395,7 @@ chunk."
         :name                         name
         :family                       effective-family
         :headers                      headers
+        :request-headers              request-headers
         :reasoning-parameter          reasoning-parameter
         :api-key-environment-variable api-key-environment-variable
         :stream-usage-p               stream-usage-p))
@@ -466,17 +472,38 @@ chunk."
 
 ;;;; -- Chat Completions Transport --
 
+(-> openai-compatible--validate-headers (string t) list)
+(defun openai-compatible--validate-headers (name headers)
+  "Return HEADERS as a header alist, or signal a configuration error for NAME."
+  (unless (and (proper-list-p headers)
+               (every (lambda (header)
+                        (and (consp header)
+                             (non-empty-string-p (first header))
+                             (stringp (rest header))))
+                      headers))
+    (error 'configuration-error
+           :message (format nil "Provider ~A requires an alist of HTTP header names and string values."
+                            name)))
+  headers)
+
 (-> openai-compatible--request-headers
     (openai-compatible-provider oauth-credentials conversation)
     list)
 (defun openai-compatible--request-headers (provider credentials conversation)
-  "Return authenticated headers for one Chat Completions request."
-  (declare (ignore conversation))
-  (openai-compatible--authenticated-headers
-   credentials
-   :accept       "text/event-stream"
-   :content-type "application/json"
-   :custom       (openai-compatible-provider-headers provider)))
+  "Return authenticated headers with per-request additions for CONVERSATION."
+  (let* ((function (openai-compatible-provider-request-headers provider))
+         (dynamic  (when function
+                     (openai-compatible--validate-headers
+                      (openai-compatible-provider-display-name provider)
+                      (funcall function conversation))))
+         (custom   (remove-duplicates
+                    (append dynamic (openai-compatible-provider-headers provider))
+                    :key #'first :test #'string-equal :from-end t)))
+    (openai-compatible--authenticated-headers
+     credentials
+     :accept       "text/event-stream"
+     :content-type "application/json"
+     :custom       custom)))
 
 (defmethod provider-open-response-stream
     ((provider openai-compatible-provider)

@@ -1186,6 +1186,7 @@
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity
+  test-openai-compatible-provider-request-headers
   test-openai-compatible-provider)
 
 (define-test-suite gemini-code-assist-provider
