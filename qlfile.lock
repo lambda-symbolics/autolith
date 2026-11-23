@@ -164,8 +164,8 @@
   :version "git-e51a0a6f4ee8ee59a4b8294f0712622c10c50599"))
 ("image-daemon" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "52e48c219eb22ca7a3740cb9565ef5cf68c21b6c")
-  :version "git-52e48c219eb22ca7a3740cb9565ef5cf68c21b6c"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "b0b365c1a0a42386ae13572bfc4bcb592b7eb8ef")
+  :version "git-b0b365c1a0a42386ae13572bfc4bcb592b7eb8ef"))
 ("lisp-em" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/lisp-em.git" :ref "c949c9a25589b4b8bd09862a326c17e262399b44")
