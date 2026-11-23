@@ -1015,11 +1015,6 @@
                (test-assert (search "autolith-shell-works"
                                     (tool-result-content result))
                             "shell.run captures combined output"))
-             (test-assert
-              (= (workspace-tool-shell-timeout
-                  (json-object "timeout-seconds" 900))
-                 900)
-              "shell.run accepts requested timeouts above ten minutes")
              (let* ((result
                       (run "shell" "run"
                            "command" (test-fixture-shell-command

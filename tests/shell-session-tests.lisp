@@ -2,13 +2,14 @@
 
 ;;;; -- Reusable Shell Behavior --
 
-(-> shell-session-tests--run (tool-context string &key (:command string)
-                              (:timeout (integer 1)) (:separate-p boolean)) tool-result)
-(defun shell-session-tests--run (context name &key (command ":") (timeout 10) separate-p)
-  "Invoke the public named-shell tool with bounded test deadlines."
+(-> shell-session-tests--run
+    (tool-context string &key (:command string) (:separate-p boolean))
+    tool-result)
+(defun shell-session-tests--run (context name &key (command ":") separate-p)
+  "Invoke the public named-shell tool."
   (tool-execute (tool-registry-find (tool-context-registry context) "shell" "run")
                 context (json-object "session" name "command" command
-                                     "timeout-seconds" timeout "separate-output" separate-p)))
+                                     "separate-output" separate-p)))
 
 (-> shell-session-tests--output (tool-result tool-context &key (:stream keyword)) string)
 (defun shell-session-tests--output (result context &key (stream ':output))
@@ -133,32 +134,22 @@
           (tool-registry-close-runtime-state registry)))))
   nil)
 
-(-> test-shell-session-timeout-and-bounds () null)
-(defun test-shell-session-timeout-and-bounds ()
-  "Bound capture, retain partial logs and kill descendants when a command times out."
+(-> test-shell-session-output-bounds () null)
+(defun test-shell-session-output-bounds ()
+  "Bound retained capture while draining all command output."
   (when (platform-shell-sessions-p *platform*)
     (with-test-configuration (configuration root)
       (let* ((configuration (configuration-copy configuration :working-directory root))
              (registry      (default-tools--register-shell (make-instance 'tool-registry)))
-             (context       (shell-output-tests--context configuration registry))
-             (marker        (merge-pathnames "escaped-child" root)))
+             (context       (shell-output-tests--context configuration registry)))
         (unwind-protect
-             (progn
-               (let* ((*shell-log-capture-byte-limit* 64)
-                      (result                         (shell-session-tests--run context "bounded"
-                                                                               :command "i=0; while [ $i -lt 200 ]; do printf x; i=$((i+1)); done"))
-                      (capture                        (first (getf (first (getf (tool-result-details result) :shell-logs)) :captures))))
-                 (test-assert (= 64 (getf capture :byte-count)) "Retained output obeys the existing finite disk limit")
-                 (test-assert (= 200 (getf capture :observed-byte-count)) "Drain oversized output without blocking the shell"))
-               (let ((result (shell-session-tests--run
-                              context "timeout" :timeout 1
-                              :command                   (format nil "printf partial; (sleep 3; printf leak > ~A) & wait"
-                                                                 (uiop:escape-sh-token (namestring marker))))))
-                 (test-assert (eq ':timeout (getf (tool-result-details result) :execution-status)) "Report timeout status")
-                 (test-assert (string= "partial" (shell-session-tests--output result context)) "Retain partial output")
-                 (test-assert (shell-session-dead-p (shell-session--find context "timeout")) "Timeout invalidates the session"))
-               (sleep 3)
-               (test-assert (not (probe-file marker)) "Timeout kills the entire shell descendant tree"))
+             (let ((*shell-log-capture-byte-limit* 64))
+               (let* ((result  (shell-session-tests--run
+                                context "bounded"
+                                :command "i=0; while [ $i -lt 200 ]; do printf x; i=$((i+1)); done"))
+                      (capture (first (getf (first (getf (tool-result-details result) :shell-logs)) :captures))))
+                 (test-assert (= 64 (getf capture :byte-count)) "Retained output obeys the finite disk limit")
+                 (test-assert (= 200 (getf capture :observed-byte-count)) "Drain oversized output without blocking the shell")))
           (tool-registry-close-runtime-state registry)))))
   nil)
 

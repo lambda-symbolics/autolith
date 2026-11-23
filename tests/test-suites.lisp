@@ -231,14 +231,14 @@
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
   test-shell-prelaunch-failure
-  test-shell-retained-timeout
+  test-shell-execution-without-deadline
   test-shell-log-export-boundary)
 
 (define-test-suite shell-session
   test-shell-session-platform-discovery
   test-shell-session-state-and-logs
   test-shell-session-death-reset-and-scopes
-  test-shell-session-timeout-and-bounds
+  test-shell-session-output-bounds
   test-shell-session-serialization
   test-shell-session-cancellation
   test-shell-session-sandbox

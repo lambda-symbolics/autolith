@@ -36,9 +36,6 @@
 
 ;;;; -- Workspace Defaults --
 
-(defparameter *shell-default-timeout-seconds* 60
-  "The default timeout for a shell.run command, in seconds.")
-
 (defparameter *shell-maximum-output-characters* 6000
   "The raw-byte head/tail sampling budget for an inline shell.run preview.")
 
@@ -205,13 +202,6 @@ Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
               :message   (format nil "Tool argument ~S must be an integer." name)
               :tool-name name)))))
 
-(-> workspace-tool-shell-timeout (json-object) (integer 1))
-(defun workspace-tool-shell-timeout (arguments)
-  "Return the positive requested shell timeout with no product maximum."
-  (max 1
-       (or (workspace-tool-integer-argument arguments "timeout-seconds")
-           *shell-default-timeout-seconds*)))
-
 
 ;;;; -- Tool Executions --
 
@@ -247,7 +237,6 @@ Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
              (and (non-empty-string-p value) value)))
          (directory-argument (tool-argument arguments "directory"))
          (directory          (workspace-tool-resolve-path context directory-argument))
-         (timeout            (workspace-tool-shell-timeout arguments))
          (merge-output-p
            (not (tool-boolean-argument
                  arguments "separate-output" :tool-name "shell.run")))
@@ -285,7 +274,6 @@ Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
                         (workspace-tool-run-shell-command
                          command directory
                          :policy         policy
-                         :timeout        timeout
                          :output-limit   output-limit
                          :environment    environment
                          :context        context

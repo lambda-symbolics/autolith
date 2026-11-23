@@ -123,13 +123,13 @@
 
 (-> workspace-tool-run-shell-command
     (string pathname
-     &key (:policy t) (:timeout (integer 1)) (:output-limit (integer 0))
+     &key (:policy t) (:output-limit (integer 0))
            (:environment list) (:context tool-context) (:merge-output-p boolean)
            (:cancel-function (option function)) (:result-function (option function)))
     tool-result)
 (defun workspace-tool-run-shell-command
     (command directory
-     &key policy timeout output-limit environment context (merge-output-p t)
+     &key policy output-limit environment context (merge-output-p t)
        cancel-function result-function)
   "Run one authorized command after allocating its private execution-owned capture.
 
@@ -150,7 +150,7 @@ Keep publication ownership through preview construction and native cleanup."
                             (run-sandboxed
                              program arguments
                              :policy policy :working-directory directory :environment environment
-                             :timeout timeout :merge-output-p merge-output-p
+                             :merge-output-p     merge-output-p
                              :output-limit 0 :error-output-limit 0
                              :capture-directory  (shell-log-capture-directory artifact)
                              :retain-output-p    t

@@ -1961,11 +1961,11 @@ Pass =session= to =shell.run= to reuse a POSIX shell. Commands in one shell
 run serially and share variables, functions and the current directory. Pass
 =directory= to change the directory first. Autolith authorizes each command
 in its observed directory and captures separate logs for each invocation.
-Use =description= to label the live row.
+Use =description= to label the live row. Shell commands have no execution deadline.
 
 - Use =shell.sessions= to inspect live and dead shells.
 - Use =shell.close= to stop and forget a shell.
-- Use =shell.reset= to replace a shell after exit, timeout or cancellation,
+- Use =shell.reset= to replace a shell after exit or cancellation,
   or after permissions, workspace or writable scopes change.
 
 The runtime stops its shells and descendants on shutdown. Reset does not

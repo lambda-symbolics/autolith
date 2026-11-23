@@ -128,29 +128,30 @@
                    "The launch diagnostic is preserved without a capture result")))
   nil)
 
-(-> test-shell-retained-timeout () null)
-(defun test-shell-retained-timeout ()
-  "Retain pre-timeout output with truthful incomplete status."
+(-> test-shell-execution-without-deadline () null)
+(defun test-shell-execution-without-deadline ()
+  "Execute without a process deadline and retain the complete output."
   (with-test-configuration (configuration root)
     (declare (ignore root))
     (let* ((registry (make-default-tool-registry))
            (context  (shell-output-tests--context configuration registry))
-           (result   (tool-execute
-                      (tool-registry-find registry "shell" "run") context
-                      (json-object
-                       "command" (test-fixture-shell-command
-                                  *platform* "printf BEFORE-TIMEOUT; sleep 5"
-                                  "[Console]::Write('BEFORE-TIMEOUT'); Start-Sleep -Seconds 5")
-                       "timeout-seconds" 1)))
+           (executor (symbol-function 'run-sandboxed))
+           (result
+             (test-call-with-function-replacements
+              (list (list 'run-sandboxed
+                          (lambda (&rest arguments)
+                            (test-assert (null (getf (rest (rest arguments)) :timeout))
+                                         "Shell execution supplies no process deadline")
+                            (apply executor arguments))))
+              (lambda ()
+                (tool-execute (tool-registry-find registry "shell" "run") context
+                              (json-object "command" "echo completed")))))
            (metadata (first (getf (tool-result-details result) :shell-logs)))
            (capture  (first (getf metadata :captures))))
-      (test-assert (not (tool-result-success-p result)) "Timeout reports a failed execution")
-      (test-assert (and (getf metadata :timed-out-p)
-                        (not (getf capture :complete-p))
-                        (plusp (getf capture :byte-count)))
-                   "Timeout retains bytes and never claims a complete capture")
-      (test-assert (search "BEFORE-TIMEOUT" (tool-result-content result))
-                   "Timeout preview includes captured diagnostics")))
+      (test-assert (tool-result-success-p result) "The command completes successfully")
+      (test-assert (getf capture :complete-p) "Retain a complete output capture")
+      (test-assert (search "completed" (tool-result-content result))
+                   "Include the captured command output")))
   nil)
 
 (-> test-shell-log-export-boundary () null)

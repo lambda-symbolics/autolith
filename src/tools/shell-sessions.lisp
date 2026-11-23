@@ -240,24 +240,22 @@
                                       (princ-to-string (or exit-code 1))))
               (setf (shell-session-dead-p session) t)))
            :name (format nil "shell session ~A" (shell-session-name session))))
-    (loop with deadline = (+ (get-internal-real-time) (* 10 internal-time-units-per-second))
-          until (probe-file (shell-session--path session "ready"))
-          do (when (or (shell-session-dead-p session)
-                       (> (get-internal-real-time) deadline))
+    (loop until (probe-file (shell-session--path session "ready"))
+          do (when (shell-session-dead-p session)
                (shell-session--stop session)
                (shell-session--fail (or (shell-session-diagnostic session)
-                                       "Reusable shell startup timed out.")))
+                                       "Reusable shell exited before startup.")))
              (sleep 0.02)))
   nil)
 
 (-> shell-session--execute
     (shell-session tool-context string
      &key (:directory pathname) (:authorization keyword)
-          (:timeout (integer 1)) (:merge-output-p boolean) (:output-limit (integer 0))
+          (:merge-output-p boolean) (:output-limit (integer 0))
           (:change-directory-p boolean)) tool-result)
 (defun shell-session--execute
     (session context command
-     &key directory authorization timeout merge-output-p output-limit change-directory-p)
+     &key directory authorization merge-output-p output-limit change-directory-p)
   "Run one serialized command without replay, using normal retained shell logs."
   (with-recursive-lock-held ((shell-session-lock session))
     (unless (equal (shell-session-scope session) (shell-session--scope context authorization))
@@ -289,7 +287,7 @@
                       *platform* (shell-session-temporary session) :merge-output-p merge-output-p
                       :programs                                                    (shell-session-programs session))
                      (shell-session-temporary session)
-                     :policy (external-sandbox-policy) :timeout timeout :output-limit output-limit
+                     :policy (external-sandbox-policy) :output-limit output-limit
                      :context context :merge-output-p merge-output-p
                      :cancel-function (lambda ()
                                         (and (shell-session-dead-p session)
@@ -338,7 +336,6 @@
      :operation-function
      (lambda ()
       (shell-session--execute session context command :directory directory :authorization authorization
-                               :timeout            (workspace-tool-shell-timeout arguments)
                                :merge-output-p     (not (tool-boolean-argument arguments "separate-output" :tool-name "shell.run"))
                                :output-limit       *shell-maximum-output-characters*
                                :change-directory-p (not (null explicit-directory))))

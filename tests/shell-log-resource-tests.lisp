@@ -427,7 +427,6 @@
                    (test-fixture-shell-command *platform* "exit 0" "exit 0")
                    (config :working-directory configuration)
                    :policy       ':invalid-policy
-                   :timeout      1
                    :output-limit 32
                    :context      context)
                   nil)

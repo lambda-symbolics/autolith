@@ -525,13 +525,12 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
             "command" (tool-string-property "The shell command line to execute.")
             "description" (tool-string-property "An optional short description used to label the live command row.")
             "directory" (tool-string-property "The working directory; defaults to the workspace.")
-            "timeout-seconds" (tool-integer-property "Seconds before the command is stopped; defaults to 60 with no maximum.")
             "separate-output" (tool-boolean-property "Capture stdout/stderr separately; defaults to false (merged output). Separate streams have no reconstructed interleaving.")
             "completion-policy" (tool-completion-policy-property)
             "async" (tool-boolean-property "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))))
     (when supported-p
       (setf (gethash "session" properties)
-            (tool-string-property "Optional owner-local persistent shell name. Variables, functions and cwd survive commands. After exit, timeout or cancellation, explicitly shell.reset before reuse.")
+            (tool-string-property "Optional owner-local persistent shell name. Variables, functions and cwd survive commands. After exit or cancellation, explicitly shell.reset before reuse.")
             (gethash "directory" properties)
             (tool-string-property "The working directory; defaults to the workspace, or the current named shell directory.")
             description (concatenate 'string description

@@ -111,7 +111,7 @@
              (test-assert
               (handler-case
                   (progn (workspace-tool-run-shell-command "fixture" (config :working-directory configuration)
-                                                           :context context :timeout 1 :output-limit 100)
+                                                            :context context :output-limit 100)
                          nil)
                 (cl-exec-sandbox:sandbox-process-cleanup-error (condition)
                   (eq condition cleanup-condition)))
