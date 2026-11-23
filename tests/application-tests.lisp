@@ -7972,8 +7972,8 @@
                    (list
                     (list
                      'application--create-tool-registry
-                     (lambda (configuration &key shared-mcp-manager)
-                       (declare (ignore configuration shared-mcp-manager))
+                     (lambda (configuration &key shared-mcp-manager conversation)
+                       (declare (ignore configuration shared-mcp-manager conversation))
                        failed-registry))
                     (list
                      'context-runtime-reset
@@ -8031,8 +8031,8 @@
                               identifier))))
                     (list
                      'application--create-tool-registry
-                     (lambda (configuration &key shared-mcp-manager)
-                       (declare (ignore configuration shared-mcp-manager))
+                     (lambda (configuration &key shared-mcp-manager conversation)
+                       (declare (ignore configuration shared-mcp-manager conversation))
                        (error
                         'mcp-server-startup-error
                         :message     "Required MCP server failed."
@@ -8155,8 +8155,8 @@
             (list
              (list
               'application--create-tool-registry
-              (lambda (replacement-configuration &key shared-mcp-manager)
-                (declare (ignore replacement-configuration shared-mcp-manager))
+              (lambda (replacement-configuration &key shared-mcp-manager conversation)
+                (declare (ignore replacement-configuration shared-mcp-manager conversation))
                 new-registry))
              (list
               'mcp-configuration-load
@@ -8319,12 +8319,13 @@
                      (terminal-ui-create
                       :terminal (make-instance 'recording-terminal :columns 72))))
              (list 'application--create-tool-registry
-                   (lambda (configuration &key shared-mcp-manager)
+                   (lambda (configuration &key shared-mcp-manager conversation)
                      (when (and probing-p (eq stage ':registry))
                        (error injected))
                      (multiple-value-bind (registry retained)
                          (funcall original-registry-create configuration
-                                  :shared-mcp-manager shared-mcp-manager)
+                                  :shared-mcp-manager shared-mcp-manager
+                                  :conversation       conversation)
                        (when probing-p
                          (setf new-registry registry))
                        (values registry retained))))
@@ -8708,11 +8709,12 @@
                          nil))
                       (list
                        'application--create-tool-registry
-                       (lambda (new-configuration)
-                         (setf new-registry
-                               (funcall
-                                original-registry-create
-                                new-configuration))))
+                       (lambda (new-configuration &key conversation)
+                         (multiple-value-bind (registry retained)
+                             (funcall original-registry-create
+                                      new-configuration :conversation conversation)
+                           (setf new-registry registry)
+                           (values registry retained))))
                       (list
                        'lisp-worker-pool-create
                        (lambda (new-configuration)
