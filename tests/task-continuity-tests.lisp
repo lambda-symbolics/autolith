@@ -20,7 +20,7 @@
            (job
             (task-tests--make-job orchestrator :identifier "orphan" :parent-agent parent
                                   :detached-p t :item
-                                  (append (list :agent "task" :task "Return the result.")
+                                  (append (list :task "Return the result.")
                                           definition)))
            (context
             (make-instance 'tool-context :configuration configuration :agent parent
@@ -378,7 +378,7 @@
             (sibling
              (task-tests--make-job orchestrator :identifier "sibling" :parent-agent
                                    parent :item
-                                   (append (list :agent "task" :task "Sibling")
+                                   (append (list :task "Sibling")
                                            (task-job-item job))))
             (text          (tool-tests--overflow-text)))
        (task-continuity-record-job sibling parent)
@@ -434,7 +434,7 @@
                                          (session-job-root-conversation-identifier job)
                                          :owner-identifiers (list (job-identifier job))
                                          :item
-                                         (append (list :agent "task" :task "Nested")
+                                         (append (list :task "Nested")
                                                  (task-job-item job)))))
              (task-continuity-record-job nested-job nested-parent)
              (test-assert (readable-p (child-context nested-job) uri)

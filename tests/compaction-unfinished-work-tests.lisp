@@ -237,7 +237,7 @@
             (unwind-protect
                  (progn
                    (tool-execute (tool-registry-find registry "child" "spawn") context
-                                 (json-object "name" "compaction-child" "agent" "task"
+                                 (json-object "name" "compaction-child"
                                               "task" "Enter the blocking ordinary tool."
                                               "completion-policy" "continue"))
                    (setf child (first (task-orchestrator-list-jobs runtime)))

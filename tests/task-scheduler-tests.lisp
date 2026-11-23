@@ -316,7 +316,7 @@ pool must reject the cancelled parent without creating a descendant."
                  (list
                   (list :item
                         (append
-                         (list :name "racing-descendant" :agent "admission-race" :task
+                         (list :name "racing-descendant" :task
                                "Be admitted before cancellation scans." :context nil
                                :async t)
                          definition)
@@ -397,7 +397,7 @@ pool must reject the cancelled parent without creating a descendant."
                 (entry
                  (list :item
                        (append
-                        (list :name "too-late" :agent "admission-race" :task
+                        (list :name "too-late" :task
                               "This child must not be admitted." :context nil :async t)
                         definition)
                        :detached t)))
@@ -435,7 +435,6 @@ pool must reject the cancelled parent without creating a descendant."
                                          (task-tests--make-job orchestrator :item
                                                                (append
                                                                 (list :name  identifier
-                                                                      :agent "hurry-race"
                                                                       :task
                                                                       "Own inline admission test children."
                                                                       :context nil :async
@@ -448,7 +447,7 @@ pool must reject the cancelled parent without creating a descendant."
                (list
                 (list :item
                       (append
-                       (list :name name :agent "hurry-race" :task
+                       (list :name name :task
                              "Remain inline for admission accounting." :context nil
                              :async nil)
                        definition)
@@ -931,7 +930,7 @@ pool must reject the cancelled parent without creating a descendant."
                                                       (conversation-identifier
                                                        (agent-conversation primary-a)))))
          (durable-result
-          (list :id "resumed-child-1" :name "resumed-child" :agent "task" :status
+          (list :id "resumed-child-1" :name "resumed-child" :status
                 ':success :output "Recovered durable child output." :error nil
                 :duration-ms 17 :model "test-model" :detached t)))
     (labels ((execute-get (viewer identifier)
@@ -1931,7 +1930,7 @@ pool must reject the cancelled parent without creating a descendant."
                          collect (list :item
                                        (append
                                         (list :name (format nil "live-~2,'0D" index)
-                                              :agent "capacity" :task "Remain queued."
+                                              :task "Remain queued."
                                               :context nil :async t)
                                         definition)
                                        :detached t)))))

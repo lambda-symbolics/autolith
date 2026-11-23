@@ -753,7 +753,7 @@
              (definition   (list :tools ':all))
              (entry
               (list :detached t :item
-                    (append (list :agent "admission-child" :task "Attempt one request.")
+                    (append (list :task "Attempt one request.")
                             definition)))
              (job          nil))
         (setf (agent-provider (application-agent application)) provider)

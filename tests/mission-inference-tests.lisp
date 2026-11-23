@@ -395,7 +395,7 @@
            (definition   (list :tools ':all))
            (entry
             (list :detached t :item
-                  (append (list :agent "mission-child" :task "Finish admitted work.")
+                  (append (list :task "Finish admitted work.")
                           definition)))
            (job          nil))
       (setf (agent-provider (application-agent application)) provider)
@@ -501,7 +501,7 @@
              (definition    (list :tools ':all))
              (entry
               (list :detached t :item
-                    (append (list :agent "mission-child" :task "Finish admitted work.")
+                    (append (list :task "Finish admitted work.")
                             definition)))
              (record-status (symbol-function 'mission-knowledge-record-status))
              (published-p   nil)
@@ -676,7 +676,7 @@
             (definition      (list :tools ':all))
             (entry
              (list :detached t :item
-                   (append (list :agent "bounded-child" :task "Attempt one turn.")
+                   (append (list :task "Attempt one turn.")
                            definition)))
             (goal            (application-goal application))
             (identity        nil)
@@ -1034,7 +1034,7 @@
              (entry
               (list :detached t :item
                     (append
-                     (list :agent "outcome-child" :task "Return the requested outcome.")
+                     (list :task "Return the requested outcome.")
                      definition)))
              (job         nil))
         (setf (application-provider application) provider

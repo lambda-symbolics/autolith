@@ -856,7 +856,7 @@
            (entry
             (list :detached t :item
                   (append
-                   (list :name "child" :agent "mission-child" :task "Check admission")
+                   (list :name "child" :task "Check admission")
                    definition)))
            (submit       (symbol-function 'job-pool-submit-batch)))
       (unwind-protect

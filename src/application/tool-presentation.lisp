@@ -1727,8 +1727,8 @@ lists, independently of the producer's transport limits."
                     (return-from invalid (values nil nil))))))
         (when (consp details)
           (let ((tagged-p (member (first details)
-                                  '(:task-run :task-agents :job-list :job-get :job-wait
-                                     :job-cancel :job-send :mission :mcp-content))))
+                                  '(:task-run :job-list :job-get :job-wait
+                                    :job-cancel :job-send :mission :mcp-content))))
             (when (or tagged-p
                       (member (first details)
                               '(:job :continuity-list :classification :job-id :execution-id)))
@@ -1765,9 +1765,8 @@ lists, independently of the producer's transport limits."
          (status       (and (json-object-p result) (json-get result "status")))
          (identity     (or (json-get object "id") (json-get object "name")
                            (json-get object "job-id") (json-get object "execution-id") "task"))
-         (role         (or (json-get object "agent") (json-get object "role")
-                           (json-get object "tool")))
-         (shell-p      (equal role "shell.run"))
+         (tool-name    (json-get object "tool"))
+         (shell-p      (equal tool-name "shell.run"))
          (summary      (unless shell-p
                          (or (and (json-object-p result)
                                   (or (json-get result "summary") (json-get result "label")
@@ -1797,7 +1796,7 @@ lists, independently of the producer's transport limits."
      (application--tool-field-rows
       application
       (loop for (label value style) in
-            (list (list "role" role ':code)
+            (list (list "tool" tool-name ':code)
                   (list "duration" (and duration (format nil "~A ms" duration)) ':plain)
                   (list "requests" (and requests (princ-to-string requests)) ':plain)
                   (list "current tool" current-tool ':code)
