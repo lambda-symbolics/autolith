@@ -702,6 +702,44 @@ the version the client says it is, when it says one."
          (world-terminal-client-screen-release screen)))))
   nil)
 
+(-> test-world-server-channel-exit () null)
+(defun test-world-server-channel-exit ()
+  "Exit inbox and workspace channels through a terminal, notifying every viewer before closing transport."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (dolist (inbox-p '(t nil))
+       (let* ((identifier (world-client-open configuration
+                                             :inbox-p   inbox-p
+                                             :directory (world-tests--workspace root "channel-exit")
+                                             :switch-p  t))
+              (host       (world-server--find-host server identifier)))
+         (world-server-tests--call-with-terminal-client
+          configuration identifier
+          (lambda (type await-exit view)
+            (declare (ignore type))
+            (world-terminal-client--disconnect (channel-subscription-connection view))
+            (multiple-value-bind (exit ended-p) (funcall await-exit)
+              (test-assert (and ended-p (eq (first exit) ':attachment-lost))
+                           "An unexpected connection loss is reported as a failure."))))
+         (world-server-tests--call-with-terminal-client
+          configuration identifier
+          (lambda (type await-exit view)
+            (declare (ignore view))
+            (world-server-tests--call-with-terminal-client
+             configuration identifier
+             (lambda (watch-type await-watch-exit watcher)
+               (declare (ignore watch-type watcher))
+               (funcall type '(:insert "(exit)"))
+               (funcall type ':submit)
+               (dolist (await (list await-exit await-watch-exit))
+                 (multiple-value-bind (exit ended-p) (funcall await)
+                   (test-assert (and ended-p (equal exit '(:status 0 :message nil :details nil)))
+                                (format nil "A deliberate exit ends each attached terminal successfully: ~S" exit)))))
+             :read-only-p t)))
+         (test-assert (task-tests--wait-until (lambda () (eq (world-host-state host) ':retired)) 20)
+                      "The exited channel retires after notifying its terminals.")))))
+  nil)
+
 (-> test-world-server-control-z-detach () null)
 (defun test-world-server-control-z-detach ()
   "Detach a terminal client through Ctrl-Z while its channel's work completes."

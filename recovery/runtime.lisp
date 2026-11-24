@@ -209,8 +209,7 @@
             "This pristine image starts after active Autolith fails or when ~
              recovery is requested.~%It inspects the failure and boots ~
              pristine committed source. Explicit generation selection and ~
-             rollback can boot retained state. The damaged active core is ~
-             never loaded.~2%")
+             rollback can boot retained state.~2%")
     (finish-output *error-output*))
   nil)
 

@@ -492,7 +492,9 @@ controller's exit reason."
                     (setf exit-reason
                           (application-input-controller-exit-reason input-controller))
                     (when (member exit-reason '(:quit :interrupt :end-of-input))
-                      (application--present-open-instruction application)))
+                      (application--present-open-instruction application))
+                    (unless (eq exit-reason ':checkpoint)
+                      (world-terminal-finish-attachments application :status 0)))
                (finish-shutdown)))
         (finish-shutdown)))
     exit-reason))
