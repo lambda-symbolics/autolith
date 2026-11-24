@@ -32,12 +32,13 @@
 
 (-> procedure--result-output (tool-result) t)
 (defun procedure--result-output (result)
-  "Return RESULT's delivered object or array, decoding arbitrary text when needed."
-  (if (tool-result-native-present-p result)
-      (let ((value (tool-result-native-value result)))
-        (and (or (json-object-p value) (and (vectorp value) (not (stringp value))))
-             value))
-      (procedure--decode-output (tool-result-content result))))
+  "Return the object or array delivered by RESULT, or else its text decoded as JSON or as it is."
+  (or (and (tool-result-native-present-p result)
+           (let ((value (tool-result-native-value result)))
+             (and (or (json-object-p value) (and (vectorp value) (not (stringp value))))
+                  value)))
+      (procedure--decode-output (tool-result-content result))
+      (tool-result-content result)))
 
 
 ;;;; -- Public Functions --
