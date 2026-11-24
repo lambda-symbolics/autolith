@@ -372,7 +372,7 @@
   "Check input startup, physical resize, quit and screen-preserving selection handoff."
   (with-test-configuration (configuration)
     (dolist (input '(:interrupt :enter #\Return #\Newline (:switch :session-id "b6uouHJ")
-                     "First request" "(+ 1 2)" "? (+ 1 2)"))
+                     (:channel-command :new) "First request" "(+ 1 2)" "? (+ 1 2)"))
       (let* ((terminal                    (make-instance 'recording-terminal :columns 80 :rows 24))
              (screen                      (world-terminal-screen-create :terminal terminal))
              (event                       (cond
@@ -415,17 +415,21 @@
                                (= (clinedi:frame-snapshot-width last-frame) 44)
                                (= (clinedi:frame-snapshot-height last-frame) 12))
                           "welcome starts input, follows physical resize and releases only its watch on handoff")
-             (test-assert (equal exit (if (stringp input)
+             (test-assert (equal exit (cond
+                                        ((stringp input)
                                          (list ':switch :new-p t :initial-input
-                                               (list :action ':submit :payload input))
+                                               (list :action ':submit :payload input)))
+                                        ((equal input '(:channel-command :new))
+                                         (list ':switch :new-p t))
+                                        (t
                                          (case input
                                            (:interrupt
                                             nil)
                                            ((:enter #\Return #\Newline)
                                             (list ':switch :new-p t))
                                            (otherwise
-                                            input))))
-                          "navigation and first text, direct Lisp or async Lisp submissions retain their input")
+                                            input)))))
+                          "navigation opens its target directly, while first submissions retain their input")
              (test-assert (search (config :model configuration)
                                   (clinedi:ansi-strip
                                    (format nil "~{~A~}" (coerce (clinedi:frame-snapshot-rows last-frame) 'list))))

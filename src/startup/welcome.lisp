@@ -111,10 +111,11 @@ Return the navigation request with its first input, or NIL when the user leaves.
                             (setf *terminal-resize-pending-p* t))
                            ((eq event ':ignore)
                             nil)
-                           ((and (member event '(:submit :enter :return))
-                                 (zerop (length (line-editor-text (terminal-ui-editor ui))))
-                                 (null (user-message-input-image-pathnames
-                                        (terminal-ui--submission-input ui ""))))
+                           ((or (equal event '(:channel-command :new))
+                                (and (member event '(:submit :enter :return))
+                                     (zerop (length (line-editor-text (terminal-ui-editor ui))))
+                                     (null (user-message-input-image-pathnames
+                                            (terminal-ui--submission-input ui "")))))
                             (setf (welcome-input-port-request port) (list :switch :new-p t)
                                   (welcome-input-port-finished-p port) t))
                            (t
