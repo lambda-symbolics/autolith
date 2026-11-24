@@ -193,6 +193,152 @@
                        "base64 wire size is not interpreted as text tokens")))))
   nil)
 
+(-> context-admission-test--tool-output (t) hash-table)
+(defun context-admission-test--tool-output (output)
+  "Return a Codex function_call_output history item carrying OUTPUT."
+  (json-object "type" "function_call_output" "call_id" "image-call" "output" output))
+
+(-> context-admission-test--tool-image (string) hash-table)
+(defun context-admission-test--tool-image (url)
+  "Return an input_image part at URL as Autolith encodes attached tool results."
+  (json-object "type" "input_image" "image_url" url "detail" "high"))
+
+(-> test-context-admission-tool-output-images () null)
+(defun test-context-admission-tool-output-images ()
+  "Charge direct tool-output image parts the image allowance in full and measured estimates."
+  (let ((short-url "https://example.invalid/image")
+        (long-url  (concatenate 'string "data:image/png;base64,"
+                                (make-string 100000 :initial-element #\a))))
+    (flet ((direct (url)
+             (context-admission-test--tool-output
+              (vector (json-object "type" "input_text" "text" "screenshot")
+                      (context-admission-test--tool-image url))))
+           (nested (url)
+             (context-admission-test--tool-output
+              (vector (json-object "payload" (context-admission-test--tool-image url))))))
+      (with-test-configuration (configuration)
+        (let ((provider (make-instance 'context-admission-test-provider :configuration configuration)))
+          (flet ((estimate (item)
+                   (provider-request-input-token-estimate provider (json-object "input" (vector item)))))
+            (multiple-value-bind (short uncertain-p) (estimate (direct short-url))
+              (test-assert (and uncertain-p (>= short *provider-image-token-estimate*))
+                           "a direct tool-output image receives the image allowance")
+              (test-assert (= short (estimate (direct long-url)))
+                           "tool-output image URL size does not replace the allowance"))
+            (test-assert (< (estimate (nested short-url)) *provider-image-token-estimate*)
+                         "image-shaped tool data is ordinary JSON")
+            (test-assert (>= (estimate (nested long-url)) (floor (length long-url) 4))
+                         "image-shaped tool data is counted by its encoded bytes"))))
+      (context-admission-test--with-measured-context
+       (lambda (agent)
+         (let ((conversation (agent-conversation agent))
+               (provider     (agent-provider agent)))
+           (context-admission-test--measure agent)
+           (flet ((estimate (item)
+                    (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+                           (request                    (provider-request-object provider conversation #())))
+                      (setf (gethash "input" request)
+                            (concatenate 'vector (json-get request "input") (vector item)))
+                      (multiple-value-list (provider-request-input-token-estimate provider request)))))
+             (destructuring-bind (short uncertain-p) (estimate (direct short-url))
+               (test-assert (and uncertain-p (> short *provider-image-token-estimate*))
+                            "a measured suffix charges a direct tool-output image the allowance")
+               (test-assert (= short (first (estimate (direct long-url))))
+                            "a measured suffix ignores tool-output image URL size"))
+             (test-assert (< (first (estimate (nested short-url))) *provider-image-token-estimate*)
+                          "a measured suffix counts image-shaped tool data as JSON")
+             (test-assert (>= (first (estimate (nested long-url))) (floor (length long-url) 4))
+                          "a measured suffix counts image-shaped tool data by its bytes")))))))
+  nil)
+
+(-> test-context-admission-tool-output-image-edges () null)
+(defun test-context-admission-tool-output-image-edges ()
+  "Charge only direct Responses tool-output images, once, on every estimate path."
+  (let* ((data-url (concatenate 'string "data:image/png;base64,"
+                                (make-string 100000 :initial-element #\a)))
+         (image    (context-admission-test--tool-image data-url))
+         (text     (json-object "type" "input_text" "text" "screenshot")))
+    (with-test-configuration (configuration)
+      (let ((provider (make-instance 'context-admission-test-provider :configuration configuration)))
+        (labels ((ours (value)
+                   (multiple-value-list (provider-context--request-characters provider value)))
+
+                 (library (value)
+                   (multiple-value-list
+                    (provider-request-characters provider value
+                                                 :image-characters (* 4 *provider-image-token-estimate*))))
+
+                 (as-content (parts)
+                   ;; The library's declared Responses image location; "content" is one character longer.
+                   (vector (json-object "type" "function_call_output" "call_id" "image-call" "content" parts)))
+
+                 (matches-content-p (parts)
+                   (destructuring-bind (characters uncertain-p)
+                       (ours (vector (context-admission-test--tool-output parts)))
+                     (destructuring-bind (expected expected-uncertain-p) (library (as-content parts))
+                       (and (= characters (1- expected)) (eq uncertain-p expected-uncertain-p))))))
+          (dolist (output (list "plain string output" (vector text)))
+            (let ((items (vector (context-admission-test--tool-output output))))
+              (test-assert (equal (ours items) (library items))
+                           "tool output without images is counted as before")))
+          (test-assert (matches-content-p (vector image text image))
+                       "several direct images each receive the content-array allowance")
+          (test-assert (matches-content-p (vector image (json-object "payload" image)))
+                       "a nested copy of a direct image is still ordinary JSON")
+          (let ((items (vector (context-admission-test--tool-output
+                                (vector (json-object "type" "image_url" "image_url" data-url))))))
+            (test-assert (equal (ours items) (library items))
+                         "another protocol's image type is ordinary Responses JSON"))
+          (let* ((history (vector (json-object "type" "message" "role" "user" "content" "hello")
+                                  (context-admission-test--tool-output "text")))
+                 (request (json-object "input" history)))
+            (test-assert (and (eq history (provider-context--without-tool-output-images provider history))
+                              (eq request (provider-context--without-tool-output-images provider request)))
+                         "histories without tool-output images are not copied"))
+          (let* ((item    (context-admission-test--tool-output (vector text image)))
+                 (request (json-object "input" (vector item))))
+            (ours request)
+            (test-assert (eq image (aref (json-get item "output") 1))
+                         "estimating leaves the encoded request unchanged"))
+          (let ((plain (make-instance 'model-provider))
+                (items (vector (context-admission-test--tool-output (vector text image)))))
+            (test-assert (equal (multiple-value-list (provider-context--request-characters plain items))
+                                (multiple-value-list
+                                 (provider-request-characters plain items
+                                                              :image-characters (* 4 *provider-image-token-estimate*))))
+                         "a transport that is not Responses keeps the library count")))))
+    (context-admission-test--with-measured-context
+     (lambda (agent)
+       (let ((conversation (agent-conversation agent))
+             (provider     (agent-provider agent)))
+         (test-call-with-function-replacements
+          ;; Admit requests carrying image allowances; this test measures, it does not refuse.
+          (list (list 'provider-effective-context-window
+                      (lambda (provider) (declare (ignore provider)) 1000000)))
+          (lambda ()
+            (conversation-append-provider-item
+             conversation (json-object "type" "function_call" "call_id" "image-call"
+                                       "name" "test" "arguments" "{}"))
+            (conversation-append-provider-item
+             conversation (context-admission-test--tool-output (vector text image)))
+            (context-admission-test--measure agent)
+            (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+                   (request                    (provider-request-object provider conversation #())))
+              (test-assert (= 1200 (provider-request-input-token-estimate provider request))
+                           "a measured tool-output image is not charged again")
+              (setf (gethash "input" request)
+                    (concatenate 'vector (json-get request "input")
+                                 (vector (context-admission-test--tool-output (vector image)))))
+              (provider-open-response-stream provider request :conversation conversation)
+              (test-assert (= (getf *provider-context-request* :wire-characters)
+                              (provider-context--request-characters
+                               provider (provider-request-history provider request)))
+                           "recorded wire size uses the same image charge as the estimates")
+              (test-assert (> (getf *provider-context-request* :wire-characters)
+                              (* 8 *provider-image-token-estimate*))
+                           "recorded wire size charges both tool-output images"))))))))
+  nil)
+
 (-> test-context-admission-checkpoint-transaction () null)
 (defun test-context-admission-checkpoint-transaction ()
   "Reject oversized final checkpoints before changing durable or projected history."
