@@ -472,9 +472,11 @@ part of the reconstructible state."
     (multiple-value-bind (text evaluation)
         (ecase (self--evaluation-target arguments)
           (:server
-           (self--evaluate-in-active-image (tool-context-configuration context) sources
-                                           :restart-name         restart-name
-                                           :restart-value-source restart-value-source))
+           (application-operation-install-tool-bindings (tool-context-registry context))
+           (let ((*tool-lisp-context* context))
+             (self--evaluate-in-active-image (tool-context-configuration context) sources
+                                             :restart-name         restart-name
+                                             :restart-value-source restart-value-source)))
           (:client
            (agent-observer-evaluate-on-client (tool-context-observer context) sources
                                               :restart-name         restart-name

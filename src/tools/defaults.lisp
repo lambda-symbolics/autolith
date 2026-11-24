@@ -1032,7 +1032,7 @@ them."
           (list
            'self-eval-tool
            "self" "eval"
-           "Evaluate exploratory Common Lisp forms in order in the active image's AUTOLITH package. AUTOLITH: references accept internal symbols. Each form is read only after the one before it ran, so a later form may use a package an earlier form created. The result shows the last form's values; a failure stops the sequence and names the failing form. A restart reruns the whole sequence. Target client runs the forms in the attached client's image instead, the process that owns the terminal, composes the screen and draws the sidebar; it fails when no attached client evaluates Lisp."
+           "Evaluate exploratory Common Lisp forms in order in the active image's AUTOLITH package. AUTOLITH: references accept internal symbols. Each form is read only after the one before it ran, so a later form may use a package an earlier form created. The result shows the last form's values; a failure stops the sequence and names the failing form. A restart reruns the whole sequence. In the active image, forms call tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). Target client runs the forms in the attached client's image instead, the process that owns the terminal, composes the screen and draws the sidebar; it fails when no attached client evaluates Lisp."
            (tool-object-schema
             (json-object
              "forms" (tool-forms-property
