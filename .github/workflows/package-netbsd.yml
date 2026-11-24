@@ -6,12 +6,19 @@ on:
       tag:
         required: true
         type: string
+      provision_only:
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
         description: Existing release tag to build
         required: true
         type: string
+      provision_only:
+        description: Only install and verify the build dependencies
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -23,6 +30,7 @@ jobs:
     timeout-minutes: 90
     env:
       RELEASE_TAG: ${{ inputs.tag }}
+      PROVISION_ONLY: ${{ inputs.provision_only }}
     steps:
       - name: Validate release tag
         run: '[[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
@@ -44,13 +52,35 @@ jobs:
         with:
           release: "10"
           mem: 8192
-          envs: RELEASE_TAG
+          envs: RELEASE_TAG PROVISION_ONLY
           cache-after-prepare: false
           prepare: |
             set -eu
             export PATH="/usr/pkg/bin:/usr/pkg/sbin:$PATH"
-            # Upgrade dependencies already installed in the base VM from the live mirror.
-            pkg_add -u bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
+            # Resolve exact package versions from pkg_summary, then validate all downloads
+            # before installing them. A failed Rust transfer must not leave partial packages.
+            repository=${PKG_PATH:-https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/x86_64/10.2/All}
+            repository_path=${repository#*://}
+            repository_path=${repository_path#*/}
+            set -- bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
+            prepared=false
+            for mirror in "$repository" \
+                "https://ftp.NetBSD.org/$repository_path" \
+                "https://ftp.fr.netbsd.org/$repository_path"; do
+              export PKG_PATH="$mirror" PKG_REPOS="$mirror"
+              if pkg_add -u pkgin && pkgin -f -y update && pkgin -y -d install "$@"; then
+                prepared=true
+                break
+              fi
+              if command -v pkgin >/dev/null 2>&1; then
+                pkgin -y clean || true
+              fi
+            done
+            if [ "$prepared" != true ]; then
+              printf '%s\n' 'NetBSD build dependency downloads failed on every mirror.' >&2
+              exit 1
+            fi
+            pkgin -y install "$@"
             pkg_info -e 'pcre2-[0-9]*'
             if [ ! -d /etc/openssl/certs ] || [ -z "$(ls -A /etc/openssl/certs 2>/dev/null)" ]; then
               mozilla-rootcerts install
@@ -58,6 +88,13 @@ jobs:
           run: |
             set -eu
             export PATH="$HOME/bin:/usr/pkg/bin:/usr/local/bin:$PATH"
+            if [ "$PROVISION_ONLY" = true ]; then
+              rustc --version
+              cmake --version
+              gmake --version
+              sbcl --version
+              exit 0
+            fi
             ./script/ci-package-release dist/
             release_name=autolith-"$RELEASE_TAG"-x86_64-netbsd
             (cd dist && sha256sum -c "$release_name.tar.gz.sha256")
@@ -73,6 +110,7 @@ jobs:
             grep -F "${RELEASE_TAG#v}" "$smoke_root/version"
 
       - name: Upload NetBSD release artifacts
+        if: ${{ !inputs.provision_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
