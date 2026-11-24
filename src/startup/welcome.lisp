@@ -11,7 +11,7 @@
 
 (defclass welcome-pane-terminal (pane-terminal)
   ((banner-function :initarg :banner-function :reader welcome-pane-terminal-banner-function
-                    :type function
+                    :type          function
                     :documentation "The function rendering the banner within the available transcript height.")
    (ui :initform nil :accessor welcome-pane-terminal-ui :type (option fullscreen-terminal-ui)
        :documentation "The composer whose empty transcript can contain the startup banner."))
@@ -68,11 +68,11 @@ Return the navigation request with its first input, or NIL when the user leaves.
                                  :banner-function banner-function))
          (ui       (terminal-ui-create
                     :terminal pane :fullscreen-p t :prompt *application-prompt*
-                    :prompt-padding (config :prompt-padding configuration)
+                    :prompt-padding          (config :prompt-padding configuration)
                     :message-header-prefixes *application-message-header-prefixes*
-                    :placeholder *application-placeholder*
-                    :completion-root (config :working-directory configuration)
-                    :mention-function (application-world-mention-function configuration)))
+                    :placeholder             *application-placeholder*
+                    :completion-root         (config :working-directory configuration)
+                    :mention-function        (application-world-mention-function configuration)))
          (watch    nil))
     (setf (welcome-pane-terminal-ui pane) ui)
     (terminal-ui-connect-transcript-actions ui)

@@ -2570,8 +2570,8 @@ the version the client says it is, when it says one."
                               (declare (ignore candidate arguments))
                               (values "bfirst1" nil)))
                       (list 'channel-view-run
-                            (lambda (view &key attached-function notice client-version boot-p wait-function)
-                              (declare (ignore boot-p wait-function))
+                            (lambda (view &key attached-function notice client-version boot-p wait-function initial-input)
+                              (declare (ignore boot-p wait-function initial-input))
                               (let ((identifier (channel-subscription-identifier view)))
                                 (push identifier attaches)
                                 (push client-version client-versions)
@@ -2839,8 +2839,8 @@ the version the client says it is, when it says one."
           (list 'world-terminal-client-screen-release
                 (lambda (screen) (funcall release screen)))
           (list 'channel-view-run
-                (lambda (view &key attached-function notice client-version boot-p wait-function)
-                  (declare (ignore client-version boot-p wait-function))
+                (lambda (view &key attached-function notice client-version boot-p wait-function initial-input)
+                  (declare (ignore client-version boot-p wait-function initial-input))
                   (let ((identifier (channel-subscription-identifier view))
                         (panel      (world-terminal-screen-panel (channel-view-screen view))))
                     (push identifier attaches)

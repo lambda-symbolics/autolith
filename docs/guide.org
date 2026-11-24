@@ -120,9 +120,10 @@ are kept.
    =nix run github:lambda-symbolics/autolith -- auth chatgpt= instead.
    To use a local model, see [[https://lambda-symbolics.com/autolith/docs/configure-autolith#run-a-local-model][Set up local inference]].
 2. *Open a channel.* Run =autolith= or =nix run github:lambda-symbolics/autolith=
-   in the directory where you want to work. Select =inbox= or another channel
-   in the sidebar. Use =autolith open= to reopen the most recent top-level
-   channel in the workspace, or =autolith open ID= to open a specific channel.
+   in the directory where you want to work. Type a request or Lisp form at the
+   startup prompt to create a channel and submit it, or select =inbox= or an
+   existing channel in the sidebar. Use =autolith open= to reopen the most recent
+   top-level channel in the workspace, or =autolith open ID= to open a specific channel.
 3. *Send your first request.* Try /List the files in this workspace and tell
    me where to start./ To see commands, enter =(help)= in the same prompt.
 
