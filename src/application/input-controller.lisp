@@ -1869,7 +1869,7 @@ next provider request."
 
 (-> application-input-controller--lisp-active-turn-action
     (application-input-controller string)
-    (member :apply :apply-interactive :steer :cancel :execute :hold))
+    (member :apply :apply-interactive :steer :execute :hold))
 (defun application-input-controller--lisp-active-turn-action (controller source)
   "Return SOURCE's admission action when CONTROLLER has an active turn."
   (if (application-input-controller-turn-active-p controller)
@@ -1907,15 +1907,13 @@ next provider request."
          (marker-p nil)
          (status   0)
          (reopen-p t)
-         (result   nil)
-         (result-p nil))
+         (result   nil))
     (application-input-controller--open-prompt-if-ready controller)
     (setf marker-p (terminal-ui-start-prompt-execution ui))
     (unwind-protect
          (handler-case
              (progn
-               (setf result (funcall function)
-                     result-p t)
+               (setf result (funcall function))
                (when (application-input-controller--prompt-result-failure-p
                       result)
                 (setf status (if (eq result ':aborted) 130 1)))
@@ -1926,8 +1924,7 @@ next provider request."
              (error condition)))
       (when marker-p
         (terminal-ui-finish-prompt-block ui status)
-        (when (and reopen-p
-                   (not (and result-p (eq result ':quit))))
+        (when reopen-p
           (application-input-controller--open-prompt-if-ready controller))))))
 
 (-> application-input-controller--run-responsive-lisp
@@ -2027,14 +2024,10 @@ may execute immediately; other Lisp waits for the idle boundary."
     (when changed-p
       (application-input-controller--publish-counts controller))
     (case post-action
-      (:cancel
-       (application-input-controller--request-exit controller ':quit))
       (:execute
-       (let ((result (if async-p
-                         (application-run-async-lisp-input application text)
-                         (application-input-controller--run-responsive-lisp controller text))))
-         (when (eq result ':quit)
-           (application-input-controller--request-exit controller ':quit))))
+       (if async-p
+           (application-run-async-lisp-input application text)
+           (application-input-controller--run-responsive-lisp controller text)))
       (:steer
        (application-input-controller--schedule-steering-command controller input))
       (:apply-interactive
@@ -2131,12 +2124,7 @@ may execute immediately; other Lisp waits for the idle boundary."
          (message     (input-message input))
          (text        (user-message-input-text input)))
     (flet ((deferred (accepted-p)
-             (if accepted-p ':deferred ':failed))
-
-           (executed (result)
-             (when (eq result ':quit)
-               (application-input-controller--request-exit controller ':quit))
-             result))
+             (if accepted-p ':deferred ':failed)))
       (cond
         ((input-async-lisp-p text)
          (if (application-input-controller--submission-storage-ready-p controller input)
@@ -2152,23 +2140,21 @@ may execute immediately; other Lisp waits for the idle boundary."
          (application-world-terminal-resume application)
          (if (application-input-controller-busy-p controller)
              (ecase (application-input-controller--lisp-active-turn-action controller text)
-               (:cancel
-                (application-input-controller--request-exit controller ':quit))
-               (:execute
-                (executed (application-input-controller--run-responsive-lisp
-                           controller text :interactive-p interactive-p)))
-               (:steer
-                (deferred (application-input-controller--schedule-steering-command controller input)))
-               (:apply
-                (deferred (application-input-controller--schedule-apply controller input)))
-               (:apply-interactive
-                (deferred
-                 (if interactive-p
-                     (application-input-controller--schedule-interactive-apply controller input)
-                     (application-input-controller--schedule-lisp controller input :interactive-p nil))))
-               (:hold
-                (deferred (application-input-controller--schedule-lisp
-                           controller input :interactive-p interactive-p))))
+              (:execute
+               (application-input-controller--run-responsive-lisp
+                controller text :interactive-p interactive-p))
+              (:steer
+               (deferred (application-input-controller--schedule-steering-command controller input)))
+              (:apply
+               (deferred (application-input-controller--schedule-apply controller input)))
+              (:apply-interactive
+               (deferred
+                (if interactive-p
+                    (application-input-controller--schedule-interactive-apply controller input)
+                    (application-input-controller--schedule-lisp controller input :interactive-p nil))))
+              (:hold
+               (deferred (application-input-controller--schedule-lisp
+                          controller input :interactive-p interactive-p))))
              (deferred (application-input-controller--enqueue
                         controller (if interactive-p ':lisp ':native-lisp) input))))
         (t
@@ -2332,7 +2318,7 @@ may execute immediately; other Lisp waits for the idle boundary."
      (application-input-controller--handle-submission controller payload :steer-p nil)
      t)
     (:detach
-     (application-input-controller--handle-submission controller "(detach)" :steer-p nil)
+     (application-input-controller--handle-submission controller "(exit)" :steer-p nil)
      t)
     (:interrupt
      (case (application-input-controller--active-turn-interrupt-action controller)
@@ -3293,8 +3279,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
               (incf (application-input-controller-follow-up-edit-index controller) promoted-count))
             (setf (application-input-controller-steering-promotion-prefix-count controller)
                   (+ steering-promotion-prefix-count promoted-count))))
-        (when (and (application-input-controller-turn-cancellation-p controller)
-                   (not (eq (application-input-controller-exit-reason controller) ':quit)))
+        (when (application-input-controller-turn-cancellation-p controller)
           (setf (application-input-controller-prompt-marker-status controller) 130))
         (setf clear-notice-p
               (or (application-input-controller-turn-cancellation-p controller)
@@ -3724,15 +3709,10 @@ however it ended."
                           (application-run-lisp-input
                            application (second work) :interactive-p (eq (first work) ':lisp)))))
                 (application-input-controller--record-prompt-result
-                 controller result)
-                (when (eq result ':quit)
-                  (application-input-controller--request-exit
-                   controller ':quit))))
+                 controller result)))
              (:command
-              (let ((result (application-input-controller--run-steering-command controller (second work))))
-                (application-input-controller--record-prompt-result controller result)
-                (when (eq result ':quit)
-                  (application-input-controller--request-exit controller ':quit))))
+              (application-input-controller--record-prompt-result
+               controller (application-input-controller--run-steering-command controller (second work))))
              (:operation-request
               (let* ((request    (second work))
                      (identifier (getf request :pending-input-identifier)))

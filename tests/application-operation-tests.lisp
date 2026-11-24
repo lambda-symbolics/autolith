@@ -549,7 +549,7 @@
                        ("(channel.send :text \"text\")" :execute)
                        ("(channel.send :text (read-file \"/tmp/example\"))" :execute)
                        ("(goal \"pause\")" :hold)
-                       ("(exit)" :cancel)
+                       ("(exit)" :execute)
                        ("(progn (exit))" :hold)
                        ("(update)" :hold)
                        ("(compact)" :hold)
@@ -673,13 +673,6 @@
                    (search "(resource.read" output)
                    (search "(exit)" output))
               "nested help can present the full registered operation reference"))
-           (let ((evaluation
-                    (application-lisp-evaluate "(exit)" :application application)))
-             (test-assert
-              (and (eq (application-lisp-evaluation-status evaluation) ':ok)
-                   (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
-                   (null (application-lisp-evaluation-values evaluation)))
-              "exit transfers control to the application loop"))
            (let ((*update-check-fetch-function* (lambda () "v99.0.0")))
              (setf (application-installation-provenance application)
                    (make-instance

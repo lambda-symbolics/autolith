@@ -655,11 +655,10 @@ a fresh channel; add =-d= or =--detached= to create it without attaching. To
 open it later, use the printed =autolith open ID= command. Only one terminal
 can control a channel. Use =--read-only= to observe from another terminal.
 
-Inside Autolith, use =(open "ID")= to switch channels. Use =(detach)= or Ctrl-Z
-to disconnect the terminal and leave work running. Use =(exit)= to end the
-channel. To stop *all* channels and their server, use =autolith stop= from the
-OS shell or =(stop-server)= from Autolith. Updating or rolling back also stops
-the shared server.
+Inside Autolith, use =(open "ID")= to switch channels. Use =(exit)= or Ctrl-Z
+to disconnect the terminal and leave work running. To stop *all* channels and
+their server, use =autolith stop= from the OS shell or =(stop-server)= from
+Autolith. Updating or rolling back also stops the shared server.
 
 An idle channel can unload after =(config :channel-idle-minutes)= minutes (30
 by default) if nothing is running or queued and no terminal shows it. Open it

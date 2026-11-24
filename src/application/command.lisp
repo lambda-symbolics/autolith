@@ -29,7 +29,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-   '(:hold :inspect :execute :apply :apply-interactive :steer :cancel)
+   '(:hold :inspect :execute :apply :apply-interactive :steer)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -378,7 +378,7 @@ The maximum is NIL for &REST or &KEY."
    (busy-behavior
     :initarg       :busy-behavior
     :reader        application-command-busy-behavior
-     :type         (member :hold :inspect :execute :apply :apply-interactive :steer :cancel)
+     :type         (member :hold :inspect :execute :apply :apply-interactive :steer)
     :documentation "The command policy while application work is active.")
    (terminal-behavior
     :initarg       :terminal-behavior
@@ -914,13 +914,13 @@ without changing the registry."
 
 (defgeneric application-command-execute (command application invocation)
   (:documentation
-   "Execute COMMAND for APPLICATION and INVOCATION; return a loop action and the command's value."))
+   "Execute COMMAND for APPLICATION and INVOCATION; return :CONTINUE and the command's value."))
 
 (defmethod application-command-execute
     ((command application-command)
      application
      (invocation application-command-invocation))
-  "Invoke COMMAND's captured handler and validate its loop action."
+  "Invoke COMMAND's captured handler and validate its completion status."
   (labels ((invoke-callable-handler (arguments)
              "Invoke COMMAND's callable handler with replaceable ARGUMENTS."
              (if *application-command-interactive-p*
@@ -948,7 +948,7 @@ without changing the registry."
                       (application-command-invocation-arguments invocation))
                      (funcall (application-command-handler command)
                               application invocation))
-               (unless (member action '(:continue :quit) :test #'eq)
+               (unless (eq action ':continue)
                  (error 'configuration-error
                         :message
                         (format nil
@@ -970,7 +970,7 @@ without changing the registry."
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
-   "Return :HOLD, :EXECUTE, :APPLY, :APPLY-INTERACTIVE, :STEER, or :CANCEL.
+   "Return :HOLD, :EXECUTE, :APPLY, :APPLY-INTERACTIVE, or :STEER.
 
 :EXECUTE runs immediately. :APPLY and :APPLY-INTERACTIVE run at the next safe
 provider boundary before steering, with the latter allowing a terminal picker.
@@ -1006,9 +1006,7 @@ no arguments; explicit values still use the noninteractive :APPLY lane."
        (t
         ':execute)))
     (:execute
-     ':execute)
-    (:cancel
-     ':cancel)))
+     ':execute)))
 
 (defgeneric application-command-prepare-steering (definition application input)
   (:documentation
@@ -1057,7 +1055,7 @@ APPLICATION are its authoritative Lisp argument contract. The handler is capture
 at registration. :HELP-TOPIC selects a supported section, defaulting to Other
 commands. :HELP-ORDER is an optional integer rank, with
 ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
-or :QUIT, and may return a second value, which a Lisp call of the command yields."
+and may return a second value, which a Lisp call of the command yields."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
   (let* ((callable-p       (eq (getf metadata :callable) t))

@@ -430,9 +430,9 @@ Inside Autolith, use =(open)= for either case.
 * Detached sessions
 :PROPERTIES:
 :ID: detached-sessions
-:VERSION: 8
+:VERSION: 9
 :END:
-Use =(detach)= to leave your channel working in the background.
+Use =(exit)= or Ctrl-Z to leave your channel working in the background.
 Return with =autolith open ID=.
 Closing the terminal also leaves the channel working.
 
@@ -441,7 +441,6 @@ Closing the terminal also leaves the channel working.
 =autolith tell ID "message"=         send a message
 =autolith open ID --read-only=       watch a channel
 
-Use =(exit)= to close your current channel.
 Use =autolith stop= to stop the server and every channel it hosts.
 
 * Give Autolith an objective

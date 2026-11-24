@@ -491,7 +491,7 @@ controller's exit reason."
                            (application-input-failed-backtrace condition)))))
                     (setf exit-reason
                           (application-input-controller-exit-reason input-controller))
-                    (when (member exit-reason '(:quit :interrupt :end-of-input))
+                    (when (member exit-reason '(:interrupt :end-of-input))
                       (application--present-open-instruction application))
                     (unless (eq exit-reason ':checkpoint)
                       (world-terminal-finish-attachments application :status 0)))

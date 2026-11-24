@@ -148,14 +148,6 @@
      (and (eq (application-lisp-evaluation-status evaluation) ':ok)
           (equal (application-lisp-evaluation-values evaluation) '(":DONE")))
      "ordinary warnings still complete their evaluation"))
-  (let ((evaluation
-          (application-lisp-evaluate
-           "(error 'application-operation-loop-action :action :quit)")))
-    (test-assert
-     (and (eq (application-lisp-evaluation-status evaluation) ':ok)
-          (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
-          (null (application-lisp-evaluation-values evaluation)))
-     "Autolith operation controls complete evaluation with their loop action"))
   (dolist (condition
            (list (make-condition 'rollback-requested
                                  :message       "requested rollback"
@@ -796,16 +788,7 @@
                        (equal provider-items-before
                               (conversation-input-items
                                (application-conversation application))))
-                  "local work shows exact source and values outside ordinary provider history")))
-             (let ((exit-controller
-                     (lisp-machine-tests--controller application)))
-               (application-input-controller--run-work
-                exit-controller '(:lisp "(exit)"))
-               (test-assert
-                (and (application-input-controller-stopping-p exit-controller)
-                     (eq (application-input-controller-exit-reason exit-controller)
-                         ':quit))
-                "exit stops the responsive controller")))
+                  "local work shows exact source and values outside ordinary provider history"))))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors
           (tool-registry-close-runtime-state
@@ -982,21 +965,7 @@
                     (test-substring-count (marker "C") output))
                    (zerop
                     (test-substring-count (marker "D;0") output)))
-                  "immediate active-turn Lisp does not nest another marker block"))
-               (terminal-ui-finish-prompt-block ui 0)
-               (terminal-ui-open-prompt-block ui)
-               (recording-terminal-reset terminal)
-               (run-lisp-work "(exit)")
-               (let ((output (recording-terminal-output terminal)))
-                 (test-assert
-                  (and (application-input-controller-stopping-p controller)
-                       (markers-in-order-p output '("C" "D;0"))
-                       (zerop
-                        (test-substring-count (marker "A") output))
-                       (zerop
-                        (test-substring-count (marker "B") output))
-                       (eq (terminal-ui-prompt-marker-state ui) ':closed))
-                  "close completes its block without opening another prompt")))
+                  "immediate active-turn Lisp does not nest another marker block")))
           (ignore-errors (application-input-controller-stop controller))
           (ignore-errors (terminal-ui-stop ui))
           (ignore-errors

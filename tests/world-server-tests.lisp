@@ -702,47 +702,9 @@ the version the client says it is, when it says one."
          (world-terminal-client-screen-release screen)))))
   nil)
 
-(-> test-world-server-channel-exit () null)
-(defun test-world-server-channel-exit ()
-  "Exit inbox and workspace channels through a terminal, notifying every viewer before closing transport."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (dolist (inbox-p '(t nil))
-       (let* ((identifier (world-client-open configuration
-                                             :inbox-p   inbox-p
-                                             :directory (world-tests--workspace root "channel-exit")
-                                             :switch-p  t))
-              (host       (world-server--find-host server identifier)))
-         (world-server-tests--call-with-terminal-client
-          configuration identifier
-          (lambda (type await-exit view)
-            (declare (ignore type))
-            (world-terminal-client--disconnect (channel-subscription-connection view))
-            (multiple-value-bind (exit ended-p) (funcall await-exit)
-              (test-assert (and ended-p (eq (first exit) ':attachment-lost))
-                           "An unexpected connection loss is reported as a failure."))))
-         (world-server-tests--call-with-terminal-client
-          configuration identifier
-          (lambda (type await-exit view)
-            (declare (ignore view))
-            (world-server-tests--call-with-terminal-client
-             configuration identifier
-             (lambda (watch-type await-watch-exit watcher)
-               (declare (ignore watch-type watcher))
-               (funcall type '(:insert "(exit)"))
-               (funcall type ':submit)
-               (dolist (await (list await-exit await-watch-exit))
-                 (multiple-value-bind (exit ended-p) (funcall await)
-                   (test-assert (and ended-p (equal exit '(:status 0 :message nil :details nil)))
-                                (format nil "A deliberate exit ends each attached terminal successfully: ~S" exit)))))
-             :read-only-p t)))
-         (test-assert (task-tests--wait-until (lambda () (eq (world-host-state host) ':retired)) 20)
-                      "The exited channel retires after notifying its terminals.")))))
-  nil)
-
-(-> test-world-server-control-z-detach () null)
-(defun test-world-server-control-z-detach ()
-  "Detach a terminal client through Ctrl-Z while its channel's work completes."
+(-> test-world-server-client-exit () null)
+(defun test-world-server-client-exit ()
+  "Leave a channel through EXIT or Ctrl-Z while its work completes."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry       (world-client-entry configuration))
@@ -752,9 +714,9 @@ the version the client says it is, when it says one."
             (host        (world-server--find-host server identifier))
             (application (world-host-application host))
             (controller  (application-input-controller application)))
-       (dolist (text (list (string (code-char 26))
-                           (format nil "~C[122;5u" #\Escape)
-                           (format nil "~C[90;5u" #\Escape)))
+       (dolist (events (list '((:insert "(exit)") :submit)
+                            (list (terminal--decode-editing-event (make-string-input-stream (string (code-char 26)))))
+                            (list (terminal--decode-editing-event (make-string-input-stream (format nil "~C[122;5u" #\Escape))))))
          (let ((gate      (sb-thread:make-semaphore :count 0))
                (started   (sb-thread:make-semaphore :count 0))
                (completed (sb-thread:make-semaphore :count 0))
@@ -791,13 +753,13 @@ the version the client says it is, when it says one."
                       (application-input-controller--handle-submission controller source :steer-p nil)
                       (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
                                    "the host runner starts the queued work")
-                      (funcall type (terminal--decode-editing-event (make-string-input-stream text)))
+                      (dolist (event events) (funcall type event))
                       (test-assert (multiple-value-bind (exit ended-p) (funcall await-exit)
                                      (and ended-p (null exit)))
-                                   "Ctrl-Z ends the terminal client's view as a detach")
+                                   "Exit returns the terminal client to the shell.")
                       (test-assert (task-tests--wait-until
                                     (lambda () (not (world-host-attached-p host))) 5)
-                                   "Ctrl-Z releases its client")
+                                   "Exit releases its client.")
                       (test-assert (and runner (thread-alive-p runner)
                                         (application-input-controller-busy-p controller)
                                         (not (world-server-stopping-p server))

@@ -621,28 +621,24 @@
                           (test-assert
                            (eq (application-input-controller--run-responsive-lisp
                                 controller "(operation-failure)") ':aborted)
-                           "aborting from a responsive command error returns to the prompt")
-                          (test-assert
-                           (eq (application-input-controller--run-responsive-lisp
-                                controller "(exit)") ':quit)
-                           "responsive exit preserves its successful loop action")))
+                           "aborting from a responsive command error returns to the prompt")))
                       (let* ((records
                                (conversation-user-operation-snapshot
                                 (application-conversation application)))
                              (properties (mapcar #'rest records)))
                         (test-assert
-                         (and (= (length records) 4)
+                         (and (= (length records) 3)
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :source))
                                        properties)
                                '("(operation-abort)" "(operation-abort)"
-                                  "(operation-failure)" "(exit)"))
+                                  "(operation-failure)"))
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :status))
                                        properties)
-                               '(:aborted :aborted :aborted :ok)))
+                               '(:aborted :aborted :aborted)))
                          "terminal command outcomes retain exact source and final status")
                         (test-assert
                          (and
@@ -652,8 +648,7 @@
                                      (getf record :result)
                                      :test #'char-equal))
                            (subseq properties 0 2))
-                          (search "synthetic command failure" (getf (third properties) :result))
-                          (search "loop action: quit" (getf (fourth properties) :result)))
+                          (search "synthetic command failure" (getf (third properties) :result)))
                          "terminal command outcomes retain bounded local diagnostics")))
                  (ignore-errors (terminal-ui-stop ui))
                  (ignore-errors

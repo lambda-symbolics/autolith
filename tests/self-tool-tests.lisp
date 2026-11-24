@@ -43,11 +43,12 @@
           (:name string)
           (:aliases list)
           (:action keyword)
+          (:value t)
           (:description string)
           (:tip string))
     string)
 (defun test-application-command-definition-source
-    (&key definition-name name aliases action description tip)
+    (&key definition-name name aliases action value description tip)
   "Return one complete application command definition for self-tool tests."
   (format nil
           "(define-application-command ~S~%~
@@ -61,14 +62,14 @@
              ~2T(application invocation)~%~
              ~2T~S~%~
              ~2T(declare (ignore application invocation))~%~
-             ~2T~S)"
+             ~2T(values ~S ~S))"
           definition-name
           name
           aliases
           description
           tip
           description
-          action))
+          action value))
 
 (defvar *test-self-definition-reader-side-effect-p* nil
   "Whether a self.define test payload executed during reading.")
@@ -689,7 +690,8 @@
             :definition-name 'test-self-command-existing
             :name            "self-command-existing"
             :aliases         '("self-command-existing-alias")
-            :action          ':quit
+            :action          ':continue
+            :value           ':replacement
             :description     "Return the replacement command action."
             :tip             "Use (self-command-existing) for the replacement action."))
          (new-source
@@ -713,7 +715,7 @@
             :definition-name 'test-self-command-collision-rejected
             :name            "self-command-collision"
             :aliases         nil
-            :action          ':quit
+            :action          ':continue
             :description     "Attempt to collide with an existing alias."
             :tip             "This colliding command must never become effective."))
          (replay-source
@@ -807,11 +809,11 @@
               configuration
               existing-replacement-source)
              (test-assert
-              (eq (funcall
-                   (fdefinition 'test-self-command-existing)
-                   nil
-                   nil)
-                  ':quit)
+              (eq (nth-value 1 (funcall
+                                (fdefinition 'test-self-command-existing)
+                                nil
+                                nil))
+                  ':replacement)
               "self.define installs replacement command behavior")
              (test-assert
               (eq (application-command-definition-name

@@ -9,7 +9,7 @@
 (defstruct (application-lisp-evaluation
              (:constructor application-lisp-evaluation-create
                  (&key status output values value-kinds condition restart-names
-                        selected-restart-name loop-action)))
+                       selected-restart-name)))
   "Captured outcome of one explicit active-image Common Lisp evaluation."
   (status ':ok :type application-lisp-evaluation-status)
   (output "" :type string)
@@ -17,8 +17,7 @@
   (value-kinds nil :type list)
   (condition nil :type (option string))
   (restart-names nil :type list)
-  (selected-restart-name nil :type (option string))
-  (loop-action nil :type (option (member :quit))))
+  (selected-restart-name nil :type (option string)))
 
 (defparameter *application-lisp-value-restart-names*
   '(supply-arguments use-value store-value)
@@ -59,8 +58,7 @@ are presented by the evaluator."
 (defun application-lisp--control-condition-p (condition)
   "Return true when CONDITION belongs to Autolith's own control boundary."
   (typep condition
-         '(or application-operation-loop-action
-              application-turn-cancelled
+         '(or application-turn-cancelled
               application-input-failed
               autolith-control-condition
               agent-loop-error
@@ -163,7 +161,6 @@ journaling or provider conversation projection."
         (condition-text                     nil)
         (restart-names                      nil)
         (selected-restart-name              nil)
-        (loop-action                        nil)
         (*application-lisp-tool-results*    (make-hash-table :test #'eq)))
     (handler-case
         (let ((*standard-output*                   output-stream)
@@ -190,10 +187,6 @@ journaling or provider conversation projection."
                   condition-text debugger-condition
                   restart-names debugger-restart-names
                   selected-restart-name debugger-selected-restart-name)))
-      (application-operation-loop-action (condition)
-        (setf status ':ok
-              loop-action (application-operation-loop-action-action condition)
-              raw-values nil))
       ((or application-turn-cancelled
            application-input-failed
            agent-loop-error
@@ -217,8 +210,7 @@ journaling or provider conversation projection."
          :values rendered-values :value-kinds value-kinds
          :condition             condition-text
          :restart-names         restart-names
-         :selected-restart-name selected-restart-name
-         :loop-action           loop-action)))))
+         :selected-restart-name selected-restart-name)))))
 
 
 ;;;; -- Local Evaluation Presentation --
@@ -653,17 +645,6 @@ Autolith diagnosis may propose validated executable recoveries."
        (application-lisp--select-restart application condition restarts))
      :debug-condition-p debug-condition-p)))
 
-(-> application-lisp--user-operation-result
-    (application-lisp-evaluation list)
-    string)
-(defun application-lisp--user-operation-result (evaluation result-entry)
-  "Return RESULT-ENTRY as durable text with EVALUATION's loop action."
-  (let ((rendered (terminal--spans-text result-entry))
-        (action   (application-lisp-evaluation-loop-action evaluation)))
-    (if action
-        (format nil "~A~%loop action: ~(~A~)" rendered action)
-        rendered)))
-
 (-> application-run-lisp-input
     (application string &key (:interactive-p boolean))
     keyword)
@@ -692,8 +673,7 @@ caller."
              (application-set-local-activity application nil)))
          (result-entry (application-lisp--result-entry evaluation))
          (status       (application-lisp-evaluation-status evaluation))
-         (result
-           (application-lisp--user-operation-result evaluation result-entry)))
+         (result       (terminal--spans-text result-entry)))
     (application-present application result-entry)
     (conversation-append-user-operation
      (application-conversation application)
@@ -703,7 +683,7 @@ caller."
      :result result)
     (case status
       (:ok
-       (or (application-lisp-evaluation-loop-action evaluation) ':continue))
+       ':continue)
       (:aborted
        ':aborted)
       (:error

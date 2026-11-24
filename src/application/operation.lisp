@@ -82,19 +82,6 @@ A present NIL entry records ambiguous provenance.")
 (defgeneric application-operation-binding-eligible-p (operation)
   (:documentation "Return whether OPERATION receives a canonical function binding."))
 
-(define-condition application-operation-loop-action (error)
-  ((action
-    :initarg       :action
-    :reader        application-operation-loop-action-action
-    :type          (member :quit)
-    :documentation "The application loop action requested by the operation."))
-  (:report
-   (lambda (condition stream)
-     (format stream "The local operation requested ~S."
-             (application-operation-loop-action-action condition))))
-  (:documentation
-   "A local operation requested control transfer to the application loop."))
-
 (defvar *application-operation-application* nil
   "The application whose registered operations are callable during local Lisp.")
 
@@ -753,7 +740,7 @@ argument objects to construct a label; only the outer argument list is copied."
 
 (-> application-operation-source-active-turn-action
     (application string)
-    (member :apply :apply-interactive :steer :cancel :execute :hold))
+    (member :apply :apply-interactive :steer :execute :hold))
 (defun application-operation-source-active-turn-action (application source)
   "Classify one complete explicit Lisp SOURCE beside APPLICATION's active turn.
 
@@ -836,12 +823,7 @@ wait for the serialized application boundary."
            (application-operation--command-invocation command arguments))
          (*application-command-presentation-invocation* invocation)
          (*application-command-presentation-pending-p*  nil))
-    (multiple-value-bind (action value) (application-command-execute command application invocation)
-      (case action
-        (:continue
-         value)
-        (:quit
-         (error 'application-operation-loop-action :action ':quit))))))
+    (nth-value 1 (application-command-execute command application invocation))))
 
 (defgeneric application-lisp--native-tool-value (result)
   (:documentation

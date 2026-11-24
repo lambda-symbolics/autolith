@@ -3349,13 +3349,13 @@ show."
   (application-fix-skipped-definitions application comment)
   ':continue)
 
-(define-application-command application--builtin-detach-command
-    (:name              "detach"
+(define-application-command application--builtin-exit-command
+    (:name              "exit"
      :help-topic        :runtime
      :help-order        15
      :argument          nil
-     :description       "detach Autolith from the current terminal"
-     :tip               "keeps the session running and returns the foreground shell."
+     :description       "leave the channel running and return to the shell"
+     :tip               "disconnects this client; return with `autolith open ID`."
      :busy-behavior     :execute
      :terminal-behavior :shared
      :callable          t)
@@ -3363,13 +3363,9 @@ show."
   (let ((session (application-channel-endpoint application)))
     (unless session
       (error 'world-terminal-error
-             :message   "The world-terminal session is not ready to detach."
+             :message   "The channel's terminal endpoint is not ready."
              :operation ':detach))
-    (let ((result (world-terminal--detach-terminal session)))
-      (when (getf (rest result) :scheduled-p)
-        (application-present
-         application
-         "Detach scheduled; the terminal releases once current work reaches a safe stop."))))
+    (world-terminal--detach-terminal session))
   ':continue)
 
 (define-application-command application--builtin-stop-server-command
@@ -3386,17 +3382,3 @@ show."
       (error 'world-error :operation ':stop :message "This client has no world server."))
     (world-server--dispatch server ':stop nil))
   ':continue)
-
-(define-application-command application--builtin-exit-command
-    (:name              "exit"
-     :help-topic        :runtime
-     :help-order        16
-     :argument          nil
-     :description       "leave Autolith"
-     :tip               "exits cleanly; Ctrl-C also prints the exact resume command."
-     :busy-behavior     :cancel
-     :terminal-behavior :shared
-     :callable          t)
-    (application)
-  (declare (ignore application))
-  ':quit)

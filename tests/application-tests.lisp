@@ -402,13 +402,6 @@
   (test-assert
    (string= (application-command-name (application-command-find "usage")) "status")
    "declared aliases resolve through their canonical command definitions")
-  (test-assert
-   (eq
-    (application-command-busy-action
-     (application-command-find "EXIT")
-     (application-operation--command-invocation (application-command-find "EXIT") nil))
-    ':cancel)
-   "exit cancels active work before ending the listener")
   (dolist (case '(("settings" "(settings :onboarding-p nil)"
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
@@ -1088,7 +1081,6 @@
                      for position = (search substring text :start2 start)
                      while position count position)))
       (dolist (case '((:interrupt (:interrupt))
-                      (:quit ((:insert "(exit)") :submit))
                       (:end-of-input (:end-of-input))))
         (destructuring-bind (reason events) case
           (let* ((durable (conversation-create configuration
@@ -1195,7 +1187,7 @@
 (-> test-graceful-shutdown-retains-interrupt-escape () null)
 (defun test-graceful-shutdown-retains-interrupt-escape ()
   "Test Ctrl-C forces already-pending shutdown while Escape remains harmless."
-  (dolist (reason '(:quit :end-of-input :shutdown))
+  (dolist (reason '(:end-of-input :shutdown))
     (let* ((terminal      (make-instance 'queued-recording-terminal :columns 80))
            (ui            (terminal-ui-create :terminal terminal))
            (application   (make-instance 'application :ui ui))
@@ -1267,8 +1259,8 @@
                 nil)))
        (lambda ()
          (application-input-controller--process-event controller ':detach)))
-      (test-assert (equal called (list controller "(detach)"))
-                   "Ctrl-Z submits the existing detach operation while idle and active")
+      (test-assert (equal called (list controller "(exit)"))
+                   "Ctrl-Z submits exit while idle and active")
       (terminal-ui-stop ui)))
   nil)
 
@@ -1735,10 +1727,7 @@
                             (string=
                              (line-editor-text (terminal-ui-editor ui))
                              "draft survives"))
-                      (queued-recording-terminal-enqueue terminal ':interrupt)
-                      (queued-recording-terminal-enqueue
-                       terminal '(:insert "(exit)"))
-                      (queued-recording-terminal-enqueue terminal ':submit))
+                      (queued-recording-terminal-enqueue terminal ':stream-end))
                     :name "Autolith active-turn stop-key test"))
              (unwind-protect
                   (let ((*application-forced-exit-function*
@@ -1991,10 +1980,7 @@
                                           2)))))
                            (error (condition)
                              (setf producer-condition condition)))
-                      (queued-recording-terminal-enqueue terminal ':interrupt)
-                      (queued-recording-terminal-enqueue
-                       terminal '(:insert "(exit)"))
-                      (queued-recording-terminal-enqueue terminal ':submit)))
+                      (queued-recording-terminal-enqueue terminal ':stream-end)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
                 (let ((*application-forced-exit-function*
@@ -5231,7 +5217,7 @@
                     ("goal" (:pause) :hold) ("mcp" () :execute)
                     ("hurry-up" () :execute) ("model" () :apply-interactive)
                     ("effort" () :apply-interactive) ("permissions" () :apply-interactive)
-                    ("status" () :execute) ("compact" () :hold) ("exit" () :cancel)))
+                    ("status" () :execute) ("compact" () :hold)))
       (destructuring-bind (name arguments expected) case
         (test-assert (eq (busy-action name arguments) expected)
                      (format nil "busy ~A ~S resolves to ~A" name arguments expected)))))

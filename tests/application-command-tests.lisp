@@ -407,7 +407,7 @@
                   :definition-name   'application-command-tests--conditional
                   :name              "conditional"
                   :aliases           nil
-                  :busy-behavior     ':cancel
+                  :busy-behavior     ':execute
                   :terminal-behavior ':exclusive-without-arguments)))
              (register-application-command command :source ':runtime))
            (let* ((inspection
@@ -448,7 +448,7 @@
               (eq (application-command-busy-action
                    (application-command-invocation-command conditional)
                    conditional)
-                  ':cancel))
+                  ':execute))
              "busy behavior is declared by the command and refined by invocation")
             (test-assert
              (and
@@ -472,11 +472,10 @@
          ((cwd "/tmp") :steer)
          ((cwd) :execute)
          ((model "gpt-5.6-sol") :apply)
-         ((detach) :execute)
+         ((exit) :execute)
          ((fix-skipped-definitions) :hold)
          ((vault-restore) :execute)
-         ((vault-discard) :execute)
-         ((exit) :cancel)))
+         ((vault-discard) :execute)))
     (destructuring-bind (form expected) case
       (let* ((invocation (application-command-tests--invocation form))
              (command    (application-command-invocation-command invocation)))
