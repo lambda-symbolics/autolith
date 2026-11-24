@@ -872,15 +872,35 @@ snapshot."
           (error () nil))
         (list content content ':text))))
 
+(-> application-operation--call-tool
+    (tool-context tool (or list json-object) &key (:registry tool-registry))
+    tool-result)
+(defun application-operation--call-tool
+    (context tool arguments &key (registry (tool-context-registry context)))
+  "Call TOOL of REGISTRY in CONTEXT with native keyword ARGUMENTS or a JSON object.
+
+Signal TOOL-ERROR if the call fails. Returns the tool result."
+  (let ((result (tool-registry-execute-native-call
+                 registry
+                 (json-object "namespace" (tool-namespace tool)
+                              "name"      (tool-name tool)
+                              "call_id"   (tool-context-call-id context)
+                              "arguments" (if (hash-table-p arguments)
+                                              arguments
+                                              (application-operation--tool-arguments arguments tool)))
+                 context)))
+    (unless (tool-result-success-p result)
+      (error 'tool-error
+             :message   (tool-failure-summary tool (tool-result-content result))
+             :tool-name (tool-canonical-name tool)))
+    result))
+
 (defmethod application-operation-invoke
     ((operation application-tool-operation) application arguments &key context)
   "Invoke a tool through the registry's native or textual path."
   (let* ((tool              (application-operation-backend operation))
          (canonical-name    (tool-canonical-name tool))
          (tool-context      (or context (application-operation--tool-context application)))
-         (json-arguments    (if (hash-table-p arguments)
-                                arguments
-                                (application-operation--tool-arguments arguments tool)))
          (ui                (and (slot-boundp application 'ui)
                                 (application-ui application)))
          (previous-activity (and ui (terminal-ui-local-activity ui)))
@@ -890,20 +910,12 @@ snapshot."
                   (when ui
                     (application-set-local-activity
                      application (format nil "running ~A" canonical-name)))
-                  (tool-registry-execute-native-call
-                   (or (tool-context-registry tool-context)
-                       (application-tool-registry application))
-                   (json-object "namespace" (tool-namespace tool)
-                               "name" (tool-name tool)
-                               "call_id" (tool-context-call-id tool-context)
-                               "arguments" json-arguments)
-                   tool-context))
+                  (application-operation--call-tool
+                   tool-context tool arguments
+                   :registry (or (tool-context-registry tool-context)
+                                 (application-tool-registry application))))
              (when ui
                (application-set-local-activity application previous-activity)))))
-    (unless (tool-result-success-p result)
-      (error 'tool-error
-             :message   (tool-failure-summary tool (tool-result-content result))
-             :tool-name canonical-name))
     (when *application-lisp-tool-results*
       (let ((content (tool-result-content result)))
         (setf (gethash content *application-lisp-tool-results*)
@@ -953,16 +965,25 @@ snapshot."
 
 (-> application-operation--binding-function (non-empty-string) function)
 (defun application-operation--binding-function (name)
-  "Return the dynamic wrapper function for canonical operation NAME."
+  "Return the dynamic wrapper function for canonical operation NAME.
+
+The function calls the tool NAME in *TOOL-LISP-CONTEXT* if that is bound.
+Otherwise it calls the operation NAME of the active local application."
   (lambda (&rest arguments)
-    (unless (typep *application-operation-application* 'application)
-      (error 'configuration-error
-             :message
-             (format nil
-                     "Operation ~A requires an active local Autolith evaluation."
-                     name)))
-    (apply #'application-operation-call
-           *application-operation-application* name arguments)))
+    (cond
+      (*tool-lisp-context*
+       (let ((tool (tool-registry-resolve (tool-context-registry *tool-lisp-context*) name)))
+         (unless tool
+           (error 'tool-error :message (format nil "No tool is named ~A." name) :tool-name name))
+         (tool-result-content
+          (application-operation--call-tool *tool-lisp-context* tool arguments))))
+      ((typep *application-operation-application* 'application)
+       (apply #'application-operation-call
+              *application-operation-application* name arguments))
+      (t
+       (error 'configuration-error
+              :message
+              (format nil "Operation ~A requires an active local Autolith evaluation." name))))))
 
 (-> application-operation--install-binding
     (application-operation)
@@ -996,6 +1017,12 @@ snapshot."
   "Keep local special forms on their directly defined bindings."
   (declare (ignore operation))
   nil)
+
+(-> application-operation-install-tool-bindings ((option tool-registry)) null)
+(defun application-operation-install-tool-bindings (registry)
+  "Install the function bindings of the tools of REGISTRY, if given, that do not conflict."
+  (dolist (tool (and registry (tool-registry-tools registry)))
+    (application-operation--install-binding (application-operation--from-tool tool))))
 
 (-> application-operation-install-bindings (application) list)
 (defun application-operation-install-bindings (application)

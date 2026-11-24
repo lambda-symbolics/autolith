@@ -351,6 +351,9 @@
 (defvar *tool-authorization-context* nil
   "The exact tool execution whose permission callback is running on this thread.")
 
+(defvar *tool-lisp-context* nil
+  "The tool context of the tool functions called on this thread, or NIL for the local user.")
+
 (-> tool-context-authorize-command
     (tool-context string pathname)
     keyword)
