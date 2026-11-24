@@ -634,6 +634,7 @@
                                           (:file "recovery-input-vault-tests")
                                           (:file "vault-edit-tests")
                                           (:file "user-init-tests")
+                                          (:file "client-site-init-tests")
                                           (:file "prompt-tests")
                                           (:file "acp-observer-tests")
                                           (:file "acp-session-tests")

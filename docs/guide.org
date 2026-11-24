@@ -813,6 +813,14 @@ contain =init.lisp=, =mcp.sexp=, =skills/= and =agents/=. A site
 =init.lisp= runs with the same privileges as personal configuration. Use an
 explicit site root in place of =XDG_CONFIG_DIRS=.
 
+The terminal client loads the site =init.lisp= itself after installing the
+configured theme and before it builds its screen, so site presentation is
+available without the world server. Except for =autolith auth=, which also
+loads trusted directory and personal initialization, the client loads only the
+site layer; those layers stay with the server process. A site file that fails
+in the client is reported once on standard error and the client keeps the
+stock interface.
+
 ** Settings
 
 Use =(settings)= to open the settings picker. Select a setting to see the

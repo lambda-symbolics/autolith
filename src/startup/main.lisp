@@ -663,6 +663,16 @@ dependencies."
     (when (non-empty-string-p value)
       (list :site-config-root (pathname value)))))
 
+(-> main--client-site-init-p
+    (configuration &key (:pristine-p boolean) (:server-p boolean)) boolean)
+(defun main--client-site-init-p (configuration &key pristine-p server-p)
+  "Return whether this process is a terminal client with a configured site layer.
+
+A pristine recovery skips executable initialization, and a detached world
+server loads every layer itself when it creates an application."
+  (and (not (or pristine-p server-p))
+       (not (null (configuration-site-init-path configuration)))))
+
 (-> main--model-arguments (clingon:command) list)
 (defun main--model-arguments (command)
   "Return transient model overrides, leaving provider validation to user init."
@@ -747,9 +757,14 @@ dependencies."
                     (not (typep *active-application* 'application))))))
     (when image-state-loaded-p
       (image-state-load configuration :pristine-p pristine-p))
+    (when (main--client-site-init-p
+           configuration
+           :pristine-p pristine-p
+           :server-p   (not (null handoff-record)))
+      (user-init-load-site configuration))
     (when authenticate-p
       (unless pristine-p
-        (user-init-load configuration))
+        (user-init-load configuration :layers '(:directory :user)))
       (main-authenticate (provider-bootstrap-configuration configuration)
                          authentication-selection
                          authentication-method))
