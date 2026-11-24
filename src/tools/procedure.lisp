@@ -1,10 +1,14 @@
 (in-package #:autolith)
 
-;;;; -- Procedure Tool --
+;;;; -- Procedure Tools --
 
 (defclass procedure-run-tool (tool)
   ()
   (:documentation "A tool for running learned procedures."))
+
+(defclass procedure-define-tool (tool)
+  ()
+  (:documentation "A tool for defining procedures from tool calls and parameters."))
 
 (defmethod tool-execution-policy ((tool procedure-run-tool))
   "Run procedure calls separately from other tool calls in the provider batch."
@@ -29,3 +33,29 @@
     (knowledge-error (condition)
       (error 'tool-error :message   (autolith-error-message condition)
                          :tool-name "procedure.run"))))
+
+(defmethod tool-execute ((tool procedure-define-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Define the procedure described by ARGUMENTS and report its version and steps."
+  (declare (ignore tool))
+  (handler-case
+      (let* ((configuration (tool-context-configuration context))
+             (conversation  (tool-context-conversation context))
+             (procedure     (procedure-from-json arguments)))
+        (multiple-value-bind (identifier version added-p)
+            (procedure-define configuration procedure
+                              :source-conversation (and conversation
+                                                        (conversation-identifier conversation)))
+          (tool-success
+           (procedure-definition-report
+            procedure
+            :version version
+            :added-p added-p
+            :status  (procedure-entry-status
+                      (knowledge-base-procedure (knowledge-base-read configuration)
+                                                (knowledge--workspace configuration)
+                                                identifier))))))
+    (knowledge-error (condition)
+      (error 'tool-error :message   (autolith-error-message condition)
+                         :tool-name "procedure.define"))))

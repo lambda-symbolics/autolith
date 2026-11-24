@@ -708,20 +708,56 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
 
 (-> default-tools--register-procedure (tool-registry) tool-registry)
 (defun default-tools--register-procedure (registry)
-  "Register the tool running learned procedures in REGISTRY."
+  "Register the tools defining and running procedures in REGISTRY."
   (tool-registry-describe-namespace
    registry "procedure"
-   "Tool-call sequences Autolith learned from recurring work, run in one step.")
+   "Sequences of tool calls that run in one step.")
+  (default-tools--register
+   registry
+   (list 'procedure-define-tool
+         "procedure" "define"
+         "Define a procedure, which is a sequence of tool calls that procedure.run makes in one step. A string in the arguments refers to a parameter as {name} and to the result of an earlier step as <call N> or <call N path.to.field>. A string that contains only {name} passes the value with its type. Defining an existing id adds a new version."
+         (tool-object-schema
+          (json-object
+           "id" (tool-string-property
+                 "The name of the procedure. It starts with a lowercase letter and contains lowercase letters, digits, hyphens and dots.")
+           "description" (tool-string-property
+                          "What the procedure does. The list of procedures shows it.")
+           "parameters" (json-object
+                         "type" "array"
+                         "description" "The values that change from one run to the next."
+                         "items" (tool-object-schema
+                                  (json-object
+                                   "name" (tool-string-property
+                                           "The name of the parameter, in the same form as the id.")
+                                   "type" (cl-llm-provider-api:provider-enum-schema
+                                           '("string" "integer" "number" "boolean")
+                                           "The type of the value. The default is string.")
+                                   "description" (tool-string-property
+                                                  "What the value means."))
+                                  '("name")))
+           "steps" (json-object
+                    "type" "array"
+                    "description" "The tool calls in order."
+                    "items" (tool-object-schema
+                             (json-object
+                              "tool" (tool-string-property
+                                      "The name of the tool, such as shell.run.")
+                              "arguments" (json-object
+                                           "type" "object"
+                                           "description" "The arguments of the call, with references to parameters and earlier results in strings."))
+                             '("tool" "arguments"))))
+          '("id" "steps"))))
   (default-tools--register
    registry
    (list 'procedure-run-tool
          "procedure" "run"
-         "Make a learned procedure's tool calls in one step, each with its usual authorization, and report every call and result. Use it when Autolith says a procedure fits the request, or one listed by memory:procedures does. A procedure never admitted asks for admission first. If a call fails the run stops and reports where; continue with ordinary calls."
+         "Make the tool calls of a procedure in one step, each with its usual authorization, and report every call and result. If a call fails, the run stops and reports where it stopped. Continue with ordinary calls in that case."
          (tool-object-schema
           (json-object
-           "id" (tool-string-property "The procedure's name.")
+           "id" (tool-string-property "The name of the procedure.")
            "parameters" (json-object "type" "object"
-                                     "description" "The procedure's parameters by name, such as {\"quarter\": \"q3\"}."))
+                                     "description" "The parameters of the procedure by name, such as {\"quarter\": \"q3\"}."))
           '("id"))))
   registry)
 

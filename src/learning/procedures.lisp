@@ -364,6 +364,74 @@ compared without regard to case; bound values must suit their parameters."
     (json-encode (json-object "id" (getf (rest procedure) :id) "parameters" parameters))))
 
 
+;;;; -- Authored Procedures --
+
+(-> procedure-from-json (t) list)
+(defun procedure-from-json (object)
+  "Return the procedure described by the decoded JSON OBJECT.
+
+OBJECT contains an id, an optional description, optional parameters and the
+steps. Each parameter contains a name, an optional type and an optional
+description. Each step contains a tool and its arguments. A string in the
+arguments refers to a parameter as {NAME} and to the result of an earlier step
+N as <call N PATH>, where PATH is an optional dot-separated path into a JSON
+result. Signal KNOWLEDGE-ERROR with code :INVALID-PROCEDURE if OBJECT does
+not describe a valid procedure."
+  (flet ((fail (control &rest arguments)
+           (apply #'knowledge--fail ':invalid-procedure object control arguments)))
+    (unless (json-object-p object)
+      (fail "A procedure is a JSON object."))
+    (let* ((identifier  (json-get object "id"))
+           (description (json-get object "description"))
+           (parameters  (procedure--json-parameters (json-get object "parameters")))
+           (names       (mapcar (lambda (parameter) (getf parameter :name)) parameters))
+           (steps       (json-get object "steps")))
+      (unless (knowledge-rule-name-p identifier)
+        (fail "The id ~S does not start with a lowercase letter, or it contains characters other than lowercase letters, digits, hyphens and dots."
+              identifier))
+      (unless (or (null description) (stringp description))
+        (fail "The description is a string."))
+      (unless (and (vectorp steps) (not (stringp steps)) (plusp (length steps)))
+        (fail "The steps are a non-empty array."))
+      (list :procedure
+            :id          identifier
+            :description description
+            :parameters  parameters
+            :steps       (loop for step across steps
+                               for index from 0
+                               collect (procedure--json-step step names index))))))
+
+(-> procedure-definition-report
+    (list &key (:version integer) (:added-p boolean) (:status procedure-status))
+    string)
+(defun procedure-definition-report (procedure &key version added-p status)
+  "Return the text reporting PROCEDURE as VERSION with STATUS, and whether VERSION is new by ADDED-P.
+
+The text contains every step and the parameters that no step uses."
+  (let* ((properties (rest procedure))
+         (used       (mapcan (lambda (step) (procedure--template-parameters (getf step :arguments)))
+                             (getf properties :steps)))
+         (unused     (remove-if (lambda (name) (member name used :test #'string=))
+                                (mapcar (lambda (parameter) (getf parameter :name))
+                                        (getf properties :parameters)))))
+    (with-output-to-string (stream)
+      (format stream "Procedure ~A version ~D ~:[already has this definition~;is defined~]. ~A"
+              (getf properties :id) version added-p
+              (ecase status
+                (:active
+                 "Run it with procedure.run.")
+                (:suspended
+                 "It is suspended after failed runs. It runs again only after a changed definition.")
+                (:retired
+                 "It is retired, so it does not run.")))
+      (loop for step in (getf properties :steps)
+            for index from 1
+            do (format stream "~%~D. ~A ~A" index (getf step :tool)
+                       (procedure-template-text (getf step :arguments))))
+      (when unused
+        (format stream "~%No step uses parameter~P ~{~A~^, ~}." (length unused) unused)))))
+
+
 ;;;; -- Stored Procedures --
 
 (-> procedure-entry-reduce ((option list) list) list)
@@ -632,6 +700,126 @@ Return the bindings and whether VALUE agreed."
        (values bindings t))
       (t
        (values bindings nil)))))
+
+(-> procedure--json-parameters (t) list)
+(defun procedure--json-parameters (parameters)
+  "Return the procedure parameters described by the decoded JSON array PARAMETERS."
+  (flet ((fail (control &rest arguments)
+           (apply #'knowledge--fail ':invalid-procedure parameters control arguments)))
+    (unless (or (null parameters) (and (vectorp parameters) (not (stringp parameters))))
+      (fail "The parameters are an array."))
+    (let ((result
+            (loop for parameter across (or parameters #())
+                  for name = (and (json-object-p parameter) (json-get parameter "name"))
+                  for type = (if (json-object-p parameter)
+                                 (json-get parameter "type" "string")
+                                 "string")
+                  for description = (and (json-object-p parameter)
+                                         (json-get parameter "description"))
+                  do (unless (knowledge-rule-name-p name)
+                       (fail "The parameter name ~S does not start with a lowercase letter, or it contains characters other than lowercase letters, digits, hyphens and dots."
+                             name))
+                     (unless (find type '(:string :integer :number :boolean) :test #'string-equal)
+                       (fail "The type of parameter ~A is string, integer, number or boolean."
+                             name))
+                     (unless (or (null description) (stringp description))
+                       (fail "The description of parameter ~A is a string." name))
+                  collect (list* :name name
+                                 :type (find type '(:string :integer :number :boolean)
+                                             :test #'string-equal)
+                                 (and description (list :description description))))))
+      (when-let ((duplicate (find-if (lambda (parameter)
+                                       (< 1 (count (getf parameter :name) result
+                                                   :key  (lambda (other) (getf other :name))
+                                                   :test #'string=)))
+                                     result)))
+        (fail "Two parameters are named ~A." (getf duplicate :name)))
+      result)))
+
+(-> procedure--json-step (t list integer) list)
+(defun procedure--json-step (step names index)
+  "Return procedure step INDEX described by the decoded JSON STEP, given the parameter NAMES."
+  (unless (and (json-object-p step) (non-empty-string-p (json-get step "tool")))
+    (knowledge--fail ':invalid-procedure step "Step ~D is an object with a tool." (1+ index)))
+  (let ((arguments (json-get step "arguments" (json-object))))
+    (unless (json-object-p arguments)
+      (knowledge--fail ':invalid-procedure step "The arguments of step ~D are an object."
+                       (1+ index)))
+    (list :tool      (json-get step "tool")
+          :arguments (procedure--json-template arguments names index))))
+
+(-> procedure--json-template (t list integer) list)
+(defun procedure--json-template (value names step)
+  "Return the template of the JSON VALUE in the arguments of STEP, given the parameter NAMES."
+  (cond
+    ((stringp value)
+     (procedure--string-template value names step))
+    ((json-object-p value)
+     (cons :object
+           (loop for key being the hash-keys of value using (hash-value item)
+                 collect (list key (procedure--json-template item names step)))))
+    ((vectorp value)
+     (cons :array
+           (map 'list (lambda (item) (procedure--json-template item names step)) value)))
+    (t
+     (list :json (json-encode value)))))
+
+(-> procedure--string-template (string list integer) list)
+(defun procedure--string-template (text names step)
+  "Return the template of TEXT in the arguments of STEP.
+
+TEXT refers to the parameters in NAMES as {NAME} and to the results of the
+steps before STEP as <call N PATH>. Other text is literal."
+  (let ((parts   nil)
+        (literal ""))
+    (loop for piece in (cl-ppcre:split "(\\{[a-z][a-z0-9.-]*\\}|<call [0-9]+(?: [^<>]*)?>)" text
+                                       :with-registers-p t)
+          for reference-p = nil then (not reference-p)
+          for reference = (and reference-p (procedure--string-reference piece names step))
+          do (if reference
+                 (progn
+                   (when (plusp (length literal))
+                     (push (list :json (json-encode literal)) parts))
+                   (push reference parts)
+                   (setf literal ""))
+                 (setf literal (concatenate 'string literal piece))))
+    (when (or (plusp (length literal)) (null parts))
+      (push (list :json (json-encode literal)) parts))
+    (if (rest parts)
+        (cons :concat (nreverse parts))
+        (first parts))))
+
+(-> procedure--string-reference (string list integer) (option list))
+(defun procedure--string-reference (text names step)
+  "Return the template TEXT refers to: a parameter in NAMES or the result of a step before STEP.
+
+Return NIL if TEXT refers to neither."
+  (if (eql (char text 0) #\{)
+      (let ((name (subseq text 1 (1- (length text)))))
+        (and (member name names :test #'string=)
+             (list :param name)))
+      (cl-ppcre:register-groups-bind ((#'parse-integer number) path)
+          ("^<call ([0-9]+)(?: (.*))?>$" text)
+        (and (<= 1 number step)
+             (list :from (1- number)
+                   (loop for key in (cl-ppcre:split "\\." (or path ""))
+                         unless (zerop (length key))
+                           collect (if (every #'digit-char-p key)
+                                       (parse-integer key)
+                                       key)))))))
+
+(-> procedure--template-parameters (list) list)
+(defun procedure--template-parameters (template)
+  "Return the names of the parameters TEMPLATE refers to."
+  (case (first template)
+    (:param
+     (list (second template)))
+    (:text
+     (list (third template)))
+    (:object
+     (mapcan (lambda (entry) (procedure--template-parameters (second entry))) (rest template)))
+    ((:array :concat)
+     (mapcan #'procedure--template-parameters (rest template)))))
 
 (-> procedure--text-piece (t) string)
 (defun procedure--text-piece (value)

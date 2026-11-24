@@ -414,6 +414,86 @@
                  "a concatenation is shown as one string with its references"))
   nil)
 
+(-> test-procedure-definition () null)
+(defun test-procedure-definition ()
+  "Test that procedure.define stores a procedure the model composed and procedure.run runs it."
+  (with-test-configuration (base root)
+    (let* ((configuration (configuration-copy base :working-directory root))
+           (registry      (make-default-tool-registry :configuration configuration))
+           (load          (learning-tests--tool
+                           registry "sales.load"
+                           (lambda (arguments)
+                             (json-object "rows" 12
+                                          "table" (format nil "t-~A" (json-get arguments "file"))))))
+           (report        (learning-tests--tool registry "sales.report"
+                                                (lambda (arguments)
+                                                  (declare (ignore arguments))
+                                                  (json-object "report" "done"))))
+           (context       (make-instance 'tool-context
+                                         :configuration configuration :worker nil :registry registry
+                                         :conversation (conversation-create configuration))))
+      (flet ((define (&rest arguments)
+               (test-resource-call registry context
+                                   :namespace "procedure" :name "define" :arguments arguments))
+
+             (steps ()
+               (vector (json-object "tool" "sales.load"
+                                    "arguments" (json-object "file" "data/{quarter}.csv"))
+                       (json-object "tool" "sales.report"
+                                    "arguments" (json-object
+                                                 "table"  "<call 1 table>"
+                                                 "title"  "Sales {quarter}, <call 1 rows> rows"
+                                                 "copies" "{copies}"
+                                                 "format" "~{~A~} {unknown}")))))
+        (let* ((parameters (vector (json-object "name" "quarter")
+                                   (json-object "name" "copies" "type" "integer")))
+               (defined    (define "id" "sales-summary" "description" "Summarize a quarter."
+                                   "parameters" parameters "steps" (steps))))
+          (test-assert (and (tool-result-success-p defined)
+                            (search "Procedure sales-summary version 1 is defined. Run it with procedure.run."
+                                    (tool-result-content defined))
+                            (search "\"title\":\"Sales {quarter}, <call 1 rows> rows\""
+                                    (tool-result-content defined)))
+                       "a composed procedure is defined and reported with its steps")
+          (test-assert (search "already has this definition"
+                               (tool-result-content
+                                (define "id" "sales-summary" "description" "Summarize a quarter."
+                                        "parameters" parameters "steps" (steps))))
+                       "the same definition adds no version"))
+        (let ((ran       (test-resource-call registry context
+                                             :namespace "procedure" :name "run"
+                                             :arguments (list "id" "sales-summary"
+                                                              "parameters" (json-object "quarter" "q3"
+                                                                                        "copies" 2))))
+              (arguments (first (learning-tests--scripted-tool-calls report))))
+          (test-assert (and (tool-result-success-p ran)
+                            (equal (json-get (first (learning-tests--scripted-tool-calls load)) "file")
+                                   "data/q3.csv")
+                            (equal (json-get arguments "table") "t-data/q3.csv")
+                            (equal (json-get arguments "title") "Sales q3, 12 rows")
+                            (eql (json-get arguments "copies") 2)
+                            (equal (json-get arguments "format") "~{~A~} {unknown}"))
+                       "the run fills parameters with their types, earlier results, and literal text"))
+        (test-assert (search "No step uses parameter region."
+                             (tool-result-content
+                              (define "id" "sales-load"
+                                      "parameters" (vector (json-object "name" "quarter")
+                                                           (json-object "name" "region"))
+                                      "steps" (vector (aref (steps) 0)))))
+                     "a parameter that no step uses is reported")
+        (loop for (arguments expected) in `((("id" "Sales" "steps" ,(steps))
+                                             "does not start with a lowercase letter")
+                                            (("id" "sales" "steps" #())
+                                             "The steps are a non-empty array.")
+                                            (("id" "sales" "steps" ,(vector (json-object "tool" "a.b"))
+                                              "parameters" ,(vector (json-object "name" "x" "type" "date")))
+                                             "string, integer, number or boolean"))
+              do (let ((result (apply #'define arguments)))
+                   (test-assert (and (not (tool-result-success-p result))
+                                     (search expected (tool-result-content result)))
+                                (format nil "a definition is refused: ~A" expected)))))))
+  nil)
+
 (-> test-procedure-lifecycle () null)
 (defun test-procedure-lifecycle ()
   "Test recording, activation, failure suspension, correction, and retirement."

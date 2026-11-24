@@ -632,6 +632,7 @@
   test-action-traces
   test-action-trace-residency
   test-procedure-templates
+  test-procedure-definition
   test-procedure-lifecycle
   test-procedure-mining
   test-procedure-learning
