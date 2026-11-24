@@ -99,15 +99,27 @@ jobs:
             release_name=autolith-"$RELEASE_TAG"-x86_64-netbsd
             (cd dist && sha256sum -c "$release_name.tar.gz.sha256")
             smoke_root=$(mktemp -d)
-            trap 'rm -rf "$smoke_root"' EXIT HUP INT TERM
             tar -xzf "dist/$release_name.tar.gz" -C "$smoke_root"
-            XDG_DATA_HOME="$smoke_root/data" \
-            XDG_STATE_HOME="$smoke_root/state" \
-            XDG_CONFIG_HOME="$smoke_root/config" \
-            XDG_CACHE_HOME="$smoke_root/cache" \
-              "$smoke_root/$release_name/bin/autolith" --version > "$smoke_root/version"
+            launcher="$smoke_root/$release_name/bin/autolith"
+            export HOME="$smoke_root/home"
+            export XDG_DATA_HOME="$smoke_root/data"
+            export XDG_STATE_HOME="$smoke_root/state"
+            export XDG_CONFIG_HOME="$smoke_root/config"
+            export XDG_CACHE_HOME="$smoke_root/cache"
+            export AUTOLITH_NO_UPDATE_CHECK=1
+            mkdir -p "$HOME"
+            trap '"$launcher" stop >"$smoke_root/stop" 2>&1 || true; rm -rf "$smoke_root"' EXIT HUP INT TERM
+            "$launcher" --version > "$smoke_root/version"
             cat "$smoke_root/version"
             grep -F "${RELEASE_TAG#v}" "$smoke_root/version"
+            printf '(shell.run :command "printf netbsd-shell-ok > %s/marker")\n' "$smoke_root" > "$smoke_root/input"
+            status=0
+            "$launcher" --permissions full < "$smoke_root/input" > "$smoke_root/output" 2>&1 || status=$?
+            cat "$smoke_root/output"
+            test "$status" -eq 0
+            test "$(cat "$smoke_root/marker")" = netbsd-shell-ok
+            test -s "$XDG_DATA_HOME/autolith/tasks/shell-log-accounting.sexp"
+            "$launcher" stop
 
       - name: Upload NetBSD release artifacts
         if: ${{ !inputs.provision_only }}
