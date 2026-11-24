@@ -716,7 +716,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
    registry
    (list 'procedure-run-tool
          "procedure" "run"
-         "Make a learned procedure's tool calls in one step, each with its usual authorization, and report every call and result. Use it when Autolith says a procedure fits the request, or one listed by memory:procedures does. A procedure never admitted asks for admission first. If a call fails the run stops and reports where; continue with ordinary calls."
+         "Make a learned procedure's tool calls in one step, each with its usual authorization, and report every call and result. Use it when Autolith says a procedure fits the request, or one listed by memory:procedures does. If a call fails the run stops and reports where; continue with ordinary calls."
          (tool-object-schema
           (json-object
            "id" (tool-string-property "The procedure's name.")
