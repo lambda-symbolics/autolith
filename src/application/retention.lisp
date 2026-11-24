@@ -12,7 +12,7 @@
 The plist holds :TRANSCRIPT-CHUNKS, :TRANSCRIPT-CHARACTERS and
 :TRANSCRIPT-EVICTED, all NIL without a fullscreen transcript;
 :FINALIZED-IDENTIFIERS; :INPUT-RECALL-ENTRIES and :INPUT-RECALL-CHARACTERS;
-:TRACE-CONVERSATIONS and :TRACE-CHARACTERS; :KNOWLEDGE-CLAIMS,
+:KNOWLEDGE-CLAIMS,
 :KNOWLEDGE-SUPPORTS, :KNOWLEDGE-EVIDENCE and :KNOWLEDGE-ARCHIVED, the retracted
 supports kept only in the log, all NIL when the knowledge log cannot be read; and :HEAP-BYTES, the dynamic space in use."
   (let* ((ui       (application-ui application))
@@ -22,21 +22,18 @@ supports kept only in the log, all NIL when the knowledge log cannot be read; an
          (base     (handler-case (knowledge-base-read (application-configuration application))
                      (knowledge-error ()
                        nil))))
-    (multiple-value-bind (trace-count trace-weight) (action-trace--cache-statistics)
-      (list :transcript-chunks     (and viewport (clinedi:transcript-viewport-chunk-count viewport))
+    (list :transcript-chunks       (and viewport (clinedi:transcript-viewport-chunk-count viewport))
           :transcript-characters   (and viewport
                                         (clinedi:transcript-viewport-resident-characters viewport))
           :transcript-evicted      (and viewport (clinedi:transcript-viewport-evicted-count viewport))
           :finalized-identifiers   (if ui (hash-table-count (terminal-ui-finalized-identifiers ui)) 0)
           :input-recall-entries    (length history)
           :input-recall-characters (reduce #'+ history :key #'length)
-          :trace-conversations     trace-count
-          :trace-characters        trace-weight
           :knowledge-claims        (and base (hash-table-count (knowledge-base-claims base)))
           :knowledge-supports      (and base (hash-table-count (knowledge-base-supports base)))
           :knowledge-evidence      (and base (hash-table-count (knowledge-base-evidence base)))
           :knowledge-archived      (and base (knowledge-base-archived-supports base))
-          :heap-bytes              (sb-kernel:dynamic-usage)))))
+          :heap-bytes              (sb-kernel:dynamic-usage))))
 
 (-> application--retention-description (application) string)
 (defun application--retention-description (application)
@@ -53,7 +50,6 @@ supports kept only in the log, all NIL when the knowledge log cannot be read; an
                                          (quantity :transcript-characters)
                                          (getf retention :transcript-evicted)))
                             (format nil "input recall ~A entries" (quantity :input-recall-entries))
-                            (format nil "traces ~A chars" (quantity :trace-characters))
                             (if (getf retention :knowledge-claims)
                                 (format nil "knowledge ~A claims, ~A supports archived"
                                         (quantity :knowledge-claims)

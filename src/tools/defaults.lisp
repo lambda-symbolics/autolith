@@ -708,20 +708,32 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
 
 (-> default-tools--register-procedure (tool-registry) tool-registry)
 (defun default-tools--register-procedure (registry)
-  "Register the tool running learned procedures in REGISTRY."
+  "Register the tools defining and running procedures in REGISTRY."
   (tool-registry-describe-namespace
    registry "procedure"
-   "Tool-call sequences Autolith learned from recurring work, run in one step.")
+   "Lisp functions that are stored in the workspace and run in the active image.")
+  (default-tools--register
+   registry
+   (list 'procedure-define-tool
+         "procedure" "define"
+         "Define or replace a procedure of the workspace. A procedure is a Common Lisp LAMBDA form with keyword parameters, a documentation string and a body. The body runs in the AUTOLITH package of the active image and can use any Lisp. It calls tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). A tool function returns the result text and signals TOOL-ERROR if the call fails. Every request lists the procedures."
+         (tool-object-schema
+          (json-object
+           "id" (tool-string-property
+                 "The name of the procedure, which contains lowercase letters, digits, hyphens and dots.")
+           "source" (tool-string-property
+                     "The LAMBDA form, such as (lambda (&key quarter) \"Write the report of QUARTER.\" ...)."))
+          '("id" "source"))))
   (default-tools--register
    registry
    (list 'procedure-run-tool
          "procedure" "run"
-         "Make a learned procedure's tool calls in one step, each with its usual authorization, and report every call and result. Use it when Autolith says a procedure fits the request, or one listed by memory:procedures does. If a call fails the run stops and reports where; continue with ordinary calls."
+         "Call a procedure with keyword arguments. Its tool calls have the permissions of this conversation. The result contains the values and the output of the procedure."
          (tool-object-schema
           (json-object
-           "id" (tool-string-property "The procedure's name.")
-           "parameters" (json-object "type" "object"
-                                     "description" "The procedure's parameters by name, such as {\"quarter\": \"q3\"}."))
+           "id" (tool-string-property "The name of the procedure.")
+           "arguments" (json-object "type" "object"
+                                    "description" "The keyword arguments by name, such as {\"quarter\": \"q3\"}."))
           '("id"))))
   registry)
 
@@ -1130,10 +1142,10 @@ them."
 
 (-> default-tools--remove-mutable-self-tools (tool-registry) tool-registry)
 (defun default-tools--remove-mutable-self-tools (registry)
-  "Remove every mutable active-image tool from REGISTRY."
+  "Remove every tool from REGISTRY that runs Lisp in the active image."
   (tool-registry-delete-if registry
                            (lambda (tool)
-                             (typep tool 'mutable-self-tool))))
+                             (typep tool '(or mutable-self-tool procedure-run-tool)))))
 
 (-> make-default-tool-registry
     (&key (:immutable-p boolean) (:configuration (option configuration)))

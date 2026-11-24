@@ -634,24 +634,8 @@
   test-knowledge-sales-fixtures
   test-knowledge-scale)
 
-(define-test-suite learning
-  test-action-traces
-  test-action-trace-residency
-  test-procedure-templates
-  test-procedure-lifecycle
-  test-procedure-mining
-  test-procedure-learning
-  test-procedure-running
-  test-procedure-automatic-runs
-  test-procedure-build-then-use
-  test-procedure-grounded-preflight
-  test-procedure-preflight-term-equality
-  test-procedure-preflight-rule-bindings
-  test-procedure-preflight-conflict-closure
-  test-procedure-preflight-shared-future-conflicts
-  test-procedure-preflight-proof-dependencies
-  test-procedure-commands
-  test-procedure-fixture)
+(define-test-suite procedures
+  test-procedure-definition)
 
 (define-test-suite diagnosis
   test-diagnosis-predictions

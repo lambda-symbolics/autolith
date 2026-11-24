@@ -534,29 +534,34 @@ retrying. If damaged contracts block ordinary calls, ask the agent to call
 =contracts.reset=. This archives the original log and clears all contracts and
 saved diagnoses without clearing facts or notes.
 
-*** Learned procedures
+*** Procedures
 
-When three successful turns in a workspace repeat a sequence of tool calls,
-Autolith can learn a /procedure/ locally. For example, after repeated requests
-such as =Make the sales report for q5.=, a notice may name =make-sales-report=
-and offer it for later requests with another file. Use =(procedures)= to see
-its calls, parameters, status and measured savings in model requests and tokens.
+A /procedure/ is a Lisp function that is stored in the workspace. The agent
+defines procedures with =procedure.define= if it expects to repeat some work. A
+procedure is a =lambda= form with keyword parameters and a documentation
+string. Its body calls tools as functions, in the same way as Lisp at the
+prompt:
+
+#+BEGIN_SRC lisp
+(lambda (&key quarter)
+  "Return the sales report of QUARTER."
+  (resource.read :uri (format nil "workspace:reports/~A.org" quarter)))
+#+END_SRC
+
+Every request lists the procedures for the agent, and the agent runs them with
+=procedure.run=. The tool calls of a procedure follow the tool approvals of the
+conversation that runs it.
 
 #+BEGIN_SRC lisp
 (procedures)
-(run-procedure "make-sales-report" :file "q5")
-(retire-procedure "make-sales-report")
+(run-procedure "sales-report" :quarter "q3")
+(retire-procedure "sales-report")
 #+END_SRC
 
-Replace the name and parameters with those listed for your procedure. Learned
-procedures become active on definition. Each call follows tool approvals and
-contracts. An exact request pattern can run automatically once its version has
-demonstrated savings on completed turns. An approximate match is offered to the
-model. Two consecutive failed runs suspend the procedure. Correct its definition
-to resume it; submitting the same definition does not clear a suspension. Use
-=(retire-procedure "NAME")= to prevent further runs and relearning. Agents inspect
-procedures at =memory:procedures= and invoke them with =procedure.run=. Learning
-and recall require active structured knowledge.
+=(procedures)= lists the procedures with their parameters.
+=(retire-procedure "NAME")= stops a procedure until it is defined again. The
+source of every procedure is in =memory:procedures=. Procedures require active
+structured knowledge.
 
 *** Diagnosis
 

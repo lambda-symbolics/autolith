@@ -170,17 +170,10 @@
     (test-assert (and (tool-result-native-present-p result)
                       (string= (gethash "value" (tool-result-native-value result)) "delivered"))
                  "native results detach the delivered snapshot from producer mutation")
-    (test-call-with-function-replacements
-     (list (list 'procedure--decode-output
-                 (lambda (text) (declare (ignore text)) (error "Unexpected text decoding."))))
-     (lambda ()
-       (test-assert (eq (procedure--result-output result) (tool-result-native-value result))
-                    "procedure execution consumes an available delivered native value")))
     (tool-result-append-notes result '("Adjusted an argument."))
     (test-assert (and (not (tool-result-native-present-p result))
-                      (null (tool-result-native-value result))
-                      (null (procedure--result-output result)))
-                 "result annotations invalidate native data before output consumption"))
+                      (null (tool-result-native-value result)))
+                 "result annotations invalidate native data"))
   (dolist (spill-p '(nil t))
     (let* ((value   (json-object "body" (make-string 9000 :initial-element #\x)))
            (offered nil)
@@ -193,12 +186,8 @@
                         (null (tool-result-native-value result)))
                    "clipped and spilled results do not expose hidden complete native data")))
   (let ((result (tool-success "arbitrary report" :native-value (json-object) :native-present-p t)))
-    (test-assert (and (not (tool-result-native-present-p result))
-                      (null (procedure--result-output result)))
+    (test-assert (not (tool-result-native-present-p result))
                  "arbitrary reports use textual output fallback"))
-  (test-assert
-   (json-object-p (procedure--result-output (tool-success "{\"value\":1}")))
-   "textual JSON producers retain procedure output decoding")
   nil)
 
 

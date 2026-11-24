@@ -4180,18 +4180,6 @@ STALE and UNVERIFIED count memories whose evidence changed or could not be check
   (cons (terminal-span ':notice (format nil "@ ~D fact~:P given earlier changed" count))
         (application--lookup-spans ':notice (mapcar #'application-memory--short ids))))
 
-(-> application--procedures-learned-notice (list) string)
-(defun application--procedures-learned-notice (learned)
-  "Return the notice naming the procedures, (NAME VERSION TURNS), just LEARNED."
-  (format nil "@ ~{~A~^ · ~} · (procedures)"
-          (mapcar (lambda (entry)
-                    (destructuring-bind (name version turns) entry
-                      (if (= version 1)
-                          (format nil "learned procedure ~A from ~D turns" name turns)
-                          (format nil "procedure ~A v~D learned from ~D turns"
-                                  name version turns))))
-                  learned)))
-
 (-> application-agent-observer
     (application
      &key (:steering-function (option function))
@@ -4214,7 +4202,6 @@ clients as :TEXT, :REASONING and :STATUS events."
   (let ((ui                       (application-ui application))
         (activity-label           (application-thinking-label))
         (related-memories-shown-p nil)
-        (procedure-offers-shown-p nil)
         (request-empty-p          nil)
         (reasoning-text           (text-buffer-create))
         (presented-reasoning-text nil)
@@ -4383,8 +4370,7 @@ clients as :TEXT, :REASONING and :STATUS events."
            (application-clients-publish application (list :status :status status :details details))
            (case status
              (:user-message-persisted
-              (setf related-memories-shown-p nil
-                    procedure-offers-shown-p nil)
+              (setf related-memories-shown-p nil)
               (let ((pending-input-identifier
                       (getf details :pending-input-identifier)))
                 (when (and pending-input-identifier
@@ -4428,29 +4414,6 @@ clients as :TEXT, :REASONING and :STATUS events."
                application
                (application--knowledge-changes-notice (getf details :count)
                                                       :ids (getf details :ids))))
-             (:procedure-offers
-              (unless procedure-offers-shown-p
-                (application-present
-                 application
-                 (list (terminal-span
-                        ':brand
-                        (sanitize-text
-                         (if (getf details :related-p)
-                             (format nil "@ learned procedure~P ~{~A~^, ~} may fit this request"
-                                     (length (getf details :names)) (getf details :names))
-                             (format nil "@ learned procedure~P ~{~A~^, ~} fit~:[s~;~] this request"
-                                     (length (getf details :names)) (getf details :names)
-                                     (rest (getf details :names))))
-                         :single-line-p t))))
-                (setf procedure-offers-shown-p t)))
-             (:procedures-learned
-              (application-present
-               application
-               (list (terminal-span ':success
-                                    (sanitize-text
-                                     (application--procedures-learned-notice
-                                      (getf details :procedures))
-                                     :single-line-p t)))))
              (:plan-changes
               (application-present
                application
@@ -4550,8 +4513,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                         application details)))))
               (application-set-activity application activity-label))
              (:steering-applied
-              (setf related-memories-shown-p nil
-                    procedure-offers-shown-p nil)
+              (setf related-memories-shown-p nil)
               (application-render-records application)
               (application-set-activity application activity-label))
              (:compaction-started

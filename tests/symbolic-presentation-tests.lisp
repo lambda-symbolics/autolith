@@ -11,15 +11,12 @@
                                        :configuration configuration
                                        :ui            (terminal-ui-create :terminal terminal)
                                        :conversation  (conversation-create configuration
-                                                                           :identifier (make-identifier))))
-           (unsafe-name (format nil "report~C[2J~%injected" #\Escape)))
+                                                                           :identifier (make-identifier)))))
       (dolist (case (list (list ':related-memories '(:count 2 :facts 3) ':dim)
                          (list ':related-memories '(:count 2 :stale 1) ':notice)
                          (list ':related-memories '(:count 2 :unverified 1) ':notice)
                          (list ':knowledge-changes '(:count 1) ':notice)
-                         (list ':plan-changes '(:count 1) ':notice)
-                         (list ':procedure-offers (list :names (list unsafe-name)) ':brand)
-                         (list ':procedures-learned (list :procedures (list (list unsafe-name 1 3))) ':success)))
+                         (list ':plan-changes '(:count 1) ':notice)))
         (destructuring-bind (status details style) case
           (let (presented)
             (test-call-with-function-replacements
@@ -56,23 +53,8 @@
 
 (-> test-symbolic-command-styles () null)
 (defun test-symbolic-command-styles ()
-  "Keep textual procedure and diagnosis states visible beyond their status icons."
-  (with-test-configuration (configuration)
-    (dolist (case '((:inactive :notice nil nil 0)
-                    (:active :success 1 nil 0)
-                    (:suspended :failure 1 nil 2)
-                    (:retired :dim 1 t 0)))
-      (destructuring-bind (status style active retired failures) case
-        (let* ((entry (list :id "report" :active active :retired-p retired
-                            :consecutive-failures failures :runs 3 :failures failures
-                            :versions '((:version 1 :procedure (:procedure :steps ((:tool "report.build")))))))
-               (spans (application-procedures--entry-lines configuration entry)))
-          (test-assert (some (lambda (span)
-                              (and (eq (terminal-span-style span) style)
-                                   (search (string-downcase (symbol-name status)) (terminal-span-text span))))
-                            spans)
-                       "A procedure's written status carries the status color."))))
-    (let ((unsafe (format nil "endpoint~C[2J~%extra" #\Escape)))
+  "Keep textual diagnosis states visible beyond their status icons."
+  (let ((unsafe (format nil "endpoint~C[2J~%extra" #\Escape)))
       (dolist (case (list (list nil ':failure) (list (list unsafe "down") ':notice)
                          (list (list unsafe) ':success)))
         (destructuring-bind (remaining style) case
@@ -88,5 +70,5 @@
             (test-assert (and (not (find #\Escape (terminal--spans-text spans)))
                               (= (count #\Newline (terminal--spans-text spans))
                                  (if (= (length remaining) 1) 3 2)))
-                         "Diagnosis data cannot add control sequences or extra logical rows."))))))
+                         "Diagnosis data cannot add control sequences or extra logical rows.")))))
   nil)
