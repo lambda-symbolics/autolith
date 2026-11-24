@@ -637,7 +637,7 @@
   test-procedure-mining
   test-procedure-learning
   test-procedure-running
-  test-procedure-automatic-runs
+  test-procedure-savings
   test-procedure-build-then-use
   test-procedure-grounded-preflight
   test-procedure-preflight-term-equality

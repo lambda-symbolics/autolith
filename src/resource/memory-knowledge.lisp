@@ -230,7 +230,7 @@ Conflicted facts come first, then the rest by predicate and text."
 
 (-> memory-knowledge--render-procedures (knowledge-base string) string)
 (defun memory-knowledge--render-procedures (base workspace)
-  "Return WORKSPACE's learned procedures with their status, record, parameters, and calls."
+  "Return WORKSPACE's procedures with their status, record, parameters, and calls."
   (let ((entries (knowledge-base-procedures base workspace)))
     (with-output-to-string (stream)
       (format stream "collection: procedures~%count: ~D~%" (length entries))
@@ -250,7 +250,7 @@ Conflicted facts come first, then the rest by predicate and text."
                     (getf (getf version :baseline) :tokens)))
           (let ((counterexamples (getf (getf version :evaluation) :counterexamples)))
             (when (and counterexamples (plusp counterexamples))
-              (format stream "  procedure not offered: ~D other request~:P with the same wording led to different behavior~%"
+              (format stream "  request pattern cleared: ~D other request~:P with the same wording led to different behavior~%"
                       counterexamples)))
           (format stream "~@[  parameters: ~{~A~^, ~}~%~]~@[  request: ~A~%~]"
                   (mapcar (lambda (parameter)
@@ -263,7 +263,7 @@ Conflicted facts come first, then the rest by predicate and text."
                 do (format stream "  ~D. ~A ~A~%" index (getf step :tool)
                            (procedure-template-text (getf step :arguments))))))
       (unless entries
-        (format stream "~%No procedures are learned yet. Autolith learns one when three turns make the same tool calls.")))))
+        (format stream "~%No procedures are defined yet. Define one with procedure.define. Autolith also learns one when three turns make the same tool calls.")))))
 
 (-> memory-knowledge--render-changes (configuration string knowledge-view) string)
 (defun memory-knowledge--render-changes (configuration viewer view)

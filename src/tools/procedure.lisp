@@ -4,7 +4,7 @@
 
 (defclass procedure-run-tool (tool)
   ()
-  (:documentation "A tool for running learned procedures."))
+  (:documentation "A tool for running procedures."))
 
 (defclass procedure-define-tool (tool)
   ()
@@ -18,7 +18,7 @@
 (defmethod tool-execute ((tool procedure-run-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Run a learned procedure."
+  "Run a procedure."
   (declare (ignore tool))
   (handler-case
       (let* ((identifier (tool-argument arguments "id" :required t))

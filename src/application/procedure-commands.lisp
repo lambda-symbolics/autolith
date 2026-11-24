@@ -2,7 +2,7 @@
 
 ;;;; -- Procedure Commands --
 
-;;; (procedures) lists the procedures Autolith learned in this workspace, what
+;;; (procedures) lists the procedures of this workspace, what
 ;;; they call, and what they saved; (run-procedure "ID" :NAME VALUE ...) runs
 ;;; one with ordinary tool authorization; (retire-procedure) stops one for good.
 
@@ -11,13 +11,13 @@
 
 (-> application-procedures-entry (application) list)
 (defun application-procedures-entry (application)
-  "Return the learned procedures of APPLICATION's workspace with status, calls, and cost."
+  "Return the procedures of APPLICATION's workspace with status, calls, and cost."
   (let* ((configuration (application-configuration application))
          (entries       (knowledge-base-procedures (knowledge-base-read configuration)
                                                    (knowledge--workspace configuration))))
     (if (null entries)
         (application-hint-line
-         "no procedures are learned yet; Autolith learns one when three turns make the same tool calls")
+         "no procedures are defined yet; the agent defines them, and Autolith learns one when three turns make the same tool calls")
         (append
          (list (terminal-span ':brand "# procedures")
                (terminal-span ':dim (format nil "  ~D~%" (length entries))))

@@ -525,13 +525,18 @@ retrying. If damaged contracts block ordinary calls, ask the agent to call
 =contracts.reset=. This archives the original log and clears all contracts and
 saved diagnoses without clearing facts or notes.
 
-*** Learned procedures
+*** Procedures
 
-When three successful turns in a workspace repeat a sequence of tool calls,
-Autolith can learn a /procedure/ locally. For example, after repeated requests
-such as =Make the sales report for q5.=, a notice may name =make-sales-report=
-and offer it for later requests with another file. Use =(procedures)= to see
-its calls, parameters, status and measured savings in model requests and tokens.
+A /procedure/ is a sequence of tool calls that the agent runs in one step. The
+agent defines a procedure with =procedure.define= if it expects to need the
+same calls again. The values that change from one run to the next become the
+parameters of the procedure. Autolith also learns a procedure locally if three
+successful turns in a workspace repeat a sequence of tool calls.
+
+The active procedures of the workspace are listed with their parameters in
+every request, and the agent runs one with =procedure.run=. Use =(procedures)= to
+see their calls, parameters, status and measured savings in model requests and
+tokens.
 
 #+BEGIN_SRC lisp
 (procedures)
@@ -539,15 +544,13 @@ its calls, parameters, status and measured savings in model requests and tokens.
 (retire-procedure "make-sales-report")
 #+END_SRC
 
-Replace the name and parameters with those listed for your procedure. Learned
-procedures become active on definition. Each call follows tool approvals and
-contracts. An exact request pattern can run automatically once its version has
-demonstrated savings on completed turns. An approximate match is offered to the
-model. Two consecutive failed runs suspend the procedure. Correct its definition
-to resume it; submitting the same definition does not clear a suspension. Use
-=(retire-procedure "NAME")= to prevent further runs and relearning. Agents inspect
-procedures at =memory:procedures= and invoke them with =procedure.run=. Learning
-and recall require active structured knowledge.
+Replace the name and parameters with those listed for your procedure.
+Procedures become active on definition. Each call follows tool approvals and
+contracts. Two consecutive failed runs suspend the procedure. Correct its
+definition to resume it. Submitting the same definition does not clear a
+suspension. Use =(retire-procedure "NAME")= to prevent further runs and
+relearning. Agents read the steps of procedures at =memory:procedures=.
+Procedures require active structured knowledge.
 
 *** Diagnosis
 

@@ -321,12 +321,11 @@ active on definition and recompute derived values locally. Plan steps may
 name the facts they require and verify, and =plan.expand= expands a step
 by its task methods.
 
-Autolith learns procedures from repeated tool sequences on its own.
-When a notice says a learned procedure fits the request, run it with
-=procedure.run= and the arguments the notice gives instead of repeating
-its steps by hand. When it lists procedures that may fit, choose one only
-if it does the work the request needs, filling its parameters from the
-request.
+A procedure is a sequence of tool calls that =procedure.run= makes in one
+step. Define a procedure with =procedure.define= if a sequence of tool calls
+is likely to be needed again, and make the changing values its parameters.
+Run a listed procedure with =procedure.run= if its description matches the
+task. Autolith also learns procedures from tool sequences that repeat.
 
 An admitted tool contract refuses a call whose required facts do not
 hold, and the refused call was not made: establish the missing fact

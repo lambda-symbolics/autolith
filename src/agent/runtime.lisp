@@ -636,19 +636,13 @@ request that carries its expansion."
               (when pending-input-identifier
                 (list :pending-input-identifier pending-input-identifier)))))
           (unwind-protect
-               (progn
-                 (agent-run-fitting-procedure agent observer
-                                              (or (user-message-input-text content) "")
-                                              :automatic-p        automatic-p
-                                              :tools-p            tools-p
-                                              :tool-restriction-p tool-restriction-p)
-                 (agent--run-provider-loop
-                  agent observer
-                  :goal-context       goal-context
-                  :tools-p            tools-p
-                  :tool-allowlist     tool-allowlist
-                  :tool-restriction-p tool-restriction-p
-                  :request-number     compaction-requests))
+               (agent--run-provider-loop
+                agent observer
+                :goal-context       goal-context
+                :tools-p            tools-p
+                :tool-allowlist     tool-allowlist
+                :tool-restriction-p tool-restriction-p
+                :request-number     compaction-requests)
             (conversation-clear-ephemeral-input-items conversation))))))))
 
 
@@ -705,11 +699,6 @@ retries stay auditable next to the request they belong to."
        (agent-observer-status
         observer :plan-changes
         (list :count (plan-change-event-count event))))
-      (procedure-offer-event
-       (agent-observer-status
-        observer :procedure-offers
-        (list :names     (procedure-offer-event-names event)
-              :related-p (procedure-offer-event-related-p event))))
       (provider-retries-exhausted-event
        (agent-observer-status
         observer :provider-retries-exhausted

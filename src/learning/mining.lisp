@@ -219,8 +219,8 @@ TRACES contains accepted traces, newest first. A sequence needs at least two
 calls, no procedure runs, and *PROCEDURE-MINIMUM-EXAMPLES* example turns.
 Each omitted example must be reproducible by a procedure learned from the others.
 If another trace matches the request pattern but performs different work,
-clear that pattern so the procedure is not offered automatically. Ignore traces
-that run procedures when checking for these counterexamples.
+clear that pattern. Ignore traces that run procedures when checking for these
+counterexamples.
 EVALUATION records the checked examples and counterexample count."
   (let ((groups nil))
     (dolist (trace traces)

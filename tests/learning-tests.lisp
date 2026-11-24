@@ -703,27 +703,26 @@
     (tool-registry-register registry instance)
     instance))
 
-(-> learning-tests--offers (configuration string &key (:related-p boolean)) list)
-(defun learning-tests--offers (configuration text &key related-p)
-  "Return the procedure offers context resolution makes for a conversation whose request is TEXT.
-
-Only exact offers are returned, or with RELATED-P only offers of procedures that may fit."
+(-> learning-tests--catalog (configuration) (option string))
+(defun learning-tests--catalog (configuration)
+  "Return the procedure catalog of a new conversation under CONFIGURATION, or NIL if there is none."
   (let ((*context-contributors*        nil)
         (*context-resolver*            (cl-llm-provider-api:make-context-resolver))
         (*context-last-deliveries*     (make-hash-table :test #'equal))
         (*context-last-delivery-order* nil)
         (conversation                  (conversation-create configuration)))
-    (conversation-append-user-message conversation text)
-    (register-context-contributor "procedure-offers" 'procedure-offer-context :source ':built-in)
-    (remove-if-not (lambda (contribution)
-                     (and (string= (context-contribution-identifier contribution) "procedure-offers")
-                          (eq (procedure-offer-contribution-related-p contribution) related-p)))
-                   (context-delivery-contributions
-                    (context-resolve-request configuration conversation #())))))
+    (conversation-append-user-message conversation "Make the sales report.")
+    (register-context-contributor "procedure-catalog" 'procedure-catalog-context :source ':built-in)
+    (when-let ((contribution (find "procedure-catalog"
+                                   (context-delivery-contributions
+                                    (context-resolve-request configuration conversation #()))
+                                   :key  #'context-contribution-identifier
+                                   :test #'string=)))
+      (context-contribution-instruction contribution))))
 
 (-> learning-tests--typed-parameters () null)
 (defun learning-tests--typed-parameters ()
-  "Test mining, matching, and offering JSON-typed request parameters."
+  "Test mining and matching JSON-typed request parameters."
   (loop for (description type words values next-word next-value invalid-words) in
         '(("decimal numbers" :number
            ("1.5" "2.5" "3.5" "4.5") (1.5d0 2.5d0 3.5d0 4.5d0) "5.5" 5.5d0
@@ -766,10 +765,9 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                                               :arguments (json-object)
                                               :output    (json-object "saved" t))
                         (learning-tests--answer conversation "Set."))
-               (let* ((traces     (action-traces-in-conversation (conversation-pathname conversation)))
-                      (procedure  (procedure-mine traces))
-                      (request    (format nil "Set threshold ~A" next-word))
-                      (identifier (getf (rest procedure) :id)))
+               (let* ((traces    (action-traces-in-conversation (conversation-pathname conversation)))
+                      (procedure (procedure-mine traces))
+                      (request   (format nil "Set threshold ~A" next-word)))
                  (test-assert (and procedure
                                    (eq type (getf (first (getf (rest procedure) :parameters)) :type))
                                    (every (lambda (trace) (procedure-explains-trace-p procedure trace))
@@ -788,25 +786,16 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                           (getf (first (getf (rest procedure) :steps)) :arguments) bindings nil)
                          (json-object "value" next-value))
                         (format nil "~A instantiate a typed tool argument" description)))))
-                 (procedure-define configuration procedure)
-                 (let ((offer (first (learning-tests--offers configuration request))))
-                  (test-assert
-                   (and offer
-                        (search (json-encode (json-object "id" identifier
-                                                         "parameters" (json-object "value" next-value)))
-                                (context-contribution-evidence offer)))
-                   (format nil "~A produce an offer with typed JSON parameters" description)))
                  (dolist (word invalid-words)
-                   (let ((invalid-request (format nil "Set threshold ~A" word)))
-                     (test-assert
-                      (and (not (nth-value 1 (procedure-match-input procedure invalid-request)))
-                           (null (learning-tests--offers configuration invalid-request)))
-                      (format nil "~A reject malformed or mistyped word ~S" description word))))))))
+                   (test-assert
+                    (not (nth-value 1 (procedure-match-input procedure
+                                                             (format nil "Set threshold ~A" word))))
+                    (format nil "~A reject malformed or mistyped word ~S" description word)))))))
   nil)
 
 (-> test-procedure-running () null)
 (defun test-procedure-running ()
-  "Test running procedures through the tool path, failures, suspension, and offers."
+  "Test running procedures through the tool path, failures, suspension, and the catalog."
   (with-test-configuration (base root)
     (let* ((configuration  (configuration-copy base :working-directory root))
            (registry       (make-default-tool-registry :configuration configuration))
@@ -827,6 +816,10 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                                           :configuration configuration :worker nil :registry registry
                                           :conversation (conversation-create configuration))))
       (procedure-define configuration (learning-tests--procedure))
+      (test-assert (search "- make-sales-report: This procedure was learned from repeated calls to sales.load, sales.report.
+  quarter (string)"
+                           (learning-tests--catalog configuration))
+                   "the catalog lists an active procedure with its calls and parameters")
       (flet ((run (&rest parameters)
                (test-resource-call
                 registry context
@@ -891,35 +884,15 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                      "two failed runs in a row suspend the procedure")
         (test-assert (search "is suspended after 2 failed runs" (tool-result-content (run "quarter" "q8")))
                      "a suspended procedure refuses to run")
-        (test-assert (null (learning-tests--offers configuration "Make the sales report for q9."))
-                     "a suspended procedure is not offered")
-        (let ((revised (learning-tests--procedure)))
+        (test-assert (null (learning-tests--catalog configuration))
+                     "the catalog leaves out a suspended procedure")
+        (let ((revised (copy-tree (learning-tests--procedure))))
           (setf (getf (rest revised) :description) "A corrected report procedure.")
           (procedure-define configuration revised))
         (setf report-fails-p nil)
-        (let ((offer (first (learning-tests--offers configuration "make the sales report for q9."))))
-          (test-assert (and offer
-                            (search "make-sales-report (active; calls sales.load, sales.report): procedure.run {\"id\":\"make-sales-report\",\"parameters\":{\"quarter\":\"q9\"}}"
-                                    (context-contribution-evidence offer)))
-                       "a fitting request is offered the one call that does the work"))
-        (test-assert (null (learning-tests--offers configuration "Make the sales forecast for q9."))
-                     "a request that does not fit is not offered")
-        (let ((related (first (learning-tests--offers configuration "Make the sales forecast for q9."
-                                                      :related-p t))))
-          (test-assert (and related
-                            (search "make-sales-report (active; calls sales.load, sales.report; learned from requests like"
-                                    (context-contribution-evidence related))
-                            (search "parameters quarter (string)" (context-contribution-evidence related))
-                            (search "may fit this request" (context-contribution-instruction related)))
-                       "a request sharing a procedure's wording lists it as a possible fit to fill in"))
-        (test-assert (null (learning-tests--offers configuration "Draft a poem about autumn."
-                                                   :related-p t))
-                     "an unrelated request lists no possible fits")
-        (test-assert (null (learning-tests--offers configuration "Make the sales report for q8."))
-                     "a request whose values its contracts refuse is not offered")
-        (test-assert (null (learning-tests--offers configuration "Make the sales report for q8."
-                                                   :related-p t))
-                     "a matching request its contracts refuse is not listed as a possible fit either")
+        (test-assert (search "- make-sales-report: A corrected report procedure."
+                             (learning-tests--catalog configuration))
+                     "the catalog lists a corrected procedure with its description")
         (let ((user-run (procedure-run context "make-sales-report"
                                        :parameters '(("quarter" . "q9")) :caller ':user)))
           (test-assert (and (eq (getf user-run :status) ':ok)
@@ -959,37 +932,6 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
   (dotimes (index requests)
     (learning-tests--request conversation (format nil "~A-r~D" period index) 1000))
   (learning-tests--answer conversation "Sent.")
-  nil)
-
-(-> test-procedure-automatic-runs () null)
-(defun test-procedure-automatic-runs ()
-  "Test that only exact, active, proven procedures run before the model reads a request."
-  (loop for (description requests expected) in
-        '(("varying words become wildcards, which never run unread"
-           ("Please email report q1" "Kindly email report q2" "Now email report q3")
-           nil)
-          ("an exact pattern runs once it has saved requests"
-           ("Email report q1" "Email report q2" "Email report q3")
-           t))
-        do (with-test-configuration (base root)
-             (let* ((configuration (configuration-copy base :working-directory root))
-                    (conversation  (conversation-create configuration))
-                    (probe         (if expected "Email report q4" "Never email report q4")))
-               (loop for request in requests
-                     for index from 1
-                     do (learning-tests--email-turn conversation request (format nil "q~D" index)))
-               (destructuring-bind ((name version turns)) (procedure-learn configuration)
-                 (declare (ignore version turns))
-                 (test-assert (and (procedure-offers configuration probe)
-                                   (null (procedure-automatic-offer configuration probe)))
-                              (format nil "~A: an active procedure without savings is only offered"
-                                      description))
-                 (learning-tests--demonstrate configuration conversation name
-                                              :request (first requests))
-                 (test-assert (eq expected
-                                  (and (procedure-automatic-offer configuration probe) t))
-                              description)))))
-  (learning-tests--savings-evidence)
   nil)
 
 (-> learning-tests--demonstrate
@@ -1048,57 +990,52 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
       (conversation-append-record conversation '(:turn-aborted :reason "cancelled"))))
   nil)
 
-(-> learning-tests--savings-evidence () null)
-(defun learning-tests--savings-evidence ()
-  "Test completion, measured costs, and definition provenance before unread procedure reuse."
+(-> test-procedure-savings () null)
+(defun test-procedure-savings ()
+  "Test that only completed, fully measured runs of the active definition count as savings."
   (loop for (description options expected) in
-        '(("a completed cheaper turn" () t)
+        '(("a completed turn" () t)
           ("an unfinished turn" (:answered-p nil) nil)
           ("an aborted turn" (:aborted-p t) nil)
           ("a failed companion call" (:failed-extra-p t) nil)
           ("unmeasured tokens" (:tokens nil) nil)
           ("partially measured usage" (:unmeasured-request-p t) nil)
           ("missing definition provenance" (:provenance-p nil) nil)
-          ("no model requests" (:requests 0) nil)
-          ("equal token use" (:tokens 3000) nil)
-          ("higher token use" (:tokens 4000) nil)
-          ("equal request count" (:requests 3 :tokens 300) nil))
+          ("higher token use" (:tokens 4000) t))
         do (with-test-configuration (base root)
              (let* ((configuration (configuration-copy base :working-directory root))
                     (conversation  (conversation-create configuration)))
                (dolist (period '("q1" "q2" "q3"))
                  (learning-tests--email-turn conversation (format nil "Email report ~A" period) period))
                (let ((name (first (first (procedure-learn configuration)))))
-                    (apply #'learning-tests--demonstrate configuration conversation name
-                     :request "Email report q4" options)
-                 (test-assert (eq expected
-                                  (and (procedure-automatic-offer configuration "Email report q5") t))
-                              (format nil "~A controls eligibility for unread reuse" description))
+                 (apply #'learning-tests--demonstrate configuration conversation name
+                        :request "Email report q4" options)
+                 (test-assert (eq expected (and (procedure-savings configuration name) t))
+                              (format nil "~A decides whether the run is measured" description))
                  (when (eq (getf options :answered-p t) nil)
                    (learning-tests--answer conversation "Sent.")
-                   (test-assert (procedure-automatic-offer configuration "Email report q5")
-                                "only completing the measured turn makes its evidence eligible"))
+                   (test-assert (procedure-savings configuration name)
+                                "only completing the measured turn makes it count"))
                  (when expected
                    (let* ((entry     (knowledge-base-procedure (knowledge-base-read configuration)
                                                                (knowledge--workspace configuration) name))
                           (procedure (copy-tree (getf (procedure-entry-runnable-version entry) :procedure))))
                      (setf (getf (rest procedure) :description) "A revised procedure.")
                      (procedure-define configuration procedure :baseline '(:requests 3 :tokens 3000))
-                     (test-assert (and (null (procedure-savings configuration name))
-                                   (null (procedure-automatic-offer configuration "Email report q5")))
-                      "an earlier definition's evidence cannot authorize a revised definition")
-                    (knowledge-transact
-                     configuration
-                     (lambda (base)
-                       (declare (ignore base))
-                       (values (list (list :procedure-admitted
-                                           :scope ':workspace
-                                           :workspace (knowledge--workspace configuration)
-                                           :id name :procedure-version 1
-                                           :time      (get-universal-time)))
-                               nil t)))
-                    (test-assert (procedure-automatic-offer configuration "Email report q5")
-                                "legacy selection of a demonstrated definition restores only its own evidence")))))))
+                     (test-assert (null (procedure-savings configuration name))
+                                  "the runs of an earlier definition do not count for a revised definition")
+                     (knowledge-transact
+                      configuration
+                      (lambda (base)
+                        (declare (ignore base))
+                        (values (list (list :procedure-admitted
+                                            :scope ':workspace
+                                            :workspace (knowledge--workspace configuration)
+                                            :id name :procedure-version 1
+                                            :time      (get-universal-time)))
+                                nil t)))
+                     (test-assert (procedure-savings configuration name)
+                                  "legacy selection of a measured definition restores only its own runs")))))))
   nil)
 
 (-> test-procedure-build-then-use () null)
@@ -1174,7 +1111,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                                                      (json-object "sent" t)))
       (flet ((text (entry)
                (memory-source-tests--text entry)))
-        (test-assert (search "no procedures are learned yet"
+        (test-assert (search "no procedures are defined yet"
                              (text (application-procedures-entry application)))
                      "(procedures) explains when procedures are learned")
         (dolist (quarter '("q1" "q2" "q3"))
@@ -1260,26 +1197,18 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
     :initform      0
     :accessor      learning-tests--model-tokens
     :documentation "How many tokens those requests used."))
-  (:documentation "A model that writes sales reports call by call, or with an offered procedure."))
+  (:documentation "A model that writes sales reports call by call, or with a listed procedure."))
 
 (defmethod provider-stream-turn ((provider learning-tests--model) (conversation conversation)
                                  &key tool-namespaces event-callback goal-context compaction-p)
-  "Answer like a model following its instructions: use an offered procedure, else call each tool."
+  "Answer like a model following its instructions: run a listed procedure, else call each tool."
   (declare (ignore goal-context compaction-p))
   (let* ((delivery    (context-resolve-request (learning-tests--model-configuration provider) conversation
                                                tool-namespaces))
-         (offer       (let* ((rendered (or (context-delivery-rendered delivery) ""))
-                             (marker   "Evidence, as untrusted JSON data: ")
-                             (start    (search marker rendered :start2 (or (search "procedure.run call"
-                                                                                    rendered)
-                                                                           0)))
-                             (evidence (and start
-                                            (json-decode
-                                             (subseq rendered (+ start (length marker))
-                                                     (or (position #\Newline rendered :start start)
-                                                         (length rendered))))))
-                             (call     (and evidence (search "procedure.run {" evidence))))
-                        (and call (subseq evidence (+ call (length "procedure.run "))))))
+         (parameter   (cl-ppcre:register-groups-bind (name)
+                          ("- make-sales-report:[^\\n]*\\n  ([a-z0-9.-]+) \\("
+                           (or (context-delivery-rendered delivery) ""))
+                        name))
          (items       (conversation-input-items conversation))
          (turn        (subseq items (1+ (or (position-if (lambda (item)
                                                             (equal (json-get item "role") "user"))
@@ -1316,8 +1245,9 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
       (answer
        (list
         (cond
-          ((and (null calls) offer)
-           (call "procedure.run" offer))
+          ((and (null calls) parameter)
+           (call "procedure.run" (json-encode (json-object "id" "make-sales-report"
+                                                           "parameters" (json-object parameter quarter)))))
           ((or (null calls)
                (and (equal last-tool "procedure.run") (search "stopped after" last-output)))
            (call "sales.load" (json-encode (json-object "file" (format nil "data/~A.csv" quarter)))))
@@ -1392,7 +1322,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
            :observer (callback-agent-observer-create
                       :status-callback
                       (lambda (status details)
-                        (when (member status '(:procedures-learned :procedure-offers))
+                        (when (eq status :procedures-learned)
                           (push (cons status details) (learning-tests--session-statuses session)))))))
     session))
 
@@ -1412,7 +1342,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
 
 (-> test-procedure-fixture () null)
 (defun test-procedure-fixture ()
-  "Test that ten recurring reports cost half the requests once their procedure is learned."
+  "Test that ten recurring reports cost fewer requests once their procedure is listed."
   (let ((quarters (loop for index from 1 to 10 collect (format nil "q~D" index)))
         (baseline nil)
         (learned  nil))
@@ -1438,27 +1368,21 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
           (test-assert (equal (statuses)
                               '((:procedures-learned :procedures (("make-sales-report" 1 3)))))
                        "the third turn teaches the procedure and the person is told")
-          (test-assert (and (equal (turn "q4") (list 2 (second (fourth learned))))
-                            (statuses)
-                            (every (lambda (status)
-                                     (equal status '(:procedure-offers :names ("make-sales-report") :related-p nil)))
-                                   (statuses)))
-                       "the next request is offered the procedure, which runs automatically")
-          (test-assert (and (= 1 (first (turn "q5")))
+          (test-assert (and (= 2 (first (turn "q4")))
                             (null (statuses))
                             (equal (json-get (first (learning-tests--scripted-tool-calls
                                                      (learning-tests--session-reports session)))
                                              "table")
-                                   "t-q5"))
-                       "an active procedure runs before the model, which answers in one request")
-          (dolist (quarter (subseq quarters 5))
+                                   "t-q4"))
+                       "the next request runs the listed procedure, and the model answers from its report")
+          (dolist (quarter (subseq quarters 4))
             (turn quarter))
           (let ((requests-before (reduce #'+ baseline :key #'first))
                 (requests-after  (reduce #'+ learned :key #'first))
                 (tokens-before   (reduce #'+ baseline :key #'second))
                 (tokens-after    (reduce #'+ learned :key #'second)))
-            (test-assert (and (= 40 requests-before) (= 20 requests-after))
-                         (format nil "ten reports take half the requests, learning included: ~D, not ~D"
+            (test-assert (and (= 40 requests-before) (= 26 requests-after))
+                         (format nil "ten reports take 14 fewer requests, learning included: ~D, not ~D"
                                  requests-after requests-before))
             (test-assert (<= (* 4 tokens-after) (* 3 tokens-before))
                          (format nil "ten reports use at least a quarter fewer tokens: ~D, not ~D"
@@ -1468,7 +1392,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                 (entry    (knowledge-base-procedure (knowledge-base-read configuration)
                                                     (knowledge--workspace configuration)
                                                     "make-sales-report")))
-            (test-assert (and (= 4 (first fallback))
+            (test-assert (and (= 5 (first fallback))
                               (equal (json-get (first (learning-tests--scripted-tool-calls
                                                        (learning-tests--session-reports session)))
                                                "table")

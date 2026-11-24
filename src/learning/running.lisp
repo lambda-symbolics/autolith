@@ -144,95 +144,6 @@ Record the run and return
     (t
      (knowledge--fail ':invalid-parameters object "Parameters are an object of names and values."))))
 
-(-> procedure-offers (configuration string) list)
-(defun procedure-offers (configuration text)
-  "Return the procedures whose request pattern fits request TEXT with every parameter bound.
-
-Each offer is a plist of :ID, :STATUS, :PROCEDURE, and :BINDINGS. Only active
-procedures whose contract requirements hold for these values are offered."
-  (loop for entry in (knowledge-base-procedures (knowledge-base-read configuration)
-                                                (knowledge--workspace configuration))
-        for status = (procedure-entry-status entry)
-        for procedure = (getf (procedure-entry-runnable-version entry) :procedure)
-        when (eq status ':active)
-          append (multiple-value-bind (bindings matched-p) (procedure-match-input procedure text)
-                   (and matched-p
-                        (every (lambda (parameter)
-                                 (assoc (getf parameter :name) bindings :test #'string=))
-                               (getf (rest procedure) :parameters))
-                        (handler-case
-                            (progn (procedure--check-contracts configuration procedure bindings)
-                                   t)
-                          (knowledge-error ()
-                            nil))
-                        (list (list :id        (getf entry :id)
-                                    :status    status
-                                    :procedure procedure
-                                    :bindings  (reverse bindings)))))))
-
-(defparameter *procedure-related-offer-limit* 3
-  "The most learned procedures offered as possible fits for one request.")
-
-(defparameter *procedure-related-minimum-shared* 2
-  "The fewest content words a request shares with a procedure for it to be a possible fit.")
-
-(-> procedure--content-words (string) list)
-(defun procedure--content-words (text)
-  "Return TEXT's distinct lowercase words without punctuation or naming stopwords."
-  (remove-duplicates
-   (loop for word in (procedure-words (substitute #\Space #\- text))
-         for bare = (string-downcase (string-trim "\"'.,;:!?()[]{}" word))
-         when (and (> (length bare) 1)
-                   (not (member bare *procedure-name-stopwords* :test #'string=)))
-           collect bare)
-   :test #'string=))
-
-(-> procedure--vocabulary (list) list)
-(defun procedure--vocabulary (procedure)
-  "Return the content words describing PROCEDURE: its name, request pattern, and description."
-  (let ((properties (rest procedure)))
-    (procedure--content-words
-     (format nil "~A ~{~A~^ ~} ~@[~A~]"
-             (getf properties :id)
-             (remove-if-not #'stringp (getf properties :input))
-             (getf properties :description)))))
-
-(-> procedure-related-offers (configuration string) list)
-(defun procedure-related-offers (configuration text)
-  "Return the procedures request TEXT may call for although no pattern matched it, best first.
-
-These are active procedures sharing at least
-*PROCEDURE-RELATED-MINIMUM-SHARED* content words with TEXT, at most
-*PROCEDURE-RELATED-OFFER-LIMIT* of them. A procedure whose pattern matches
-TEXT is left out: PROCEDURE-OFFERS either offers it exactly or has a reason,
-such as a refusing contract, not to. Each is a plist of :ID, :STATUS,
-:PROCEDURE, and the :SHARED words. They are only advice: nothing runs without
-the model choosing one and supplying its parameters."
-  (let* ((words  (procedure--content-words text))
-         (scored
-           (loop for entry in (knowledge-base-procedures (knowledge-base-read configuration)
-                                                         (knowledge--workspace configuration))
-                 for status = (procedure-entry-status entry)
-                 for procedure = (getf (procedure-entry-runnable-version entry) :procedure)
-                 for shared = (and (eq status ':active)
-                                   procedure
-                                   (not (nth-value 1 (procedure-match-input procedure text)))
-                                   (intersection words (procedure--vocabulary procedure)
-                                                 :test #'string=))
-                 when (>= (length shared) *procedure-related-minimum-shared*)
-                   collect (list :id        (getf entry :id)
-                                 :status    status
-                                 :procedure procedure
-                                 :shared    (sort (copy-list shared) #'string<)))))
-    (subseq (sort scored
-                  (lambda (left right)
-                    (let ((left-count  (length (getf left :shared)))
-                          (right-count (length (getf right :shared))))
-                      (or (> left-count right-count)
-                          (and (= left-count right-count)
-                               (string< (getf left :id) (getf right :id)))))))
-            0 (min *procedure-related-offer-limit* (length scored)))))
-
 (-> procedure-savings (configuration string) (option list))
 (defun procedure-savings (configuration identifier)
   "Return measured costs of completed model turns running IDENTIFIER's active definition.
@@ -250,27 +161,6 @@ version and definition provenance or complete usage measurements do not count."
          (list :turns    (length runs)
                :requests (round (reduce #'+ runs :key #'first) (length runs))
                :tokens   (round (reduce #'+ runs :key #'second) (length runs))))))
-
-(-> procedure-automatic-offer (configuration string) (option list))
-(defun procedure-automatic-offer (configuration text)
-  "Return the one offer for request TEXT that may run before the model reads the request, or NIL.
-
-Running without the model's reading needs more than a fit. The procedure must
-be active; every word of its request pattern that is not a parameter must
-be literal, so a varying word such as \"Please\" or \"Never\" cannot match
-anything; and completed model turns running this exact definition must have
-used fewer measured requests and tokens than its learning baseline. Anything
-less is an offer the model may decline."
-  (let ((candidates
-          (remove-if-not
-           (lambda (offer)
-             (and (eq (getf offer :status) ':active)
-                  (every (lambda (element)
-                           (or (stringp element) (eq (first element) :param)))
-                         (getf (rest (getf offer :procedure)) :input))
-                  (procedure--demonstrated-p configuration (getf offer :id))))
-           (procedure-offers configuration text))))
-    (and (= 1 (length candidates)) (first candidates))))
 
 
 ;;;; -- Private Functions --
@@ -393,20 +283,6 @@ are checked again against actual results by the ordinary call dispatch."
                    ;; A call cannot use its own promises, nor another contract on that call.
                    (setf produced (nconc next-productions produced)))))))
   nil)
-
-(-> procedure--demonstrated-p (configuration string) boolean)
-(defun procedure--demonstrated-p (configuration identifier)
-  "Return true when completed runs of IDENTIFIER's active definition saved requests and tokens."
-  (let* ((entry    (knowledge-base-procedure (knowledge-base-read configuration)
-                                             (knowledge--workspace configuration)
-                                             identifier))
-         (baseline (getf (procedure-entry-version entry (getf entry :active)) :baseline))
-         (savings  (procedure-savings configuration identifier)))
-    (and baseline savings
-         (realp (getf baseline :requests)) (realp (getf baseline :tokens))
-         (< (getf savings :requests) (getf baseline :requests))
-         (< (getf savings :tokens) (getf baseline :tokens))
-         t)))
 
 (-> procedure--coerce (list t) t)
 (defun procedure--coerce (parameter value)

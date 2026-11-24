@@ -355,14 +355,6 @@ compared without regard to case; bound values must suit their parameters."
         :key  (lambda (parameter) (getf parameter :name))
         :test #'string=))
 
-(-> procedure-describe-call (list list) string)
-(defun procedure-describe-call (procedure bindings)
-  "Return the procedure.run arguments for PROCEDURE with parameter BINDINGS as JSON text."
-  (let ((parameters (json-object)))
-    (dolist (binding bindings)
-      (setf (gethash (first binding) parameters) (rest binding)))
-    (json-encode (json-object "id" (getf (rest procedure) :id) "parameters" parameters))))
-
 
 ;;;; -- Authored Procedures --
 

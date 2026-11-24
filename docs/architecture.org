@@ -314,7 +314,8 @@ for removal by 0.68.0.
   legacy definitions retain their original inactive semantics, and historical
   admission records select their recorded versions. Remove these compatibility
   readers with the 0.69.0 knowledge-log migration.
-- Procedures are learned from tool-call traces read from conversation logs.
+- Procedures are defined by the model with =procedure.define= or learned from
+  tool-call traces read from conversation logs.
   Traces are cached in memory per conversation and extended from where the
   last read stopped; they are never written anywhere, so the transcript stays
   the one record of what a turn did.

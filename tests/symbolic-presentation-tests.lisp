@@ -18,7 +18,6 @@
                          (list ':related-memories '(:count 2 :unverified 1) ':notice)
                          (list ':knowledge-changes '(:count 1) ':notice)
                          (list ':plan-changes '(:count 1) ':notice)
-                         (list ':procedure-offers (list :names (list unsafe-name)) ':brand)
                          (list ':procedures-learned (list :procedures (list (list unsafe-name 1 3))) ':success)))
         (destructuring-bind (status details style) case
           (let (presented)

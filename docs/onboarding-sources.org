@@ -529,16 +529,14 @@ Unsatisfied requirements appear as blocked.
 
 =(mission :status)=  inspect gates and evidence
 
-* Reuse a learned sequence
+* Reuse a sequence of calls
 :PROPERTIES:
 :ID: symbolic-procedures
-:VERSION: 2
+:VERSION: 3
 :END:
-Autolith learns and activates a *parameterized procedure* locally after repeating the same tool-call sequence in three successful turns.
+The agent defines a *parameterized procedure* if it expects to make the same tool calls again. Autolith also learns one locally after the same tool-call sequence repeats in three successful turns.
 
 =(procedures)=  inspect calls, status, runs, and measured savings
-
-Automatic reuse requires successful runs of the *exact active version* with measured savings in both model requests and tokens.
 
 Use =(retire-procedure "NAME")= to stop using and learning that procedure.
 
