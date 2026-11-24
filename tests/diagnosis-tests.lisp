@@ -23,7 +23,36 @@
     :documentation "The repairs tried, newest first."))
   (:documentation "A remote service with one fault and the tools that probe and repair it."))
 
-(defclass diagnosis-tests--wire-named-tool (learning-tests--scripted-tool)
+(defclass diagnosis-tests--scripted-tool (tool)
+  ((respond
+    :initarg       :respond
+    :reader        diagnosis-tests--scripted-tool-respond
+    :type          function
+    :documentation "Called with the arguments; returns a JSON object, or a string to fail with."))
+  (:documentation "A tool answering from a script."))
+
+(defmethod tool-execute ((tool diagnosis-tests--scripted-tool) (context tool-context)
+                         (arguments hash-table))
+  "Answer as the script says."
+  (declare (ignore context))
+  (let ((answer (funcall (diagnosis-tests--scripted-tool-respond tool) arguments)))
+    (if (stringp answer)
+        (tool-failure answer)
+        (tool-success (json-encode answer)))))
+
+(-> diagnosis-tests--tool (tool-registry string function) diagnosis-tests--scripted-tool)
+(defun diagnosis-tests--tool (registry tool respond)
+  "Register scripted TOOL, a NAMESPACE.NAME string answering through RESPOND, in REGISTRY."
+  (let* ((dot      (position #\. tool))
+         (instance (make-instance 'diagnosis-tests--scripted-tool
+                                  :namespace (subseq tool 0 dot) :name (subseq tool (1+ dot))
+                                  :description "A scripted tool."
+                                  :parameters  (json-object "type" "object" "additionalProperties" t)
+                                  :respond     respond)))
+    (tool-registry-register registry instance)
+    instance))
+
+(defclass diagnosis-tests--wire-named-tool (diagnosis-tests--scripted-tool)
   ((display
     :initarg       :display
     :reader        diagnosis-tests--wire-named-tool-display
@@ -60,24 +89,24 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
          (world    (make-instance 'diagnosis-tests--world :fault fault :registry registry)))
     (flet ((fault-p (name)
              (equal (diagnosis-tests--world-fault world) name))
-           (learning-tests--tool (registry tool respond)
+           (diagnosis-tests--tool (registry tool respond)
              (if wire-names-p
                  (diagnosis-tests--wire-named-tool registry tool respond)
-                 (learning-tests--tool registry tool respond))))
-      (learning-tests--tool registry "service.ping"
+                 (diagnosis-tests--tool registry tool respond))))
+      (diagnosis-tests--tool registry "service.ping"
                             (lambda (arguments)
                               (declare (ignore arguments))
                               (json-object "reachable" (if (fault-p "unavailable") (json-false) t))))
       (when config-p
-        (learning-tests--tool registry "service.config"
+        (diagnosis-tests--tool registry "service.config"
                               (lambda (arguments)
                                 (declare (ignore arguments))
                                 (json-object "current" (if (fault-p "stale-endpoint") (json-false) t)))))
-      (learning-tests--tool registry "service.auth"
+      (diagnosis-tests--tool registry "service.auth"
                             (lambda (arguments)
                               (declare (ignore arguments))
                               (json-object "accepted" (if (fault-p "credentials") (json-false) t))))
-      (learning-tests--tool registry "service.check"
+      (diagnosis-tests--tool registry "service.check"
                             (lambda (arguments)
                               (declare (ignore arguments))
                               (json-object "healthy" (if (diagnosis-tests--world-fault world)
@@ -86,7 +115,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
       (loop for (cause . tool) in *diagnosis-tests-repairs*
             do (let ((cause cause)
                      (tool  tool))
-                 (learning-tests--tool registry tool
+                 (diagnosis-tests--tool registry tool
                                        (lambda (arguments)
                                          (declare (ignore arguments))
                                          (push tool (diagnosis-tests--world-repairs world))
@@ -242,7 +271,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
             (wire     (find "service.ping" (tool-registry-tools registry)
                             :key #'tool-display-name :test #'string=))
             (context  (diagnosis-tests--context configuration world)))
-       (learning-tests--tool registry "service.ping"
+       (diagnosis-tests--tool registry "service.ping"
                              (lambda (arguments)
                                (declare (ignore arguments))
                                (json-object "reachable" (json-false))))
@@ -472,7 +501,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
         configuration :id "measure-service" :tool "service.measure"
         :observes (vector (json-object "predicate" "service.measurement"
                                        "arguments" #("billing" 42))))
-       (learning-tests--tool (diagnosis-tests--world-registry world) "service.measure"
+       (diagnosis-tests--tool (diagnosis-tests--world-registry world) "service.measure"
                              (lambda (arguments)
                                (declare (ignore arguments))
                                (json-object)))
@@ -507,7 +536,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
                                  :key #'tool-display-name :test #'string=))
         :when             (json-object "service" "?service")
         :requires         #(#("probe.allowed" "?service")))
-       (learning-tests--tool (diagnosis-tests--world-registry world) "service.ping-fallback"
+       (diagnosis-tests--tool (diagnosis-tests--world-registry world) "service.ping-fallback"
                              (lambda (arguments)
                                (declare (ignore arguments))
                                (json-object "reachable" (json-false))))

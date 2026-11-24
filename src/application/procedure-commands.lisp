@@ -2,125 +2,58 @@
 
 ;;;; -- Procedure Commands --
 
-;;; (procedures) lists the procedures Autolith learned in this workspace, what
-;;; they call, and what they saved; (run-procedure "ID" :NAME VALUE ...) runs
-;;; one with ordinary tool authorization; (retire-procedure) stops one for good.
+;;; (procedures) lists the procedures of this workspace; (run-procedure "ID"
+;;; :NAME VALUE ...) runs one with ordinary tool authorization;
+;;; (retire-procedure) retires one until it is defined again.
 
 
 ;;; (procedures)
 
 (-> application-procedures-entry (application) list)
 (defun application-procedures-entry (application)
-  "Return the learned procedures of APPLICATION's workspace with status, calls, and cost."
+  "Return the procedures of the workspace of APPLICATION with their parameters and documentation."
   (let* ((configuration (application-configuration application))
          (entries       (knowledge-base-procedures (knowledge-base-read configuration)
                                                    (knowledge--workspace configuration))))
     (if (null entries)
-        (application-hint-line
-         "no procedures are learned yet; Autolith learns one when three turns make the same tool calls")
-        (append
-         (list (terminal-span ':brand "# procedures")
-               (terminal-span ':dim (format nil "  ~D~%" (length entries))))
-         (loop for entry in entries
-               append (application-procedures--entry-lines configuration entry))))))
+        (application-hint-line "no procedures are defined yet")
+        (cons (terminal-span ':brand (format nil "# procedures~%"))
+              (loop for entry in entries
+                    append (application-procedures--entry-lines entry))))))
 
-(-> application-procedures--entry-lines (configuration list) list)
-(defun application-procedures--entry-lines (configuration entry)
-  "Return the terminal lines describing procedure ENTRY."
-  (let* ((status     (procedure-entry-status entry))
-         (identifier (getf entry :id))
-         (version    (procedure-entry-version entry))
-         (procedure  (getf version :procedure))
-         (baseline   (getf version :baseline))
-         (savings    (and (member status '(:active :suspended))
-                          (procedure-savings configuration identifier)))
-         (request    (procedure-input-text procedure)))
-    (append
-     (list (ecase status
-             (:active
-              (terminal-span ':success "  ✓ "))
-             (:inactive
-              (terminal-span ':notice "  ? "))
-             (:suspended
-              (terminal-span ':failure "  ! "))
-             (:retired
-              (terminal-span ':dim "  × ")))
-           (terminal-span ':strong
-                          (format nil "~A v~D"
-                                  (sanitize-text identifier :single-line-p t)
-                                  (getf version :version)))
-           (terminal-span (ecase status
-                            (:active
-                             ':success)
-                            (:inactive
-                             ':notice)
-                            (:suspended
-                             ':failure)
-                            (:retired
-                             ':dim))
-                          (format nil "  ~(~A~)" status))
-           (terminal-span ':dim
-                          (format nil "~@[ · runs v~D~] · ~D run~:P, ~D failed~A~%"
-                                 (and (getf entry :active)
-                                      (/= (getf entry :active) (getf version :version))
-                                      (getf entry :active))
-                                 (getf entry :runs) (getf entry :failures)
-                                 (case status
-                                   (:inactive
-                                    " · legacy definition")
-                                   (:suspended
-                                    " · correct its definition to resume")
-                                   (otherwise
-                                    ""))))
-           (terminal-span ':plain
-                          (format nil "    ~{~A~^ → ~}~%"
-                                  (mapcar (lambda (step)
-                                            (sanitize-text (getf step :tool) :single-line-p t))
-                                          (getf (rest procedure) :steps)))))
-     (when request
-       (list (terminal-span ':dim (format nil "    request: ~A~%"
-                                          (sanitize-text request :single-line-p t)))))
-     (when (eq status ':suspended)
-       (list (terminal-span ':failure
-                            (format nil "    last failure: ~A~%"
-                                    (sanitize-text (or (getf entry :last-failure) "unknown")
-                                                   :single-line-p t)))))
-     (when (getf version :examples)
-       (list (terminal-span ':dim
-                            (format nil "    learned from ~D turns averaging ~D request~:P, ~D tokens~@[~A~]~%"
-                                    (length (getf version :examples))
-                                    (getf baseline :requests) (getf baseline :tokens)
-                                    (and savings
-                                         (format nil "; turns running it: ~D request~:P, ~D tokens (~D turn~:P)"
-                                                 (getf savings :requests) (getf savings :tokens)
-                                                 (getf savings :turns))))))))))
+(-> application-procedures--entry-lines (list) list)
+(defun application-procedures--entry-lines (entry)
+  "Return the terminal lines describing the procedure ENTRY."
+  (handler-case
+      (list (if (getf entry :retired-p)
+                (terminal-span ':dim "  × ")
+                (terminal-span ':success "  ✓ "))
+            (terminal-span ':strong
+                           (format nil "~A~%" (sanitize-text (procedure-signature entry)
+                                                             :single-line-p t)))
+            (terminal-span ':dim
+                           (format nil "    ~A~%" (sanitize-text (procedure-documentation entry)
+                                                                 :single-line-p t))))
+    (knowledge-error (condition)
+      (list (terminal-span ':failure "  ! ")
+            (terminal-span ':strong (sanitize-text (getf entry :id) :single-line-p t))
+            (terminal-span ':dim (format nil " ~A~%" (autolith-error-message condition)))))))
 
 
 ;;; (run-procedure), (retire-procedure)
 
 (-> application-procedure-run-entry (application string list) list)
 (defun application-procedure-run-entry (application identifier arguments)
-  "Run procedure IDENTIFIER with ARGUMENTS, alternating names and values, and show each call."
+  "Run the procedure IDENTIFIER with the keyword ARGUMENTS and show the result."
   (handler-case
-      (let* ((parameters (application-procedures--parameters arguments))
-             (run        (procedure-run (application-tool-context application) identifier
-                                        :parameters parameters :caller ':user))
-             (report     (procedure-run-report identifier run)))
-        (list (if (eq (getf run :status) ':ok)
-                  (terminal-span ':success "✓ ran  ")
-                  (terminal-span ':failure "! stopped  "))
-              (terminal-span ':dim (format nil "~A~%" (sanitize-text report)))))
+      (list (terminal-span ':success "✓ ran  ")
+            (terminal-span ':dim
+                           (format nil "~A~%"
+                                   (sanitize-text
+                                    (procedure-run (application-tool-context application)
+                                                   identifier arguments)))))
     (knowledge-error (condition)
       (application-failure-line (autolith-error-message condition)))))
-
-(-> application-procedures--parameters (list) list)
-(defun application-procedures--parameters (arguments)
-  "Return the parameter alist of ARGUMENTS, names (keywords or text) alternating with values."
-  (unless (evenp (length arguments))
-    (knowledge--fail ':invalid-parameters arguments
-                     "Give parameters as names and values, such as (run-procedure \"ID\" :quarter \"q3\")."))
-  (loop for (name value) on arguments by (partial #'nthcdr 2)
-        collect (cons (string-downcase (string name)) value)))
 
 (-> application-procedure-retire-entry (application string) list)
 (defun application-procedure-retire-entry (application identifier)
@@ -140,8 +73,8 @@
 (define-application-command application--builtin-procedures-command
     (:name              "procedures"
      :argument          nil
-     :description       "list procedures learned from recurring work."
-     :tip               "shows all learned tool sequences"
+     :description       "list the procedures of this workspace."
+     :tip               "shows the procedures and their parameters"
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
@@ -152,8 +85,8 @@
 (define-application-command application--builtin-run-procedure-command
     (:name              "run-procedure"
      :argument          "[ID] [NAME VALUE ...]"
-     :description       "run a learned procedure without the model."
-     :tip               "run a saved tool procedure"
+     :description       "run a procedure without the model."
+     :tip               "runs a procedure with keyword arguments"
      :busy-behavior     :hold
      :terminal-behavior :shared
      :callable          t)
@@ -168,8 +101,8 @@
 (define-application-command application--builtin-retire-procedure-command
     (:name              "retire-procedure"
      :argument          "[ID]"
-     :description       "stop a learned procedure for good"
-     :tip               "retire a procedure so it is no longer used"
+     :description       "retire a procedure until it is defined again."
+     :tip               "retires a procedure"
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)

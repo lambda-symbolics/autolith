@@ -132,7 +132,7 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-procedures-table
     :type          hash-table
-    :documentation "Learned procedure entries by (WORKSPACE IDENTIFIER): versions, activation, and runs.")
+    :documentation "The procedure entries by (WORKSPACE IDENTIFIER).")
    (diagnoses
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-diagnoses-table
@@ -515,13 +515,10 @@ by a newer generation stays readable after a rollback."
                        :workspace (getf properties :workspace)
                        :time      (getf properties :time)))))
         ((:procedure-defined :procedure-admitted :procedure-retired :procedure-run)
-         (let ((key (list (getf properties :workspace)
-                          (if (eq (first record) :procedure-defined)
-                              (getf (rest (getf properties :procedure)) :id)
-                              (getf properties :id)))))
-           (setf (gethash key (knowledge-base-procedures-table base))
-                 (procedure-entry-reduce (gethash key (knowledge-base-procedures-table base))
-                                         record))))
+         (let ((key (list (getf properties :workspace) (getf properties :id))))
+           (when-let ((entry (procedure-entry-reduce
+                              (gethash key (knowledge-base-procedures-table base)) record)))
+             (setf (gethash key (knowledge-base-procedures-table base)) entry))))
         (:diagnosis-defined
          (let ((diagnosis (getf properties :diagnosis)))
            (setf (gethash (list (getf properties :scope) (getf properties :workspace)

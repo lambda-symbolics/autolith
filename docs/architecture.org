@@ -297,7 +297,7 @@ for removal by 0.68.0.
 | Conversations | headers, messages, provider items, model choices         |
 | Memories      | workspace and global facts, sources and premises, tombs  |
 | Knowledge     | predicates, evidence, supports, rules, retractions,      |
-|               | learned procedures and their runs, diagnoses and cases   |
+|               | procedures, diagnoses and cases                          |
 | Viewers       | the last knowledge snapshot each viewer saw (derived)    |
 | Agendas       | versioned workspace plans and memory identifiers         |
 | Papercuts     | user-visible defect reports and closure tombstones       |
@@ -310,14 +310,13 @@ for removal by 0.68.0.
   rollback; they never read the knowledge log. Derivations, statuses, and
   conflicts are evaluated from the log, the cited files, and the time, and are
   never stored.
-  New rule and procedure definitions carry =:activation :automatic=. Untagged
+  New rule definitions carry =:activation :automatic=. Untagged
   legacy definitions retain their original inactive semantics, and historical
   admission records select their recorded versions. Remove these compatibility
   readers with the 0.69.0 knowledge-log migration.
-- Procedures are learned from tool-call traces read from conversation logs.
-  Traces are cached in memory per conversation and extended from where the
-  last read stopped; they are never written anywhere, so the transcript stays
-  the one record of what a turn did.
+- Procedures are =lambda= forms stored as source in the knowledge log.
+  =procedure.run= evaluates one in the active image. Tool functions in the
+  procedure call tools with the tool context of the caller.
 - Conversation records are authoritative provider history
 - The header records the selected model and effort. Later changes are
   durable configuration records, so resume restores the latest choices
@@ -700,7 +699,7 @@ Here's a rough, probably outdated map of the repository
 | Tools and workspace resources | =src/tools/=, =src/resource/=, cl-exec-sandbox, clifff                                           |
 | Readable durable state        | =src/conversation/=, =src/state/=, =src/resource/{memory,agenda}.lisp=, sexp-store                 |
 | Structured knowledge          | =src/knowledge/=, =src/resource/memory-knowledge.lisp=, =src/agent/memory-context.lisp=        |
-| Procedure learning            | =src/learning/=, =src/agent/procedure-context.lisp=, =src/tools/procedure.lisp=                |
+| Procedures                    | =src/knowledge/procedures.lisp=, =src/agent/procedure-context.lisp=, =src/tools/procedure.lisp= |
 | Workers and tasks             | =src/workers/=, =src/task/=, cl-jobpond, sbcl-workers                                            |
 | Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=, surgeon                         |
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |

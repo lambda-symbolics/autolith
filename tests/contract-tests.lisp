@@ -52,13 +52,6 @@
           (equal '("result" t)
                  (multiple-value-list (knowledge--reference-value "$result.items.0.value" arguments result))))
      "Contract references select the argument or result root."))
-  (test-assert
-   (handler-case
-       (progn
-         (procedure-template-instantiate '(:from 0 ("missing")) nil (list (json-object)))
-         nil)
-     (knowledge-error () t))
-   "A missing procedure output path signals a knowledge error.")
   (with-test-configuration (configuration)
     (contract-tests--define-ready configuration)
     (knowledge-define-contract

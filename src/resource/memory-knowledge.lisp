@@ -230,40 +230,15 @@ Conflicted facts come first, then the rest by predicate and text."
 
 (-> memory-knowledge--render-procedures (knowledge-base string) string)
 (defun memory-knowledge--render-procedures (base workspace)
-  "Return WORKSPACE's learned procedures with their status, record, parameters, and calls."
+  "Return the procedures of WORKSPACE with their status and source."
   (let ((entries (knowledge-base-procedures base workspace)))
     (with-output-to-string (stream)
       (format stream "collection: procedures~%count: ~D~%" (length entries))
       (dolist (entry entries)
-        (let* ((version   (procedure-entry-version entry))
-               (procedure (getf version :procedure)))
-          (format stream "~%~A v~D ~(~A~)~@[ (runs v~D)~] · ~D run~:P, ~D failed~%"
-                  (getf entry :id) (getf version :version) (procedure-entry-status entry)
-                  (and (getf entry :active)
-                       (/= (getf entry :active) (getf version :version))
-                       (getf entry :active))
-                  (getf entry :runs) (getf entry :failures))
-          (when (getf version :examples)
-            (format stream "  learned from ~D turns averaging ~D model requests and ~D tokens per turn; each turn is reproduced by the procedure learned from the other turns~%"
-                    (length (getf version :examples))
-                    (getf (getf version :baseline) :requests)
-                    (getf (getf version :baseline) :tokens)))
-          (let ((counterexamples (getf (getf version :evaluation) :counterexamples)))
-            (when (and counterexamples (plusp counterexamples))
-              (format stream "  procedure not offered: ~D other request~:P with the same wording led to different behavior~%"
-                      counterexamples)))
-          (format stream "~@[  parameters: ~{~A~^, ~}~%~]~@[  request: ~A~%~]"
-                  (mapcar (lambda (parameter)
-                            (format nil "~A (~(~A~)~@[ ending in ~A~])" (getf parameter :name)
-                                    (getf parameter :type) (getf parameter :suffix)))
-                          (getf (rest procedure) :parameters))
-                  (procedure-input-text procedure))
-          (loop for step in (getf (rest procedure) :steps)
-                for index from 1
-                do (format stream "  ~D. ~A ~A~%" index (getf step :tool)
-                           (procedure-template-text (getf step :arguments))))))
+        (format stream "~%~A~:[~; (retired)~]~%~A~%"
+                (getf entry :id) (getf entry :retired-p) (getf entry :source)))
       (unless entries
-        (format stream "~%No procedures are learned yet. Autolith learns one when three turns make the same tool calls.")))))
+        (format stream "~%No procedures are defined yet. Define one with procedure.define.")))))
 
 (-> memory-knowledge--render-changes (configuration string knowledge-view) string)
 (defun memory-knowledge--render-changes (configuration viewer view)
