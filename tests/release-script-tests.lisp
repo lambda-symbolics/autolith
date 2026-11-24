@@ -414,6 +414,23 @@ fi
     (declare (ignore output error-output))
     (test-assert (not (zerop status))
                  "the static release smoke program rejects missing arguments"))
+  (let* ((configuration (configuration-create :durable-p nil :defer-provider-validation-p t))
+         (library       (search--validated-library-path configuration))
+         (diagnostics   (make-string-output-stream)))
+    (with-test-environment (("AUTOLITH_FFF_LIBRARY" (namestring library)))
+      (test-assert
+       (test-call-with-function-replacements
+        (list (list 'uiop:command-line-arguments (lambda () (list (namestring source-root))))
+              (list 'uiop:quit
+                    (lambda (status &rest arguments)
+                      (declare (ignore arguments))
+                      (error "Static release validation exited with status ~D: ~A"
+                             status (get-output-stream-string diagnostics)))))
+        (lambda ()
+          (let ((*standard-output* (make-broadcast-stream))
+                (*error-output*    diagnostics))
+            (load (merge-pathnames "script/validate-static-release.lisp" source-root)))))
+       "the static release smoke program highlights Rust and searches files through the pinned native APIs")))
   (let ((minimum-source-sha256
           (string-trim
            '(#\Space #\Tab #\Newline #\Return)

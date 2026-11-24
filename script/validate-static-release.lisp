@@ -39,11 +39,10 @@
           (uiop:ensure-all-directories-exist (list cache-root))
           (let ((engine
                   (uiop:symbol-call
-                   :clifff                    :make-engine
-                   :library-path              (pathname library)
-                   :base-path                 source-root
-                   :cache-directory           cache-root
-                   :scan-timeout-milliseconds 30000)))
+                   :clifff          :make-engine
+                   :library-path    (pathname library)
+                   :base-path       source-root
+                   :cache-directory cache-root)))
             (unwind-protect
                  (let ((result
                          (uiop:symbol-call
