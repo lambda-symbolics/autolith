@@ -821,7 +821,9 @@
                               "Quota pressure reclaims the dead owner's capture with a truthful tombstone")
                  (shell-log-release-artifact replacement)
                  (setf replacement nil)
-                 (let ((*shell-log-tombstone-count-limit* 0))
+                 (let ((*shell-log-tombstone-count-limit* 0)
+                       (*shell-log-maintenance-interval*  0))
+                   (loop while (shell-log-maintenance-step configuration))
                    (setf replacement (shell-log-allocate context)))
                  (test-assert (not (probe-file capture-directory))
                               "Tombstone expiry removes lease files along with expired metadata")))
@@ -1655,6 +1657,9 @@
                 (shell-log--write-manifest
                  (make-instance 'shell-log-artifact :configuration configuration
                                 :capture-directory (shell-log-capture-directory capture) :metadata metadata)))))
+          (when (eq pressure :age)
+            (let ((*shell-log-maintenance-interval* 0))
+              (loop while (shell-log-maintenance-step configuration))))
           (let ((replacement
                   (handler-case
                       (shell-log-allocate (make-instance 'tool-context :configuration configuration
@@ -2283,8 +2288,9 @@
                      (lambda ()
                        (wait-for allocation-start)
                        (let ((*shell-log-active* active))
-                         (handler-case (shell-log-allocate context)
-                           (error (condition) condition))))
+                        (handler-case
+                            (progn (shell-log-prune configuration) (shell-log-allocate context))
+                          (error (condition) condition))))
                      :name "allocation racing owner removal"))
               (sb-thread:signal-semaphore allocation-start)
               (wait-for allocation-ready)

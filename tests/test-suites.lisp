@@ -244,6 +244,10 @@
   test-shell-session-protocol-boundaries)
 
 (define-test-suite shell-log-resource
+  test-shell-log-allocation-work
+  test-shell-log-accounting-recovery
+  test-shell-log-accounting-publication-failure
+  test-shell-log-maintenance-batches
   test-shell-log-delivery-backfill
   test-shell-log-delivery-backfill-removal
   test-shell-log-backfill-removal-races

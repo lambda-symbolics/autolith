@@ -475,7 +475,8 @@ Return the launcher status a hosted session asked for, or NIL."
             (setf due (+ (get-internal-real-time) interval))
             (when-let ((runtime (world-server-runtime server))) (world-server--recover-endpoint server runtime))
             (world-server--retire-unhealthy-hosts server)
-            (world-server--unload-cold-hosts server))))
+            (world-server--unload-cold-hosts server)
+            (world-server--maintain-shell-logs server))))
     (loop
      (if-let ((job
                (with-lock-held (lock)
@@ -501,6 +502,17 @@ Return the launcher status a hosted session asked for, or NIL."
                                          internal-time-units-per-second)))))))))
          (funcall job)
          (return (world-server-exit-status server))))))
+
+(-> world-server--maintain-shell-logs (world-server) null)
+(defun world-server--maintain-shell-logs (server)
+  "Run one retention batch on the world thread and yield to other server jobs."
+  (unless (or (world-server-stopping-p server) (world-server-checkpointing-p server))
+    (handler-case
+        (when (shell-log-maintenance-step (world-server-configuration server))
+          (world-server--enqueue server (lambda () (world-server--maintain-shell-logs server))))
+      (error (condition)
+        (format *error-output* "~&Shell log maintenance failed: ~A~%" condition))))
+  nil)
 
 (-> world-server-wake-channel (world-server string) null)
 (defun world-server-wake-channel (server identifier)

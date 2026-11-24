@@ -33,7 +33,22 @@
   "Release only after all live native and publication owners finish.
 Call with the shell-log lock held."
   (unless (shell-log--artifact-owned-p artifact)
-    (shell-log--release-owner (shell-log-capture-directory artifact)))
+    (unwind-protect
+         (let* ((metadata (shell-log-artifact-metadata artifact))
+                (disk     (handler-case
+                              (shell-log--read-manifest
+                               (shell-log-artifact-configuration artifact)
+                               (shell-log-capture-directory artifact) :measure-p nil)
+                            (error () nil))))
+           (when (and (plusp (getf metadata :reserved-bytes 0))
+                      (member (getf disk :state) '(:closed :interrupted)))
+             (let ((settled (copy-tree metadata)))
+               (setf (getf settled :reserved-bytes) 0
+                     (shell-log-artifact-metadata artifact) settled)
+               ;; Failed settlement retains the conservative charge until recovery.
+               (handler-case (shell-log--write-manifest artifact)
+                 (error () (setf (shell-log-artifact-metadata artifact) metadata))))))
+      (shell-log--release-owner (shell-log-capture-directory artifact))))
   nil)
 
 (-> shell-log--finish-publication ((option shell-log-publication)) null)

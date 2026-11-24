@@ -9,7 +9,7 @@
   "Maximum reserved capture bytes across private artifacts.")
 
 (defparameter *shell-log-retention-age* (* 7 24 60 60)
-  "Completed logs become age-eligible after this interval; prune on next allocation.")
+  "Completed logs become age-eligible after this interval; sweep them during maintenance.")
 
 (defparameter *shell-log-tombstone-count-limit* 512
   "Maximum retained pruned manifests; older references then report missing.")
@@ -22,6 +22,9 @@
 
 (defvar *shell-log-lock* (make-lock "shell log artifacts")
   "Serialize reservation, manifest publication and pruning.")
+
+(defparameter *shell-log-locked-root* nil
+  "Private data root serialized by the current dynamic scope, or NIL.")
 
 (defvar *shell-log-active* (make-hash-table :test #'equal)
   "Capture directories currently owned by running operations.")
@@ -107,7 +110,8 @@
          (call-with-file-lock ,path
            (lambda ()
              (platform-make-private *platform* ,path)
-             ,@body))))))
+             (let ((*shell-log-locked-root* (config :data-root ,settings)))
+               ,@body)))))))
 
 (-> shell-log--release-owner (pathname) null)
 (defun shell-log--release-owner (capture-directory)
@@ -208,21 +212,29 @@ Disable measurement until resource resolution has checked ancestor ownership."
                            (and (eq (getf metadata :state) ':closed) (not live-p)))
                        0
                        (getf metadata :reserved-bytes 0))
-                   (shell-log--measure-captures configuration directory metadata)))))
+                   (shell-log--measure-captures configuration directory metadata)))
+        (shell-log-accounting-observe configuration metadata)))
     metadata))
 
-(-> shell-log--write-manifest (shell-log-artifact) pathname)
-(defun shell-log--write-manifest (artifact)
-  "Atomically publish ARTIFACT metadata and restrict its permissions."
-  (let* ((path     (shell-log--manifest-path (shell-log-capture-directory artifact)))
-         (metadata (shell-log-artifact-metadata artifact)))
-    (when (> (utf8-string-length (task--write-readable-sexp metadata))
-             *shell-log-manifest-byte-limit*)
-      (shell-log--fail "Shell capture ownership metadata exceeds its finite allowance."))
-    (shell-log--safe-path (shell-log-artifact-configuration artifact) path)
-    (task-continuity--write path metadata)
-    (platform-make-private *platform* path)
-    path))
+(-> shell-log--write-manifest (shell-log-artifact &key (:before-publish (option function))) pathname)
+(defun shell-log--write-manifest (artifact &key before-publish)
+  "Publish ARTIFACT and its storage charge, running BEFORE-PUBLISH after invalidation."
+  (let ((configuration (shell-log-artifact-configuration artifact))
+        (directory     (shell-log-capture-directory artifact)))
+    (shell-log-accounting-write
+     configuration directory (shell-log-artifact-metadata artifact)
+     :publish
+     (lambda (metadata)
+       (let ((path (shell-log--manifest-path directory)))
+         (when (> (utf8-string-length (task--write-readable-sexp metadata))
+                  *shell-log-manifest-byte-limit*)
+           (shell-log--fail "Shell capture ownership metadata exceeds its finite allowance."))
+         (shell-log--safe-path configuration path)
+         (setf (shell-log-artifact-metadata artifact) metadata)
+         (when before-publish (funcall before-publish))
+         (task-continuity--write path metadata)
+         (platform-make-private *platform* path)
+         path)))))
 
 (-> shell-log-reference (shell-log-artifact &optional keyword) string)
 (defun shell-log-reference (artifact &optional (stream ':output))
@@ -669,6 +681,27 @@ never holds the artifact lock."
           (platform-delete-directory-tree *platform* capture-directory :validate t))
         nil)))
 
+(-> shell-log--prune-artifact (configuration pathname list) list)
+(defun shell-log--prune-artifact (configuration directory metadata)
+  "Remove authorized capture bytes and publish a tombstone in one accounting transaction."
+  (let* ((metadata (copy-tree metadata))
+         (artifact (make-instance 'shell-log-artifact :configuration configuration
+                                  :capture-directory directory :metadata metadata)))
+    (setf (getf metadata :state) ':pruned
+          (getf metadata :reserved-bytes) 0
+          (getf metadata :pruned-at) (get-universal-time)
+          (shell-log-artifact-metadata artifact) metadata)
+    (shell-log--write-manifest
+     artifact :before-publish
+     (lambda ()
+       (dolist (capture (getf metadata :captures))
+         (unless (shell-log--capture-file-p (getf capture :file))
+           (shell-log--fail "Invalid shell capture filename in manifest."))
+         (let ((path (shell-log--safe-path configuration
+                                         (merge-pathnames (getf capture :file) directory))))
+           (when (probe-file path) (platform-delete-file *platform* path))))))
+    (shell-log-artifact-metadata artifact)))
+
 (-> shell-log--trim-tombstones (configuration list) null)
 (defun shell-log--trim-tombstones (configuration inventory)
   "Bound tombstones from INVENTORY collected under the same artifact lock."
@@ -718,6 +751,7 @@ an existing writer or pending publication retains its original reservation."
 (defun shell-log--prune (configuration &key (reservation 0))
   "Reserve finite bytes under knowledge-before-shell locks and preserve exact pins.
 Keep manifests as tombstones so old references have truthful diagnostics."
+  (shell-log-accounting--dirty configuration)
   (let* ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
          (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
          (inventory
@@ -736,20 +770,10 @@ Keep manifests as tombstones so old references have truthful diagnostics."
                        (> (- (get-universal-time) (getf metadata :created-at 0))
                           *shell-log-retention-age*))
                    (shell-log--prunable-p configuration directory metadata))
-          (dolist (capture (getf metadata :captures))
-            (unless (shell-log--capture-file-p (getf capture :file))
-              (shell-log--fail "Invalid shell capture filename in manifest."))
-            (let ((path (shell-log--safe-path configuration
-                                            (merge-pathnames (getf capture :file) directory))))
-              (when (probe-file path) (platform-delete-file *platform* path))))
-          (decf total accounted-bytes)
-          (setf (getf metadata :state) ':pruned
-                (getf metadata :pruned-at) (get-universal-time)
-                (second entry) metadata)
-          (shell-log--write-manifest
-           (make-instance 'shell-log-artifact :configuration configuration
-                          :capture-directory directory :metadata metadata)))))
+          (setf (second entry) (shell-log--prune-artifact configuration directory metadata))
+          (decf total accounted-bytes))))
     (shell-log--trim-tombstones configuration inventory)
+    (shell-log-accounting-rebuild configuration inventory total)
     (when (> (+ total reservation) *shell-log-retention-byte-limit*)
       (shell-log--fail "Private shell log storage is full; protected captures cannot be pruned.")))
   nil)
@@ -772,8 +796,9 @@ it reads manifests and owner evidence. RECEIVE, when supplied, gets the
 artifact with interrupts disabled at the instant it is published, so a caller
 that releases it from an UNWIND-PROTECT cleanup never misses a published
 capture."
-  (shell-log--backfill-delivery (tool-context-configuration context))
-  (shell-log-call-with-retention-lock (tool-context-configuration context)
+  (shell-log-call-with-allocation-lock
+   (tool-context-configuration context)
+   (* *shell-log-capture-byte-limit* (if merge-output-p 1 2))
    (lambda ()
     (let* ((configuration        (tool-context-configuration context))
            (agent                (tool-context-agent context))
@@ -794,7 +819,6 @@ capture."
       (unwind-protect
            (handler-case
                (progn
-                 (shell-log--prune configuration :reservation reservation)
                  (shell-log--safe-path configuration directory)
                  (setf allocation-started-p t)
                  (ensure-directories-exist (merge-pathnames "manifest.sexp" directory))
