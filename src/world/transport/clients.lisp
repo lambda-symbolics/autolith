@@ -536,10 +536,11 @@ whatever would change the channel."
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
           (:evaluates-p boolean) (:after-sequence (option integer))
           (:cancelled-p (option function)) (:arguments list)
-          (:initialize-function (option function)))
+          (:initialize-function (option function)) (:operation keyword))
     world-terminal-client-connection)
 (defun world-terminal-client-connect (entry &key (name "client") event-function (approves-p t)
-                                           evaluates-p after-sequence cancelled-p arguments initialize-function)
+                                           evaluates-p after-sequence cancelled-p arguments initialize-function
+                                           (operation ':client))
   "Connect to the channel of world-terminal endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
@@ -564,7 +565,7 @@ history replay have no time limit."
                                (list :world-terminal-request
                                      :version   *daemon-protocol-version*
                                      :token     (world-terminal--record-token record)
-                                     :operation ':client
+                                    :operation  operation
                                      :arguments (list* :name                 name
                                                        :approves-p           approves-p
                                                        :evaluates-p          evaluates-p

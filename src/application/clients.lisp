@@ -81,6 +81,14 @@
     :initform      (make-lock "Autolith channel clients")
     :reader        client-hub-lock
     :documentation "The lock guarding the client list.")
+   (change-function
+    :initform nil :accessor client-hub-change-function :type (option function)
+    :documentation "The hosting world's semantic-state invalidation callback, or NIL for a direct channel.")
+   (activity-states
+    :initform      (make-hash-table :test #'eq)
+    :reader        client-hub-activity-states
+    :type          hash-table
+    :documentation "Activity identities and states last invalidated, excluding elapsed time and progress text.")
    (clients
     :initform      nil
     :accessor      client-hub-clients
@@ -151,6 +159,13 @@
 
 ;;;; -- Publishing --
 
+(-> client-hub-note-change (client-hub) null)
+(defun client-hub-note-change (hub)
+  "Invalidate the hosting world's runtime observation after a semantic channel change."
+  (when-let ((function (client-hub-change-function hub)))
+    (funcall function))
+  nil)
+
 (-> application-clients (application) list)
 (defun application-clients (application)
   "Return the structured clients attached to APPLICATION's channel."
@@ -198,9 +213,14 @@ EXCEPT, a client that is leaving, does not count."
 (defun application-clients-note-controller (application client)
   "Remember CLIENT as the one its user is at, when it controls: questions and channel switches go to it."
   (when (channel-client-controls-p client)
-    (let ((hub (application-client-hub application)))
+    (let ((hub       (application-client-hub application))
+          (changed-p nil))
       (with-lock-held ((client-hub-lock hub))
-        (setf (client-hub-controller hub) client))))
+        (unless (eq (client-hub-controller hub) client)
+          (setf (client-hub-controller hub) client
+                changed-p t)))
+      (when changed-p
+        (client-hub-note-change hub))))
   nil)
 
 (-> application-controlling-client (application) (option channel-client))
@@ -263,25 +283,46 @@ it, so the word reaches a client that reads before the endpoint closes."
                            collect pid))
                   #'<))))
 
+(-> client-hub--world-change-p (client-hub list) boolean)
+(defun client-hub--world-change-p (hub event)
+  "Report semantic runtime changes under HUB's lock without invalidating on activity age updates."
+  (if (eq (first event) ':ui)
+      (let ((operation (getf (rest event) :operation)))
+        (case operation
+          ((:agent-activities :command-activities)
+           (let ((states (loop for activity in (getf (rest event) :activities)
+                               collect (list (getf activity :id) (getf activity :state)))))
+             (unless (equal states (gethash operation (client-hub-activity-states hub)))
+               (setf (gethash operation (client-hub-activity-states hub)) states)
+               t)))
+          (otherwise
+           (not (null (member operation '(:turn :status :title :idle-details :pending-inputs
+                                          :program-status :local-activity)))))))
+      (not (null (member (first event) '(:state :record :status :work-finished :approval :approval-settled))))))
+
 (-> application-clients-publish (application list) null)
 (defun application-clients-publish (application event)
   "Sequence and retain EVENT, then queue it for every subscriber in that same order."
-  (let ((hub      (application-client-hub application))
-        (overflow nil))
+  (let ((hub       (application-client-hub application))
+        (changed-p nil)
+        (overflow  nil))
     (with-lock-held ((client-hub-lock hub))
-        (let ((portable
-                (append event
-                        (list :sequence        (incf (client-hub-event-sequence hub))
-                              :record-sequence (application-clients--record-sequence application)))))
-         (deque-push-back (client-hub-event-journal hub) portable)
-         (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
-               do (deque-pop-front (client-hub-event-journal hub)))
-         (dolist (client (client-hub-clients hub))
-           (when (and (channel-client--receives-p client portable)
-                      (channel-client--queue-event client portable))
-             (push client overflow)))))
+      (setf changed-p (client-hub--world-change-p hub event))
+      (let ((portable
+              (append event
+                      (list :sequence        (incf (client-hub-event-sequence hub))
+                            :record-sequence (application-clients--record-sequence application)))))
+       (deque-push-back (client-hub-event-journal hub) portable)
+       (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
+             do (deque-pop-front (client-hub-event-journal hub)))
+       (dolist (client (client-hub-clients hub))
+         (when (and (channel-client--receives-p client portable)
+                    (channel-client--queue-event client portable))
+           (push client overflow)))))
     (dolist (client overflow)
-      (channel-client-close client)))
+      (channel-client-close client))
+    (when changed-p
+      (client-hub-note-change hub)))
   nil)
 
 (-> application-presentation (application) (option channel-presentation))
@@ -392,7 +433,9 @@ cursor outside the retained tail is refused rather than skipping events."
                 (with-terminal-ui-locked (presentation)
                   (attach-appending)))
               (attach-appending)))))
-    (image-daemon:attachment-start (channel-client-attachment client)))
+    (image-daemon:attachment-start (channel-client-attachment client))
+    (when-let ((function (client-hub-change-function hub)))
+      (funcall function)))
   nil)
 
 (-> application-clients--follow-conversation (application) null)
@@ -562,7 +605,8 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
           (when (eq (channel-client-hub client) hub)
             (setf (client-hub-clients hub) (cl:delete client (client-hub-clients hub))
                   (channel-client-hub client) nil)
-            (sb-thread:condition-broadcast (client-hub-condition-variable hub)))))))
+            (sb-thread:condition-broadcast (client-hub-condition-variable hub))))
+        (client-hub-note-change hub))))
   nil)
 
 (defmethod image-daemon:attachment-packet-string ((transport channel-client-transport) event)

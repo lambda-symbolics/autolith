@@ -848,6 +848,9 @@
   test-world-repository-groups
   test-world-repository-group-refresh
   test-world-sidebar-gathers-apart
+  test-world-sidebar-change-feed
+  test-world-change-feed-shutdown
+  test-world-sidebar-runtime-invalidations
   test-world-sidebar-rows
   test-world-sidebar-home
   test-world-sidebar-tree

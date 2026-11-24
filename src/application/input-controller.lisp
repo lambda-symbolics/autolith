@@ -933,6 +933,8 @@ The caller must hold CONTROLLER's publication lock."
        (application-input-controller--publish-pending-publication-locked
         controller pending-publication nil))))
   (application-input-controller--note-turn controller)
+  ;; Queued Lisp work has no text preview, but still changes runtime queue counts.
+  (client-hub-note-change (application-client-hub (application-input-controller-application controller)))
   nil)
 
 (-> application-input-controller-turn-state (application-input-controller) list)
@@ -2458,10 +2460,16 @@ Work already running on the reader thread proceeds in place. Other threads
 pause a live reader for the call's dynamic extent. Without a live reader, call
 FUNCTION directly instead of starting one on exit. This is the owner installed
 as the terminal UI's exclusive-input function."
-  (if (application-input-controller-reader-live-p controller)
-      (input-pump-call-with-exclusive-input
-       (application-input-controller-input-pump controller) function)
-      (funcall function)))
+  (let ((hub (application-client-hub (application-input-controller-application controller))))
+    (if (application-input-controller-reader-live-p controller)
+        (unwind-protect
+             (input-pump-call-with-exclusive-input
+              (application-input-controller-input-pump controller)
+              (lambda ()
+                (client-hub-note-change hub)
+                (funcall function)))
+          (client-hub-note-change hub))
+        (funcall function))))
 
 (-> application-input-controller-call-with-reader-paused
     (application-input-controller function)
@@ -2473,8 +2481,14 @@ as the terminal UI's exclusive-input function."
     (error 'configuration-error
            :message
            "Terminal-owning work cannot pause the current input reader. Submit it without EVAL-NOW so it can run after the active turn."))
-  (input-pump-call-with-input-paused
-   (application-input-controller-input-pump controller) function))
+  (let ((hub (application-client-hub (application-input-controller-application controller))))
+    (unwind-protect
+         (input-pump-call-with-input-paused
+          (application-input-controller-input-pump controller)
+          (lambda ()
+            (client-hub-note-change hub)
+            (funcall function)))
+      (client-hub-note-change hub))))
 
 (-> application--command-authorization-items
     (string pathname &key (:sandbox-available-p boolean) (:external-tool-p boolean))

@@ -198,6 +198,10 @@ the process could fork, and a new thread serves the application again."))
                                                                                           :reader        world-server-condition-variable
                                                                                           :type          t
                                                                                           :documentation "Wakes the main thread for jobs and waiters for readiness and exits.")
+                                                                                         (change-feed
+                                                                                          :initform      (make-instance 'world-change-feed)
+                                                                                          :reader        world-server-change-feed
+                                                                                          :documentation "The world's reactive sidebar subscriptions and shared snapshots.")
                                                                                          (hosts
                                                                                           :initform      nil
                                                                                           :accessor      world-server-hosts
@@ -304,6 +308,7 @@ images use their own endpoint namespace."
     (unwind-protect
          (progn
            (setf (world-server-lease server) (world-server--lease-acquire bootstrapped))
+           (world-change-feed-start (world-server-change-feed server) bootstrapped)
            (world-compact-when-grown bootstrapped)
            (world-server--reconcile bootstrapped)
            (setf *world-message-unserved-function*
@@ -630,6 +635,7 @@ REASON, when given, is what each attached terminal is told before it lets go."
   "Stop SERVER's endpoint and the process services after its channels ended."
   (setf *world-message-unserved-function* nil)
   (world-server-stop server)
+  (world-change-feed-close (world-server-change-feed server))
   (dolist
       (startup
        (with-lock-held ((world-server-lock server))
@@ -712,10 +718,13 @@ REASON, when given, is what each attached terminal is told before it lets go."
     null)
 (defun world-server--handle-request (runtime request &key socket stream)
   "Answer one authenticated world REQUEST on STREAM."
-  (declare (ignore socket))
   (let* ((server    (world-endpoint-server runtime))
          (operation (getf (rest request) :operation))
          (arguments (getf (rest request) :arguments)))
+    (when (eq operation ':watch-world)
+      (world-change-feed-serve (world-server-change-feed server) :socket socket :stream stream
+                              :transport-lock (image-daemon:daemon-runtime-lock runtime))
+      (return-from world-server--handle-request nil))
     (flet ((answer ()
              "Dispatch the request and flush its response before releasing admission."
              (let ((response
@@ -756,6 +765,9 @@ REASON, when given, is what each attached terminal is told before it lets go."
      (list :ok :status (world-server-status server)))
     (:open
      (world-server-open server arguments))
+    (:changed
+     (world-change-notify (world-server-configuration server) :relay-p nil)
+     (list :ok))
     (:channels
      (list :ok :channels (world-server-channels server)))
     (:close
@@ -821,7 +833,14 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
 
 (-> world-server-channels (world-server) list)
 (defun world-server-channels (server)
-  "Return channel snapshots with authoritative host availability."
+  "Return shared channel snapshots with authoritative host availability."
+  (copy-tree
+   (world-change-feed-observe (world-server-change-feed server)
+                             (lambda () (world-server--channel-snapshots server)))))
+
+(-> world-server--channel-snapshots (world-server) list)
+(defun world-server--channel-snapshots (server)
+  "Collect hosted state once after a semantic world or runtime change."
   (loop for host in (world-server--hosts server)
         for health = (world-host-health host)
         for session = (application-channel-endpoint (world-host-application host))
@@ -830,6 +849,11 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
                     (list :world-terminal-status :version *daemon-protocol-version*
                           :session-id            (world-host-channel host)
                           :state health :host-health health :terminal-attached-p nil))))
+
+(defmethod (setf world-host-state) :after (value (host world-host))
+  "Invalidate the world's runtime snapshot when HOST changes lifecycle state."
+  (declare (ignore value))
+  (world-change-notify (application-configuration (world-host-application host))))
 
 (-> world-server-person-unread-changed (world-server) null)
 (defun world-server-person-unread-changed (server)
@@ -1610,6 +1634,8 @@ forgotten again when no thread could start."
   "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P.
 
 Without BOOT-SCREEN-P the channel opens without the boot screen."
+  (setf (client-hub-change-function (application-client-hub (world-host-application host)))
+        (lambda () (world-change-notify (application-configuration (world-host-application host)))))
   (setf (world-host-thread host)
         (make-thread
          (lambda ()

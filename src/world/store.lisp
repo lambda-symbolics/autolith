@@ -668,21 +668,26 @@ another world."
 UPDATE receives the world and returns the records to append and a result. The
 records are folded into a private copy and checked before publication, so a
 batch that would leave a dangling reference is refused whole."
-  (let ((pathname (configuration-world-path configuration)))
-    (with-recursive-lock-held (*world-lock*)
-      (handler-case
-          (sexp-store:log-follower-transact
-           (world--follower configuration)
-           (lambda (world)
-             (multiple-value-bind (records result) (funcall update world)
-               (when records
-                 (let ((preview (world--copy world)))
-                   (dolist (record records)
-                     (world--reduce-record pathname preview record))
-                   (world--check-integrity pathname preview :operation ':write)))
-               (values records result (not (null records))))))
-        (sexp-store:store-error (cause)
-          (world--store-error cause))))))
+  (let ((pathname  (configuration-world-path configuration))
+        (changed-p nil))
+    (multiple-value-prog1
+        (with-recursive-lock-held (*world-lock*)
+          (handler-case
+              (sexp-store:log-follower-transact
+               (world--follower configuration)
+               (lambda (world)
+                 (multiple-value-bind (records result) (funcall update world)
+                   (when records
+                     (let ((preview (world--copy world)))
+                       (dolist (record records)
+                         (world--reduce-record pathname preview record))
+                       (world--check-integrity pathname preview :operation ':write))
+                     (setf changed-p t))
+                   (values records result (not (null records))))))
+            (sexp-store:store-error (cause)
+              (world--store-error cause))))
+      (when changed-p
+        (world-change-notify configuration)))))
 
 
 ;;;; -- Reading --

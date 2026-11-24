@@ -195,10 +195,19 @@ The world server sets it while it runs, so a message wakes the agent it is for."
 
 UPDATE receives the deliveries and returns the replacement list, a result and
 whether to write."
-  (handler-case
-      (sexp-store:store-transact (world-inbox--store configuration channel-identifier) update)
-    (sexp-store:store-error (cause)
-      (world--store-error cause))))
+  (let ((changed-p nil))
+    (multiple-value-prog1
+        (handler-case
+            (sexp-store:store-transact
+             (world-inbox--store configuration channel-identifier)
+             (lambda (deliveries)
+               (multiple-value-bind (replacement result write-p) (funcall update deliveries)
+                 (setf changed-p (not (null write-p)))
+                 (values replacement result write-p))))
+          (sexp-store:store-error (cause)
+            (world--store-error cause)))
+      (when changed-p
+        (world-change-notify configuration)))))
 
 (-> world-inbox-deliveries (configuration string) list)
 (defun world-inbox-deliveries (configuration channel-identifier)

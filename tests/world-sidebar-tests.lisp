@@ -641,30 +641,57 @@
 
 (-> test-world-sidebar-gathers-apart () null)
 (defun test-world-sidebar-gathers-apart ()
-  "Test a started sidebar refreshes without waiting for a slow gather, then shows what it gathered."
-  (with-test-configuration (configuration)
-    (let ((sidebar (world-sidebar-create configuration))
-          (gate    (sb-thread:make-semaphore))
-          (inputs  (list :channels (list (make-instance 'channel :identifier "bwork1" :owner "user"
+  "Exercise nonblocking refresh and a second observation over the actual world change feed."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore server root))
+     (let ((sidebar (world-sidebar-create configuration))
+           (gate    (sb-thread:make-semaphore))
+           (gathers 0)
+           (inputs  (list :channels (list (make-instance 'channel :identifier "bwork1" :owner "user"
                                                                  :workspace "/w/" :created-at 1 :updated-at 1)))))
-      (test-call-with-function-replacements
-       (list (list 'world-sidebar--gather
-                   (lambda (panel)
-                     (declare (ignore panel))
-                     (sb-thread:wait-on-semaphore gate)
-                     inputs)))
-       (lambda ()
-         (world-sidebar-start sidebar)
-         (unwind-protect
-              (let ((start (get-internal-real-time)))
-                (test-assert (and (null (screen-panel-refresh sidebar))
-                                  (< (- (get-internal-real-time) start)
-                                     (* 1/20 internal-time-units-per-second)))
-                             "a refresh while the world is slow to read returns at once")
-                (sb-thread:signal-semaphore gate 1000)
-                (test-assert (and (task-tests--wait-until (lambda () (screen-panel-refresh sidebar)) 5)
-                                  (world-sidebar-tests--entry sidebar "bwork1"))
-                             "the entries gathered meanwhile show on a later refresh"))
-           (sb-thread:signal-semaphore gate 1000)
-           (world-sidebar-stop sidebar)))))
-    nil))
+       (test-call-with-function-replacements
+        (list (list 'world-sidebar--gather
+                    (lambda (panel)
+                      (declare (ignore panel))
+                      (sb-thread:wait-on-semaphore gate)
+                      (incf gathers)
+                      inputs)))
+        (lambda ()
+          (world-sidebar-start sidebar)
+          (unwind-protect
+               (progn
+                 (test-assert (task-tests--wait-until (lambda () (world-sidebar-connection sidebar)) 5)
+                              "the gatherer subscribes before observing the world")
+                 (let ((start (get-internal-real-time)))
+                   (test-assert (and (null (screen-panel-refresh sidebar))
+                                     (< (- (get-internal-real-time) start)
+                                        (* 1/20 internal-time-units-per-second)))
+                                "a refresh while the world is slow to read returns at once"))
+                 (sb-thread:signal-semaphore gate)
+                 (test-assert (and (task-tests--wait-until (lambda () (screen-panel-refresh sidebar)) 5)
+                                   (world-sidebar-tests--entry sidebar "bwork1") (= gathers 1))
+                              "the first subscribed observation appears on refresh")
+                 (setf inputs (list :channels (list (make-instance 'channel :identifier "bwork2" :owner "user"
+                                                                          :workspace "/w/" :created-at 2 :updated-at 2))))
+                 (world-change-notify configuration)
+                 (sb-thread:signal-semaphore gate)
+                 (test-assert (and (task-tests--wait-until (lambda () (screen-panel-refresh sidebar)) 5)
+                                   (world-sidebar-tests--entry sidebar "bwork2") (= gathers 2))
+                              "one invalidation causes the next observation without periodic gathering")
+                 (let ((previous (world-sidebar-gatherer sidebar)))
+                   (world-sidebar-stop sidebar)
+                   (setf inputs (list :channels (list (make-instance 'channel :identifier "bwork3" :owner "user"
+                                                                            :workspace "/w/" :created-at 3 :updated-at 3))))
+                   (world-sidebar-start sidebar)
+                   (sb-thread:signal-semaphore gate)
+                   (test-assert
+                    (and (task-tests--wait-until (lambda () (screen-panel-refresh sidebar)) 5)
+                         (= gathers 3)
+                         (world-sidebar-tests--entry sidebar "bwork3")
+                         (not (sb-thread:thread-alive-p previous))
+                         (not (eq previous (world-sidebar-gatherer sidebar))))
+                    "stopping reaps the old gatherer and restarting establishes a fresh subscription")))
+            (sb-thread:signal-semaphore gate 1000)
+            (world-sidebar-stop sidebar)))))))
+  nil)

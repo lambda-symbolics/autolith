@@ -7,10 +7,8 @@
 ;;; other channel beneath it, grouped by workspace, with what runs there, who
 ;;; is attached, and what arrived since this client last looked. Channel unread
 ;;; and mention baselines are client-local and start at the current counts.
-;;; A started sidebar gathers on its own thread, so reading the world, the
-;;; server and the inboxes never holds up the terminal's keystrokes; the
-;;; panel only takes what the thread gathered last. sidebar-panel.lisp draws
-;;; the entries and handles the panel's keys and clicks.
+;;; A started sidebar subscribes to world changes and gathers on its own thread.
+;;; The terminal takes the latest result without filesystem or endpoint reads.
 
 (defparameter *world-sidebar-share* 22/100
   "The share of the terminal's columns the sidebar takes left of the channel.")
@@ -28,7 +26,7 @@
   "How long the sidebar trusts what Git said about a workspace before asking again.")
 
 (defparameter *world-sidebar-refresh-seconds* 1
-  "How often the sidebar asks the world and the server what changed.")
+  "The retry delay after a failed subscription, and the unstarted panel's explicit observation interval.")
 
 (defclass world-sidebar ()
   ((configuration
@@ -141,7 +139,16 @@
     :initform      (make-condition-variable :name "Autolith world sidebar")
     :reader        world-sidebar-condition-variable
     :type          t
-    :documentation "Wakes the gatherer early when it is asked to stop.")
+    :documentation "Wakes the gatherer for changes, disconnection or shutdown.")
+   (connection
+    :initform nil :accessor world-sidebar-connection :type (option world-terminal-client-connection)
+    :documentation "The world's read-only notification subscription, owned by the gathering thread.")
+   (connection-closed-p
+    :initform t :accessor world-sidebar-connection-closed-p :type boolean
+    :documentation "Whether the feed reader reported disconnection.")
+   (dirty-p
+    :initform t :accessor world-sidebar-dirty-p :type boolean
+    :documentation "Whether a notification requires an observation; bursts coalesce under LOCK.")
    (gatherer
     :initform      nil
     :accessor      world-sidebar-gatherer
@@ -328,44 +335,107 @@
 (-> world-sidebar-start (world-sidebar) null)
 (defun world-sidebar-start (sidebar)
   "Gather SIDEBAR's entries on a thread of its own from now on, until `world-sidebar-stop'."
-  (unless (world-sidebar-gatherer sidebar)
-    (setf (world-sidebar-stopping-p sidebar) nil
-          (world-sidebar-gatherer sidebar)
-          (make-thread (lambda () (world-sidebar--gather-loop sidebar))
-                       :name "Autolith world sidebar")))
+  (with-lock-held ((world-sidebar-lock sidebar))
+    (unless (world-sidebar-gatherer sidebar)
+      (setf (world-sidebar-stopping-p sidebar) nil
+            (world-sidebar-gatherer sidebar)
+            (make-thread (lambda () (world-sidebar--gather-loop sidebar))
+                         :name "Autolith world sidebar"))))
   nil)
 
 (-> world-sidebar-stop (world-sidebar) null)
 (defun world-sidebar-stop (sidebar)
   "Stop SIDEBAR's gathering thread and wait for it; the panel gathers itself again afterwards."
-  (when-let ((thread (world-sidebar-gatherer sidebar)))
+  (multiple-value-bind (thread connection)
+      (with-lock-held ((world-sidebar-lock sidebar))
+        (when-let ((thread (world-sidebar-gatherer sidebar)))
+          (setf (world-sidebar-stopping-p sidebar) t
+                (world-sidebar-connection-closed-p sidebar) t)
+          (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar))
+          (values thread (shiftf (world-sidebar-connection sidebar) nil))))
+    (when thread
+      (when connection
+        (world-terminal-client-close connection))
+      (sb-thread:join-thread thread :default nil)
+      (with-lock-held ((world-sidebar-lock sidebar))
+        (when (eq thread (world-sidebar-gatherer sidebar))
+          (setf (world-sidebar-gatherer sidebar) nil)))))
+  nil)
+
+(-> world-sidebar--invalidate (world-sidebar list) null)
+(defun world-sidebar--invalidate (sidebar event)
+  "Wake SIDEBAR for a semantic change or a disconnected subscription."
+  (when (member (first event) '(:world-changed :closed))
     (with-lock-held ((world-sidebar-lock sidebar))
-      (setf (world-sidebar-stopping-p sidebar) t)
-      (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar)))
-    (sb-thread:join-thread thread :default nil)
-    (setf (world-sidebar-gatherer sidebar) nil))
+      (setf (world-sidebar-dirty-p sidebar) t)
+      (when (eq (first event) ':closed)
+        (setf (world-sidebar-connection-closed-p sidebar) t))
+      (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar))))
+  nil)
+
+(-> world-sidebar--close-feed (world-sidebar) null)
+(defun world-sidebar--close-feed (sidebar)
+  "Close SIDEBAR's subscription outside its state lock and reap the reader."
+  (when-let ((connection (with-lock-held ((world-sidebar-lock sidebar))
+                          (setf (world-sidebar-connection-closed-p sidebar) t)
+                          (shiftf (world-sidebar-connection sidebar) nil))))
+    (world-terminal-client-close connection))
+  nil)
+
+(-> world-sidebar--connect (world-sidebar) null)
+(defun world-sidebar--connect (sidebar)
+  "Subscribe before gathering, so a concurrent change requests another observation."
+  (world-sidebar--close-feed sidebar)
+  (let ((entry (or (world-client-entry (world-sidebar-configuration sidebar))
+                   (error 'world-terminal-error :operation ':watch-world
+                          :message                         "The world notification endpoint is unavailable."))))
+    (world-terminal-client-connect
+     entry :name "world sidebar" :operation ':watch-world :approves-p nil
+     :cancelled-p    (lambda () (world-sidebar-stopping-p sidebar))
+     :initialize-function
+     (lambda (connection)
+       (with-lock-held ((world-sidebar-lock sidebar))
+         (setf (world-sidebar-connection sidebar) connection
+               (world-sidebar-connection-closed-p sidebar) nil
+               (world-sidebar-dirty-p sidebar) t)))
+     :event-function (lambda (event) (world-sidebar--invalidate sidebar event))))
   nil)
 
 (-> world-sidebar--gather-loop (world-sidebar) null)
 (defun world-sidebar--gather-loop (sidebar)
-  "Gather SIDEBAR's entries every refresh interval until it is asked to stop.
-
-A failed gather publishes a stale observation; the next one tries again."
-  (loop
-    (let ((inputs (handler-case
-                      (list (world-sidebar--gather sidebar)
-                            (funcall (world-sidebar-clock-function sidebar)))
-                    (error (condition)
-                      (list ':failed (world-sidebar--failure-name condition))))))
-      (with-lock-held ((world-sidebar-lock sidebar))
-        (setf (world-sidebar-gathered sidebar) inputs)
-        (when (world-sidebar-stopping-p sidebar)
-          (return))
-        (condition-wait (world-sidebar-condition-variable sidebar)
-                        (world-sidebar-lock sidebar)
-                        :timeout *world-sidebar-refresh-seconds*)
-        (when (world-sidebar-stopping-p sidebar)
-          (return)))))
+  "Gather once after subscription and after coalesced changes; retry a failed connection."
+  (unwind-protect
+       (loop
+         (when (world-sidebar-stopping-p sidebar)
+           (return))
+         (handler-case
+             (progn
+               (when (world-sidebar-connection-closed-p sidebar)
+                 (world-sidebar--connect sidebar))
+               (with-lock-held ((world-sidebar-lock sidebar))
+                 (loop until (or (world-sidebar-stopping-p sidebar)
+                                 (world-sidebar-dirty-p sidebar))
+                       do (condition-wait (world-sidebar-condition-variable sidebar)
+                                          (world-sidebar-lock sidebar)))
+                 (when (world-sidebar-stopping-p sidebar)
+                   (return))
+                 (when (world-sidebar-connection-closed-p sidebar)
+                   (error 'world-terminal-error :operation ':watch-world
+                          :message                         "The world notification subscription disconnected."))
+                 (setf (world-sidebar-dirty-p sidebar) nil))
+               (let ((inputs (list (world-sidebar--gather sidebar)
+                                   (funcall (world-sidebar-clock-function sidebar)))))
+                 (with-lock-held ((world-sidebar-lock sidebar))
+                   (setf (world-sidebar-gathered sidebar) inputs))))
+           (error (condition)
+             (world-sidebar--close-feed sidebar)
+             (with-lock-held ((world-sidebar-lock sidebar))
+               (setf (world-sidebar-gathered sidebar)
+                     (list ':failed (world-sidebar--failure-name condition)))
+               (unless (world-sidebar-stopping-p sidebar)
+                 (condition-wait (world-sidebar-condition-variable sidebar)
+                                 (world-sidebar-lock sidebar) :timeout *world-sidebar-refresh-seconds*))))))
+    (world-sidebar--close-feed sidebar))
   nil)
 
 (-> world-sidebar--failure-name (condition) string)

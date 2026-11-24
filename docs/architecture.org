@@ -601,9 +601,14 @@ merges outcome fields into invocation metadata before rendering.
   The modeline's right side shows the transcript position
 - A client's screen gives the keyboard to its side panel or to the session.
   =src/world/sidebar.lisp= builds the sidebar's entries, one class per kind,
-  from what its thread gathered; =sidebar-panel.lisp= draws them and handles
-  the focused panel's keys, clicks and filter. Channel commands from the panel
-  reach the session as =(:channel-command NAME [ID])= events
+  after subscribing to the world's change feed. Committed catalogue and inbox
+  writes notify through =src/world/changes.lisp=; =transport/changes.lisp=
+  serves authenticated subscriptions and shares hosted snapshots by revision.
+  The sidebar thread coalesces invalidations and waits between changes,
+  reconnecting after a failed subscription. =sidebar-panel.lisp= draws the
+  gathered entries and handles the focused panel's keys, clicks and filter.
+  Channel commands from the panel reach the session as
+  =(:channel-command NAME [ID])= events
 - Full-screen workspaces such as the memory manager paint through the UI's own
   frame painter; a hosted channel sends their rows to its clients as a page
 - cl-colorist is used for ANSI capability detection
