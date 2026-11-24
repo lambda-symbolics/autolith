@@ -2,6 +2,23 @@
 
 ;;;; -- Durable Shell Capture Accounting --
 
+(defvar *shell-log-accounting-validated-roots* (make-hash-table :test #'equal)
+  "Data roots reconciled by this process; access under the shell-log lock.")
+
+(-> shell-log-accounting-reset () null)
+(defun shell-log-accounting-reset ()
+  "Discard inherited validation when a saved image starts a new process."
+  (with-lock-held (*shell-log-lock*)
+    (clrhash *shell-log-accounting-validated-roots*))
+  nil)
+
+(-> shell-log-accounting--validated-p (configuration) boolean)
+(defun shell-log-accounting--validated-p (configuration)
+  "Require a reconciliation in this process before trusting a persisted total."
+  (eql (current-process-id)
+       (gethash (namestring (config :data-root configuration))
+                *shell-log-accounting-validated-roots*)))
+
 (-> shell-log-accounting--path (configuration) pathname)
 (defun shell-log-accounting--path (configuration)
   "Return the private accounting checkpoint protected by the shell-log lock."
@@ -12,11 +29,11 @@
 (-> shell-log-accounting--read (configuration) list)
 (defun shell-log-accounting--read (configuration)
   "Read a bounded checkpoint, returning NIL when a validated rebuild is needed."
-  (let* ((path (shell-log-accounting--path configuration))
+  (let* ((path   (shell-log-accounting--path configuration))
          (status (platform-path-status *platform* path :follow-links-p nil))
-         (state (when (and status (eq (platform-file-status-kind status) ':file)
-                           (<= (platform-file-status-size status) 4096))
-                  (handler-case (task-continuity--read path) (error () nil)))))
+         (state  (when (and status (eq (platform-file-status-kind status) ':file)
+                            (<= (platform-file-status-size status) 4096))
+                   (handler-case (task-continuity--read path) (error () nil)))))
     (when (and (proper-list-p state) (evenp (length state))
                (getf state :version) (not (eql (getf state :version) 1)))
       (shell-log--fail "Unsupported shell capture accounting version." path))
@@ -69,23 +86,24 @@
 The previous charge is read from the durable manifest, not a measured heap copy.
 A missing or interrupted checkpoint is rebuilt by retention before admission."
   (flet ((write-locked ()
-           (let* ((path (shell-log--manifest-path directory))
-                  (exists-p (probe-file (shell-log--safe-path configuration path)))
+           (let* ((path            (shell-log--manifest-path directory))
+                  (exists-p        (probe-file (shell-log--safe-path configuration path)))
                   (previous-status (when exists-p
                                      (platform-path-status *platform* path :follow-links-p nil)))
-                  (previous (when (and previous-status
-                                       (<= (platform-file-status-size previous-status)
-                                           *shell-log-manifest-byte-limit*))
-                              (handler-case (task-continuity--read path) (error () nil))))
-                  (old-charge (if exists-p
-                                  (and (proper-list-p previous) (evenp (length previous))
-                                       (getf previous :quota-charge))
-                                  0))
-                  (charge (shell-log-accounting--charge configuration directory metadata))
-                  (state (shell-log-accounting--read configuration))
-                  (clean-p (and state (getf state :clean-p)
-                                (typep old-charge '(integer 0))
-                                (<= old-charge (getf state :bytes)))))
+                  (previous        (when (and previous-status
+                                              (<= (platform-file-status-size previous-status)
+                                                  *shell-log-manifest-byte-limit*))
+                                     (handler-case (task-continuity--read path) (error () nil))))
+                  (old-charge      (if exists-p
+                                       (and (proper-list-p previous) (evenp (length previous))
+                                            (getf previous :quota-charge))
+                                       0))
+                  (charge          (shell-log-accounting--charge configuration directory metadata))
+                  (state           (shell-log-accounting--read configuration))
+                  (clean-p         (and (shell-log-accounting--validated-p configuration)
+                                        state (getf state :clean-p)
+                                        (typep old-charge '(integer 0))
+                                        (<= old-charge (getf state :bytes)))))
              (when (and clean-p (not exists-p)
                         (> (+ (getf state :bytes) charge) *shell-log-retention-byte-limit*))
                (shell-log--fail "Private shell log storage has no capacity for this reservation." directory))
@@ -137,6 +155,11 @@ A missing or interrupted checkpoint is rebuilt by retention before admission."
   (shell-log-accounting--publish
    configuration (list :version 1 :bytes total :clean-p t
                        :maintained-at (get-universal-time)))
+  (when (>= (hash-table-count *shell-log-accounting-validated-roots*) 64)
+    (clrhash *shell-log-accounting-validated-roots*))
+  (setf (gethash (namestring (config :data-root configuration))
+                 *shell-log-accounting-validated-roots*)
+        (current-process-id))
   nil)
 
 (-> shell-log-call-with-allocation-lock (configuration (integer 0) function) t)
@@ -148,7 +171,8 @@ No capture is pruned and no evidence snapshot is needed on the ordinary path."
   (multiple-value-bind (value admitted-p)
       (with-shell-log-lock (configuration)
         (let ((state (shell-log-accounting--read configuration)))
-          (when (and state (getf state :clean-p)
+          (when (and (shell-log-accounting--validated-p configuration)
+                     state (getf state :clean-p)
                      (<= (+ (getf state :bytes) reservation) *shell-log-retention-byte-limit*))
             (values (funcall function) t))))
     (if admitted-p

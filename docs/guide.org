@@ -1974,8 +1974,8 @@ pruning protection.
 
 For a new command, capacity is normally reserved without reading retained logs.
 Age-based retention and receipt backfill run in bounded background batches.
-A missing or interrupted accounting checkpoint requires a validated scan before
-new storage can be reserved.
+A new process or a missing or interrupted accounting checkpoint requires a
+validated scan before new storage can be reserved.
 
 Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=
 and =*shell-log-retention-age*= in trusted configuration. Session export

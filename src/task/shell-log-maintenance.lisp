@@ -13,6 +13,7 @@
 
 (defvar *shell-log-maintenance-state-lock* (make-lock "shell log maintenance cursors")
   "Protect the cursor registry across independent world-server threads.")
+
 (defstruct shell-log-maintenance-state
   "A sweep cursor with no filesystem or knowledge locks held between batches."
   (directories nil :type list)
@@ -73,16 +74,17 @@
 
 Directory discovery and receipt backfill run outside the artifact lock. Each
 capture is authorized separately, so ordinary allocations can run between them."
-  (let* ((key (namestring (config :data-root configuration)))
-         (cursor (with-lock-held (*shell-log-maintenance-state-lock*)
-                   (gethash key *shell-log-maintenance-states*)))
+  (let* ((key         (namestring (config :data-root configuration)))
+         (cursor      (with-lock-held (*shell-log-maintenance-state-lock*)
+                        (gethash key *shell-log-maintenance-states*)))
          (completed-p nil))
     (unwind-protect
          (progn
            (unless cursor
              (when (with-shell-log-lock (configuration)
                      (let ((state (shell-log-accounting--read configuration)))
-                       (when (and state (getf state :clean-p)
+                       (when (and (shell-log-accounting--validated-p configuration)
+                                  state (getf state :clean-p)
                                   (>= (- (get-universal-time) (getf state :maintained-at))
                                       *shell-log-maintenance-interval*))
                          (setf (getf state :maintained-at) (get-universal-time))
@@ -95,31 +97,31 @@ capture is authorized separately, so ordinary allocations can run between them."
            (when cursor
              (loop repeat *shell-log-maintenance-batch-size*
                    while (shell-log-maintenance-state-directories cursor)
-                   for directory = (pop (shell-log-maintenance-state-directories cursor))
-                   do (if (shell-log-maintenance-state-trimming-p cursor)
-                          (shell-log-maintenance--trim configuration directory)
-                          (let ((tombstone (shell-log-maintenance--visit configuration directory)))
-                            (when tombstone
-                              (push tombstone (shell-log-maintenance-state-tombstones cursor))))))
+                   do (let ((directory (pop (shell-log-maintenance-state-directories cursor))))
+                        (if (shell-log-maintenance-state-trimming-p cursor)
+                            (shell-log-maintenance--trim configuration directory)
+                            (let ((tombstone (shell-log-maintenance--visit configuration directory)))
+                              (when tombstone
+                                (push tombstone (shell-log-maintenance-state-tombstones cursor)))))))
              (unless (shell-log-maintenance-state-directories cursor)
                (if (shell-log-maintenance-state-trimming-p cursor)
                  (with-lock-held (*shell-log-maintenance-state-lock*)
                    (remhash key *shell-log-maintenance-states*))
-                   (let* ((entries (sort (shell-log-maintenance-state-tombstones cursor)
-                                         #'< :key (lambda (entry) (getf (second entry) :pruned-at 0))))
-                          (excess (max 0 (- (length entries) *shell-log-tombstone-count-limit*))))
-                     (setf (shell-log-maintenance-state-trimming-p cursor) t
-                           (shell-log-maintenance-state-tombstones cursor) nil
-                           (shell-log-maintenance-state-directories cursor)
-                           (loop for (directory metadata) in entries
-                                 for index from 0
-                                 when (or (< index excess)
-                                          (> (- (get-universal-time) (getf metadata :pruned-at 0))
-                                             *shell-log-tombstone-age*))
-                                   collect directory))
-                     (unless (shell-log-maintenance-state-directories cursor)
-                     (with-lock-held (*shell-log-maintenance-state-lock*)
-                       (remhash key *shell-log-maintenance-states*)))))))
+                 (let* ((entries (sort (shell-log-maintenance-state-tombstones cursor)
+                                       #'< :key (lambda (entry) (getf (second entry) :pruned-at 0))))
+                        (excess  (max 0 (- (length entries) *shell-log-tombstone-count-limit*))))
+                   (setf (shell-log-maintenance-state-trimming-p cursor) t
+                         (shell-log-maintenance-state-tombstones cursor) nil
+                         (shell-log-maintenance-state-directories cursor)
+                         (loop for (directory metadata) in entries
+                               for index from 0
+                               when (or (< index excess)
+                                        (> (- (get-universal-time) (getf metadata :pruned-at 0))
+                                           *shell-log-tombstone-age*))
+                                 collect directory))
+                   (unless (shell-log-maintenance-state-directories cursor)
+                    (with-lock-held (*shell-log-maintenance-state-lock*)
+                      (remhash key *shell-log-maintenance-states*)))))))
            (setf completed-p t)
            (not (null (with-lock-held (*shell-log-maintenance-state-lock*)
                         (gethash key *shell-log-maintenance-states*)))))

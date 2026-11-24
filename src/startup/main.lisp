@@ -1828,6 +1828,7 @@ The line is colored as a failure when STREAM is a terminal that allows color."
 (defun main (arguments)
   "Run the Autolith command described by ARGUMENTS with stable exit classification."
   (main--restore-caller-asdf-environment)
+  (shell-log-accounting-reset)
   (handler-case
       (main-dispatch arguments)
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
