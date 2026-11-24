@@ -688,6 +688,13 @@
   test-local-source-tree-registration
   test-directory-user-init)
 
+(define-test-suite client-site-init
+  test-client-site-init-load
+  test-client-site-init-failure
+  test-client-site-init-policy
+  test-client-site-init-start-session
+  test-client-site-init-server-arguments)
+
 (define-test-suite agenda
   test-agenda-persistence-and-transport
   test-agenda-unbounded-item-count

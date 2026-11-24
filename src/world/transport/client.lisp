@@ -632,7 +632,9 @@ A detach or connection loss has no EXIT but still names the channel to reopen."
 
 (-> world-terminal--client-configuration () configuration)
 (defun world-terminal--client-configuration ()
-  "Create a world-terminal client configuration and ensure its directories exist."
+  "Create a world-terminal client configuration and ensure its directories exist.
+
+It does not load the site layer: these commands build no theme table or screen."
   (let ((configuration (configuration-create :defer-provider-validation-p t)))
     (configuration-ensure-directories configuration)
     (world-terminal-reconcile-endpoint-records configuration)
