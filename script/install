@@ -277,7 +277,13 @@ case $os in
     ;;
   Darwin)
     case $arch in
-      x86_64|amd64) platform=x86_64-darwin ;;
+      x86_64|amd64)
+        if [ "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
+          platform=arm64-darwin
+        else
+          platform=x86_64-darwin
+        fi
+        ;;
       arm64|aarch64) platform=arm64-darwin ;;
     esac
     ;;

@@ -1455,6 +1455,17 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                                               :separator '(#\Newline #\Return))
                            :test #'string=)
                      (format nil "Darwin release probe reports ~A" line))))
+    (dolist (translation '(:translated :native :unavailable :failed))
+      (release-script-tests--install-darwin-host-tools host-bin "x86_64" translation)
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring launcher) "--autolith-release-probe")
+           :environment environment :ignore-error-status t)
+        (declare (ignore output))
+        (test-assert (eq (zerop status) (eq translation ':translated))
+                     (format nil "An arm64 release accepts a translated Intel caller, not a native Intel host (~A): ~A"
+                             translation error-output))))
+    (release-script-tests--install-darwin-host-tools host-bin)
     (let ((library
             (merge-pathnames "lib/libcolorlisp-tree-sitter.dylib"
                              release-root)))
@@ -1483,6 +1494,15 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
              (uiop:split-string output :separator '(#\Newline #\Return))
              :test #'string=)
        "the Darwin x86-64 release launcher reports its platform"))
+    (release-script-tests--install-darwin-host-tools host-bin "x86_64" ':translated)
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring launcher) "--autolith-release-probe")
+         :environment environment :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert (zerop status)
+                   (format nil "An Intel release also runs through Rosetta: ~A" error-output)))
+    (release-script-tests--install-darwin-host-tools host-bin "x86_64")
     (release-script-tests--record
      (merge-pathnames "RELEASE" release-root)
      (format nil "v~A" *release-script-tests-version*))
@@ -1730,19 +1750,32 @@ esac
   nil)
 
 (-> release-script-tests--install-darwin-host-tools
-    (pathname &optional string)
+    (pathname &optional string (member :native :translated :unavailable :failed))
     pathname)
 (defun release-script-tests--install-darwin-host-tools
-    (directory &optional (architecture "arm64"))
+    (directory &optional (architecture "arm64") (translation ':native))
   "Install fixture commands reporting and satisfying a Darwin release target."
   (let* ((directory (uiop:ensure-directory-pathname directory))
          (uname     (merge-pathnames "uname" directory))
+         (sysctl    (merge-pathnames "sysctl" directory))
          (chmod     (merge-pathnames "chmod" directory))
          (move      (merge-pathnames "mv" directory)))
     (test-write-text
      uname
      (format nil "#!/bin/sh~%case ${1:-} in~%  -s) printf 'Darwin\\n' ;;~%  -m) printf '~A\\n' ;;~%  *) exit 64 ;;~%esac~%"
              architecture))
+    (test-write-text
+     sysctl
+     (format nil "#!/bin/sh~%~A~%"
+             (ecase translation
+               (:native
+                "printf '0\\n'")
+               (:translated
+                "printf '1\\n'")
+               (:unavailable
+                "exit 0")
+               (:failed
+                "exit 1"))))
     (test-write-text chmod "#!/bin/sh
 recursive=
 if [ \"${1:-}\" = -R ]; then
@@ -1775,7 +1808,7 @@ else
   exec /bin/mv \"$@\"
 fi
 ")
-    (dolist (command (list uname chmod move))
+    (dolist (command (list uname sysctl chmod move))
       (release-script-tests--chmod "755" command))
     directory))
 
@@ -1937,7 +1970,15 @@ fi
       (release-script-tests--run
        (list (namestring installer) "--version" tag)
        :environment base-environment
-       :output      nil)))
+       :output      nil)
+      (release-script-tests--install-darwin-host-tools fixture-bin "x86_64" ':translated)
+      (release-script-tests--run
+       (list (namestring installer) "--version" tag)
+       :environment base-environment :output nil)
+      (test-assert
+       (string= (release-script-tests--readlink (merge-pathnames "current" install-root))
+                (format nil "releases/~A-arm64-darwin" tag))
+       "An installer launched through Rosetta selects the native arm64 release.")))
   nil)
 
 (-> release-script-tests--update-handoff (pathname pathname) null)

@@ -34,6 +34,10 @@ The shell installer selects a package for your operating system and CPU:
 - macOS: Intel and Apple silicon
 - FreeBSD, NetBSD, and OpenBSD: x86-64
 
+On Apple silicon, use the native arm64 release even when installing from a
+Rosetta shell. You can also start that release from a translated application,
+such as AUI's =Try again= after stopping the server in Terminal.
+
 Make sure that =~/.local/bin= is on your =PATH= if you use the default command
 location. Install OpenSSL before running the script. On Linux, also install
 Bubblewrap (=bwrap=) for filesystem and network isolation.

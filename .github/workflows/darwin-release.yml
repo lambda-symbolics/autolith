@@ -1,0 +1,84 @@
+name: Darwin release launcher
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - bin/autolith-release
+      - script/install
+      - .github/workflows/darwin-release.yml
+  pull_request:
+    paths:
+      - bin/autolith-release
+      - script/install
+      - .github/workflows/darwin-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darwin-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  translated-caller:
+    name: arm64 release from native and Rosetta callers
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rosetta and verify both caller architectures
+        run: |
+          test "$(uname -m)" = arm64
+          sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          # Expand these probes in the translated shell, not its native parent.
+          # shellcheck disable=SC2016
+          /usr/bin/arch -x86_64 /bin/bash -c '
+            uname -m
+            test "$(uname -m)" = x86_64
+            test "$(/usr/sbin/sysctl -in sysctl.proc_translated)" = 1
+          '
+
+      - name: Start the packaged server from a translated reconnect caller
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive_directory="$RUNNER_TEMP/darwin-release-archive"
+          release_root="$RUNNER_TEMP/darwin-release"
+          mkdir -p "$archive_directory" "$release_root"
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern '*-arm64-darwin.tar.gz*' --dir "$archive_directory"
+          (
+            cd "$archive_directory"
+            shasum -a 256 --check ./*.sha256
+          )
+          archives=("$archive_directory"/*.tar.gz)
+          test "${#archives[@]}" = 1
+          tar -xzf "${archives[0]}" -C "$release_root" --strip-components=1
+          launcher="$release_root/bin/autolith"
+          chmod u+w "$release_root/bin" "$launcher"
+          cp bin/autolith-release "$launcher"
+          chmod +x "$launcher"
+          file "$release_root/runtime/bin/sbcl"
+          export HOME="$RUNNER_TEMP/darwin-release-home"
+          export XDG_CONFIG_HOME="$HOME/config"
+          export XDG_DATA_HOME="$HOME/data"
+          export XDG_STATE_HOME="$HOME/state"
+          export XDG_CACHE_HOME="$HOME/cache"
+          export AUTOLITH_NO_UPDATE_CHECK=1
+          mkdir -p "$HOME"
+          trap '"$launcher" stop || true' EXIT
+          /usr/bin/arch -arm64 /bin/bash "$launcher" --autolith-release-probe
+          /usr/bin/arch -arm64 /bin/bash "$launcher" start
+          "$launcher" status
+          "$launcher" stop
+          /usr/bin/arch -x86_64 /bin/bash "$launcher" \
+            --autolith-release-probe | tee "$RUNNER_TEMP/translated-probe"
+          grep -Fx 'platform=arm64-darwin' "$RUNNER_TEMP/translated-probe"
+          # AUI Try again invokes this installed launcher after a native stop-server.
+          /usr/bin/arch -x86_64 /bin/bash "$launcher" start
+          "$launcher" status
+          "$launcher" stop

@@ -333,8 +333,12 @@ else
     fail "RELEASE lacks platform identity for this release variant."
   release_platform=$host_platform
 fi
-[[ $release_platform == "$host_platform" ]] ||
-  fail "RELEASE platform $release_platform does not match host $host_platform."
+if [[ $release_platform != "$host_platform" ]]; then
+  # A translated caller reports x86_64 even when the arm64 runtime can run natively.
+  [[ $release_platform == arm64-darwin && $host_platform == x86_64-darwin &&
+     $(sysctl -in sysctl.proc_translated 2>/dev/null || true) == 1 ]] ||
+    fail "RELEASE platform $release_platform does not match host $host_platform."
+fi
 [[ -x $sbcl_command ]] || fail "the bundled SBCL runtime is missing."
 [[ -f $runtime_source_root/version.lisp-expr ]] ||
   fail "the bundled SBCL source is missing."
