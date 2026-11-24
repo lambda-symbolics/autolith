@@ -128,3 +128,14 @@ Or do *autolith update* in your shell.
 | [[https://github.com/DeadMeme5441/fractal-engine][fractal-engine]] | [[https://github.com/sm-th/oh-my-lisp][oh-my-lisp]]  |
 | [[https://github.com/ghuntley/jiti][jiti]]           | [[https://github.com/1hachem/lisptc][lisptc]]      |
 | [[https://github.com/mattneel/elixos][elixos]]         |             |
+
+* Screenshots
+
+#+ATTR_HTML: :alt Autolith Lisp Machine startup screen
+[[file:docs/screenshots/autolith-boot.png]]
+
+#+ATTR_HTML: :alt Autolith session showing tool calls, an active plan, and the channel sidebar
+[[file:docs/screenshots/autolith-session.png]]
+
+#+ATTR_HTML: :alt Autolith welcome screen beside a list of channels
+[[file:docs/screenshots/autolith-channels.png]]
