@@ -8,6 +8,9 @@
 (defparameter *procedure-example-limit* 8
   "The most recent turns one procedure is learned from.")
 
+(defparameter *procedure-parameter-limit* 8
+  "The most parameters of a mined procedure.")
+
 (defparameter *procedure-output-leaf-limit* 256
   "The most result fields searched for values later calls reuse.")
 

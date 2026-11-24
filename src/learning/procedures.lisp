@@ -2,12 +2,6 @@
 
 ;;;; -- Learned Procedures --
 
-(defparameter *procedure-step-limit* 32
-  "The most tool calls one procedure makes.")
-
-(defparameter *procedure-parameter-limit* 8
-  "The most parameters one procedure takes.")
-
 (defparameter *procedure-suspension-limit* 2
   "How many consecutive failed runs suspend an active procedure.")
 
@@ -82,12 +76,11 @@
               (steps      (getf properties :steps)))
          (and (knowledge-rule-name-p (getf properties :id))
               (proper-list-p parameters)
-              (<= (length parameters) *procedure-parameter-limit*)
               (every #'procedure-parameter-p parameters)
               (let ((names (mapcar (lambda (parameter) (getf parameter :name)) parameters)))
                 (and (= (length names) (length (remove-duplicates names :test #'string=)))
                      (proper-list-p steps)
-                     (<= 1 (length steps) *procedure-step-limit*)
+                     steps
                      (loop for step in steps
                            for index from 0
                            always (and (plist-schema-p step :keyword-keys-p nil :allow-duplicate-keys t)
