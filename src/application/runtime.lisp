@@ -3985,6 +3985,23 @@ continuation turns, so the notice names what woke the model."
     (error ()
       nil)))
 
+(-> configuration-status-details (configuration &key (:inbox-p boolean)) terminal-styled-text)
+(defun configuration-status-details (configuration &key inbox-p)
+  "Return the model, effort, Fast mode and repository spans for CONFIGURATION."
+  (let ((branch (application--git-branch (config :working-directory configuration))))
+    (append
+     (if inbox-p
+         (list (terminal-span ':status-model "inbox"))
+         (list (terminal-span ':status-model (config :model configuration))
+               (terminal-span ':status-dim " · ")
+               (terminal-span ':status-effort (config :reasoning-effort configuration))))
+     (when (and (not inbox-p) (configuration-codex-fast-mode-active-p configuration))
+       (list (terminal-span ':status-dim " · ")
+             (terminal-span ':status-accent "FAST")))
+     (when branch
+       (list (terminal-span ':status-dim " · git ")
+             (terminal-span ':status-branch branch))))))
+
 (-> application--status-details (application) terminal-styled-text)
 (defun application--status-details (application)
   "Return cached-phase inbox, session, model, effort, Fast mode, and repository status spans.
@@ -4004,27 +4021,12 @@ other channels show their model, since no agent reads it."
              (and conversation
                   (or title
                       (conversation-identifier-display
-                       (conversation-identifier conversation)))))
-           (branch
-             (application--git-branch
-              (config :working-directory configuration))))
+                       (conversation-identifier conversation))))))
       (append
        (when (plusp unread)
          (list (terminal-span ':status-accent (format nil "~D unread" unread))
                (terminal-span ':status-dim " · ")))
-       (if inbox-p
-           (list (terminal-span ':status-model "inbox"))
-           (list (terminal-span ':status-model
-                                (config :model configuration))
-                 (terminal-span ':status-dim " · ")
-                 (terminal-span ':status-effort
-                                (config :reasoning-effort configuration))))
-       (when (and (not inbox-p) (configuration-codex-fast-mode-active-p configuration))
-         (list (terminal-span ':status-dim " · ")
-               (terminal-span ':status-accent "FAST")))
-       (when branch
-         (list (terminal-span ':status-dim " · git ")
-               (terminal-span ':status-branch branch)))
+       (configuration-status-details configuration :inbox-p (not (null inbox-p)))
        (when session-label
          (list (terminal-span ':status-dim " · ")
                (terminal-span (if title ':status-accent ':status-dim)

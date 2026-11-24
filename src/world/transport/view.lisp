@@ -850,11 +850,23 @@ leaves the channel running and gives the terminal back."
               (terminal-ui--paint-live ui))))))
   nil)
 
+(-> channel-view--submit-initial-input (channel-view list) null)
+(defun channel-view--submit-initial-input (view input)
+  "Send the welcome submission through VIEW, keeping it editable if the local send is refused."
+  (when input
+    (let ((ui      (channel-view-ui view))
+          (payload (getf input :payload)))
+      (terminal-ui-set-input ui payload)
+      (when (input-port-apply view (getf input :action) payload)
+        (terminal-ui-set-input ui ""))))
+  nil)
+
 (-> channel-view-run
     (channel-view &key (:attached-function (option function)) (:notice (option string))
-                  (:client-version (option string)) (:boot-p boolean) (:wait-function (option function)))
+                  (:client-version (option string)) (:boot-p boolean) (:wait-function (option function))
+                  (:initial-input list))
     list)
-(defun channel-view-run (view &key attached-function notice client-version boot-p wait-function)
+(defun channel-view-run (view &key attached-function notice client-version boot-p wait-function initial-input)
   "Attach VIEW to its channel and serve its terminal until it ends, returning why.
 
 The result is what the client's main loop reads: (:SWITCH :SESSION-ID ID) to
@@ -898,6 +910,7 @@ starts the session."
                (terminal-ui-start ui))
            (channel-view--restore-draft view)
            (setf draft-ready-p t)
+           (channel-view--submit-initial-input view initial-input)
            (loop until (with-lock-held ((channel-view-state-lock view))
                          (channel-view-exit view))
                  do (channel-view--step view))

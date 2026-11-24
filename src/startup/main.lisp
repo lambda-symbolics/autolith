@@ -969,10 +969,10 @@ pump is joined before returning; queued interrupts check their retired scope."
 (-> main--attach-world-channel
     (configuration string keyword
      &key (:screen world-terminal-screen) (:notice (option string)) (:client-version (option string))
-          (:attached-function (option function)) (:wait-p boolean))
+          (:attached-function (option function)) (:wait-p boolean) (:initial-input list))
     list)
 (defun main--attach-world-channel
-    (configuration identifier mode &key screen notice client-version attached-function wait-p)
+    (configuration identifier mode &key screen notice client-version attached-function wait-p initial-input)
   "Show channel IDENTIFIER on SCREEN until this terminal leaves it, and return why it left.
 
 The terminal follows the channel as a client that renders it: a view applies
@@ -982,13 +982,14 @@ and so is a note when CLIENT-VERSION differs from the server's. A screen that
 still shows the boot panel keeps it until the user starts the session."
   (channel-view-run (channel-view-create configuration identifier screen
                                          :read-only-p (eq mode ':read-only))
-                    :notice            notice
-                    :client-version    client-version
-                    :boot-p            (not (null (world-terminal-screen-boot-ui screen)))
-                    :wait-function     (when wait-p
-                                         (lambda (function)
-                                           (main--call-with-channel-wait screen function)))
-                    :attached-function attached-function))
+                    :notice             notice
+                    :client-version     client-version
+                    :boot-p             (not (null (world-terminal-screen-boot-ui screen)))
+                    :wait-function      (when wait-p
+                                          (lambda (function)
+                                            (main--call-with-channel-wait screen function)))
+                     :attached-function attached-function
+                     :initial-input     initial-input))
 
 (-> main--welcome-agent-counts (world string) (values integer integer))
 (defun main--welcome-agent-counts (world directory)
@@ -1005,14 +1006,15 @@ still shows the boot panel keeps it until the user starts the session."
 
 (-> main--welcome-frame
     (world-terminal-screen string &key (:total (option integer)) (:local (option integer))
-     (:immutable-p boolean) (:recovered-p boolean) (:tip list)
+     (:immutable-p boolean) (:recovered-p boolean) (:tip list) (:height-limit (option integer))
      (:recovery-conversation-id (option string)) (:notice (option string)))
     clinedi:frame-snapshot)
 (defun main--welcome-frame
-    (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice)
+    (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice height-limit)
   "Render safe client startup information centered in the current pane."
   (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
-    (let* ((content-width (clamp width 1 88))
+    (let* ((height        (if height-limit (min height height-limit) height))
+           (content-width (clamp width 1 88))
            (terminal      (world-terminal-screen-terminal screen))
            (title
              (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*))))
@@ -1080,60 +1082,33 @@ still shows the boot panel keeps it until the user starts the session."
 (-> main--welcome-world-client
     (world-terminal-screen configuration string
      &key (:immutable-p boolean) (:recovery-diagnosis (option string))
-     (:recovery-conversation-id (option string)) (:notice (option string)))
+     (:recovery-conversation-id (option string)) (:notice (option string))
+     (:launch list) (:input t))
     (option list))
 (defun main--welcome-world-client
-    (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice)
-  "Read client welcome input, releasing its resize watch before channel loading."
-  (let ((terminal     (world-terminal-screen-terminal screen))
-        (tip          (application--startup-tip-spans))
-        (resize-watch nil)
-        (next-refresh 0)
-        (total        nil)
-        (local        nil))
-    (unwind-protect
-         (progn
-           (terminal-start terminal)
-           ;; Measure the banner in the transcript pane, not the fullscreen boot panel.
-           (with-lock-held ((world-terminal-screen-lock screen))
-             (world-terminal-screen--take-whole-screen screen nil))
-           (setf resize-watch
-                 (platform-watch-terminal-resize *platform*
-                  (lambda () (setf *terminal-resize-pending-p* t))))
-           (loop
-             (when (shiftf *terminal-resize-pending-p* nil)
-               (multiple-value-bind (rows columns) (terminal-current-size)
-                 (terminal-set-dimensions terminal columns :rows rows))
-               (world-terminal-screen-resized screen))
-             (when (>= (get-internal-real-time) next-refresh)
-               (setf next-refresh (+ (get-internal-real-time) internal-time-units-per-second))
-               (handler-case
-                   (multiple-value-setq (total local)
-                     (main--welcome-agent-counts (world-load configuration) directory))
-                 (world-error () (setf total nil local nil))))
-             (world-terminal-screen-show-frame
-              screen (main--welcome-frame
-                      screen directory :total total :local local :immutable-p immutable-p
-                       :recovered-p (not (null recovery-diagnosis))
-                      :tip tip :recovery-conversation-id recovery-conversation-id :notice notice)
-              :cursor-visible-p nil)
-             (world-terminal-screen-tick screen)
-             (cond
-               ((terminal-input-ready-p terminal)
-                (let ((event (world-terminal-screen-filter-event screen (terminal-read-event terminal))))
-                  (cond
-                    ((member event '(:interrupt :end-of-input :stream-end))
-                     (return nil))
-                    ((and (consp event) (eq (first event) ':switch))
-                     (return event))
-                    ((or (member event '(:submit :enter :return)) (eql event #\Return) (eql event #\Newline))
-                     (return (list ':switch :new-p t)))
-                    ((eq event ':resize)
-                     (setf *terminal-resize-pending-p* t)))))
-               (t
-                (sleep 0.05)))))
-      (when resize-watch
-        (platform-unwatch-terminal-resize *platform* resize-watch)))))
+    (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice launch input)
+  "Show startup information above the normal composer and retain its first input for a new channel."
+  (let* ((overrides     (loop for key in '(:model :provider)
+                              for value = (getf launch key)
+                              when value append (list key value)))
+         (configuration (apply #'configuration-copy configuration
+                               :working-directory (pathname directory) overrides))
+         (tip           (application--startup-tip-spans))
+         (total         nil)
+         (local         nil))
+    (handler-case
+        (multiple-value-setq (total local)
+          (main--welcome-agent-counts (world-load configuration) directory))
+      (world-error ()
+        nil))
+    (welcome-view-run
+     screen configuration
+     (lambda (height)
+       (main--welcome-frame screen directory :total total :local local :immutable-p immutable-p
+                            :recovered-p (not (null recovery-diagnosis)) :tip tip
+                            :recovery-conversation-id recovery-conversation-id :notice notice
+                            :height-limit height))
+     :input input)))
 
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
@@ -1195,18 +1170,22 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                  with restoring-p = nil
                  with client-version = *autolith-version*
                  with notice = nil
+                 with pending-input = nil
                  do (let ((exit
                            (handler-case
                              (if (null session-id)
                                  (main--welcome-world-client
                                   screen configuration launch-directory
                                   :immutable-p immutable-p :recovery-diagnosis recovery-diagnosis
-                                  :recovery-conversation-id conversation-id :notice (shiftf notice nil))
-                              (main--attach-world-channel configuration session-id attachment-mode
+                                  :recovery-conversation-id conversation-id :notice (shiftf notice nil)
+                                  :launch launch :input (getf pending-input :payload))
+                               (prog1
+                                   (main--attach-world-channel configuration session-id attachment-mode
+                                                           :initial-input pending-input
                                                           :screen screen :notice
                                                           (shiftf notice nil) :client-version
                                                           (shiftf client-version nil)
-                                                          :wait-p switching-p
+                                                          :wait-p         switching-p
                                                           :attached-function
                                                           (lambda ()
                                                             (setf (world-sidebar-current panel)
@@ -1215,7 +1194,8 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                                   origin nil
                                                                   switching-p nil
                                                                   restoring-p nil
-                                                                  started-p nil))))
+                                                                  started-p nil)))
+                                 (setf pending-input nil)))
                             (error (condition)
                                    (when started-p
                                      ; mallet:suppress no-ignore-errors -- preserve attachment failure while closing an unattached new channel
@@ -1260,6 +1240,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                          (let ((left session-id) (target (getf (rest exit) :session-id)))
                            (handler-case
                             (progn
+                             (setf pending-input (getf (rest exit) :initial-input))
                              (multiple-value-setq (session-id started-p)
                                 (main--call-with-channel-loading
                                  screen (if target "Loading channel" "Opening channel")

@@ -148,8 +148,8 @@
                 (push arguments opened)
                 (values identifier started-p)))
         (list 'channel-view-run
-                (lambda (view &key attached-function notice client-version boot-p wait-function)
-                  (declare (ignore notice client-version boot-p wait-function))
+                (lambda (view &key attached-function notice client-version boot-p wait-function initial-input)
+                  (declare (ignore notice client-version boot-p wait-function initial-input))
                  (let ((channel (channel-subscription-identifier view)))
                    (test-assert (member channel (list identifier "c6uouHJ") :test #'string=)
                                 "the client attaches to the channel the server opened")
@@ -190,7 +190,39 @@
                              (getf (second opened) :inbox-p)
                              (equal (getf (first opened) :channel) identifier))
                         "selecting home from the welcome screen attaches to the preloaded channel")
-           (setf opened nil attached nil)
+           (dolist (text '("First request" "(+ 1 2)" "? (+ 1 2)"))
+             (let* ((submission (list :action ':submit :payload text))
+                    (request    (list ':switch :new-p t :initial-input submission))
+                    (received   nil))
+               (setf opened nil attached nil welcome-events (list request))
+               (test-call-with-function-replacements
+                (list (list 'channel-view-run
+                            (lambda (view &key attached-function initial-input &allow-other-keys)
+                              (declare (ignore view))
+                              (push initial-input received)
+                              (funcall attached-function))))
+                (lambda () (main-dispatch '())))
+               (test-assert (and (= (length opened) 2) (getf (first opened) :new-p)
+                                 (equal received (list submission)))
+                            "first text, direct Lisp and async Lisp each open one channel and arrive once")))
+           (dolist (stage '(:open :attach))
+             (let* ((text       "Keep this first request")
+                    (submission (list :action ':submit :payload text))
+                    (request    (list ':switch :new-p t :initial-input submission))
+                    (failure    (make-condition 'world-terminal-error :operation stage :message "Injected refusal."))
+                    (restored   nil))
+               (setf welcome-events
+                     (list (lambda (arguments)
+                             (declare (ignore arguments))
+                             (if (eq stage ':open) (setf open-error failure) (setf attach-error failure))
+                             request)
+                           (lambda (arguments)
+                             (setf restored (getf arguments :input) open-error nil attach-error nil)
+                             nil)))
+               (main-dispatch '())
+               (test-assert (equal restored text)
+                            "a refused open or attachment restores the first submission to the welcome composer")))
+           (setf opened nil attached nil queried nil)
            (main-dispatch (list "open" identifier))
            (main-dispatch (list "open" identifier))
            (test-assert (and (= (length opened) 2)
@@ -339,14 +371,21 @@
 (defun test-client-welcome-input ()
   "Check input startup, physical resize, quit and screen-preserving selection handoff."
   (with-test-configuration (configuration)
-    (dolist (input '(:interrupt :enter #\Return #\Newline (:switch :session-id "b6uouHJ")))
+    (dolist (input '(:interrupt :enter #\Return #\Newline (:switch :session-id "b6uouHJ")
+                     "First request" "(+ 1 2)" "? (+ 1 2)"))
       (let* ((terminal                    (make-instance 'recording-terminal :columns 80 :rows 24))
              (screen                      (world-terminal-screen-create :terminal terminal))
-             (event                       (if (characterp input)
-                                              (with-input-from-string (stream (string input))
-                                                (clinedi:read-event :stream stream))
-                                              input))
-             (events                      (list ':resize event ':stream-end))
+             (event                       (cond
+                                            ((characterp input)
+                                             (with-input-from-string (stream (string input))
+                                               (clinedi:read-event :stream stream)))
+                                            ((stringp input)
+                                             (list :paste input))
+                                            (t
+                                             input)))
+             (events                      (append (list ':resize event)
+                                                  (when (stringp input) (list ':submit))
+                                                  (list ':stream-end)))
              (started-p                   nil)
              (stopped-p                   nil)
              (unwatched-p                 nil)
@@ -355,7 +394,7 @@
         (test-call-with-function-replacements
          (list
           (list 'terminal-start (lambda (candidate) (declare (ignore candidate)) (setf started-p t)))
-          (list 'terminal-stop (lambda (candidate) (declare (ignore candidate)) (setf stopped-p t)))
+          (list 'terminal-stop (lambda (candidate) (when (eq candidate terminal) (setf stopped-p t))))
           (list 'platform-watch-terminal-resize
                 (lambda (platform function) (declare (ignore platform function)) ':welcome-watch))
           (list 'platform-unwatch-terminal-resize
@@ -376,17 +415,21 @@
                                (= (clinedi:frame-snapshot-width last-frame) 44)
                                (= (clinedi:frame-snapshot-height last-frame) 12))
                           "welcome starts input, follows physical resize and releases only its watch on handoff")
-             (test-assert (equal exit (case input
-                                        (:interrupt
-                                         nil)
-                                        ((:enter #\Return #\Newline)
-                                         (list ':switch :new-p t))
-                                        (otherwise
-                                         input)))
-                          "quit, Enter and sidebar selection return distinct results")
-             (test-assert (not (search "INTERNAL CRASH INSTRUCTIONS"
-                                      (format nil "~{~A~}" (coerce (clinedi:frame-snapshot-rows last-frame) 'list))))
-                          "render safe recovery status without raw crash instructions")))))))
+             (test-assert (equal exit (if (stringp input)
+                                         (list ':switch :new-p t :initial-input
+                                               (list :action ':submit :payload input))
+                                         (case input
+                                           (:interrupt
+                                            nil)
+                                           ((:enter #\Return #\Newline)
+                                            (list ':switch :new-p t))
+                                           (otherwise
+                                            input))))
+                          "navigation and first text, direct Lisp or async Lisp submissions retain their input")
+             (test-assert (search (config :model configuration)
+                                  (clinedi:ansi-strip
+                                   (format nil "~{~A~}" (coerce (clinedi:frame-snapshot-rows last-frame) 'list))))
+                          "the welcome composer includes the configured modeline")))))))
   nil)
 
 (-> test-cli-startup-failure-line () null)

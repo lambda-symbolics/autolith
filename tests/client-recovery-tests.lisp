@@ -776,13 +776,13 @@
                 (declare (ignore candidate))
                 (when (eq operation ':input) (push arguments sent)))))
        (lambda ()
-         (labels ((run (screen identifier events &key refuse-p replay modal-p)
+          (labels ((run (screen identifier events &key refuse-p replay modal-p initial-input)
                     "Run a fresh view with real Clinedi input and only its transport stubbed."
                     (setf view (channel-view-create configuration identifier screen)
                           initial nil seen-p nil attach-fails-p refuse-p
                           replay-input replay modal-at-attach-p modal-p
                           (scripted-terminal-events terminal) (copy-tree events))
-                    (let ((failure (handler-case (progn (channel-view-run view) nil)
+                    (let ((failure (handler-case (progn (channel-view-run view :initial-input initial-input) nil)
                                      (world-terminal-error (condition) condition))))
                       (test-assert (eq (not (null failure)) (not (null (or refuse-p (member ':draft-loss events)))))
                                    "only deliberately injected transport failures signal from a view")
@@ -825,11 +825,31 @@
                                "submitted input is not resurrected on return")
                   (test-assert (equal (run screen "new" '((:switch :session-id "a"))) '("" 0))
                                "opening another fresh channel starts with an empty composer")
-                  (let ((other (world-terminal-screen-create :terminal terminal)))
-                    (unwind-protect
-                         (test-assert (equal (run other "a" '(:detach)) '("" 0))
-                                      "another terminal client cannot reuse this client's drafts")
-                      (world-terminal-screen-close other))))
+                 (dolist (text '("First request" "(+ 1 2)" "? (+ 1 2)"))
+                   (let ((before (length sent)))
+                     (test-assert
+                      (and (equal (run screen "first" '(:detach)
+                                       :initial-input (list :action ':submit :payload text)) '("" 0))
+                           (= (length sent) (1+ before))
+                           (equal (getf (first sent) :text) text)
+                           (eq (getf (first sent) :action) ':submit))
+                      "a welcome submission crosses the actual view transport once and clears its composer")))
+                 (test-call-with-function-replacements
+                  (list (list 'channel-subscription-send
+                              (lambda (&rest arguments)
+                                (declare (ignore arguments))
+                                (error 'world-terminal-error :operation ':input :message "Injected send refusal."))))
+                  (lambda ()
+                    (test-assert
+                     (equal (run screen "refused-first" '(:detach)
+                                 :initial-input (list :action ':submit :payload "Recover this request"))
+                            '("Recover this request" 20))
+                     "a refused local send preserves the welcome submission as an editable channel draft")))
+                 (let ((other (world-terminal-screen-create :terminal terminal)))
+                   (unwind-protect
+                        (test-assert (equal (run other "a" '(:detach)) '("" 0))
+                                     "another terminal client cannot reuse this client's drafts")
+                     (world-terminal-screen-close other))))
              (world-terminal-screen-close screen)))))))
   nil)
 

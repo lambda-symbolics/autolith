@@ -415,6 +415,7 @@
                                           (:file "acp/extension-jobs")
                                           (:file "telemetry/hooks")
                                           (:file "startup/session-cli")
+                                          (:file "startup/welcome")
                                           (:file "startup/main")
                                           (:file "world/server")
                                           (:file "world/assignment")
