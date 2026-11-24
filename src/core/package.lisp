@@ -422,6 +422,7 @@
                 #:provider-request-context-body
                 #:provider-request-cache-breakpoints
                 #:provider-request-characters
+                #:provider-request-image-p
                 #:provider-resample-requested-attempt
                 #:provider-resample-requested-maximum-attempts
                 #:provider-resample-requested-triggers

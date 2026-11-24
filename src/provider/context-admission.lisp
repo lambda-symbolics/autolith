@@ -415,9 +415,74 @@ messages that later change fail closed."
 
 (-> provider-context--request-characters ((option model-provider) t) (values (integer 0) boolean))
 (defun provider-context--request-characters (provider value)
-  "Apply Autolith's image allowance to encoder-owned character analysis."
-  (provider-request-characters (or provider (make-instance 'model-provider)) value
-                               :image-characters (* 4 *provider-image-token-estimate*)))
+  "Apply Autolith's image allowance to encoder-owned character analysis.
+
+The library charges the allowance only for images in Responses content arrays.
+Images placed directly in a function_call_output's output are charged the same
+way, and the estimate is marked uncertain."
+  (let ((provider  (or provider (make-instance 'model-provider)))
+        (allowance (* 4 *provider-image-token-estimate*)))
+    (multiple-value-bind (value images)
+        (provider-context--without-tool-output-images provider value)
+      (multiple-value-bind (characters uncertain-p)
+          (provider-request-characters provider value :image-characters allowance)
+        (values (+ characters
+                   (* images (- allowance (provider-request-characters provider (json-object)))))
+                (or uncertain-p (plusp images)))))))
+
+(-> provider-context--without-tool-output-images (model-provider t) (values t (integer 0)))
+(defun provider-context--without-tool-output-images (provider value)
+  "Return VALUE with direct tool-output images replaced by empty objects, and their count.
+
+VALUE is an encoded Responses request or a vector of its history items. Every
+Responses provider receives Autolith's image tool results, so this applies to
+all of them. Only changed items, and the request or vector holding them, are
+copied; other VALUEs are returned unchanged with a count of zero."
+  (multiple-value-bind (items field)
+      (when (typep provider 'responses-api-provider)
+        (typecase value
+          (hash-table
+           (provider-request-history provider value))
+          ((and vector (not string))
+           (values value nil))))
+    (let ((copy  nil)
+          (total 0))
+      (loop for item across (or items #())
+            for index from 0
+            do (multiple-value-bind (replacement images)
+                   (provider-context--tool-output-item-without-images provider item)
+                 (when (plusp images)
+                   (unless copy
+                     (setf copy (copy-seq items)))
+                   (setf (aref copy index) replacement)
+                   (incf total images))))
+      (cond
+        ((null copy)
+         (values value 0))
+        (field
+         (let ((request (json-object-copy value)))
+           (setf (gethash field request) copy)
+           (values request total)))
+        (t
+         (values copy total))))))
+
+(-> provider-context--tool-output-item-without-images (responses-api-provider t) (values t (integer 0)))
+(defun provider-context--tool-output-item-without-images (provider item)
+  "Return ITEM with the image parts directly in its output replaced, and their count.
+
+Only a function_call_output whose output is a vector qualifies. Image-shaped
+data nested deeper is ordinary JSON. ITEM is returned itself when nothing changes."
+  (flet ((image-p (part)
+           (and (json-object-p part) (provider-request-image-p provider part) t)))
+    (let ((output (and (json-object-p item)
+                       (equal (json-get item "type") "function_call_output")
+                       (json-get item "output"))))
+      (if (and (vectorp output) (not (stringp output)) (some #'image-p output))
+          (let ((copy (json-object-copy item)))
+            (setf (gethash "output" copy)
+                  (map 'vector (lambda (part) (if (image-p part) (json-object) part)) output))
+            (values copy (count-if #'image-p output)))
+          (values item 0)))))
 
 (-> provider-request-output-ceilings (model-provider hash-table) list)
 (defun provider-request-output-ceilings (provider request)

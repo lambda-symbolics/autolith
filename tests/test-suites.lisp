@@ -46,6 +46,8 @@
   test-context-admission-measured-header-identity
   test-context-admission-final-request
   test-context-admission-images
+  test-context-admission-tool-output-images
+  test-context-admission-tool-output-image-edges
   test-context-admission-checkpoint-transaction)
 
 (define-test-suite cache-review
