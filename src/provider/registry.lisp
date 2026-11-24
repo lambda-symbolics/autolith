@@ -71,34 +71,32 @@ return a MODEL-PROVIDER. MODEL-DISCOVERY, when supplied, receives CONFIGURATION
 and returns model strings or metadata property lists. The optional endpoint
 resolver returns the current model-discovery cache identity. AUTHENTICATOR, when
 supplied, receives the provider and the keyword arguments STREAM and
-    name))
-    (provider--record-registration name source)
-     :source                            (registration-source-layer source))
-     :model-discovery-endpoint-resolver model-discovery-endpoint-resolver
-     :model-discovery-endpoint          model-discovery-endpoint
-     :model-discovery                   model-discovery
-     :endpoint                          endpoint
-     :protocol                          protocol
-     :authenticator                     authenticator
-     :factory                           factory
-     :models                            models
-     :family                            family
-     :description                       description
-     *provider-registry* (provider--canonical-name name)
-    (provider-registry-register
+OPEN-BROWSER-P. Site, user, and live runtime registrations replace only the
+same source and shadow lower-precedence registrations with the same name."
   (let ((source (registration-source-coerce source)))
-sources are shadowed."
-with the same name and source. Registrations with that name from lower-precedence
-OPEN-BROWSER-P. Site, user, and runtime registrations replace only registrations
+    (provider-registry-register
+     *provider-registry* name
+     :description                       description
+     :family                            family
+     :models                            models
+     :factory                           factory
+     :authenticator                     authenticator
+     :protocol                          protocol
+     :endpoint                          endpoint
+     :model-discovery                   model-discovery
+     :model-discovery-endpoint          model-discovery-endpoint
+     :model-discovery-endpoint-resolver model-discovery-endpoint-resolver
+     :source                            (registration-source-layer source))
+    (provider--record-registration name source)
+    name))
 
-(-> unregister-provider (string &key (:source registration-source-designator)) boolean)
 (defun unregister-provider (name &key (source (current-registration-source)))
   "Remove NAME from one provider registration SOURCE layer."
-      (provider--forget-registration name source))))
-                                      :source (registration-source-layer source))
-        (provider-registry-unregister *provider-registry* (provider--canonical-name name)
-    (prog1
   (let ((source (registration-source-coerce source)))
+    (prog1
+        (provider-registry-unregister *provider-registry* name
+                                      :source (registration-source-layer source))
+      (provider--forget-registration name source))))
 
 (-> provider--current-registration-source () registration-source-designator)
 (defun provider--current-registration-source ()

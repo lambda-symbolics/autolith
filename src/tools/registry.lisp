@@ -1348,7 +1348,7 @@ group. An existing name keeps its presentation position."
 (-> tool-registry-delete-if (tool-registry function) tool-registry)
 (defun tool-registry-delete-if (registry predicate)
   "Delete every tool satisfying PREDICATE from REGISTRY and return REGISTRY."
-  (with-extension-registry-transaction
+(with-extension-registry-transaction
     (unwind-protect
          (ordered-map-delete-if
           (lambda (canonical-name tool)
@@ -1380,6 +1380,7 @@ and stay open."
            #'tool-runtime-close)
         (declare (ignore closed))
         (when failure
+          (error failure)))))
   registry)
 
 (-> tool-registry-find (tool-registry string string) (option tool))
@@ -1495,6 +1496,42 @@ nested workers and accepts only compact, content-free phase descriptions."))
 (defun function-call-canonical-name (call)
   "Return the dotted or bare canonical name carried by function CALL."
   (cl-llm-provider-api:provider-call-canonical-name call))
+(-> tool--missing-required-names (tool json-object) list)
+(defun tool--missing-required-names (tool arguments)
+  "Return one unsatisfied required-name group for TOOL and ARGUMENTS."
+  (cl-llm-provider-api:provider-schema-missing-required-names
+   (tool-parameters tool) arguments))
+
+(-> tool--missing-arguments-result (tool json-object list) tool-result)
+(defun tool--missing-arguments-result (tool arguments missing-names)
+  "Return a mechanics result with a concrete retry skeleton for MISSING-NAMES."
+  (let* ((one-of-p (eq (first missing-names) ':one-of))
+         (names (if one-of-p (rest missing-names) missing-names))
+         (skeleton-names (if one-of-p (list (first names)) names))
+         (skeleton-arguments (json-object))
+         (properties (json-get (tool-parameters tool) "properties")))
+    (maphash
+     (lambda (name value)
+       (setf (gethash name skeleton-arguments) value))
+     arguments)
+    (dolist (name skeleton-names)
+      (setf (gethash name skeleton-arguments)
+            (cl-llm-provider-api:provider-schema-argument-placeholder
+             (and (json-object-p properties)
+                  (json-get properties name)))))
+    (tool-mechanics
+     (format nil
+             (if one-of-p
+                 "Tool ~A was not executed because exactly one of ~{~A~^ or ~} is required.~%Call skeleton: ~A"
+                 "Tool ~A was not executed because required arguments are missing: ~{~A~^, ~}.~%Call skeleton: ~A")
+             (tool-canonical-name tool)
+             names
+             (json-encode
+              (json-object
+               "namespace" (tool-namespace tool)
+               "name" (tool-name tool)
+               "arguments" skeleton-arguments)))
+     :code ':missing-required-arguments)))
 
 
 ;;;; -- Argument Name Correction --
@@ -1733,34 +1770,34 @@ signals with the candidate canonical names."
               (error 'tool-error
                      :message   (format nil "Unknown tool ~A." canonical-name)
                      :tool-name canonical-name))
-            (let* ((source
-                     (if native-p
-                         (multiple-value-bind (value present-p) (gethash "arguments" call)
-                           (if present-p value (json-object)))
-                         (or (json-get call "arguments") "{}")))
-                   (arguments (if native-p
-                                  (tool-decode-native-arguments tool source)
-                                  (tool-decode-arguments tool source))))
-              (unless (json-object-p arguments)
-                (error 'tool-error
-                       :message   (format nil "Arguments for ~A are not a JSON object."
-                                          canonical-name)
-                       :tool-name canonical-name))
-              (setf arguments (tool--corrected-arguments (tool-parameters tool) arguments))
-              (let ((problem (tool--argument-problem tool arguments)))
-                (if problem
-                    problem
-                    (progn
-                      (when (tool-correction-metadata-p tool)
-                        (multiple-value-bind (value present-p) (gethash "corrects_previous" arguments)
-                          (when (and present-p (not (or (json-true-p value) (json-false-p value))))
-                            (error 'tool-error :tool-name canonical-name
-                                              :message    "corrects_previous must be a boolean."))
-                          (when *telemetry-tool-capture-p*
-                            (setf *telemetry-tool-corrects-previous-p* (and present-p (json-true-p value))))
-                          (remhash "corrects_previous" arguments)))
-                      (when *telemetry-tool-capture-p* (setf *telemetry-tool-arguments* arguments))
->>>>>>> 0917ed2a (Carry registration sources through the tool and extension registries)
+             (let* ((source
+                      (if native-p
+                          (multiple-value-bind (value present-p) (gethash "arguments" call)
+                            (if present-p value (json-object)))
+                          (or (json-get call "arguments") "{}")))
+                    (arguments (if native-p
+                                   (tool-decode-native-arguments tool source)
+                                   (tool-decode-arguments tool source))))
+               (unless (json-object-p arguments)
+                 (error 'tool-error
+                        :message   (format nil "Arguments for ~A are not a JSON object."
+                                           canonical-name)
+                        :tool-name canonical-name))
+               (setf arguments (tool--corrected-arguments (tool-parameters tool) arguments))
+               (let ((problem (tool--argument-problem tool arguments)))
+                 (if problem
+                     problem
+                     (progn
+                       (when (tool-correction-metadata-p tool)
+                         (multiple-value-bind (value present-p) (gethash "corrects_previous" arguments)
+                           (when (and present-p (not (or (json-true-p value) (json-false-p value))))
+                             (error 'tool-error :tool-name canonical-name
+                                               :message    "corrects_previous must be a boolean."))
+                           (when *telemetry-tool-capture-p*
+                             (setf *telemetry-tool-corrects-previous-p* (and present-p (json-true-p value))))
+                           (remhash "corrects_previous" arguments)))
+                       (when *telemetry-tool-capture-p* (setf *telemetry-tool-arguments* arguments))
+                       (tool-execute-with-contracts tool context arguments)))))))
       (active-image-corruption (condition)
         (error condition))
       (error (condition)

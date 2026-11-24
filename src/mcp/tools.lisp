@@ -1277,6 +1277,20 @@ retained value is credential-redacted or projected."
            :message   "An MCP result contains a value where an array is required."
            :tool-name "mcp"))
   (coerce value 'list))
+(-> mcp-tools--mime-extension (string) (option string))
+(defun mcp-tools--mime-extension (mime-type)
+  "Return a supported temporary image extension for MIME-TYPE."
+  (cond
+    ((string-equal mime-type "image/png")
+     "png")
+    ((string-equal mime-type "image/jpeg")
+     "jpg")
+    ((string-equal mime-type "image/gif")
+     "gif")
+    ((string-equal mime-type "image/webp")
+     "webp")
+    (t
+     nil)))
 
 (-> mcp-tools--image-attachment
     (tool-context string
@@ -2223,7 +2237,10 @@ retained value is credential-redacted or projected."
                              :test #'string=)))))
         (dolist (name names)
           (when-let ((tool (find name held :test #'string= :key #'tool-canonical-name)))
-            (tool-registry-register registry tool)))))
+            (tool-registry-register
+             registry tool
+             :source (mcp-server-runtime-registration-source
+                      (mcp-provider-tool-runtime tool)))))))
     registry))
 
 (-> mcp-tool-registry-activate-tools (tool-registry list) (option list))
@@ -2263,9 +2280,12 @@ Evict the oldest activation first when either activation bound is exceeded."
             (unless (member name order :test #'string=)
               (loop while (and order (not (fits-p tool)))
                     do (evict-oldest))
-              (when (fits-p tool)
-                (tool-registry-register registry tool)
-                (setf order (append order (list name)))))))
+               (when (fits-p tool)
+                 (tool-registry-register
+                  registry tool
+                  :source (mcp-server-runtime-registration-source
+                           (mcp-provider-tool-runtime tool)))
+                 (setf order (append order (list name)))))))
         (setf (mcp-registry-binding-activation-order binding) order)
         (copy-list order)))))
 
@@ -2354,11 +2374,11 @@ Evict the oldest activation first when either activation bound is exceeded."
                          name)
                  :tool-name "mcp.refresh"))
         (setf (gethash name seen) t)))
-    ;; Hold the new discovery set and replace active survivors in place, so a
-    ;; refresh with the same capabilities in any order leaves the active tool
-    ;; declarations, and with them a provider's cached prefix, unchanged.
-    (setf (mcp-registry-binding-discovered-tools binding) effective-replacements)
->>>>>>> 0917ed2a (Carry registration sources through the tool and extension registries)
+     ;; Hold the new discovery set and replace active survivors in place, so a
+     ;; refresh with the same capabilities in any order leaves the active tool
+     ;; declarations, and with them a provider's cached prefix, unchanged.
+     (setf (mcp-registry-binding-discovered-tools binding) effective-replacements)
+     (mcp-tool-registry--reconcile-active-tools registry))
   registry)
 
 (-> mcp-tool-registry--current-p
@@ -2519,30 +2539,23 @@ Evict the oldest activation first when either activation bound is exceeded."
          (tool-string-property "One prompt argument value.")))
        '("server" "name"))
       :manager manager))
-    (tool-registry-register
-     registry
-     (mcp-tools--make-helper
-      'mcp-search-tool
-      :name    "search"
-      :description
-      "Search discovered MCP tools and activate the matching ones so they become callable."
-      :parameters
-      (tool-object-schema
-       (json-object
-        "query"
-        (tool-string-property
-         "Words that describe the MCP tool you need, for example \"inspect native data type\"."))
-       '("query"))
-      :manager manager))
-    (mcp-tool-registry--replace-dynamic-tools
-=======
-    (dolist (tool (mcp-tools--manager-tool-objects manager))
-      (tool-registry-register
-       registry tool
-       :source
-       (mcp-server-runtime-registration-source
-        (mcp-provider-tool-runtime tool))))
->>>>>>> 0917ed2a (Carry registration sources through the tool and extension registries)
+     (tool-registry-register
+      registry
+      (mcp-tools--make-helper
+       'mcp-search-tool
+       :name    "search"
+       :description
+       "Search discovered MCP tools and activate the matching ones so they become callable."
+       :parameters
+       (tool-object-schema
+        (json-object
+         "query"
+         (tool-string-property
+          "Words that describe the MCP tool you need, for example \"inspect native data type\"."))
+        '("query"))
+       :manager manager))
+     (mcp-tool-registry--replace-dynamic-tools
+      registry manager (mcp-tools--manager-tool-objects manager))
     (setf (mcp-registry-binding-reconciled-revisions binding)
           (mcp-manager-tool-revisions manager)))
   registry)

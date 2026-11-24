@@ -465,10 +465,10 @@ The maximum is NIL for &REST or &KEY."
     :type          application-command
     :documentation "The immutable command contributed by this registry layer.")
    (source
-    :documentation "The layer and optional plugin that contributed the command."))
-    :type          registration-source-designator
-    :reader        application-command-registration-source
     :initarg       :source
+    :reader        application-command-registration-source
+    :type          registration-source-designator
+    :documentation "The layer and optional plugin that contributed the command."))
   (:documentation "One ordered, possibly shadowed command registration layer."))
 
 (defvar *application-command-registrations* nil
@@ -789,14 +789,14 @@ without changing the registry."
 (-> application-command--remove-registration-source (registration-source-designator) null)
 (defun application-command--remove-registration-source (source)
   "Remove every command registration contributed by SOURCE."
-                 :key #'application-command-registration-source)))))
-                 :test #'eq
-                 *application-command-registrations*
-         (remove source
-        (application-command--publish-registrations
-      (with-lock-held (*application-command-lock*)
-    (with-extension-registry-transaction
   (let ((source (registration-source-coerce source)))
+    (with-extension-registry-transaction
+      (with-lock-held (*application-command-lock*)
+        (application-command--publish-registrations
+         (remove source
+                 *application-command-registrations*
+                 :test #'eq
+                 :key #'application-command-registration-source)))))
   nil)
 
 (-> application-command--registration-snapshot

@@ -1144,8 +1144,8 @@ them."
 LSP tools register only when CONFIGURATION enables a language server, and the
 emacs.* tools and emacs: resources only when it names a reachable Emacs server
 socket."
-        (*extension-registration-source* ':builtin)
   (let ((registry      (make-instance 'tool-registry))
+        (*extension-registration-source* ':builtin)
         (search-worker (search-worker-create :configuration configuration)))
     (default-tools--register-workspace registry
                                        :knowledge-p (knowledge-active-p configuration))

@@ -212,24 +212,24 @@
              (register-application-command
               (registration-source-tests--command
                'registration-source-tests--first-command
-               "/registration-source-first")
+                "registration-source-first")
               :source first-source)
              (register-application-command
               (registration-source-tests--command
                'registration-source-tests--second-command
-               "/registration-source-second")
+                "registration-source-second")
               :source second-source)
              (application-command--remove-registration-source second-source)
              (test-assert
               (and (registration-source-tests--command-present-p
-                    "/registration-source-first")
+                     "registration-source-first")
                    (not (registration-source-tests--command-present-p
-                         "/registration-source-second")))
+                         "registration-source-second")))
               "command removal by one plugin source keeps another plugin's command")
              (application-command--remove-registration-source first-source)
              (test-assert
               (not (registration-source-tests--command-present-p
-                    "/registration-source-first"))
+                     "registration-source-first"))
               "command removal by its own plugin source removes its command")
              (register-context-contributor
               "first-plugin/example"
