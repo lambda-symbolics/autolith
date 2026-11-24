@@ -365,6 +365,10 @@ are conditional until the ordinary per-call check. Bound the entire proof search
      (coerce (mapcar (lambda (item)
                        (procedure--preflight-arguments item bindings result-variable))
                      (rest template)) 'vector))
+    (:concat
+     (if (find :from (rest template) :key #'first)
+         (procedure--preflight-variable)
+         (procedure-template-instantiate template bindings nil)))
     (otherwise
      (procedure-template-instantiate template bindings nil))))
 

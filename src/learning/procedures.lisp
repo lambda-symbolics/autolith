@@ -50,6 +50,12 @@
                  (rest template)))
          (:array
           (every #'procedure-template-p (rest template)))
+         (:concat
+          (and (rest template)
+               (every (lambda (part)
+                        (and (procedure-template-p part)
+                             (member (first part) '(:json :param :text :from))))
+                      (rest template))))
          (otherwise
           nil))
        t))
@@ -164,7 +170,13 @@ KNOWLEDGE-ERROR with code :MISSING-OUTPUT."
     (:array
      (coerce (mapcar (lambda (item) (procedure-template-instantiate item bindings outputs))
                      (rest template))
-             'vector))))
+             'vector))
+    (:concat
+     (format nil "~{~A~}"
+             (mapcar (lambda (part)
+                       (procedure--text-piece
+                        (procedure-template-instantiate part bindings outputs)))
+                     (rest template))))))
 
 (-> procedure-template-match (list t &key (:bindings list) (:outputs list)) (values list boolean))
 (defun procedure-template-match (template value &key bindings outputs)
@@ -213,7 +225,14 @@ steps' decoded results that :FROM templates must agree with."
                   (unless matched-p
                     (return-from match (values bindings nil)))
                   (setf bindings next)))
-       (values bindings t)))))
+       (values bindings t))
+      (:concat
+       (if (stringp value)
+           (procedure--concat-match (rest template) value
+                                    :start    0
+                                    :bindings bindings
+                                    :outputs  outputs)
+           (values bindings nil))))))
 
 (-> procedure-template-text (list) string)
 (defun procedure-template-text (template)
@@ -237,7 +256,15 @@ steps' decoded results that :FROM templates must agree with."
                                (procedure-template-text (second entry))))
                      (rest template))))
     (:array
-     (format nil "[~{~A~^,~}]" (mapcar #'procedure-template-text (rest template))))))
+     (format nil "[~{~A~^,~}]" (mapcar #'procedure-template-text (rest template))))
+    (:concat
+     (format nil "\"~{~A~}\""
+             (mapcar (lambda (part)
+                       (let ((text (procedure-template-text part)))
+                         (if (eql (char text 0) #\")
+                             (subseq text 1 (1- (length text)))
+                             text)))
+                     (rest template))))))
 
 (-> procedure-input-text (list) (option string))
 (defun procedure-input-text (procedure)
@@ -557,7 +584,7 @@ STATUS is :OK or :FAILED, STEPS how many calls succeeded, and CALLER :USER or :M
          (:object
           (every (lambda (entry) (procedure--references-valid-p (second entry) names step))
                  (rest template)))
-         (:array
+         ((:array :concat)
           (every (lambda (item) (procedure--references-valid-p item names step))
                  (rest template))))
        t))
@@ -605,6 +632,52 @@ Return the bindings and whether VALUE agreed."
        (values bindings t))
       (t
        (values bindings nil)))))
+
+(-> procedure--text-piece (t) string)
+(defun procedure--text-piece (value)
+  "Return JSON VALUE as text: a string as itself and anything else as JSON."
+  (if (stringp value)
+      value
+      (json-encode value)))
+
+(-> procedure--concat-match
+    (list string &key (:start (integer 0)) (:bindings list) (:outputs list))
+    (values list boolean))
+(defun procedure--concat-match (parts text &key start bindings outputs)
+  "Match TEXT from START against the concatenation of the templates PARTS, extending BINDINGS.
+
+Return the extended bindings and whether TEXT fits. A parameter matches any
+non-empty text, and the other parts must match their own text exactly."
+  (block match
+    (when (null parts)
+      (return-from match (values bindings (= start (length text)))))
+    (let ((part (first parts)))
+      (if (eq (first part) :param)
+          (loop for end from (1+ start) to (length text)
+                do (multiple-value-bind (next bound-p)
+                       (procedure--bind bindings (second part) (subseq text start end))
+                     (when bound-p
+                       (multiple-value-bind (found matched-p)
+                           (procedure--concat-match (rest parts) text
+                                                    :start    end
+                                                    :bindings next
+                                                    :outputs  outputs)
+                         (when matched-p
+                           (return-from match (values found t)))))))
+          (let* ((piece (handler-case
+                            (procedure--text-piece
+                             (procedure-template-instantiate part bindings outputs))
+                          (knowledge-error ()
+                            (return-from match (values bindings nil)))))
+                 (end   (+ start (length piece))))
+            (when (and (<= end (length text))
+                       (string= piece text :start2 start :end2 end))
+              (return-from match
+                (procedure--concat-match (rest parts) text
+                                         :start    end
+                                         :bindings bindings
+                                         :outputs  outputs)))))
+      (values bindings nil))))
 
 (-> procedure--text-middle (t string string &key (:empty-ends-p boolean)) (option string))
 (defun procedure--text-middle (value prefix suffix &key empty-ends-p)

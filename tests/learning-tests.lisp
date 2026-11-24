@@ -398,6 +398,20 @@
                                  nil)))
       (test-assert (not (procedure-p broken))
                    "a procedure naming an unknown parameter or a later step is refused")))
+  (let ((template '(:concat (:json "\"git push \"") (:param "remote") (:json "\" \"") (:param "branch"))))
+    (test-assert (equal (procedure-template-instantiate
+                         template (list (cons "remote" "origin") (cons "branch" "master")) nil)
+                        "git push origin master")
+                 "a concatenation joins the text of its parts")
+    (multiple-value-bind (found matched-p) (procedure-template-match template "git push origin master")
+      (test-assert (and matched-p
+                        (equal (rest (assoc "remote" found :test #'string=)) "origin")
+                        (equal (rest (assoc "branch" found :test #'string=)) "master"))
+                   "matching a concatenation recovers every parameter"))
+    (test-assert (not (nth-value 1 (procedure-template-match template "git pull origin master")))
+                 "a concatenation does not match text with other literal parts")
+    (test-assert (equal (procedure-template-text template) "\"git push {remote} {branch}\"")
+                 "a concatenation is shown as one string with its references"))
   nil)
 
 (-> test-procedure-lifecycle () null)
