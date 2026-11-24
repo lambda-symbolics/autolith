@@ -642,11 +642,13 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
   (declare (ignore pathname))
   nil)
 ")
-    (dolist (relative '("build-sandbox.lisp" "build-fff.lisp"))
-      (test-write-text
-       (merge-pathnames relative script-directory)
-       "nil
-"))
+    (test-write-text (merge-pathnames "build-fff.lisp" script-directory) "nil")
+    (test-write-text
+     (merge-pathnames "build-sandbox.lisp" script-directory)
+     "(uiop:run-program (list (uiop:getenv \"AUTOLITH_SBCL\") \"--script\" \"fixture-sandbox\")
+                   :output :interactive :error-output :interactive)
+(autolith-script-setenv \"AUTOLITH_TEST_SANDBOX_SELECTION\" \"installed\")
+")
     (test-write-text
      (merge-pathnames "setup.lisp" quicklisp-directory)
      "(defpackage #:ql
@@ -687,6 +689,8 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (format stream \"~A~%\" event)))
 
 (record-event \"locked-setup\")
+(dotimes (index 500)
+  (format *error-output* \"fixture ASDF warning ~D~%\" index))
 
 (let* ((setup (truename *load-truename*))
        (directory (uiop:pathname-directory-pathname setup))
@@ -717,6 +721,10 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 (in-package #:colorlisp)
 
 (defun native-library-path ()
+  (unless (equal (uiop:getenv \"AUTOLITH_TEST_SANDBOX_SELECTION\") \"installed\")
+    (error \"The sandbox selection was lost between bootstrap steps.\"))
+  (when (uiop:getenvp \"AUTOLITH_TEST_COLORLISP_FAIL\")
+    (error \"fixture ColorLisp build failed\"))
   nil)
 ")
     (test-write-text
@@ -727,6 +735,18 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 set -eu
 printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 case \"$2\" in
+  */bootstrap.lisp)
+    exec \"${AUTOLITH_TEST_REAL_SBCL:?}\" \"$@\"
+    ;;
+  */qlot-install.lisp)
+    printf 'fixture locked dependencies\\n'
+    exit \"${AUTOLITH_TEST_QLOT_STATUS:?}\"
+    ;;
+  fixture-sandbox)
+    printf 'fixture native sandbox stdout\\n'
+    printf 'fixture native sandbox stderr\\n' >&2
+    exit \"${AUTOLITH_TEST_SANDBOX_STATUS:?}\"
+    ;;
   */build-fff.lisp)
     printf 'fixture git fetching\\n'
     printf 'fixture cargo warning\\n' >&2
@@ -746,42 +766,77 @@ esac
      (format nil "~A~%" (lisp-implementation-version)))
     (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture) "2.6.4")
-    (flet ((run-bootstrap (fff-status)
-             (release-script-tests--run
-              (list (sbcl-command)
-                    "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
-                    "--script" (namestring bootstrap))
-              :environment
-              (list (format nil "HOME=~A" (namestring home))
-                    (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
-                    (format nil "XDG_DATA_HOME=~A" (namestring data-home))
-                    (format nil "XDG_STATE_HOME=~A" (namestring state-home))
-                    (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
-                    (format nil "AUTOLITH_TEST_EVENT_LOG=~A" (namestring event-log))
-                    (format nil "AUTOLITH_TEST_FFF_STATUS=~D" fff-status)
-                    "NO_COLOR=1")
-              :ignore-error-status t)))
+    (flet ((run-bootstrap (fff-status &key (qlot-status 0) (sandbox-status 0) colorlisp-fail-p terminal-p)
+             (let* ((command (list (sbcl-command)
+                                   "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
+                                   "--script" (namestring bootstrap)))
+                    (command (if terminal-p
+                                 (if (member :darwin *features*)
+                                     (append (list "script" "-q" "/dev/null") command)
+                                     (list "env" "SHELL=/bin/sh" "script" "-q" "-e" "-c"
+                                           (uiop:escape-sh-command command) "/dev/null"))
+                                 command)))
+               (release-script-tests--run command
+                :environment
+                (list (format nil "HOME=~A" (namestring home))
+                      (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+                      (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                      (format nil "XDG_STATE_HOME=~A" (namestring state-home))
+                      (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                      (format nil "AUTOLITH_TEST_EVENT_LOG=~A" (namestring event-log))
+                      (format nil "AUTOLITH_TEST_FFF_STATUS=~D" fff-status)
+                      (format nil "AUTOLITH_TEST_REAL_SBCL=~A" (sbcl-command))
+                      (format nil "AUTOLITH_TEST_QLOT_STATUS=~D" qlot-status)
+                      (format nil "AUTOLITH_TEST_SANDBOX_STATUS=~D" sandbox-status)
+                      (format nil "AUTOLITH_TEST_COLORLISP_FAIL=~A" (if colorlisp-fail-p "1" ""))
+                      "NO_COLOR=1")
+                :ignore-error-status t))))
       (multiple-value-bind (output error-output status) (run-bootstrap 0)
         (test-assert
          (zerop status)
          (format nil "the bootstrap fixture succeeds:~%~A~%~A" output error-output))
-        (let* ((lines     (uiop:split-string output :separator '(#\Newline)))
-               (git       (position "fixture git fetching" lines :test #'string=))
-               (cargo     (position "fixture cargo warning" lines :test #'string=))
-               (warning   (position "│ fixture compiler warning" lines :test #'string=))
-               (validated (position "│ fixture active image validated" lines :test #'string=))
-               (done      (position "Done." lines :test #'string=)))
-          (test-assert (and git cargo warning validated done (< git cargo warning validated done))
-                       "native streams appear together outside the rail before final validation and completion")
-          (test-assert (not (member "│ Done." lines :test #'string=))
-                       "dependency compilation does not announce bootstrap completion")))
+        (test-assert
+         (and (< (length output) 1200)
+              (every (lambda (step) (search (format nil "~D/8" step) output))
+                     '(1 2 3 4 5 6 7 8))
+              (search "Done." output)
+              (zerop (length error-output))
+              (not (find #\Escape output))
+              (not (search "fixture" output)))
+         "successful Lisp warning floods and native output are captured behind bounded, plain step progress"))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0 :terminal-p t)
+        (test-assert
+         (and (zerop status) (find #\Return output) (find #\Escape output)
+              (search "8/8" output) (search "Done." output)
+              (<= (count #\Newline output) 3)
+              (zerop (length error-output)))
+         "terminal progress replaces one line at step boundaries even when NO_COLOR is set"))
       (multiple-value-bind (output error-output status) (run-bootstrap 42)
-        (test-assert (= 42 status)
-                     (format nil "the failing native phase preserves exit status: ~A" error-output))
-        (test-assert (and (search "fixture cargo warning" output)
-                          (not (search "fixture active image validated" output))
-                          (not (search "Done." output)))
-                     "failure preserves diagnostics and stops before validation and completion")))
+        (test-assert
+         (and (= 42 status) (search "5/8" output) (search "exit status 42" output)
+              (search "fixture git fetching" error-output)
+              (search "fixture cargo warning" error-output)
+              (not (search "fixture ASDF warning" error-output))
+              (not (search "Done." output)))
+         "a failed native step prints its own merged output and exit status"))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0 :qlot-status 53)
+        (test-assert
+         (and (= 53 status) (search "2/8" output) (search "exit status 53" output)
+              (search "Retrying (3 of 3)" error-output)
+              (search "fixture locked dependencies" error-output))
+         "locked dependency retries are captured and the final failed status is preserved"))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0 :sandbox-status 23)
+        (test-assert
+         (and (plusp status) (search "4/8" output) (search "FAILED" output)
+              (search "fixture native sandbox stdout" error-output)
+              (search "fixture native sandbox stderr" error-output))
+         "interactive native subprocess output is captured even when a Lisp-loaded step fails"))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0 :colorlisp-fail-p t)
+        (test-assert
+         (and (plusp status) (search "6/8" output) (search "FAILED" output)
+              (search "fixture ColorLisp build failed" error-output)
+              (not (search "fixture native sandbox" error-output)))
+         "an in-process Lisp failure prints the diagnostics for its own step")))
     (let* ((events       (uiop:read-file-string event-log))
            (qlot-install (search "script/qlot-install.lisp" events))
            (locked-setup (search "locked-setup" events))

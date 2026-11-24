@@ -76,6 +76,10 @@ again.
 4. Start Autolith with =./bin/autolith=. To run it from other directories, link
    =bin/autolith= into a directory on your =PATH=.
 
+During bootstrap, follow the progress bar for the current build step. Output
+from successful steps is hidden. If a step fails, read its captured output and
+exit status below the progress bar.
+
 Use =--list= to see test names, =--suite NAME= to select a suite, or
 =--test NAME= to select one test. You can repeat the selectors. For example:
 
