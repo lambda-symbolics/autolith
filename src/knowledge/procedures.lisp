@@ -2,9 +2,35 @@
 
 ;;;; -- Procedures --
 
-;;; A procedure is a Lisp function stored in the knowledge log of a workspace.
-;;; The source of the function is a LAMBDA form with keyword parameters and a
-;;; documentation string.
+;;; Procedures are Lisp functions stored in the knowledge log of a workspace.
+;;; The source forms contain keyword parameters and documentation strings.
+
+(-> procedure--lambda-list-valid-p (t) boolean)
+(defun procedure--lambda-list-valid-p (lambda-list)
+  "Return true if LAMBDA-LIST is a valid keyword-only lambda list."
+  (and (proper-list-p lambda-list)
+       (or (null lambda-list) (eq (first lambda-list) '&key))
+       (handler-case
+           (multiple-value-bind (required optional rest keywords allow-other-keys auxiliary)
+               (parse-ordinary-lambda-list lambda-list)
+             (declare (ignore allow-other-keys))
+             (let ((names (append
+                           (loop for specification in keywords
+                               append (cons (second (first specification))
+                                            (when (third specification)
+                                              (list (third specification)))))
+                           (mapcar #'first auxiliary))))
+               (and (null required)
+                    (null optional)
+                    (null rest)
+                    (every (lambda (name)
+                             (and (symbolp name)
+                                  (not (constantp name))
+                                  (not (member name lambda-list-keywords))))
+                           names)
+                    (= (length names) (length (remove-duplicates names)))
+                    t)))
+         (program-error () nil))))
 
 (-> procedure-form (string) list)
 (defun procedure-form (source)
@@ -16,12 +42,11 @@ a documentation string and a body."
                 (error (condition)
                   (knowledge--fail ':invalid-procedure source
                                    "The source cannot be read: ~A" condition)))))
-    (unless (and (consp form)
+    (unless (and (proper-list-p form)
+                 (>= (length form) 4)
                  (eq (first form) 'lambda)
-                 (listp (second form))
-                 (member (first (second form)) '(nil &key))
-                 (stringp (third form))
-                 (nthcdr 3 form))
+                 (procedure--lambda-list-valid-p (second form))
+                 (stringp (third form)))
       (knowledge--fail ':invalid-procedure source
                        "The source must be a LAMBDA form with keyword parameters, a documentation string and a body."))
     form))

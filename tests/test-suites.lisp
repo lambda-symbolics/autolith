@@ -635,7 +635,9 @@
   test-knowledge-scale)
 
 (define-test-suite procedures
-  test-procedure-definition)
+  test-procedure-definition
+  test-procedure-syntax
+  test-procedure-persistence)
 
 (define-test-suite diagnosis
   test-diagnosis-predictions

@@ -4,7 +4,7 @@
   (:shadow #:open #:trace #:delete)
   (:import-from #:alexandria
     #:clamp #:ensure-gethash #:if-let #:lastcar #:proper-list-p #:when-let
-    #:read-file-into-byte-vector #:write-string-into-file)
+    #:parse-ordinary-lambda-list #:read-file-into-byte-vector #:write-string-into-file)
   (:import-from #:cl-resources
                 #:resource
                 #:resource-uri
