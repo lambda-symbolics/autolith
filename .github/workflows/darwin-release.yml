@@ -5,11 +5,13 @@ on:
     branches: [master]
     paths:
       - bin/autolith-release
+      - script/launcher-cli.sh
       - script/install
       - .github/workflows/darwin-release.yml
   pull_request:
     paths:
       - bin/autolith-release
+      - script/launcher-cli.sh
       - script/install
       - .github/workflows/darwin-release.yml
   workflow_dispatch:
@@ -59,8 +61,11 @@ jobs:
           test "${#archives[@]}" = 1
           tar -xzf "${archives[0]}" -C "$release_root" --strip-components=1
           launcher="$release_root/bin/autolith"
-          chmod u+w "$release_root/bin" "$launcher"
+          launcher_helper="$release_root/libexec/autolith/script/launcher-cli.sh"
+          chmod u+w "$release_root/bin" "$launcher" \
+            "$(dirname "$launcher_helper")" "$launcher_helper"
           cp bin/autolith-release "$launcher"
+          cp script/launcher-cli.sh "$launcher_helper"
           chmod +x "$launcher"
           file "$release_root/runtime/bin/sbcl"
           export HOME="$RUNNER_TEMP/darwin-release-home"
