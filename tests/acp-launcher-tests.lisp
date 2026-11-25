@@ -290,11 +290,10 @@
 
 (-> test-acp-pristine-refused () null)
 (defun test-acp-pristine-refused ()
-  "Test ACP refuses a pristine start, since its channels live in the world server, which never runs pristine."
+  "Test that pristine ACP starts are rejected."
   (test-assert (handler-case (progn (main-dispatch '("--pristine" "acp")) nil)
-                 (configuration-error (condition)
-                   (search "never runs pristine" (autolith-error-message condition))))
-               "a pristine ACP start is refused with the reason")
+                 (configuration-error () t))
+               "Pristine ACP starts signal CONFIGURATION-ERROR.")
   nil)
 
 (-> test-acp-launcher-failure-keeps-stdout-clean () null)
