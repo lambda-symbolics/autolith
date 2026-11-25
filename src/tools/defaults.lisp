@@ -1179,10 +1179,11 @@ socket."
     (mission-schedule-register-tools registry)
     (skill-augment-tool-registry registry)
     (executable-skill-register-tools registry)
+    ;; These registrations are defined in optional systems.
     (when (fboundp 'structural-register-default-tools)
-      (structural-register-default-tools registry))
+      (funcall (fdefinition 'structural-register-default-tools) registry))
     (when (fboundp 'debug-register-default-tools)
-      (debug-register-default-tools registry))
+      (funcall (fdefinition 'debug-register-default-tools) registry))
     (when immutable-p
       (default-tools--remove-mutable-self-tools registry))
     registry))
