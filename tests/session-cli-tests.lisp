@@ -454,7 +454,7 @@
                (test-assert
                 (string= (main--startup-failure-line "timeout" (make-broadcast-stream))
                          (format nil "! ~A could not start: timeout" expected-product))
-                "the startup failure line names the product"))
+                "the startup failure line contains the product name"))
              (test-assert (string= (clingon:command-name (main--top-level-command))
                                    expected-command)
                           "the top-level command takes the configured command name")
@@ -466,7 +466,7 @@
                 (configuration-error (condition)
                   (string= (autolith-error-message condition)
                            (format nil "Usage: ~A update [--help]" expected-command))))
-              "update usage names the configured command")))
+              "the update usage text contains the configured command name")))
   nil)
 
 (-> test-cli-startup-failure-line () null)

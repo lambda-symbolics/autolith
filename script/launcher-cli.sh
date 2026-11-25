@@ -54,7 +54,7 @@ autolith_uninstall_usage()
 autolith_uninstall_help()
 {
   autolith_uninstall_usage
-  printf '\nRemove the %s installation, managed runtimes, built images, and caches\nwithout starting a session. User data is kept: conversations, memories, agendas,\nimage commits, settings, credentials, and configuration. --yes skips the\nconfirmation prompt.\n' "$(autolith_product_name)"
+  printf '\nRemove the following without starting a session:\n- The %s installation\n- Managed runtimes\n- Built images\n- Caches\n\nUser data is kept:\n- Conversations\n- Memories\n- Agendas\n- Image commits\n- Settings\n- Credentials\n- Configuration\n\nUse --yes to skip the confirmation prompt.\n' "$(autolith_product_name)"
 }
 
 autolith_launcher_parse()
@@ -183,10 +183,10 @@ autolith_launcher_parse()
   fi
 }
 
-# Print the name of the per-user directories. AUTOLITH_DIRECTORY_NAME gives
-# the name. The default is autolith if the variable is unset or empty. The
-# name must start with an ASCII letter or digit and contain only those, dots,
-# hyphens and underscores, as PLATFORM-APPLICATION-DIRECTORY-NAME requires.
+# Print the per-user directory name from AUTOLITH_DIRECTORY_NAME.
+# Use autolith if the variable is unset or empty.
+# Valid names match ^[A-Za-z0-9][A-Za-z0-9._-]*$, as required by
+# PLATFORM-APPLICATION-DIRECTORY-NAME.
 autolith_directory_name()
 {
   local LC_ALL=C
@@ -310,7 +310,7 @@ autolith_uninstall()
   done
 
   if [[ ${#targets[@]} -eq 0 && ${#links[@]} -eq 0 ]]; then
-    printf 'Nothing to remove: no %s installation, runtime, image, or cache was found.\n' "$(autolith_product_name)" >&2
+    printf 'There is nothing to remove for %s.\n' "$(autolith_product_name)" >&2
   else
     printf '%s uninstall removes:\n' "$(autolith_product_name)" >&2
     for entry in ${targets[@]+"${targets[@]}"} ${links[@]+"${links[@]}"}; do

@@ -6,10 +6,10 @@
   "The user-visible version from the Autolith system definition.")
 
 (defparameter *product-name* "Autolith"
-  "The name of the product in user-facing text if AUTOLITH_PRODUCT_NAME is unset or empty.")
+  "This is the product name for user-facing text if AUTOLITH_PRODUCT_NAME is unset or empty.")
 
 (defparameter *product-command-name* "autolith"
-  "The name of the launcher command in user-facing text if AUTOLITH_COMMAND_NAME is unset or empty.")
+  "This is the launcher command name for user-facing text if AUTOLITH_COMMAND_NAME is unset or empty.")
 
 (defparameter *default-model* "gpt-6.1-sol"
   "The default model requested from the subscription provider.")
@@ -607,7 +607,7 @@ out. Other providers use their registry metadata, then the conservative fallback
 (defun product-name ()
   "Return the name of the product in user-facing text.
 
-The AUTOLITH_PRODUCT_NAME environment variable gives the name. If the
+The name is read from the AUTOLITH_PRODUCT_NAME environment variable. If the
 variable is unset or empty, the name is *PRODUCT-NAME*."
   (let ((name (uiop:getenv "AUTOLITH_PRODUCT_NAME")))
     (if (non-empty-string-p name)
@@ -618,7 +618,7 @@ variable is unset or empty, the name is *PRODUCT-NAME*."
 (defun product-command-name ()
   "Return the name of the launcher command in user-facing text.
 
-The AUTOLITH_COMMAND_NAME environment variable gives the name. If the
+The name is read from the AUTOLITH_COMMAND_NAME environment variable. If the
 variable is unset or empty, the name is *PRODUCT-COMMAND-NAME*."
   (let ((name (uiop:getenv "AUTOLITH_COMMAND_NAME")))
     (if (non-empty-string-p name)

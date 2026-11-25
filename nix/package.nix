@@ -976,7 +976,7 @@ let
     fi
   '';
 
-  # A packaged default applies if the corresponding variable is unset or empty.
+  # Packaged defaults apply if the corresponding variables are unset or empty.
   portableName = name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
   launcherName = if commandName == null then "autolith" else commandName;
   packagedDefault = variable: value:
@@ -1001,9 +1001,9 @@ assert with pkgs.stdenv.hostPlatform;
   (isLinux && (isx86_64 || isAarch64)) || (isDarwin && isAarch64);
 assert lib.versionAtLeast pkgs.sbcl.version minimumSbclVersion;
 assert lib.assertMsg (directoryName == null || portableName directoryName)
-  "directoryName ${toString directoryName} must start with an ASCII letter or digit and contain only those, dots, hyphens and underscores.";
+  "directoryName ${toString directoryName} must match the ASCII pattern ^[A-Za-z0-9][A-Za-z0-9._-]*$.";
 assert lib.assertMsg (commandName == null || portableName commandName)
-  "commandName ${toString commandName} must start with an ASCII letter or digit and contain only those, dots, hyphens and underscores.";
+  "commandName ${toString commandName} must match the ASCII pattern ^[A-Za-z0-9][A-Za-z0-9._-]*$.";
 pkgs.writeShellApplication {
   name = launcherName;
   runtimeInputs = [

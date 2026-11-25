@@ -111,9 +111,7 @@ next build performs."
   "Return the relative directory pathname named by AUTOLITH_DIRECTORY_NAME.
 
 The default is autolith/ if the variable is unset or empty. Signal an error
-if the value is not a portable directory name. The name must start with an
-ASCII letter or digit and only contain ASCII letters, digits, dots, hyphens
-and underscores."
+if the value does not match the ASCII pattern ^[A-Za-z0-9][A-Za-z0-9._-]*$."
   (let ((name (uiop:getenv "AUTOLITH_DIRECTORY_NAME")))
     (cond
       ((or (null name) (zerop (length name)))
