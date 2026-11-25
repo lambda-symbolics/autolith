@@ -1308,13 +1308,21 @@ host to publish its endpoint."
 
 (-> world-server--channel-workspace (world-server string) string)
 (defun world-server--channel-workspace (server identifier)
-  "Return the workspace channel IDENTIFIER records, or the server's own directory."
+  "Return the workspace channel IDENTIFIER records, the directory its conversation began in, or the server's own directory.
+
+A conversation that the world does not record yet registers the directory it
+began in as its workspace once it is served."
   (let* ((configuration (world-server-configuration server))
          (world         (world-load configuration))
          (channel       (world-channel-find world identifier)))
     (if channel
         (channel-workspace channel)
-        (world-workspace-name (config :working-directory configuration)))))
+        (let ((origin (getf (rest (conversation-peek-header
+                                   (conversation-pathname-for-id configuration identifier)))
+                            :directory)))
+          (world-workspace-name (if (non-empty-string-p origin)
+                                    origin
+                                    (config :working-directory configuration)))))))
 
 (-> world-server-take-generation-warning (world-server) boolean)
 (defun world-server-take-generation-warning (server)

@@ -749,7 +749,8 @@
  test-world-server-restart-checkpoint
  test-world-server-stop test-world-server-switch
  test-world-channel-command-admission
- test-world-server-resume-order test-world-server-open-latest-touched
+ test-world-server-resume-order test-world-server-named-open-directory
+ test-world-server-open-latest-touched
  test-world-server-startup-inbox
  test-world-server-open-passes-damage test-world-server-generation-warning-once
  test-world-server-open-constraints test-world-client-script-submissions
