@@ -970,13 +970,15 @@ never waits for work that holds it."
     boolean)
 (defun application-input-controller-busy-p (controller)
   "Return true when CONTROLLER has active or pending application work."
-  (not
-   (null
-    (with-lock-held ((application-input-controller-lock controller))
-      (or (application-input-controller-active-p controller)
-          (find-if-not #'deque-empty-p
-                       (application-input-controller--queues controller))
-          (application-input-controller-follow-up-edit-work controller))))))
+  (with-lock-held ((application-input-controller-lock controller))
+    (application-input-controller--busy-locked-p controller)))
+
+(-> application-input-controller--busy-locked-p (application-input-controller) boolean)
+(defun application-input-controller--busy-locked-p (controller)
+  "Return whether CONTROLLER has active or pending work under the held controller lock."
+  (not (null (or (application-input-controller-active-p controller)
+                 (find-if-not #'deque-empty-p (application-input-controller--queues controller))
+                 (application-input-controller-follow-up-edit-work controller)))))
 
 (-> application-input-controller--follow-up-editing-p
     (application-input-controller)
@@ -1478,22 +1480,22 @@ work receive steering as soon as possible instead of as follow-ups."
 
 (-> application-input-controller--request-idle-exit (application-input-controller) boolean)
 (defun application-input-controller--request-idle-exit (controller)
-  "Commit an idle CONTROLLER to exit without cancelling or discarding accepted work.
-
-Only controller state changes under its lock. Callers may hold the endpoint's
-attachment lock; no persistence or presentation runs in that lock order."
+  "Commit an idle CONTROLLER to exit under the controller lock."
   (with-lock-held ((application-input-controller-lock controller))
-    (cond
-      ((or (application-input-controller-stopping-p controller)
-           (application-input-controller-active-p controller)
-           (find-if-not #'deque-empty-p (application-input-controller--queues controller))
-           (application-input-controller-follow-up-edit-work controller))
-       nil)
-      (t
-       (setf (application-input-controller-exit-reason controller) ':world-terminal-kill
-             (application-input-controller-stopping-p controller) t)
-       (sb-thread:condition-broadcast (application-input-controller-condition-variable controller))
-       t))))
+    (application-input-controller--request-idle-exit-locked controller)))
+
+(-> application-input-controller--request-idle-exit-locked (application-input-controller) boolean)
+(defun application-input-controller--request-idle-exit-locked (controller)
+  "Commit an idle CONTROLLER to exit with the controller lock already held."
+  (cond
+    ((or (application-input-controller-stopping-p controller)
+         (application-input-controller--busy-locked-p controller))
+     nil)
+    (t
+     (setf (application-input-controller-exit-reason controller) ':world-terminal-kill
+           (application-input-controller-stopping-p controller) t)
+     (sb-thread:condition-broadcast (application-input-controller-condition-variable controller))
+     t)))
 
 (-> application-input-controller--request-exit
     (application-input-controller keyword)

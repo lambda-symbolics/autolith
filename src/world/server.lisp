@@ -575,6 +575,16 @@ channel that cannot be served keeps its message waiting."
 (-> world-server--host-idle-p (world-host) boolean)
 (defun world-server--host-idle-p (host)
   "Return true while HOST's channel is served, no terminal shows it, and nothing runs or waits in it."
+  (if-let ((controller (application-input-controller (world-host-application host))))
+    (with-lock-held ((application-input-controller-lock controller))
+      (world-server--host-idle-locked-p host))
+    (world-server--host-idle-locked-p host)))
+
+(-> world-server--host-idle-locked-p (world-host) boolean)
+(defun world-server--host-idle-locked-p (host)
+  "Return whether HOST is idle without acquiring the input-controller lock.
+
+The controller lock must be held if HOST has a controller."
   (let* ((application  (world-host-application host))
          (controller   (application-input-controller application))
          (orchestrator (application--task-orchestrator application)))
@@ -582,7 +592,7 @@ channel that cannot be served keeps its message waiting."
          (not (world-host-paused-p host))
          (null (world-host-exit-reason host))
          (not (world-host-attached-p host))
-         (not (and controller (application-input-controller-busy-p controller)))
+         (not (and controller (application-input-controller--busy-locked-p controller)))
          (not (and orchestrator (plusp (task-orchestrator-session-live-count orchestrator)))))))
 
 (-> world-server--retire-unhealthy-hosts (world-server) null)
@@ -1035,19 +1045,19 @@ started must not end one another terminal attached to since."
                  (assoc (world-host-channel host) states :test #'string=)))
            (setf (rest state)
                  (if (and session controller)
-                     (with-lock-held ((image-daemon:daemon-runtime-lock
-                                       session))
-                       (cond ((world-host-attached-p host)
-                              ':attached)
-                             ((not (world-server--host-idle-p host))
-                              ':running)
-                             ((application-input-controller--request-idle-exit
-                               controller)
-                              (setf (channel-endpoint-closing-p session) t
-                                    (world-host-state host) ':closing)
-                              ':closing)
-                             (t
-                              ':hosted)))
+                      ;; Match input dispatch: take the controller lock before the endpoint lock.
+                     (with-lock-held ((application-input-controller-lock controller))
+                       (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                         (cond ((world-host-attached-p host)
+                                ':attached)
+                               ((not (world-server--host-idle-locked-p host))
+                                ':running)
+                               ((application-input-controller--request-idle-exit-locked controller)
+                                (setf (channel-endpoint-closing-p session) t
+                                      (world-host-state host) ':closing)
+                                ':closing)
+                               (t
+                                ':hosted))))
                      ':hosted))))
        (dolist (host hosts)
          (let ((state (assoc (world-host-channel host) states :test #'string=)))
