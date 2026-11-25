@@ -1183,6 +1183,8 @@
   test-openai-compatible-provider-bare-auth-selection
   test-openai-compatible-tool-name-recovery
   test-openai-compatible-provider-tool-schemas
+  test-openai-compatible-compaction-tool-choice
+  test-openai-compatible-subclass-compaction-tool-choice
   test-openai-api-responses
   test-openai-compatible-provider-model-cache-boundary
   test-openai-compatible-provider-authentication-bootstrap

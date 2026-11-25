@@ -447,7 +447,8 @@ be overridden. Model discovery uses only HEADERS."
                            (list goal-context context))
                :options
                (list :shared-items            shared
-                     :tool-choice             *provider-tool-choice*
+                     ;; Some routes reject a forced tool choice.
+                     :tool-choice             (unless compaction-p *provider-tool-choice*)
                      :stream-usage-p
                      (openai-compatible-provider-stream-usage-p provider)
                      :reasoning-parameter
