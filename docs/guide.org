@@ -751,8 +751,8 @@ value for the corresponding XDG variable overrides each default.
 | Process state | =XDG_STATE_HOME= | =~/.local/state/autolith/= | =%LOCALAPPDATA%\autolith\state\= |
 | Cache | =XDG_CACHE_HOME= | =~/.cache/autolith/= | =%LOCALAPPDATA%\autolith\cache\= |
 
-A packager can replace =autolith= in each root with =AUTOLITH_DIRECTORY_NAME=,
-which is described under [[*Configure Autolith][Configure Autolith]].
+Packagers can set =AUTOLITH_DIRECTORY_NAME= to replace =autolith= in the
+per-user roots. See [[*Configure Autolith][Configure Autolith]].
 
 Endpoint records, leases and recovery state are under the state root. The
 management REPL socket defaults to =management/repl.sock= there on platforms
@@ -823,20 +823,23 @@ contain =init.lisp=, =mcp.sexp=, =skills/= and =agents/=. A site
 explicit site root in place of =XDG_CONFIG_DIRS=.
 
 Packagers that ship Autolith under another name can set three environment
-variables before the launcher starts. =AUTOLITH_DIRECTORY_NAME= replaces
-=autolith= in each per-user root, so data is kept in
-=~/.local/share/NAME/= instead of =~/.local/share/autolith/=. The name must
-start with an ASCII letter or digit and contain only those, dots, hyphens and
-underscores. The launcher and the runtime refuse any other name.
-=AUTOLITH_PRODUCT_NAME= replaces the word Autolith in startup, update and
-recovery messages. =AUTOLITH_COMMAND_NAME= replaces the command name
-=autolith= in command-line help and in the commands that messages suggest.
+variables before the launcher starts:
+
+- Set =AUTOLITH_DIRECTORY_NAME= to replace =autolith= in the per-user roots.
+  Data is kept in =~/.local/share/NAME/= instead of =~/.local/share/autolith/=.
+  The name must start with an ASCII letter or digit and only contain ASCII
+  letters, digits, dots, hyphens and underscores.
+- Use =AUTOLITH_PRODUCT_NAME= for the product name in startup, update and
+  recovery messages.
+- Set =AUTOLITH_COMMAND_NAME= for the command name in help and suggested commands.
+
 Processes started by Autolith inherit these variables.
 
-A Nix package can carry these names itself. Import =nix/package.nix= with
-=directoryName=, =productName=, =commandName= and =siteConfigRoot= to make the
-packaged launcher set the matching variables when they are unset. The
-launcher is then installed as =bin/COMMAND= instead of =bin/autolith=.
+Nix packagers can include defaults for these variables. Import
+=nix/package.nix= with =directoryName=, =productName=, =commandName=
+and =siteConfigRoot=. The packaged launcher sets the matching variables
+if they are unset or empty. The launcher is installed as =bin/COMMAND=
+instead of =bin/autolith=.
 
 ** Project instructions and adaptation notes
 

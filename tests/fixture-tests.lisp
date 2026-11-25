@@ -310,7 +310,7 @@
 
 (-> test-application-directory-name-roots () null)
 (defun test-application-directory-name-roots ()
-  "Place every root under the directory that AUTOLITH_DIRECTORY_NAME names, and refuse unportable names."
+  "Test that runtime and standalone roots use the configured directory name. Test that invalid names are rejected."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (let ((*package* (find-package :autolith)))

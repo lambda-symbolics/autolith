@@ -438,7 +438,7 @@
 
 (-> test-cli-product-identity () null)
 (defun test-cli-product-identity ()
-  "Name the product and the launcher command in CLI text from the environment."
+  "Test that CLI text uses the configured product and launcher names."
   (loop for (product command expected-product expected-command)
           in (list (list nil nil "Autolith" "autolith")
                    (list "" "" "Autolith" "autolith")
