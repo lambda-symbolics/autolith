@@ -455,6 +455,10 @@ For a fast delimiter check before loading edited Lisp, use the built-in
 
 ## Commit Policy
 
+- Do not post GitHub issue/PR comments or textual reviews in the user's name
+  without explicit authorization for that publication. A request to fix,
+  review, merge, close or release does not authorize a comment. Keep findings
+  in the conversation. Do not edit or delete existing comments unless asked.
 - Use primitive-style, imperative commit messages with a title line only,
   shorter than 72 characters.
 - Put ticket references in parentheses at the end of the title, for example
