@@ -385,6 +385,22 @@ To configure Autolith in Lisp, edit:
 @@code:Config root: {{{:config-root}}}
 State root:  {{{:state-root}}}@@
 
+* Project instructions and adaptation notes
+:PROPERTIES:
+:ID: project-files
+:VERSION: 1
+:END:
+Put project rules in =AGENTS.md=.
+Autolith reads these files from the project root down to the current working directory.
+Rules in deeper directories refine the rules above them.
+
+Use =AUTOLITH.org= in the project root for notes about project-specific Autolith adaptations.
+Autolith includes this file as project notes in model requests.
+
+Record the problem and the change in these notes.
+Include the verification results and the conditions for removing the adaptation.
+Instructions in =AGENTS.md= take precedence over these notes.
+
 * Prompt padding
 :PROPERTIES:
 :ID: prompt-padding

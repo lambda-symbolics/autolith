@@ -816,6 +816,20 @@ contain =init.lisp=, =mcp.sexp=, =skills/= and =agents/=. A site
 =init.lisp= runs with the same privileges as personal configuration. Use an
 explicit site root in place of =XDG_CONFIG_DIRS=.
 
+** Project instructions and adaptation notes
+
+Put repository instructions in =AGENTS.md=.
+Autolith reads these files from the project root down to the current working directory.
+Rules in deeper directories refine the rules above them.
+In Git projects, the project root is the nearest ancestor directory with a =.git= entry.
+Outside Git projects, the current working directory is the project root.
+
+Use the optional =AUTOLITH.org= at the project root to document project-specific
+Autolith adaptations. Include the problem and the change.
+Record the verification results and the conditions for removing the adaptation.
+Autolith includes these notes in model requests.
+Instructions in =AGENTS.md= take precedence.
+
 ** Folder blacklist
 
 Set =*tool-path-blacklist*= in trusted =init.lisp= to deny native tool path
