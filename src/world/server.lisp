@@ -208,10 +208,15 @@ the process could fork, and a new thread serves the application again."))
                                                                                           :type          list
                                                                                           :documentation "The hosts of every open channel, newest first.")
                                                                                          (jobs
-                                                                                          :initform      nil
+                                                                                          :initform      (make-deque)
                                                                                           :accessor      world-server-jobs
-                                                                                          :type          list
+                                                                                          :type          deque
                                                                                           :documentation "Thunks waiting for the main thread, oldest first.")
+                                                                                         (child-activity-refresh-pending-p
+                                                                                          :initform      nil
+                                                                                          :accessor      world-server-child-activity-refresh-pending-p
+                                                                                          :type          boolean
+                                                                                          :documentation "Whether one child-activity refresh is queued.")
                                                                                          (stopping-p
                                                                                           :initform      nil
                                                                                           :accessor      world-server-stopping-p
@@ -483,20 +488,20 @@ Return the launcher status a hosted session asked for, or NIL."
          (due  (+ (get-internal-real-time) interval))
          (sweep
           (lambda ()
-            (setf due (+ (get-internal-real-time) interval))
-            (when-let ((runtime (world-server-runtime server))) (world-server--recover-endpoint server runtime))
+            (when-let ((runtime (world-server-runtime server)))
+              (world-server--recover-endpoint server runtime))
             (world-server--retire-unhealthy-hosts server)
             (world-server--unload-cold-hosts server)
-            (world-server--maintain-shell-logs server))))
+            (world-server--maintain-shell-logs server)
+            (setf due (+ (get-internal-real-time) interval)))))
     (loop
      (if-let ((job
                (with-lock-held (lock)
                  (loop
                   (let ((left (- due (get-internal-real-time))))
                     (cond
-                     ((world-server-jobs server)
-                      (return (pop (world-server-jobs server))))
-                     ((and (world-server-stopping-p server)
+                     ((and (deque-empty-p (world-server-jobs server))
+                           (world-server-stopping-p server)
                            (null (world-server-hosts server))
                            (notany
                             (lambda (startup)
@@ -506,6 +511,8 @@ Return the launcher status a hosted session asked for, or NIL."
                       (return nil))
                      ((<= left 0)
                       (return sweep))
+                     ((not (deque-empty-p (world-server-jobs server)))
+                      (return (deque-pop-front (world-server-jobs server))))
                      (t
                       (condition-wait (world-server-condition-variable server)
                                       lock :timeout
@@ -729,14 +736,21 @@ REASON, when given, is what each attached terminal is told before it lets go."
 
 (-> world-server-note-child-activities (world-server) null)
 (defun world-server-note-child-activities (server)
-  "Refresh on the server thread rather than entering another channel from a turn."
-  (world-server--enqueue
-   server (lambda ()
-            (handler-case (world-server--refresh-child-activities server)
-              (world-error (cause)
-                (warn 'world-session-warning
-                      :pathname (configuration-world-path (world-server-configuration server))
-                      :cause    cause))))))
+  "Coalesce child-activity updates into one queued refresh on SERVER."
+  (with-lock-held ((world-server-lock server))
+    (unless (world-server-child-activity-refresh-pending-p server)
+      (world-server--enqueue-locked
+       server
+       (lambda ()
+         (with-lock-held ((world-server-lock server))
+           (setf (world-server-child-activity-refresh-pending-p server) nil))
+         (handler-case (world-server--refresh-child-activities server)
+           (world-error (cause)
+             (warn 'world-session-warning
+                   :pathname (configuration-world-path (world-server-configuration server))
+                   :cause    cause)))))
+      (setf (world-server-child-activity-refresh-pending-p server) t)))
+  nil)
 
 (-> world-server--wake (world-server) null)
 (defun world-server--wake (server)
@@ -1958,8 +1972,14 @@ heap and restarts from it instead."
 (defun world-server--enqueue (server job)
   "Run JOB on SERVER's main thread after the jobs before it."
   (with-lock-held ((world-server-lock server))
-    (setf (world-server-jobs server) (append (world-server-jobs server) (list job)))
-    (sb-thread:condition-broadcast (world-server-condition-variable server)))
+    (world-server--enqueue-locked server job))
+  nil)
+
+(-> world-server--enqueue-locked (world-server function) null)
+(defun world-server--enqueue-locked (server job)
+  "Queue JOB under the held lock of SERVER and wake the main thread."
+  (deque-push-back (world-server-jobs server) job)
+  (sb-thread:condition-broadcast (world-server-condition-variable server))
   nil)
 
 (-> world-server-call-quiesced (world-server application function) t)
