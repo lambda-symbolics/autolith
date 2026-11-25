@@ -247,7 +247,7 @@ that prefix. Count every new item and take no credit for removed reasoning."
                     (if (and (equal name "instructions") (stringp value) old-prompt
                              (equal (provider-cache-prefix--entry old-prompt)
                                     (rest (assoc name (getf sample :wire-fields) :test #'equal))))
-                        (provider-context--inserted-bytes old-prompt value)
+                        (cl-llm-provider-api:context-inserted-utf8-bytes old-prompt value)
                         (utf8-string-length (json-encode value))))))))
 
 (-> provider-context--switched-input (model-provider hash-table &key (:context list) (:sample list))
