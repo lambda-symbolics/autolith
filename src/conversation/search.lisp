@@ -249,18 +249,17 @@ each block, so a fragment spanning two blocks is still found."
       (when (every (lambda (fragment)
                      (conversation-search--segment-contains-p segment fragment))
                    fragments)
-        (let ((segment-matches nil))
+        (let ((segment-matches (make-deque :maximum-count (- limit found))))
           (conversation--map-records
            segment
            (lambda (record)
              (let ((text (conversation-record-search-text record)))
                (when (and text (conversation-search-text-matches-p text terms))
                  (when-let ((projected (conversation-replay-project-record record)))
-                   (push (make-instance 'conversation-search-match
-                                        :record projected
-                                        :text   text)
-                         segment-matches))))))
-          (loop for match in segment-matches
+                  (deque-push-back
+                   segment-matches
+                   (make-instance 'conversation-search-match :record projected :text text)))))))
+          (loop for match in (reverse (deque->list segment-matches))
                 while (< found limit)
                 do (push match matches)
                    (incf found)))))
@@ -301,17 +300,19 @@ The second value is true when a further projected record follows them."
 (-> conversation-records-newest (conversation (integer 1)) list)
 (defun conversation-records-newest (conversation count)
   "Return CONVERSATION's newest COUNT projected records, oldest first."
-  (let ((records nil))
+  (let ((records   nil)
+        (collected 0))
     (dolist (segment (reverse (conversation-search--segments conversation)))
-      (when (>= (length records) count)
+      (when (>= collected count)
         (return))
-      (let ((segment-records nil))
+      (let ((segment-records (make-deque :maximum-count (- count collected))))
         (conversation-search--map-projections
          segment
          (lambda (projected)
-           (push projected segment-records)))
-        (setf records (append (nreverse segment-records) records))))
-    (last records count)))
+           (deque-push-back segment-records projected)))
+        (incf collected (deque-count segment-records))
+        (setf records (nconc (deque->list segment-records) records))))
+    records))
 
 (-> conversation-compaction-sequences (conversation) list)
 (defun conversation-compaction-sequences (conversation)

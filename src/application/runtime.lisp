@@ -4612,24 +4612,28 @@ The third user turn names it too, whichever comes first.")
 (-> application--conversation-title-context (conversation) (option list))
 (defun application--conversation-title-context (conversation)
   "Return bounded first-and-recent message excerpts for naming CONVERSATION."
-  (let* ((index
-           (and (conversation-persisted-p conversation)
-                (conversation-picker-search-find
-                 (conversation-pathname conversation))))
-         (messages
-           (and index
-                (remove-if-not
-                 #'non-empty-string-p
-                 (application--conversation-title-select-messages
-                  (conversation-picker-search-index-messages index))))))
+  (let ((messages nil))
+    (when (conversation-persisted-p conversation)
+      (with-recursive-lock-held ((conversation-append-lock conversation))
+        (call-with-file-lock
+         (conversation-picker-source-lock-pathname (conversation-pathname conversation))
+         (lambda ()
+           (conversation-map-records
+            conversation
+            (lambda (record)
+              (when-let ((message (conversation--record-preview record)))
+                (let ((excerpt (subseq message 0
+                                       (min (length message)
+                                            *conversation-title-context-maximum-characters*))))
+                  (setf messages
+                        (application--conversation-title-select-messages
+                         (append messages (list excerpt))))))))))))
+    (setf messages (remove-if-not #'non-empty-string-p messages))
     (when messages
       (let ((characters-per-message
-              (max 1
-                   (floor *conversation-title-context-maximum-characters*
-                          (length messages)))))
+              (max 1 (floor *conversation-title-context-maximum-characters* (length messages)))))
         (mapcar (lambda (message)
-                  (subseq message 0
-                          (min (length message) characters-per-message)))
+                  (subseq message 0 (min (length message) characters-per-message)))
                 messages)))))
 
 (-> application--conversation-title-request (list) string)
