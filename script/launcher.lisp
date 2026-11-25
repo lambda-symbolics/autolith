@@ -51,7 +51,7 @@
 (defparameter *launcher-terminal-statuses* '(64 76 130 143)
   "Session exit statuses that end the launcher without entering recovery.")
 
-(defparameter *launcher-active-heap-size* "3GB"
+(defparameter *launcher-active-heap-size* "4GB"
   "The dynamic space for hosted channels, including room for SBCL's copying GC.
 
 Pristine recovery keeps the default.")

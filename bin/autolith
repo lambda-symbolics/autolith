@@ -223,7 +223,7 @@ active_image_valid()
 
 # The hosted channels share this heap. Leave room for SBCL to copy surviving
 # objects before releasing the old pages. Pristine recovery keeps its default.
-active_heap_size=3GB
+active_heap_size=4GB
 
 run_active_core()
 {
