@@ -327,7 +327,8 @@ Without a configuration, as in standalone tool registries, knowledge is active."
                             (typep (getf admission :by) '(or knowledge-admitter non-empty-string))
                             (typep (getf admission :time) 'timestamp))))
                  (typep (getf properties :time) 'timestamp))))
-         ((:procedure-defined :procedure-admitted :procedure-retired :procedure-run)
+         ((:lisp-procedure-defined :lisp-procedure-retired
+           :procedure-defined :procedure-admitted :procedure-retired :procedure-run)
           (procedure-record-valid-p record))
          (:diagnosis-defined
           (let ((properties (rest record)))
@@ -514,7 +515,8 @@ by a newer generation stays readable after a rollback."
                        :scope     (getf properties :scope)
                        :workspace (getf properties :workspace)
                        :time      (getf properties :time)))))
-        ((:procedure-defined :procedure-admitted :procedure-retired :procedure-run)
+        ((:lisp-procedure-defined :lisp-procedure-retired
+          :procedure-defined :procedure-admitted :procedure-retired :procedure-run)
          (let ((key (list (getf properties :workspace) (getf properties :id))))
            (when-let ((entry (procedure-entry-reduce
                               (gethash key (knowledge-base-procedures-table base)) record)))

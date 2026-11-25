@@ -70,16 +70,20 @@ a documentation string and a body."
 (defun procedure-record-valid-p (record)
   "Return true if RECORD is a well-formed procedure record.
 
-Records of the step procedures that Lisp procedures replaced are valid as well."
+Step-procedure records are accepted until the next knowledge-log format migration."
   (let ((properties (rest record)))
     (and (eq (getf properties :scope) ':workspace)
          (non-empty-string-p (getf properties :workspace))
          (typep (getf properties :time) 'timestamp)
-         (or (member (first record) '(:procedure-admitted :procedure-run))
-             (getf properties :procedure)
-             (and (knowledge-rule-name-p (getf properties :id))
-                  (or (eq (first record) :procedure-retired)
-                      (stringp (getf properties :source)))))
+         (case (first record)
+           (:lisp-procedure-defined
+            (and (knowledge-rule-name-p (getf properties :id))
+                 (stringp (getf properties :source))))
+           (:lisp-procedure-retired
+            (knowledge-rule-name-p (getf properties :id)))
+           ((:procedure-defined :procedure-admitted :procedure-retired :procedure-run)
+            (or (getf properties :procedure)
+                (knowledge-rule-name-p (getf properties :id)))))
          t)))
 
 (-> procedure-entry-reduce ((option list) list) (option list))
@@ -90,13 +94,13 @@ An entry contains :ID, :SOURCE, :TIME and :RETIRED-P. Returns NIL if RECORD
 belongs to a step procedure."
   (let ((properties (rest record)))
     (case (first record)
-      (:procedure-defined
+      (:lisp-procedure-defined
        (when (getf properties :source)
          (list :id        (getf properties :id)
                :source    (getf properties :source)
                :time      (getf properties :time)
                :retired-p nil)))
-      (:procedure-retired
+      (:lisp-procedure-retired
        (when entry
          (let ((entry (copy-list entry)))
            (setf (getf entry :retired-p) t)
@@ -133,7 +137,7 @@ valid procedure."
    configuration
    (lambda (base)
      (declare (ignore base))
-     (values (list (list :procedure-defined
+     (values (list (list :lisp-procedure-defined
                          :version             *knowledge-format-version*
                          :scope               ':workspace
                          :workspace           (knowledge--workspace configuration)
@@ -159,10 +163,10 @@ Return true if it was not already retired."
            (knowledge--fail ':unknown-procedure identifier "No procedure is named ~A." identifier))
          (if (getf entry :retired-p)
              (values nil nil nil)
-             (values (list (list :procedure-retired
-                                 :scope     ':workspace
-                                 :workspace workspace
-                                 :id        identifier
-                                 :time      (get-universal-time)))
-                     t
-                     t)))))))
+             (values (list (list :lisp-procedure-retired
+                                :scope     ':workspace
+                                :workspace workspace
+                                :id        identifier
+                                :time      (get-universal-time)))
+                    t
+                    t)))))))

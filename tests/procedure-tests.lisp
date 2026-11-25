@@ -106,10 +106,55 @@
                           (null (procedure-catalog-context request))
                           (not (getf entry :retired-p)))
                      "retirement is persistent and idempotent without changing prior snapshots")
+        (let ((archive     (merge-pathnames "procedures.sexp" root))
+              (destination (merge-pathnames "moved/" root)))
+          (ensure-directories-exist destination)
+          (data-export archive :workspace root :configuration configuration)
+          (with-test-configuration (target)
+            (let ((target (configuration-copy target :working-directory destination)))
+              (data-import archive :workspace destination :configuration target)
+              (let ((entry (knowledge-base-procedure
+                            (knowledge-tests--reread target) (knowledge--workspace target) "amount")))
+                (test-assert (and entry (equal source (getf entry :source))
+                                  (getf entry :retired-p))
+                             "workspace archives retain procedure definitions and retirement after remapping")))))
         (procedure-define configuration "amount" source)
+        (let ((kinds nil))
+          (sexp-store:log-map
+           (lambda (record)
+             (case (first record)
+               (:transaction
+                (setf kinds (append (mapcar #'first (getf (rest record) :records)) kinds)))
+              (:knowledge
+               nil)
+              (otherwise
+               (push (first record) kinds))))
+           (configuration-knowledge-path configuration))
+          (test-assert
+           (and kinds (notany (lambda (kind)
+                                (member kind '(:procedure-defined :procedure-admitted
+                                               :procedure-retired :procedure-run)))
+                              kinds))
+           "Lisp procedure records have distinct kinds for rollback to step-procedure readers"))
+        (knowledge-transact
+         configuration
+         (lambda (base)
+           (declare (ignore base))
+           (values
+            (loop for record in
+                  '((:procedure-defined
+                     :procedure (:procedure :id "amount" :parameters nil
+                                 :steps ((:tool "resource.read" :arguments (:object)))))
+                    (:procedure-admitted :id "amount" :procedure-version 1)
+                    (:procedure-run :id "amount" :procedure-version 1
+                     :status :ok :caller :user :steps 1)
+                    (:procedure-retired :id "amount"))
+                  collect (append record (list :scope ':workspace :workspace workspace :time 1)))
+            nil
+            t)))
         (test-assert (and (not (getf (knowledge-base-procedure
                                       (knowledge-tests--reread configuration) workspace "amount")
                                     :retired-p))
                           (procedure-catalog-context request))
-                     "redefinition restores the procedure and catalog entry"))))
+                     "legacy step-procedure history does not replace or retire a Lisp procedure"))))
   nil)

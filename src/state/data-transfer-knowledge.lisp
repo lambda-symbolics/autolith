@@ -20,7 +20,7 @@
 
 (-> data-transfer--collect-knowledge (configuration t) list)
 (defun data-transfer--collect-knowledge (configuration workspace)
-  "Return the knowledge records an archive of WORKSPACE, or of everything, carries."
+  "Return knowledge records for WORKSPACE, or all records if WORKSPACE is NIL."
   (let ((records (data-transfer--knowledge-records configuration)))
     (if (null workspace)
         records
@@ -28,7 +28,8 @@
                            (and (member (first record)
                                         '(:schema-defined :claim-asserted :rule-defined
                                           :rule-admitted :rule-retired :method-defined
-                                          :contract-defined :procedure-defined
+                                          :contract-defined :lisp-procedure-defined
+                                          :lisp-procedure-retired :procedure-defined
                                           :procedure-admitted :procedure-retired
                                           :procedure-run :diagnosis-defined
                                           :diagnosis-recorded))
