@@ -1,5 +1,23 @@
-(require :asdf)
-(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
+;;;; -- Bootstrap Initialization --
+
+(defun bootstrap-initialize (script-path)
+  "Load bootstrap prerequisites quietly and replay diagnostics on failure."
+  (let ((capture (make-string-output-stream)))
+    (handler-case
+        (let ((*standard-output* capture)
+              (*error-output*    capture)
+              (*trace-output*    capture))
+          (require :asdf)
+          (load (merge-pathnames "roots.lisp"
+                                 (make-pathname :name nil :type nil :version nil
+                                                :defaults script-path))))
+      (error (condition)
+        (write-string (get-output-stream-string capture) *error-output*)
+        (finish-output *error-output*)
+        (error condition)))))
+
+(bootstrap-initialize *load-truename*)
+
 
 ;;;; -- Bootstrap Progress --
 

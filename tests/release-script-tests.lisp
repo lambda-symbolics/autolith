@@ -641,6 +641,7 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
          (quicklisp-directory (merge-pathnames "quicklisp/" home))
          (qlot-directory      (merge-pathnames ".qlot/" fixture))
          (cache-home          (merge-pathnames "cache/" fixture))
+         (registry-root       (merge-pathnames "registry/" fixture))
          (data-home           (merge-pathnames "data/" fixture))
          (state-home          (merge-pathnames "state/" fixture))
          (event-log           (merge-pathnames "events.log" fixture))
@@ -651,8 +652,20 @@ printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (ensure-directories-exist bootstrap)
     (uiop:copy-file (merge-pathnames "script/bootstrap.lisp" source-root)
                     bootstrap)
-    (uiop:copy-file (merge-pathnames "script/roots.lisp" source-root)
-                    (merge-pathnames "roots.lisp" script-directory))
+    (test-write-text
+     (merge-pathnames "roots.lisp" script-directory)
+     (concatenate 'string
+                  "(format t \"fixture startup stdout~%\")
+(format *error-output* \"fixture startup stderr~%\")
+(format *trace-output* \"fixture startup trace~%\")
+(when (uiop:getenvp \"AUTOLITH_TEST_BOOTSTRAP_STARTUP_FAIL\")
+  (error \"fixture bootstrap initialization failed\"))
+"
+                  (uiop:read-file-string (merge-pathnames "script/roots.lisp" source-root))))
+    (dolist (relative '("first/bootstrap-registry-fixture.asd"
+                        "second/bootstrap-registry-fixture.asd"))
+      (test-write-text (merge-pathnames relative registry-root)
+                       "(asdf:defsystem #:bootstrap-registry-fixture)"))
     (test-write-text
      (merge-pathnames "runtime-requirement.lisp" script-directory)
      "(defun autolith-require-minimum-runtime (pathname)
@@ -783,7 +796,8 @@ esac
      (format nil "~A~%" (lisp-implementation-version)))
     (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture) "2.6.4")
-    (flet ((run-bootstrap (fff-status &key (qlot-status 0) (sandbox-status 0) colorlisp-fail-p terminal-p)
+    (flet ((run-bootstrap (fff-status &key (qlot-status 0) (sandbox-status 0)
+                                       colorlisp-fail-p startup-fail-p terminal-p)
              (let* ((command (list (sbcl-command)
                                    "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
                                    "--script" (namestring bootstrap)))
@@ -801,11 +815,14 @@ esac
                       (format nil "XDG_STATE_HOME=~A" (namestring state-home))
                       (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
                       (format nil "AUTOLITH_TEST_EVENT_LOG=~A" (namestring event-log))
+                      (format nil "CL_SOURCE_REGISTRY=(:source-registry (:tree ~S) :inherit-configuration)"
+                              (namestring registry-root))
                       (format nil "AUTOLITH_TEST_FFF_STATUS=~D" fff-status)
                       (format nil "AUTOLITH_TEST_REAL_SBCL=~A" (sbcl-command))
                       (format nil "AUTOLITH_TEST_QLOT_STATUS=~D" qlot-status)
                       (format nil "AUTOLITH_TEST_SANDBOX_STATUS=~D" sandbox-status)
                       (format nil "AUTOLITH_TEST_COLORLISP_FAIL=~A" (if colorlisp-fail-p "1" ""))
+                      (format nil "AUTOLITH_TEST_BOOTSTRAP_STARTUP_FAIL=~A" (if startup-fail-p "1" ""))
                       "NO_COLOR=1")
                 :ignore-error-status t))))
       (multiple-value-bind (output error-output status) (run-bootstrap 0)
@@ -853,7 +870,16 @@ esac
          (and (plusp status) (search "6/8" output) (search "FAILED" output)
               (search "fixture ColorLisp build failed" error-output)
               (not (search "fixture native sandbox" error-output)))
-         "an in-process Lisp failure prints the diagnostics for its own step")))
+         "an in-process Lisp failure prints the diagnostics for its own step"))
+      (multiple-value-bind (output error-output status) (run-bootstrap 0 :startup-fail-p t)
+        (declare (ignore output))
+        (test-assert
+         (and (plusp status)
+              (search "fixture startup stdout" error-output)
+              (search "fixture startup stderr" error-output)
+              (search "fixture startup trace" error-output)
+              (search "fixture bootstrap initialization failed" error-output))
+         "an initialization failure replays captured startup diagnostics and exits unsuccessfully")))
     (let* ((events       (uiop:read-file-string event-log))
            (qlot-install (search "script/qlot-install.lisp" events))
            (locked-setup (search "locked-setup" events))
