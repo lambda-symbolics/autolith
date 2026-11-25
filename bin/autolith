@@ -60,7 +60,8 @@ source_checksums_path=$source_root/sbcl-source-releases.sha256
 terminal_state=
 state_home=$(xdg_base_directory "${XDG_STATE_HOME:-}" "$HOME/.local/state")
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
-runtime_command_path=$data_home/autolith/runtimes/command
+directory_name=$(autolith_directory_name) || exit 1
+runtime_command_path=$data_home/$directory_name/runtimes/command
 inherited_runtime_source_root=${AUTOLITH_SBCL_SOURCE_ROOT:-}
 configured_sbcl=${AUTOLITH_SBCL:-}
 select_runtime_command()
@@ -82,7 +83,7 @@ select_runtime_command()
   fi
   if [[ -r "$source_root/sbcl.version" ]]; then
     bundled_version=$(< "$source_root/sbcl.version")
-    candidate=$data_home/autolith/runtimes/$bundled_version/installation/bin/sbcl
+    candidate=$data_home/$directory_name/runtimes/$bundled_version/installation/bin/sbcl
     if [[ -n "$bundled_version" && -f "$candidate" && -x "$candidate" ]]; then
       sbcl_command=$candidate
       export AUTOLITH_SBCL=$sbcl_command
@@ -106,7 +107,7 @@ select_runtime_command()
 
 select_runtime_command || exit $?
 selected_runtime_version=
-if [[ -d "$data_home/autolith/runtimes" ]] &&
+if [[ -d "$data_home/$directory_name/runtimes" ]] &&
    selected_runtime_probe=$("$sbcl_command" --version 2>/dev/null); then
   selected_runtime_version=${selected_runtime_probe#SBCL }
   selected_runtime_version=${selected_runtime_version%% *}
@@ -115,8 +116,8 @@ runtime_source_root=
 source_identity_path=
 source_identity=
 if [[ -n "$selected_runtime_version" ]]; then
-  runtime_source_root=$data_home/autolith/runtimes/$selected_runtime_version/source
-  source_identity_path=$data_home/autolith/runtimes/$selected_runtime_version/source.identity
+  runtime_source_root=$data_home/$directory_name/runtimes/$selected_runtime_version/source
+  source_identity_path=$data_home/$directory_name/runtimes/$selected_runtime_version/source.identity
   if [[ -r "$source_identity_path" ]]; then
     IFS= read -r source_identity < "$source_identity_path" || source_identity=
   fi
@@ -147,9 +148,9 @@ elif [[ -n "$runtime_source_root" &&
 else
   unset AUTOLITH_SBCL_SOURCE_ROOT
 fi
-recovery_core=${AUTOLITH_RECOVERY_CORE:-$data_home/autolith/recovery/autolith-recovery.core}
+recovery_core=${AUTOLITH_RECOVERY_CORE:-$data_home/$directory_name/recovery/autolith-recovery.core}
 recovery_manifest=$(dirname -- "$recovery_core")/manifest.sexp
-active_core=${AUTOLITH_ACTIVE_CORE:-$data_home/autolith/active/autolith-active.core}
+active_core=${AUTOLITH_ACTIVE_CORE:-$data_home/$directory_name/active/autolith-active.core}
 active_manifest=$(dirname -- "$active_core")/manifest.sexp
 crash_pointer=
 recovery_session_pointer=
@@ -332,13 +333,13 @@ if [[ "$recovery_requested" == true ]]; then
   exit $?
 fi
 
-crash_pointer_directory="$state_home/autolith/crash-pointers"
-(umask 077; mkdir -p -- "$state_home/autolith" "$crash_pointer_directory") || exit 1
+crash_pointer_directory="$state_home/$directory_name/crash-pointers"
+(umask 077; mkdir -p -- "$state_home/$directory_name" "$crash_pointer_directory") || exit 1
 crash_pointer="$crash_pointer_directory/launcher-$$.path"
 rm -f -- "$crash_pointer"
 export AUTOLITH_CRASH_POINTER="$crash_pointer"
 
-recovery_session_pointer_directory="$state_home/autolith/recovery-session-pointers"
+recovery_session_pointer_directory="$state_home/$directory_name/recovery-session-pointers"
 (umask 077; mkdir -p -- "$recovery_session_pointer_directory") || exit 1
 recovery_session_pointer="$recovery_session_pointer_directory/launcher-$$.sexp"
 rm -f -- "$recovery_session_pointer"
@@ -367,7 +368,7 @@ if [[ "$status" -ne 64 && "$status" -ne 76 &&
   if [[ -f "$crash_pointer" ]]; then
     IFS= read -r capsule < "$crash_pointer" || capsule=
     case "$capsule" in
-      "$state_home/autolith/crashes/"*.sexp)
+      "$state_home/$directory_name/crashes/"*.sexp)
         if [[ ! -f "$capsule" ]]; then
           capsule=
         fi

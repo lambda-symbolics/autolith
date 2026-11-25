@@ -455,23 +455,27 @@ protocol."
 
 Configuration lives under the roaming application data folder, and data,
 state, and cache under the local one, each in its own subdirectory."
-  (ecase kind
-    (:config
-     (merge-pathnames "autolith/"
-                      (or (win32--absolute-environment-directory "XDG_CONFIG_HOME")
-                          (win32--known-folder "APPDATA"))))
-    (:data
-     (if-let ((xdg (win32--absolute-environment-directory "XDG_DATA_HOME")))
-         (merge-pathnames "autolith/" xdg)
-         (merge-pathnames "autolith/data/" (win32--known-folder "LOCALAPPDATA"))))
-    (:state
-     (if-let ((xdg (win32--absolute-environment-directory "XDG_STATE_HOME")))
-         (merge-pathnames "autolith/" xdg)
-         (merge-pathnames "autolith/state/" (win32--known-folder "LOCALAPPDATA"))))
-    (:cache
-     (if-let ((xdg (win32--absolute-environment-directory "XDG_CACHE_HOME")))
-         (merge-pathnames "autolith/" xdg)
-         (merge-pathnames "autolith/cache/" (win32--known-folder "LOCALAPPDATA"))))))
+  (let ((directory (platform-application-directory)))
+    (ecase kind
+      (:config
+       (merge-pathnames directory
+                        (or (win32--absolute-environment-directory "XDG_CONFIG_HOME")
+                            (win32--known-folder "APPDATA"))))
+      (:data
+       (if-let ((xdg (win32--absolute-environment-directory "XDG_DATA_HOME")))
+           (merge-pathnames directory xdg)
+           (merge-pathnames (merge-pathnames "data/" directory)
+                            (win32--known-folder "LOCALAPPDATA"))))
+      (:state
+       (if-let ((xdg (win32--absolute-environment-directory "XDG_STATE_HOME")))
+           (merge-pathnames directory xdg)
+           (merge-pathnames (merge-pathnames "state/" directory)
+                            (win32--known-folder "LOCALAPPDATA"))))
+      (:cache
+       (if-let ((xdg (win32--absolute-environment-directory "XDG_CACHE_HOME")))
+           (merge-pathnames directory xdg)
+           (merge-pathnames (merge-pathnames "cache/" directory)
+                            (win32--known-folder "LOCALAPPDATA")))))))
 
 (-> win32--attributes (pathname) integer)
 (defun win32--attributes (pathname)

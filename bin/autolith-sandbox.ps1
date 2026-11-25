@@ -21,15 +21,26 @@ function Install-AutolithSandboxBundle([string]$Source, [string]$Root, [string]$
   Install-ClExecSandboxBundle $Source $Root
 }
 
+function Get-AutolithDirectoryName {
+  # Mirrors AUTOLITH-SCRIPT-APPLICATION-DIRECTORY in script/roots.lisp.
+  $name = $env:AUTOLITH_DIRECTORY_NAME
+  if (-not $name) { return 'autolith' }
+  if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') {
+    throw "AUTOLITH_DIRECTORY_NAME `"$name`" is not a portable directory name."
+  }
+  return $name
+}
+
 function Get-AutolithSandboxRoot {
   $absolute = '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)'
+  $directory = Get-AutolithDirectoryName
   if ($env:XDG_DATA_HOME -and $env:XDG_DATA_HOME -match $absolute) {
-    return (Join-Path $env:XDG_DATA_HOME 'autolith\native\sandbox')
+    return (Join-Path $env:XDG_DATA_HOME "$directory\native\sandbox")
   }
   if (-not $env:LOCALAPPDATA -or $env:LOCALAPPDATA -notmatch $absolute) {
     throw 'LOCALAPPDATA must name an absolute directory.'
   }
-  return (Join-Path $env:LOCALAPPDATA 'autolith\data\native\sandbox')
+  return (Join-Path $env:LOCALAPPDATA "$directory\data\native\sandbox")
 }
 
 function Set-AutolithSandboxDefault([string]$Root) {

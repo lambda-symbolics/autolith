@@ -178,7 +178,8 @@
                                      (:cache
                                       ".cache/"))
                                    home)))
-    (merge-pathnames "autolith/" (posix--environment-directory variable fallback))))
+    (merge-pathnames (platform-application-directory)
+                     (posix--environment-directory variable fallback))))
 
 (defmethod platform-parse-namestring ((platform posix-platform) string)
   "Read STRING as a Unix namestring, as UIOP does for pathname designators."

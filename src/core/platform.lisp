@@ -265,6 +265,47 @@ reason :MISSING when PATHNAME does not exist."))
       (platform-parse-namestring *platform* designator)
       designator))
 
+(defparameter *platform-application-directory-name* "autolith"
+  "The name of the per-user directories when AUTOLITH_DIRECTORY_NAME is unset.")
+
+(-> platform-application-directory-name () string)
+(defun platform-application-directory-name ()
+  "Return the name of the per-user directories that Autolith keeps.
+
+The AUTOLITH_DIRECTORY_NAME environment variable gives the name. When the
+variable is unset or empty, the name is *PLATFORM-APPLICATION-DIRECTORY-NAME*.
+Signal PLATFORM-ERROR with operation :ROOTS and reason :REFUSED when the
+variable does not name one portable directory."
+  (let ((name (uiop:getenv "AUTOLITH_DIRECTORY_NAME")))
+    (cond
+      ((not (non-empty-string-p name))
+       *platform-application-directory-name*)
+      ((platform--portable-directory-name-p name)
+       name)
+      (t
+       (error 'platform-error
+              :message   (format nil "AUTOLITH_DIRECTORY_NAME ~S is not a portable directory name." name)
+              :operation ':roots
+              :reason    ':refused)))))
+
+(-> platform-application-directory () pathname)
+(defun platform-application-directory ()
+  "Return the relative directory pathname named by PLATFORM-APPLICATION-DIRECTORY-NAME."
+  (make-pathname :directory (list ':relative (platform-application-directory-name))))
+
+(-> platform--portable-directory-name-p (string) boolean)
+(defun platform--portable-directory-name-p (name)
+  "Return T when NAME starts with an ASCII letter or digit and contains only those, dots, hyphens and underscores."
+  (flet ((portable-character-p (character)
+           (and (char< character (code-char 128))
+                (or (alphanumericp character)
+                    (find character ".-_")))))
+    (and (plusp (length name))
+         (char< (char name 0) (code-char 128))
+         (alphanumericp (char name 0))
+         (every #'portable-character-p name)
+         t)))
+
 (defgeneric platform-file-uri (platform pathname)
   (:documentation "Encode an absolute native pathname as a percent-escaped file URI."))
 

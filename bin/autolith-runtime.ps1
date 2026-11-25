@@ -15,14 +15,25 @@ function Fail([string]$message) {
   exit 1
 }
 
+function Get-AutolithDirectoryName {
+  # Mirrors AUTOLITH-SCRIPT-APPLICATION-DIRECTORY in script/roots.lisp.
+  $name = $env:AUTOLITH_DIRECTORY_NAME
+  if (-not $name) { return 'autolith' }
+  if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') {
+    Fail "AUTOLITH_DIRECTORY_NAME `"$name`" is not a portable directory name."
+  }
+  return $name
+}
+
 function Get-DataRoot {
   # Mirrors AUTOLITH-APPLICATION-ROOT for :data in script/roots.lisp.
+  $directory = Get-AutolithDirectoryName
   $xdg = $env:XDG_DATA_HOME
   if ($xdg -and ($xdg -match '^([A-Za-z]:[\\/]|\\\\)')) {
-    return (Join-Path $xdg 'autolith')
+    return (Join-Path $xdg $directory)
   }
   if (-not $env:LOCALAPPDATA) { Fail 'LOCALAPPDATA is not set.' }
-  return (Join-Path $env:LOCALAPPDATA 'autolith\data')
+  return (Join-Path (Join-Path $env:LOCALAPPDATA $directory) 'data')
 }
 
 function Get-RuntimeVersion([string]$candidate) {

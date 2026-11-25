@@ -1,4 +1,13 @@
-{ pkgs, src, crane }:
+{ pkgs
+, src
+, crane
+  # Packagers that ship Autolith under another name set these defaults in the
+  # launcher. The matching AUTOLITH_* environment variables still override them.
+, directoryName ? null
+, productName ? null
+, commandName ? null
+, siteConfigRoot ? null
+}:
 
 let
   lib = pkgs.lib;
@@ -967,6 +976,22 @@ let
     fi
   '';
 
+  # A packaged default applies only when the caller left its variable unset.
+  portableName = name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
+  launcherName = if commandName == null then "autolith" else commandName;
+  packagedDefault = variable: value:
+    lib.optionalString (value != null) ''
+      if [ -z "''${${variable}:-}" ]; then
+        export ${variable}=${lib.escapeShellArg (toString value)}
+      fi
+    '';
+  packagedDefaults = lib.concatStrings [
+    (packagedDefault "AUTOLITH_DIRECTORY_NAME" directoryName)
+    (packagedDefault "AUTOLITH_PRODUCT_NAME" productName)
+    (packagedDefault "AUTOLITH_COMMAND_NAME" commandName)
+    (packagedDefault "AUTOLITH_SITE_CONFIG_ROOT" siteConfigRoot)
+  ];
+
 in
 assert lib.assertMsg (qlotSourcesWithoutBuildMetadata == [])
   "qlfile.lock git sources without Nix build metadata in nix/package.nix: ${toString qlotSourcesWithoutBuildMetadata}";
@@ -975,8 +1000,12 @@ assert lib.assertMsg (lib.subtractLists (builtins.attrNames qlotGitSources) qlot
 assert with pkgs.stdenv.hostPlatform;
   (isLinux && (isx86_64 || isAarch64)) || (isDarwin && isAarch64);
 assert lib.versionAtLeast pkgs.sbcl.version minimumSbclVersion;
+assert lib.assertMsg (directoryName == null || portableName directoryName)
+  "directoryName ${toString directoryName} must start with an ASCII letter or digit and contain only those, dots, hyphens and underscores.";
+assert lib.assertMsg (commandName == null || portableName commandName)
+  "commandName ${toString commandName} must start with an ASCII letter or digit and contain only those, dots, hyphens and underscores.";
 pkgs.writeShellApplication {
-  name = "autolith";
+  name = launcherName;
   runtimeInputs = [
     pkgs.bash
     pkgs.coreutils
@@ -986,6 +1015,7 @@ pkgs.writeShellApplication {
     runtime
   ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.procps ];
     text = ''
+      ${packagedDefaults}
       # shellcheck source=/dev/null
       source "${autolithSystem}/script/launcher-cli.sh"
       autolith_launcher_capture_asdf_environment
@@ -1001,6 +1031,7 @@ pkgs.writeShellApplication {
       home="''${HOME:-/home/user}"
       data_home=$(xdg_base_directory "''${XDG_DATA_HOME:-}" "$home/.local/share")
       cache_home=$(xdg_base_directory "''${XDG_CACHE_HOME:-}" "$home/.cache")
+      directory_name=$(autolith_directory_name) || exit 1
       # ASDF reads this variable before project initialization can validate it.
       export XDG_CACHE_HOME="$cache_home"
     export AUTOLITH_SBCL="${runtime}/bin/sbcl"
@@ -1019,12 +1050,12 @@ pkgs.writeShellApplication {
     export GIT_OPTIONAL_LOCKS=0
 
     # Keep durable Nix images under data and regenerable ASDF output under cache.
-    nix_root="$data_home/autolith/nix"
+    nix_root="$data_home/$directory_name/nix"
     identity_name="${builtins.baseNameOf (toString imageIdentity)}"
     image_root="$nix_root/images"
     image_directory="$image_root/$identity_name"
-    asdf_cache="$cache_home/autolith/nix/asdf-cache/$identity_name"
-    (umask 077; mkdir -p "$data_home/autolith" "$cache_home/autolith" \
+    asdf_cache="$cache_home/$directory_name/nix/asdf-cache/$identity_name"
+    (umask 077; mkdir -p "$data_home/$directory_name" "$cache_home/$directory_name" \
       "$image_root" "$asdf_cache")
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
@@ -1055,7 +1086,7 @@ pkgs.writeShellApplication {
     description = "A live, self-modifying Common Lisp agent";
     homepage = "https://github.com/lambda-symbolics/autolith";
     license = lib.licenses.mit;
-    mainProgram = "autolith";
+    mainProgram = launcherName;
     platforms = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
   };
 

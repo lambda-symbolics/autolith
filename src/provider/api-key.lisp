@@ -347,7 +347,7 @@ never retains the resulting credential after this call."
                (subseq account-id (length "api-key/"))
                account-id))
    (merge-pathnames
-    "autolith/"
+    (platform-application-directory)
     (environment-directory
      "XDG_STATE_HOME"
      (merge-pathnames ".local/state/" (user-homedir-pathname))))))

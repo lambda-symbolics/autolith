@@ -97,7 +97,7 @@
      (:plain " selects provider web search: disabled turns it off, cached uses indexed results, and live fetches fresh results where supported."))
     ((:plain "Configuring a language server in ")
      (:code "lsp.sexp")
-     (:plain " under your Autolith config directory adds definition, hover, and diagnostics tools for workspace code."))
+     (:plain " under your configuration directory adds definition, hover, and diagnostics tools for workspace code."))
     ((:plain "Claude caches a prompt for five minutes. If you often pause longer, ")
      (:code "(setf (config :prompt-cache-ttl) :1h)")
      (:plain " asks Anthropic and OpenRouter Claude models for one hour, at twice the cache-write price."))
@@ -151,15 +151,16 @@ the terminal wraps the semantic spans."
       (list
        (terminal-span
         ':notice
-         (format nil "· ~Aupdate available: Autolith ~A -> ~A~%"
+         (format nil "· ~Aupdate available: ~A ~A -> ~A~%"
                  (if (application-world-server application)
                      "world server "
                      "")
-                 current-version latest-version))
+                 (product-name) current-version latest-version))
        (terminal-span
         ':dim
         (if (eq (update-availability-method availability) ':nix)
-            "  installed through Nix; update the flake or profile that provides Autolith"
+            (format nil "  installed through Nix; update the flake or profile that provides ~A"
+                    (product-name))
             "  choose whether to install it before continuing"))))))
 
 (-> application-present-generation-health-warning (application) boolean)
@@ -201,13 +202,13 @@ presents the warning in the first channel it opens only."
              (choice
                (terminal-ui-select
                 ui
-                :title           (format nil "Autolith ~A is available" (subseq tag 1))
+                :title           (format nil "~A ~A is available" (product-name) (subseq tag 1))
                 :items           (application--update-choice-items)
                 :resize-callback #'application-pending-terminal-size)))
         (case choice
           (:update
            (error 'update-requested
-                  :message (format nil "Update to Autolith ~A." (subseq tag 1))
+                  :message (format nil "Update to ~A ~A." (product-name) (subseq tag 1))
                   :tag     tag))
           (:skip
            (update-state-dismiss (application-configuration application) tag)
@@ -215,7 +216,7 @@ presents the warning in the first channel it opens only."
            (application-present
             application
             (list (terminal-span ':dim
-                                 (format nil "· skipped Autolith ~A" (subseq tag 1))))))))))
+                                 (format nil "· skipped ~A ~A" (product-name) (subseq tag 1))))))))))
   nil)
 
 (-> application--expected-error-entry
@@ -224,8 +225,8 @@ presents the warning in the first channel it opens only."
 (defun application--expected-error-entry (condition)
   "Return the failure line describing expected CONDITION."
   (application-failure-line
-   (format nil "~A~:[~;~%(auth) authenticates Autolith directly~]"
-           condition (typep condition 'credentials-unavailable))))
+   (format nil "~A~:[~;~%(auth) authenticates ~A directly~]"
+           condition (typep condition 'credentials-unavailable) (product-name))))
 
 (-> application-handle-expected-error
     (application (or autolith-error cl-llm-provider-api:provider-api-error))
@@ -524,22 +525,22 @@ relaying terminal needs to hand the stable launcher, or NIL."))
 (defmethod main--launcher-exit ((condition update-requested))
   "Ask the packaged outer launcher to install the requested release."
   (values *main-update-request-status*
-          (format nil "Autolith will update to ~A after restoring the terminal."
-                  (subseq (update-requested-tag condition) 1))
+          (format nil "~A will update to ~A after restoring the terminal."
+                  (product-name) (subseq (update-requested-tag condition) 1))
           ':notice))
 
 (defmethod main--launcher-exit ((condition rollback-requested))
   "Ask the stable launcher to start the selected retained generation."
   (values *main-rollback-recovery-status*
-          (format nil "Autolith is rolling back to retained generation ~A."
-                  (rollback-requested-generation-id condition))
+          (format nil "~A is rolling back to retained generation ~A."
+                  (product-name) (rollback-requested-generation-id condition))
           ':notice))
 
 (defmethod main--launcher-exit ((condition fatal-control-path-error))
   "Ask the stable launcher to boot recovery after a fatal error."
   (values *main-fatal-recovery-status*
-          (format nil "Autolith entered recovery after a fatal error. Capsule: ~A"
-                  (fatal-control-path-error-capsule-pathname condition))
+          (format nil "~A entered recovery after a fatal error. Capsule: ~A"
+                  (product-name) (fatal-control-path-error-capsule-pathname condition))
           ':failure
           (list :crash-capsule
                 (namestring (fatal-control-path-error-capsule-pathname condition)))))
@@ -771,8 +772,8 @@ dependencies."
         (error 'configuration-error :message "--read-only cannot be combined with --permissions.")))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
-      (format *error-output* "~&Autolith: ~A~%"
-              (application--command-sandbox-unavailable-message))
+      (format *error-output* "~&~A: ~A~%"
+              (product-name) (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
     (unless (platform-supports-p *platform* ':detached-sessions)
       (error 'platform-capability-unavailable
@@ -1019,7 +1020,7 @@ still shows the boot panel keeps it until the user starts the session."
            (content-width (clamp width 1 88))
            (terminal      (world-terminal-screen-terminal screen))
            (title
-             (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*))))
+             (list (terminal-span ':brand (format nil "~:@(~A~) v~A" (product-name) *autolith-version*))))
            (details
              (list* (application--banner-metadata-field "workspace"
                      (sanitize-text directory :single-line-p t))
@@ -1049,7 +1050,8 @@ still shows the boot panel keeps it until the user starts the session."
               (when (or recovered-p recovery-conversation-id)
                 (list (terminal-span ':notice
                        (if recovery-conversation-id
-                           (format nil "Recovery available: autolith open ~A~%"
+                           (format nil "Recovery available: ~A open ~A~%"
+                                   (product-command-name)
                                    (conversation-identifier-display recovery-conversation-id))
                            (format nil "Recovered startup.~%")))))
               (when notice
@@ -1061,7 +1063,8 @@ still shows the boot panel keeps it until the user starts the session."
                                    (terminal--render-spans terminal content) content-width)))
         (let* ((lines    (rows spans))
                (warning  (rows (list (terminal-span ':notice
-                                      "! autolith executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"))))
+                                      (format nil "! ~A executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"
+                                              (product-command-name))))))
                (tip-rows (when tip (rows tip))))
           (when (> (length lines) height)
             (setf lines
@@ -1552,8 +1555,8 @@ Return success and bounded secondary cleanup metadata without replacing a primar
             (replay-failures
               (image-state-load configuration :pristine-p pristine-p)))
        (dolist (failure replay-failures)
-         (format *error-output* "Autolith: private image replay failed: ~A: ~A~%"
-                 (first failure) (rest failure)))
+         (format *error-output* "~A: private image replay failed: ~A: ~A~%"
+                 (product-name) (first failure) (rest failure)))
        (unless pristine-p
          (user-init-load configuration))
        (provider-bootstrap-configuration configuration)
@@ -1574,7 +1577,8 @@ update through their flake or Nix profile."
    (lambda (command)
      (declare (ignore command))
      (error 'configuration-error
-            :message "Run update through the installed autolith launcher."))))
+            :message (format nil "Run update through the installed ~A launcher."
+                             (product-command-name))))))
 
 (-> main--uninstall-command () clingon:command)
 (defun main--uninstall-command ()
@@ -1595,7 +1599,8 @@ Lisp starts; on Windows it prints the folders to delete."
    (lambda (command)
      (declare (ignore command))
      (error 'configuration-error
-            :message "Run uninstall through the installed autolith launcher."))))
+            :message (format nil "Run uninstall through the installed ~A launcher."
+                             (product-command-name))))))
 
 (-> main--normalize-update-arguments (list) list)
 (defun main--normalize-update-arguments (arguments)
@@ -1606,7 +1611,7 @@ Lisp starts; on Windows it prints the folders to delete."
           (setf tail (butlast tail)))
         (unless (or (null tail) (equal tail '("--help")) (equal tail '("-h")))
           (error 'configuration-error
-                 :message "Usage: autolith update [--help]"))
+                 :message (format nil "Usage: ~A update [--help]" (product-command-name))))
         (cons "update" (when tail '("--help"))))
       arguments))
 
@@ -1664,7 +1669,8 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
    (lambda (command)
      (when (getopt* command ':pristine)
        (error 'configuration-error
-              :message "ACP opens channels in the world server, which never runs pristine; start a pristine rescue session with autolith resume --pristine."))
+              :message (format nil "ACP opens channels in the world server, which never runs pristine; start a pristine rescue session with ~A resume --pristine."
+                               (product-command-name))))
      (let ((endpoint        (main--acp-endpoint command))
            (configuration   (configuration-create :defer-provider-validation-p t))
            (permission-mode (or (getopt* command ':permissions) ':ask)))
@@ -1676,14 +1682,15 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
 (defun main--top-level-command ()
   "Return Autolith's top-level command-line definition."
   (make-command
-   :name         "autolith"
+   :name         (product-command-name)
    :description  "a small, live, self-modifying Common Lisp agent"
    :long-description
-   "The stable launcher also accepts --recovery and --from-source, which
-select how Autolith starts before this command line is parsed.
-Use -- to end option parsing. autolith update installs the latest packaged
+   (format nil "The stable launcher also accepts --recovery and --from-source, which
+select how ~A starts before this command line is parsed.
+Use -- to end option parsing. ~A update installs the latest packaged
 release and exits without starting a session.
-autolith uninstall removes the installation and keeps user data."
+~A uninstall removes the installation and keeps user data."
+           (product-name) (product-command-name) (product-command-name))
    :version      *autolith-version*
    :options      (main--session-options)
    :sub-commands (list (main--open-command)
@@ -1785,7 +1792,8 @@ autolith uninstall removes the installation and keeps user data."
                    (format nil "~A Observed lock owner PID ~D. ~A" original pid
                            (case reachability
                              (:reachable
-                              "A matching channel endpoint is reachable in this image selection; inspect it with autolith status or attach with autolith open ID.")
+                              (format nil "A matching channel endpoint is reachable in this image selection; inspect it with ~A status or attach with ~:*~A open ID."
+                                      (product-command-name)))
                              (:no-reachable-endpoint
                               (format nil "No matching channel endpoint was found in this image selection. Inspect and recheck PID ~D; if you choose to stop it, run kill ~D, then retry. The owner may have changed since this snapshot." pid pid))
                              (otherwise
@@ -1817,7 +1825,7 @@ variables for later user and child consumers are restored here."
   "Return the line saying Autolith could not start because of MESSAGE.
 
 The line is colored as a failure when STREAM is a terminal that allows color."
-  (let ((line     (format nil "! Autolith could not start: ~A" message))
+  (let ((line     (format nil "! ~A could not start: ~A" (product-name) message))
         (sequence (and (main--output-styled-p stream)
                        (terminal-style-sequence ':failure))))
     (if sequence

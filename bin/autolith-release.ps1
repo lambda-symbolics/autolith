@@ -27,7 +27,7 @@ $env:GIT_OPTIONAL_LOCKS = '0'
 if ($args.Count -gt 0 -and $args[0] -eq '--autolith-release-probe') {
   "version=$($fields.version)"; "tag=$($fields.tag)"; "commit=$($fields.commit)"; "platform=$($fields.platform)"; "source=$sourceRoot"; "runtime=$runtime"; exit 0
 }
-$dataRoot = Join-Path $env:LOCALAPPDATA 'autolith\data'
+$dataRoot = Join-Path (Join-Path $env:LOCALAPPDATA (Get-AutolithDirectoryName)) 'data'
 $userIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $imageRoot = Join-Path $releaseRoot (Join-Path '.autolith-images' $userIdentity)
 $activeCore = Join-Path $imageRoot 'active\autolith-active.core'

@@ -308,6 +308,49 @@
                                   "ordinary native defaults follow the environment")))))))
   nil)
 
+(-> test-application-directory-name-roots () null)
+(defun test-application-directory-name-roots ()
+  "Place every root under the directory that AUTOLITH_DIRECTORY_NAME names, and refuse unportable names."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let ((*package* (find-package :autolith)))
+      (load (asdf:system-relative-pathname :autolith "script/roots.lisp")))
+    (let ((script-root (symbol-function
+                        (find-symbol "AUTOLITH-APPLICATION-ROOT" :autolith)))
+          (base        (uiop:native-namestring root)))
+      (with-test-environment (("XDG_CONFIG_HOME" base) ("XDG_DATA_HOME" base)
+                              ("XDG_STATE_HOME" base) ("XDG_CACHE_HOME" base))
+        (loop for (name expected) in '((nil "autolith/")
+                                       ("" "autolith/")
+                                       ("iilith" "iilith/")
+                                       ("Agent-2.next_1" "Agent-2.next_1/"))
+              do (with-test-environment (("AUTOLITH_DIRECTORY_NAME" name))
+                   (dolist (kind '(:config :data :state :cache))
+                     (dolist (actual (list (platform-application-root *platform* kind)
+                                           (funcall script-root kind)))
+                       (test-assert (string= (concatenate 'string base expected)
+                                             (uiop:native-namestring actual))
+                                    "every root uses the configured directory name")))))
+        (dolist (name (list "." ".." ".hidden" "-flag" "a/b" "a\\b" "star*"
+                           (format nil "caf~C" (code-char 233))))
+          (with-test-environment (("AUTOLITH_DIRECTORY_NAME" name))
+            (test-assert (eq ':refused
+                             (handler-case
+                                 (progn
+                                   (platform-application-root *platform* ':data)
+                                   nil)
+                               (platform-error (condition)
+                                 (platform-error-reason condition))))
+                         "the runtime refuses an unportable directory name")
+            (test-assert (handler-case
+                             (progn
+                               (funcall script-root ':data)
+                               nil)
+                           (error ()
+                             t))
+                         "standalone helpers refuse an unportable directory name"))))))
+  nil)
+
 (-> test-xdg-explicit-roots () null)
 (defun test-xdg-explicit-roots ()
   "Keep explicit roots ahead of XDG defaults across configuration constructors."

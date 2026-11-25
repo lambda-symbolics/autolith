@@ -436,6 +436,39 @@
                           "the welcome composer includes the configured modeline")))))))
   nil)
 
+(-> test-cli-product-identity () null)
+(defun test-cli-product-identity ()
+  "Name the product and the launcher command in CLI text from the environment."
+  (loop for (product command expected-product expected-command)
+          in (list (list nil nil "Autolith" "autolith")
+                   (list "" "" "Autolith" "autolith")
+                   (list "Autolith: Braiins Edition" "iilith" "Autolith: Braiins Edition" "iilith")
+                   (list (format nil "Two~%Lines") "cmd" nil "cmd"))
+        do (with-test-environment (("AUTOLITH_PRODUCT_NAME" product)
+                                   ("AUTOLITH_COMMAND_NAME" command))
+             (test-assert (not (find #\Newline (product-name)))
+                          "the product name is one line of text")
+             (when expected-product
+               (test-assert (string= (product-name) expected-product)
+                            "the product name follows AUTOLITH_PRODUCT_NAME")
+               (test-assert
+                (string= (main--startup-failure-line "timeout" (make-broadcast-stream))
+                         (format nil "! ~A could not start: timeout" expected-product))
+                "the startup failure line names the product"))
+             (test-assert (string= (clingon:command-name (main--top-level-command))
+                                   expected-command)
+                          "the top-level command takes the configured command name")
+             (test-assert
+              (handler-case
+                  (progn
+                    (main--normalize-update-arguments (list "update" "extra"))
+                    nil)
+                (configuration-error (condition)
+                  (string= (autolith-error-message condition)
+                           (format nil "Usage: ~A update [--help]" expected-command))))
+              "update usage names the configured command")))
+  nil)
+
 (-> test-cli-startup-failure-line () null)
 (defun test-cli-startup-failure-line ()
   "Test a failed start reports one marked line, styled only for a styled terminal."

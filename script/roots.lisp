@@ -107,34 +107,57 @@ next build performs."
       (error "The ~A environment variable does not name an absolute directory."
              variable)))
 
+(defun autolith-script-application-directory ()
+  "Return the relative directory that AUTOLITH_DIRECTORY_NAME names, or autolith/ when it is unset.
+
+Signal an error when the variable does not name one portable directory: a name
+that starts with an ASCII letter or digit and contains only those, dots,
+hyphens and underscores."
+  (let ((name (uiop:getenv "AUTOLITH_DIRECTORY_NAME")))
+    (cond
+      ((or (null name) (zerop (length name)))
+       (make-pathname :directory '(:relative "autolith")))
+      ((and (char< (char name 0) (code-char 128))
+            (alphanumericp (char name 0))
+            (every (lambda (character)
+                     (and (char< character (code-char 128))
+                          (or (alphanumericp character)
+                              (find character ".-_"))))
+                   name))
+       (make-pathname :directory (list :relative name)))
+      (t
+       (error "AUTOLITH_DIRECTORY_NAME ~S is not a portable directory name." name)))))
+
 (defun autolith-application-root (kind)
   "Return Autolith's per-user directory of KIND, one of :config, :data, :state, or :cache."
-  (let* ((variable (ecase kind
-                     (:config
-                      "XDG_CONFIG_HOME")
-                     (:data
-                      "XDG_DATA_HOME")
-                     (:state
-                      "XDG_STATE_HOME")
-                     (:cache
-                      "XDG_CACHE_HOME")))
-         (xdg      (autolith-script-environment-directory variable)))
+  (let* ((directory (autolith-script-application-directory))
+         (variable  (ecase kind
+                      (:config
+                       "XDG_CONFIG_HOME")
+                      (:data
+                       "XDG_DATA_HOME")
+                      (:state
+                       "XDG_STATE_HOME")
+                      (:cache
+                       "XDG_CACHE_HOME")))
+         (xdg       (autolith-script-environment-directory variable)))
     (cond
       (xdg
-       (merge-pathnames "autolith/" xdg))
+       (merge-pathnames directory xdg))
       ((and (uiop:os-windows-p) (eq kind :config))
-       (merge-pathnames "autolith/" (autolith-script-known-folder "APPDATA")))
+       (merge-pathnames directory (autolith-script-known-folder "APPDATA")))
       ((uiop:os-windows-p)
-       (merge-pathnames (ecase kind
-                          (:data
-                           "autolith/data/")
-                          (:state
-                           "autolith/state/")
-                          (:cache
-                           "autolith/cache/"))
+       (merge-pathnames (merge-pathnames (ecase kind
+                                           (:data
+                                            "data/")
+                                           (:state
+                                            "state/")
+                                           (:cache
+                                            "cache/"))
+                                         directory)
                         (autolith-script-known-folder "LOCALAPPDATA")))
       (t
-       (merge-pathnames "autolith/"
+       (merge-pathnames directory
                         (merge-pathnames (ecase kind
                                            (:config
                                             ".config/")
