@@ -1244,6 +1244,90 @@
          (error (world-host-failure host))))))
   nil)
 
+(-> test-exit-before-work-handler-keeps-cancellation-pending () null)
+(defun test-exit-before-work-handler-keeps-cancellation-pending ()
+  "Test an exit reaching new work before its handler leaves cancellation pending."
+  (let* ((application (make-instance 'application :ui nil))
+         (controller
+           (make-instance 'application-input-controller
+                          :application                   application
+                          :initial-work-items            (make-deque :initial-contents (list (list ':probe)))
+                          :pending-persistence-enabled-p nil
+                          :main-thread                   (current-thread)))
+         (published   (sb-thread:make-semaphore))
+         (release     (sb-thread:make-semaphore))
+         (processed   (sb-thread:make-semaphore))
+         (held-p      nil)
+         (outcome     nil)
+         (escaped     nil)
+         (thread      nil))
+    (setf (application-input-controller application) controller
+          ;; NEXT-WORK publishes counts after marking its work active and
+          ;; before the serving loop's handler is in place; hold it there.
+          (client-hub-change-function (application-client-hub application))
+          (lambda ()
+            (when (and (application-input-controller-active-p controller) (not held-p))
+              (setf held-p t)
+              (sb-thread:signal-semaphore published)
+              (sb-thread:wait-on-semaphore release :timeout 10))))
+    (setf thread
+          (make-thread
+           (lambda ()
+             (handler-case
+                 (let ((work (application-input-controller--next-work controller)))
+                   (setf outcome
+                         (list work
+                               (application-input-controller--consume-turn-cancellation-delivery-p
+                                controller))))
+               (serious-condition (condition)
+                 (setf escaped condition))))
+           :name "Autolith test channel before its work handler"))
+    (setf (slot-value controller 'main-thread) thread)
+    (unwind-protect
+         (progn
+           (test-assert (sb-thread:wait-on-semaphore published :timeout 10)
+                        "new work is active while its counts publish")
+           (application-input-controller--request-exit controller ':end-of-input)
+           ;; Interrupts run in order, so this one follows any cancellation.
+           (when (thread-alive-p thread)
+             (interrupt-thread thread (lambda () (sb-thread:signal-semaphore processed)))
+             (sb-thread:wait-on-semaphore processed :timeout 10)))
+      (sb-thread:signal-semaphore release)
+      (sb-thread:join-thread thread :default nil :timeout 10))
+    (test-assert (null escaped)
+                 (format nil "no cancellation is signalled outside the work handler: ~S" escaped))
+    (test-assert (equal outcome '((:probe) t))
+                 "the work arrives with its cancellation pending for the handler"))
+  (let* ((application (make-instance 'application :ui nil))
+         (controller
+           (make-instance 'application-input-controller
+                          :application                   application
+                          :pending-persistence-enabled-p nil
+                          :main-thread                   (current-thread)))
+         (waiting     (sb-thread:make-semaphore))
+         (never       (sb-thread:make-semaphore))
+         (thread
+           (make-thread
+            (lambda ()
+              (let ((*application-turn-cancellation-deliverable-p* t))
+                (handler-case
+                    (progn
+                      (sb-thread:signal-semaphore waiting)
+                      (sb-thread:wait-on-semaphore never :timeout 10)
+                      ':not-cancelled)
+                  (application-turn-cancelled ()
+                    ':cancelled))))
+            :name "Autolith test channel inside its work handler")))
+    (setf (application-input-controller application) controller
+          (slot-value controller 'main-thread) thread
+          (application-input-controller-active-p controller) t)
+    (sb-thread:wait-on-semaphore waiting :timeout 10)
+    (test-assert (application-input-controller--request-active-turn-cancellation controller)
+                 "an active turn accepts cancellation")
+    (test-assert (eq (sb-thread:join-thread thread :default nil :timeout 10) ':cancelled)
+                 "work inside its handler is cancelled promptly"))
+  nil)
+
 (-> test-active-turn-stop-keys () null)
 (defun test-active-turn-stop-keys ()
   "Test Escape cancels one provider turn and returns to the prompt."
