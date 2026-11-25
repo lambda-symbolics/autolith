@@ -42,7 +42,10 @@ source_root=$(CDPATH= cd -P "$(dirname "$adapter_path")/.." && pwd)
 minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl-minimum.version")
 source_checksums_path=$source_root/sbcl-source-releases.sha256
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
-runtimes_root=$data_home/autolith/runtimes
+# shellcheck source=../script/launcher-cli.sh
+source "$source_root/script/launcher-cli.sh" || exit 1
+directory_name=$(autolith_directory_name) || exit 1
+runtimes_root=$data_home/$directory_name/runtimes
 runtime_command_path=$runtimes_root/command
 managed_prefix=$runtimes_root/$runtime_release/installation
 managed_sbcl=$managed_prefix/bin/sbcl

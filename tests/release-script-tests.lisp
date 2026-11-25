@@ -2579,7 +2579,7 @@ esac
      (list bin-directory tools-directory data-home))
     (uiop:copy-file (merge-pathnames "bin/autolith-runtime" source-root)
                     adapter-target)
-    (dolist (name '("runtime-probe.lisp" "runtime-requirement.lisp"))
+    (dolist (name '("launcher-cli.sh" "runtime-probe.lisp" "runtime-requirement.lisp"))
       (let ((target (merge-pathnames (format nil "script/~A" name) fixture-root)))
         (ensure-directories-exist target)
         (uiop:copy-file (merge-pathnames (format nil "script/~A" name) source-root)
@@ -3873,6 +3873,33 @@ esac
                        "static validation rejects escaping symbolic links")))
      nil)))
 
+(-> release-script-tests--directory-name-agreement (pathname) null)
+(defun release-script-tests--directory-name-agreement (source-root)
+  "Check that the shell launchers and the runtime accept the same AUTOLITH_DIRECTORY_NAME values."
+  (let ((helper (namestring (merge-pathnames "script/launcher-cli.sh" source-root))))
+    (dolist (name (list "" "iilith" "Agent-2.next_1" "." ".." ".hidden" "-flag" "a/b"
+                        "a b" "star*" (format nil "caf~C" (code-char 233))))
+      (let ((runtime-name
+              (with-test-environment (("AUTOLITH_DIRECTORY_NAME" name))
+                (handler-case
+                    (platform-application-directory-name)
+                  (platform-error ()
+                    nil)))))
+        (multiple-value-bind (output error-output status)
+            (release-script-tests--run
+             (list "bash" "-c" "source \"$1\"; autolith_directory_name" "launcher-test" helper)
+             :environment         (list (format nil "AUTOLITH_DIRECTORY_NAME=~A" name))
+             :ignore-error-status t)
+          (test-assert
+           (if runtime-name
+               (and (zerop status)
+                    (string= output (format nil "~A~%" runtime-name)))
+               (and (not (zerop status))
+                    (search "is not a portable directory name" error-output)))
+           (format nil "the launcher and the runtime agree on directory name ~S: ~A ~A"
+                   name output error-output)))))
+    nil))
+
 (-> release-script-tests--launcher-preflight (pathname) null)
 (defun release-script-tests--launcher-preflight (source-root)
   "Check shared launcher argument handling against the live Clingon catalog."
@@ -4150,6 +4177,7 @@ esac
          (progn
               (release-script-tests--syntax source-root)
               (release-script-tests--launcher-preflight source-root)
+              (release-script-tests--directory-name-agreement source-root)
               (release-script-tests--update-dispatch)
               (release-script-tests--models-command)
               (release-script-tests--bootstrap-dependency-order source-root root)

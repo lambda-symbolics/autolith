@@ -20,9 +20,24 @@ autolith_launcher_capture_asdf_environment()
   done
 }
 
+# Print the name of the product in user-facing text. AUTOLITH_PRODUCT_NAME
+# gives the name, and the name is Autolith when the variable is unset or empty.
+autolith_product_name()
+{
+  printf '%s\n' "${AUTOLITH_PRODUCT_NAME:-Autolith}"
+}
+
+# Print the name of the launcher command in user-facing text.
+# AUTOLITH_COMMAND_NAME gives the name, and the name is autolith when the
+# variable is unset or empty.
+autolith_command_name()
+{
+  printf '%s\n' "${AUTOLITH_COMMAND_NAME:-autolith}"
+}
+
 autolith_update_usage()
 {
-  printf 'Usage: autolith update [--help]\n'
+  printf 'Usage: %s update [--help]\n' "$(autolith_command_name)"
 }
 
 autolith_update_help()
@@ -33,13 +48,13 @@ autolith_update_help()
 
 autolith_uninstall_usage()
 {
-  printf 'Usage: autolith uninstall [--yes] [--help]\n'
+  printf 'Usage: %s uninstall [--yes] [--help]\n' "$(autolith_command_name)"
 }
 
 autolith_uninstall_help()
 {
   autolith_uninstall_usage
-  printf '\nRemove the Autolith installation, managed runtimes, built images, and caches\nwithout starting a session. User data stays: conversations, memories, agendas,\nimage commits, settings, credentials, and configuration. --yes skips the\nconfirmation prompt.\n'
+  printf '\nRemove the %s installation, managed runtimes, built images, and caches\nwithout starting a session. User data stays: conversations, memories, agendas,\nimage commits, settings, credentials, and configuration. --yes skips the\nconfirmation prompt.\n' "$(autolith_product_name)"
 }
 
 autolith_launcher_parse()
@@ -168,6 +183,21 @@ autolith_launcher_parse()
   fi
 }
 
+# Print the name of the per-user directories. AUTOLITH_DIRECTORY_NAME gives
+# the name, and the name is autolith when the variable is unset or empty. The
+# name must start with an ASCII letter or digit and contain only those, dots,
+# hyphens and underscores, as PLATFORM-APPLICATION-DIRECTORY-NAME requires.
+autolith_directory_name()
+{
+  local LC_ALL=C
+  local name=${AUTOLITH_DIRECTORY_NAME:-autolith}
+  if [[ ! $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    printf 'AUTOLITH_DIRECTORY_NAME "%s" is not a portable directory name.\n' "$name" >&2
+    return 1
+  fi
+  printf '%s\n' "$name"
+}
+
 autolith_xdg_directory()
 {
   case ${1:-} in
@@ -221,19 +251,20 @@ autolith_uninstall()
   local install_root=${2:-}
   local source_root=${3:-}
   local home=${HOME:-}
-  local data_root state_root cache_root config_root bin_directory
+  local directory_name data_root state_root cache_root config_root bin_directory
   local entry link target candidate status=0
   local -a targets=()
   local -a links=()
 
   if [[ -z $home ]]; then
-    printf 'Autolith uninstall failed: HOME is not set.\n' >&2
+    printf '%s uninstall failed: HOME is not set.\n' "$(autolith_product_name)" >&2
     return 1
   fi
-  data_root=$(autolith_xdg_directory "${XDG_DATA_HOME:-}" "$home/.local/share")/autolith
-  state_root=$(autolith_xdg_directory "${XDG_STATE_HOME:-}" "$home/.local/state")/autolith
-  cache_root=$(autolith_xdg_directory "${XDG_CACHE_HOME:-}" "$home/.cache")/autolith
-  config_root=$(autolith_xdg_directory "${XDG_CONFIG_HOME:-}" "$home/.config")/autolith
+  directory_name=$(autolith_directory_name) || return 1
+  data_root=$(autolith_xdg_directory "${XDG_DATA_HOME:-}" "$home/.local/share")/$directory_name
+  state_root=$(autolith_xdg_directory "${XDG_STATE_HOME:-}" "$home/.local/state")/$directory_name
+  cache_root=$(autolith_xdg_directory "${XDG_CACHE_HOME:-}" "$home/.cache")/$directory_name
+  config_root=$(autolith_xdg_directory "${XDG_CONFIG_HOME:-}" "$home/.config")/$directory_name
   bin_directory=${AUTOLITH_BIN_DIR:-$home/.local/bin}
 
   # Built images, managed runtimes, retained generation cores, worker images,
@@ -279,9 +310,9 @@ autolith_uninstall()
   done
 
   if [[ ${#targets[@]} -eq 0 && ${#links[@]} -eq 0 ]]; then
-    printf 'Nothing to remove: no Autolith installation, runtime, image, or cache was found.\n' >&2
+    printf 'Nothing to remove: no %s installation, runtime, image, or cache was found.\n' "$(autolith_product_name)" >&2
   else
-    printf 'Autolith uninstall removes:\n' >&2
+    printf '%s uninstall removes:\n' "$(autolith_product_name)" >&2
     for entry in ${targets[@]+"${targets[@]}"} ${links[@]+"${links[@]}"}; do
       printf '  %s\n' "$entry" >&2
     done
@@ -297,7 +328,7 @@ autolith_uninstall()
       case $entry in
         y|Y|yes|YES|Yes) ;;
         *)
-          printf 'Autolith is not removed.\n' >&2
+          printf '%s is not removed.\n' "$(autolith_product_name)" >&2
           return 1
           ;;
       esac

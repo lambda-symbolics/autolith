@@ -55,9 +55,10 @@ sandbox_helper=$release_root/libexec/cl-exec-sandbox-helper
 process_group_helper=$release_root/libexec/cl-exec-sandbox-process-group
 home=${HOME:-}
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$home/.local/share")
-active_core=$data_home/autolith/active/autolith-active.core
-recovery_core=$data_home/autolith/recovery/autolith-recovery.core
-image_marker=$data_home/autolith/release-images
+directory_name=$(autolith_directory_name) || exit 1
+active_core=$data_home/$directory_name/active/autolith-active.core
+recovery_core=$data_home/$directory_name/recovery/autolith-recovery.core
+image_marker=$data_home/$directory_name/release-images
 
 style_brand=
 style_dim=

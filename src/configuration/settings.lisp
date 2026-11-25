@@ -5,6 +5,12 @@
 (defparameter *autolith-version* (asdf:component-version (asdf:find-system "autolith"))
   "The user-visible version from the Autolith system definition.")
 
+(defparameter *product-name* "Autolith"
+  "The name of the product in user-facing text when AUTOLITH_PRODUCT_NAME is unset.")
+
+(defparameter *product-command-name* "autolith"
+  "The name of the launcher command in user-facing text when AUTOLITH_COMMAND_NAME is unset.")
+
 (defparameter *default-model* "gpt-6.1-sol"
   "The default model requested from the subscription provider.")
 
@@ -593,3 +599,28 @@ out. Other providers use their registry metadata, then the conservative fallback
                                     override)))
           parsed)
         *default-compaction-threshold-percent*)))
+
+
+;;;; -- Product Identity --
+
+(-> product-name () string)
+(defun product-name ()
+  "Return the name of the product in user-facing text.
+
+The AUTOLITH_PRODUCT_NAME environment variable gives the name. When the
+variable is unset or empty, the name is *PRODUCT-NAME*."
+  (let ((name (uiop:getenv "AUTOLITH_PRODUCT_NAME")))
+    (if (non-empty-string-p name)
+        (sanitize-text name :single-line-p t)
+        *product-name*)))
+
+(-> product-command-name () string)
+(defun product-command-name ()
+  "Return the name of the launcher command in user-facing text.
+
+The AUTOLITH_COMMAND_NAME environment variable gives the name. When the
+variable is unset or empty, the name is *PRODUCT-COMMAND-NAME*."
+  (let ((name (uiop:getenv "AUTOLITH_COMMAND_NAME")))
+    (if (non-empty-string-p name)
+        (sanitize-text name :single-line-p t)
+        *product-command-name*)))

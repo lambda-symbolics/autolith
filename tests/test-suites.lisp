@@ -1679,6 +1679,7 @@
 (define-test-suite session-cli
   test-cli-resume-prefixes
   test-cli-startup-failure-line
+  test-cli-product-identity
   test-cli-world-client-start
   test-client-welcome-layout
   test-client-welcome-input)
@@ -1961,7 +1962,8 @@
   test-platform-copy-file-permissions
   test-xdg-native-directory-roots
   test-xdg-configuration-native-defaults
-  test-xdg-explicit-roots)
+  test-xdg-explicit-roots
+  test-application-directory-name-roots)
 
 (define-test-suite test-runner
   test-runner-identifier-isolation
