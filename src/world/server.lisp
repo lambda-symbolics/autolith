@@ -364,11 +364,22 @@ instead of starting a second server."
     (or (ls-flock:file-lock-busy-p pathname)
         (world-server-restarting-p configuration))))
 
+(-> world-server--runtime-stop (world-server) null)
+(defun world-server--runtime-stop (server)
+  "Stop the owned endpoint of SERVER and clear the reference after cleanup succeeds."
+  (when-let ((runtime (world-server-runtime server)))
+    (image-daemon:daemon-runtime-stop runtime)
+    (setf (world-server-runtime server) nil))
+  nil)
+
 (-> world-server--runtime-start
     (world-server &key (:token (option string)) (:created-at (option integer)))
     null)
 (defun world-server--runtime-start (server &key token created-at)
-  "Publish SERVER's endpoint under TOKEN and CREATED-AT, or under the ones clients already hold."
+  "Clean up the owned endpoint of SERVER and publish a replacement under TOKEN and CREATED-AT.
+
+If omitted, use the token and creation time already recorded on SERVER."
+  (world-server--runtime-stop server)
   (let ((runtime nil))
     (setf runtime
           (image-daemon:daemon-runtime-create
@@ -380,10 +391,10 @@ instead of starting a second server."
            :initargs         (list :server server)
            :request-function #'world-server--handle-request
            :error-function   (lambda (condition)
-                               (world-server--endpoint-failed server runtime condition))))
+                               (world-server--endpoint-failed server runtime condition)))
+          (world-server-runtime server) runtime)
     (image-daemon:daemon-runtime-start runtime)
-    (setf (world-server-runtime server) runtime
-          (world-server-token server) (image-daemon:daemon-runtime-token runtime)
+    (setf (world-server-token server) (image-daemon:daemon-runtime-token runtime)
           (world-server-created-at server) (image-daemon:daemon-runtime-created-at runtime)))
   nil)
 
@@ -659,15 +670,17 @@ REASON, when given, is what each attached terminal is told before it lets go."
     (let ((thread (world-host-thread host)))
       (when (and thread (not (eq thread (current-thread))))
         (join-thread thread))))
-  (when-let ((runtime (world-server-runtime server)))
-    (setf (world-server-runtime server) nil)
-    (image-daemon:daemon-runtime-stop runtime))
-  (handler-case (management-repl-stop server) (error nil nil))
-  (handler-case (slynk-stop) (error nil nil))
-  (handler-case (rlm-environment-pool-flush) (error nil nil))
-  (telemetry--call-safely #'telemetry-shutdown)
-  (when-let ((lease (shiftf (world-server-lease server) nil))) (handler-case (lease-release lease) (error nil nil)))
-  nil)(-> world-server--hosts (world-server) list)
+  (unwind-protect
+       (world-server--runtime-stop server)
+    (handler-case (management-repl-stop server) (error nil nil))
+    (handler-case (slynk-stop) (error nil nil))
+    (handler-case (rlm-environment-pool-flush) (error nil nil))
+    (telemetry--call-safely #'telemetry-shutdown)
+    (when-let ((lease (shiftf (world-server-lease server) nil)))
+      (handler-case (lease-release lease) (error nil nil))))
+  nil)
+
+(-> world-server--hosts (world-server) list)
 (defun world-server--hosts (server)
   "Return a snapshot of SERVER's hosts, newest first."
   (with-lock-held ((world-server-lock server))
@@ -2046,8 +2059,9 @@ CANCEL-FUNCTION instead of FUNCTION."
                     (world-server--call-with-services-stopped server thunk))))
              (funcall function))))
     (setf *active-application* nil)
-    (world-server--resume-channels server application reconnect-id
-                                   :notice-function notice-function)))
+    (unless (world-server-stopping-p server)
+      (world-server--resume-channels server application reconnect-id
+                                     :notice-function notice-function))))
 
 (-> world-server--drain (world-server) boolean)
 (defun world-server--drain (server)
@@ -2173,13 +2187,21 @@ the host to restart: their job pools own threads the fork must not see."
 
 (-> world-server--call-with-services-stopped (world-server function) t)
 (defun world-server--call-with-services-stopped (server thunk)
-  "Call THUNK with the world endpoint, the management REPL and Slynk stopped, then publish them again."
-  (let ((runtime (shiftf (world-server-runtime server) nil)))
-    (when runtime (image-daemon:daemon-runtime-stop runtime))
-    (unwind-protect
-        (management-repl-call-quiesced server
-                                       (lambda () (slynk-call-quiesced thunk)))
-      (world-server--runtime-start server))))
+  "Call THUNK with the process services stopped, then restore the world endpoint.
+
+Stop SERVER if endpoint cleanup or publication fails during recovery."
+  (unwind-protect
+       (progn
+         (world-server--runtime-stop server)
+         (management-repl-call-quiesced server
+                                       (lambda () (slynk-call-quiesced thunk))))
+    (handler-case
+        (unless (world-server-stopping-p server)
+          (world-server--runtime-start server))
+      (serious-condition (condition)
+        (world-server-stop
+         server :reason "The world endpoint could not restart after the checkpoint.")
+        (error condition)))))
 
 (-> world-server--resume-channels
     (world-server application string &key (:notice-function (option function)))
