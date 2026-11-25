@@ -181,7 +181,7 @@
       (multiple-value-bind (short uncertain-p)
           (provider-request-input-token-estimate
            provider (json-object "type" "input_image" "image_url" "https://example.invalid/image"))
-        (test-assert (and uncertain-p (= short *provider-image-token-estimate*))
+        (test-assert (and uncertain-p (= short (provider-image-token-allowance)))
                      "image token accounting is explicitly approximate")
         (multiple-value-bind (encoded encoded-uncertain-p)
             (provider-request-input-token-estimate
@@ -220,11 +220,11 @@
           (flet ((estimate (item)
                    (provider-request-input-token-estimate provider (json-object "input" (vector item)))))
             (multiple-value-bind (short uncertain-p) (estimate (direct short-url))
-              (test-assert (and uncertain-p (>= short *provider-image-token-estimate*))
+              (test-assert (and uncertain-p (>= short (provider-image-token-allowance)))
                            "a direct tool-output image receives the image allowance")
               (test-assert (= short (estimate (direct long-url)))
                            "tool-output image URL size does not replace the allowance"))
-            (test-assert (< (estimate (nested short-url)) *provider-image-token-estimate*)
+            (test-assert (< (estimate (nested short-url)) (provider-image-token-allowance))
                          "image-shaped tool data is ordinary JSON")
             (test-assert (>= (estimate (nested long-url)) (floor (length long-url) 4))
                          "image-shaped tool data is counted by its encoded bytes"))))
@@ -240,11 +240,11 @@
                             (concatenate 'vector (json-get request "input") (vector item)))
                       (multiple-value-list (provider-request-input-token-estimate provider request)))))
              (destructuring-bind (short uncertain-p) (estimate (direct short-url))
-               (test-assert (and uncertain-p (> short *provider-image-token-estimate*))
+               (test-assert (and uncertain-p (> short (provider-image-token-allowance)))
                             "a measured suffix charges a direct tool-output image the allowance")
                (test-assert (= short (first (estimate (direct long-url))))
                             "a measured suffix ignores tool-output image URL size"))
-             (test-assert (< (first (estimate (nested short-url))) *provider-image-token-estimate*)
+             (test-assert (< (first (estimate (nested short-url))) (provider-image-token-allowance))
                           "a measured suffix counts image-shaped tool data as JSON")
              (test-assert (>= (first (estimate (nested long-url))) (floor (length long-url) 4))
                           "a measured suffix counts image-shaped tool data by its bytes")))))))
@@ -265,7 +265,7 @@
                  (library (value)
                    (multiple-value-list
                     (provider-request-characters provider value
-                                                 :image-characters (* 4 *provider-image-token-estimate*))))
+                                                 :image-characters (* 4 (provider-image-token-allowance)))))
 
                  (as-content (parts)
                    ;; The library's declared Responses image location; "content" is one character longer.
@@ -304,7 +304,7 @@
             (test-assert (equal (multiple-value-list (provider-context--request-characters plain items))
                                 (multiple-value-list
                                  (provider-request-characters plain items
-                                                              :image-characters (* 4 *provider-image-token-estimate*))))
+                                                              :image-characters (* 4 (provider-image-token-allowance)))))
                          "a transport that is not Responses keeps the library count")))))
     (context-admission-test--with-measured-context
      (lambda (agent)
@@ -334,8 +334,79 @@
                                provider (provider-request-history provider request)))
                            "recorded wire size uses the same image charge as the estimates")
               (test-assert (> (getf *provider-context-request* :wire-characters)
-                              (* 8 *provider-image-token-estimate*))
+                              (* 8 (provider-image-token-allowance)))
                            "recorded wire size charges both tool-output images"))))))))
+  nil)
+
+(-> context-admission-test--image-request ((integer 0)) hash-table)
+(defun context-admission-test--image-request (count)
+  "Return a request whose single user message carries COUNT image parts."
+  (json-object
+   "input"
+   (vector
+    (json-object "type" "message" "role" "user" "content"
+                 (coerce (loop repeat count
+                               collect (json-object "type" "input_image"
+                                                    "image_url" "https://example.invalid/image"
+                                                    "detail" "high"))
+                         'vector)))))
+
+(-> test-context-admission-prepared-images () null)
+(defun test-context-admission-prepared-images ()
+  "Charge each image at the local preparation cap rather than a flat larger allowance."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "40000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let ((provider (make-instance 'context-admission-test-provider
+                                     :configuration configuration))
+            (cap      *image-input-maximum-patches*))
+        (labels ((image-tokens (count)
+                   (- (provider-request-input-token-estimate
+                       provider (context-admission-test--image-request count))
+                      (provider-request-input-token-estimate
+                       provider (context-admission-test--image-request 0))))
+
+                 (charged-p (count allowance)
+                   ;; Allow one token per image for array delimiters and rounding.
+                   (<= (* count allowance) (image-tokens count) (* count (1+ allowance)))))
+          (test-assert (charged-p 1 cap)
+                       "one image is charged at the preparation patch cap")
+          (test-assert (charged-p 4 cap)
+                       "several images are each charged at the preparation cap")
+          (let ((*image-input-maximum-patches* 1200))
+            (test-assert (charged-p 1 1200)
+                         "the allowance follows a rebound preparation cap"))
+          (let ((*provider-image-token-estimate* 9000))
+            (test-assert (charged-p 1 9000)
+                         "an explicit per-image allowance still takes precedence"))
+          (provider-open-response-stream provider (context-admission-test--image-request 4))
+          (test-assert (= 1 (context-admission-test-provider-network-calls provider))
+                       "four prepared images fit a window the flat allowance would refuse")))))
+  nil)
+
+(-> test-context-admission-prepared-image-bounds () null)
+(defun test-context-admission-prepared-image-bounds ()
+  "Prepared images at, under and over the patch cap never exceed the charged allowance."
+  (flet ((prepared-patches (width height)
+           (multiple-value-bind (format target-width target-height)
+               (apply #'yolokuva:image-preparation :png width height (image-input--limits))
+             (declare (ignore format))
+             (values (* (ceiling target-width *image-input-patch-size*)
+                        (ceiling target-height *image-input-patch-size*))
+                     target-width target-height))))
+    (multiple-value-bind (patches width height) (prepared-patches 1600 1600)
+      (test-assert (and (= patches *image-input-maximum-patches*) (= width 1600) (= height 1600))
+                   "an image exactly at the patch cap is kept and charged in full"))
+    (multiple-value-bind (patches width) (prepared-patches 1600 1568)
+      (test-assert (and (< patches *image-input-maximum-patches*) (= width 1600))
+                   "an image just under the patch cap is kept"))
+    (dolist (size '((1601 1600) (1632 1600) (2048 2048) (4000 3000) (8000 100) (100 8000)))
+      (multiple-value-bind (patches width height) (apply #'prepared-patches size)
+        (test-assert (and (<= patches (provider-image-token-allowance))
+                          (<= (max width height) *image-input-maximum-dimension*))
+                     (format nil "a ~{~D~^x~} image is reduced to the charged cap" size))))
+    (test-assert (= 1 (prepared-patches 1 1))
+                 "a tiny image still fits the allowance"))
   nil)
 
 (-> test-context-admission-checkpoint-transaction () null)
@@ -1190,7 +1261,7 @@
                             (vector (json-object "type" "message" "role" "user" "content"
                                                  (vector (json-object "type" "input_image" "image_url" "https://example.invalid/image"))))))
          (multiple-value-bind (tokens uncertain-p) (provider-request-input-token-estimate provider request)
-           (test-assert (and uncertain-p (> tokens *provider-image-token-estimate*))
+           (test-assert (and uncertain-p (> tokens (provider-image-token-allowance)))
                         "new media retains its bounded allowance alongside measured input"))))))
   (context-admission-test--with-measured-context
    (lambda (agent)

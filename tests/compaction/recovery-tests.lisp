@@ -670,6 +670,7 @@
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "600000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "4096"))
     (with-test-configuration (configuration)
+     (let ((*provider-image-token-estimate* 16384))
       (dolist (separate-p '(nil t))
         (let* ((conversation (conversation-create configuration))
                (provider     (make-instance 'compaction-recovery-test-provider :configuration configuration))
@@ -698,7 +699,7 @@
                        separate-p (provider-request-input-token-estimate provider raw)
                        (provider-request-input-token-estimate provider request)
                        (provider-request-output-reserve provider request)))))
-          (test-assert (equal before (mapcar #'json-encode items)) "Source images survive summary preflight unchanged.")))))
+          (test-assert (equal before (mapcar #'json-encode items)) "Source images survive summary preflight unchanged."))))))
   nil)
 
 (-> test-compaction-recovery-image-text-controls () null)
@@ -736,6 +737,7 @@
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "600000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "4096"))
     (with-test-configuration (configuration)
+     (let ((*provider-image-token-estimate* 16384))
       (let* ((conversation (conversation-create configuration))
              (provider     (make-instance 'compaction-recovery-test-provider
                                           :configuration configuration
@@ -776,7 +778,7 @@
              (lambda ()
                (provider-check-request-context
                 provider (provider-request-object provider (compaction-recovery-view state candidate) #() :compaction-p t))))
-            (test-assert (equal notes (compaction-recovery-notes state)) "Readmission does not duplicate omission audit entries."))))))
+            (test-assert (equal notes (compaction-recovery-notes state)) "Readmission does not duplicate omission audit entries.")))))))
   nil)
 
 
