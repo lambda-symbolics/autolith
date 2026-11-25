@@ -259,7 +259,7 @@ and no thread of the new process can hold the lock yet."
                         record))
          (entry     (list* (first annotated) :time (get-universal-time) (rest annotated))))
     (ensure-directories-exist pathname)
-    (log-append pathname entry)
+    (mutation-journal--append pathname entry)
     (telemetry-note-mutation-journal entry)
     entry))
 

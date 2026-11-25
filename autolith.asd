@@ -250,6 +250,7 @@
                                           (:file "skills/executable")
                                           (:file "self/tools")
                                           (:file "self/apropos")
+                                          (:file "state/mutation-journal")
                                           (:file "state/durable-mutations")
                                           (:file "state/image-commits")
                                           (:file "startup/user-init")
