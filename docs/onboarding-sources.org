@@ -162,7 +162,7 @@ Choose your first LLM provider
 
 #+name: auth-skip
 #+begin_onboarding_text
-Skip authentication; keep any existing account and model
+Skip authentication and keep any existing account and model
 #+end_onboarding_text
 
 #+name: auth-method-title
@@ -206,7 +206,7 @@ Login cancelled. Type (auth) to try again, or continue to skip signing in.
 :ID: welcome
 :VERSION: 3
 :END:
-[[https://autolith.rocks][@@brand:Autolith@@]] is an agent you can inspect and change while it runs.
+[[https://autolith.rocks][@@brand:Autolith@@]] is an agent that you can inspect and change while it runs.
 
 I'm [[https://twitter.com/LukasHozda][*Lukáš Hozda*]]. I made this tour to help you get started.
 
@@ -237,7 +237,7 @@ Choose a provider and sign in before your first conversation.
 
 For a *ChatGPT subscription*, choose *chatgpt*. Use *browser* for OAuth with a local callback, or *device-code* to enter the displayed code in your browser.
 
-For an *OpenAI API key*, choose *openai-api* and paste your key into the hidden prompt. Autolith saves it in its private credential store and discovers your available models.
+For an *OpenAI API key*, choose *openai-api* and paste your key into the hidden prompt. Autolith saves it in the private credential store. Autolith discovers your available models.
 
 Follow the login or API-key prompts for other providers.
 
@@ -271,7 +271,7 @@ Use familiar terminal editing shortcuts:
 :VERSION: 4
 :EXERCISE: help
 :END:
-The prompt accepts ordinary text, but you can also start with a parenthesis to evaluate Common Lisp forms.
+The prompt accepts ordinary text. You can also start with a parenthesis to evaluate Common Lisp forms.
 
 =(help)=      basic help
 =(settings)=  settings
@@ -294,7 +294,7 @@ Type *? followed by a space* before a Lisp form to run it in the background.
 
 Press Enter to run it.
 
-This is also useful if a Lisp form you want to evaluate does not start with a parenthesis:
+This is also useful if a Lisp form that you want to evaluate does not start with a parenthesis:
 
 =? *my-var*=
 
@@ -319,7 +319,7 @@ Use =:channel= to send a request to a named child channel that is already runnin
 =(channel.send :channel "@test-review"
               :text "Run focused tests and report failures.")=
 
-The current channel is the default. Optional =:images= accepts a vector or list
+The current channel is the default. The optional =:images= argument accepts a vector or list
 of pathname strings, for example =#("/tmp/diagram.png")=.
 
 * Steering and follow-ups
@@ -363,7 +363,7 @@ The agent uses *fff* indexed search to find files, identifiers, or path patterns
 =(search.content :query "parse-request")=  exact identifiers
 =(search.glob :pattern "**/*.lisp")=         matching paths
 
-*In the prompt: type @ and part of a path, then press Tab.* Choose a fuzzy match to insert its path.
+*In the prompt: type @ and part of a path, then press Tab.* Choose a fuzzy match to insert the path.
 
 You and the model can call these tools.
 In fullscreen mode, you can click a tool call to paste it into your prompt, then repeat or modify the call.
@@ -419,7 +419,7 @@ You can change this later in =(settings)=.
 :VERSION: 1
 :END:
 Use *channels* for separate conversations and projects in one background Autolith server.
-Each channel has its own history and workspace. Your main agent and its children appear by name.
+Channels have their own histories and workspaces. Your main agent and its children appear by name.
 
 Use =(open)= or click a channel in the sidebar to visit it.
 Work in other channels continues while you are elsewhere.
@@ -457,7 +457,7 @@ Closing the terminal also leaves the channel working.
 =autolith tell ID "message"=         send a message
 =autolith open ID --read-only=       watch a channel
 
-Use =autolith stop= to stop the server and every channel it hosts.
+Use =autolith stop= to stop the server and every channel that it hosts.
 
 * Give Autolith an objective
 :PROPERTIES:
@@ -478,7 +478,7 @@ For more elaborate acceptance criteria, verification gates, and budgets, use =(m
 :ID: missions
 :VERSION: 1
 :END:
-Use a *mission* when you need explicit acceptance criteria and limits on turns, tokens, and time.
+Use a *mission* if you need explicit acceptance criteria and limits on turns, tokens, and time.
 
 =(mission :start
  '(:objective "Prepare a release summary"
@@ -489,17 +489,19 @@ Use a *mission* when you need explicit acceptance criteria and limits on turns, 
 =(mission :status)=  inspect progress, budgets, and evidence
 =(mission :resume)=  continue after a pause or resolved blocker
 
-To finish this example, inspect the result, then record your acceptance:
-=(mission :accept "review" "I checked and accept the summary")=
-=(mission :verify)=
+To finish this example:
+1. Inspect the result.
+2. Record your acceptance:
+   =(mission :accept "review" "I checked and accept the summary")=
+3. Run verification:
+   =(mission :verify)=
 
 For automated checks, link criteria to verification gates.
 
 To finish a mission, pass all criteria and gates.
 Use =(mission :cancel "Reason")= to stop instead.
 
-Missions are very popular with our enterprise users that try to have predictable LLM execution
-bounds.
+Use missions to specify limits on LLM execution.
 
 * Keep evidence with what you remember
 :PROPERTIES:
@@ -507,14 +509,13 @@ bounds.
 :VERSION: 1
 :END:
 Autolith keeps *prose memories* and *structured facts* with their sources.
-A fact can have several independent supports.
+Facts can have several independent supports.
 
 =(memories)=           browse memories and facts
 =(memories "deploy")=  filter by topic
 =(why "ID")=           inspect sources and dependencies
 
-Autolith checks stale or invalid entries before relying on them. May it reduce the amount of hallucinations
-your models have.
+Inspect the sources before relying on recalled information.
 
 @@brand:read the evidence -> record it -> recheck when it changes@@
 
@@ -523,13 +524,13 @@ your models have.
 :ID: symbolic-rules
 :VERSION: 2
 :END:
-A *rule* becomes active on definition and derives facts locally. Move a meeting and its calculated departure time changes without a model request.
+*Rules* become active on definition. Facts are derived locally from active rules. If you update a meeting fact, the calculated departure time is recomputed locally.
 
 =(rules)=                   inspect latest and active versions
 =(retire-rule "departure")= stop a rule deriving facts
 =(what-changed)=            inspect changes and their causes
 
-Use =(why "ID")= to inspect a conclusion's premises.
+Use =(why "ID")= to inspect the premises of a conclusion.
 
 * Check plans and calls against facts
 :PROPERTIES:
@@ -540,7 +541,7 @@ Use =(why "ID")= to inspect a conclusion's premises.
 Unsatisfied requirements appear as blocked.
 
 *Mission fact gates* check accepted evidence.
-*Action contracts* check requirements before a tool call, describing its predicted effects and observed results.
+*Action contracts* check requirements before a tool call. The predicted effects and observed results of the call are described in the contracts.
 
 =(mission :status)=  inspect gates and evidence
 
@@ -562,7 +563,7 @@ Use =(retire-procedure "NAME")= to stop using and learning that procedure.
 :ID: symbolic-diagnosis
 :VERSION: 2
 :END:
-When several causes could explain a failure, Autolith can check known facts
+If several causes could explain a failure, Autolith can check known facts
 and run *diagnostic probes* before choosing a repair.
 
 Probes are on by default. Turn them off in =(settings)=.
@@ -581,7 +582,7 @@ Autolith can use *recursive language models (RLM)* to process very large inputs 
       -> focused analyses
       -> combined result@@
 
-You can request it specifically if you like, but generally, Autolith knows when to use it.
+You can request it specifically if you like. Autolith can also use it automatically.
 
 * Delegate independent work
 :PROPERTIES:
@@ -593,7 +594,7 @@ Autolith can start *child agents* for implementation, research, design, or revie
 @@brand:you -> primary Autolith -> named children
                         <- results and evidence@@
 
-Each child has its own channel. Use =(open)= to visit it.
+Children have their own channels. Use =(open)= to visit the channels.
 
 Steer a running child with =(channel.send :channel "@child-name" :text "...")=. If it has a response for you, you will see it.
 
@@ -604,11 +605,11 @@ Steer a running child with =(channel.send :channel "@child-name" :text "...")=. 
 :END:
 Ask Autolith to give children *meaningful names*, such as =parser-review= or =release-tests=.
 
-Ask it to *reuse a suitable idle child* for related work. A child keeps its name, channel and history between assignments.
+Ask it to *reuse a suitable idle child* for related work. Children keep their names, channels and histories between assignments.
 
-*Remove finished children you no longer need.* Ask Autolith to remove them explicitly.
-Removal deletes the child's channel, history and children nested under it.
-Each agent can have up to 32 children.
+*Remove finished children that you no longer need.* Ask Autolith to remove them explicitly.
+Removal deletes the channel and history of the child and the children nested under it.
+Agents can each have up to 32 children.
 
 =Name the reviewer parser-review and reuse it for later parser changes.=
 =Remove parser-review when we finish this review.=
@@ -653,7 +654,7 @@ Read the diff. Cite files and line numbers.=
 =<config-root>/skills/review/=  user skill
 Use =(skills)= to browse the catalog.
 
-For executable skills, add =EXECUTABLE.sexp= with entrypoints, contracts, and capabilities.
+For executable skills, add =EXECUTABLE.sexp= to define entrypoints, contracts, and capabilities.
 
 * Welcome to your LISP MACHINE.
 :PROPERTIES:
