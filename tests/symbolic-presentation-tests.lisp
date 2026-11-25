@@ -4,7 +4,7 @@
 
 (-> test-symbolic-session-notices () null)
 (defun test-symbolic-session-notices ()
-  "Exercise notice severity and untrusted names through the application observer."
+  "Test that notice severity is visible through the application observer."
   (with-test-configuration (configuration)
     (let* ((terminal    (make-instance 'recording-terminal :columns 80 :styled-p t))
            (application (make-instance 'application
@@ -53,7 +53,7 @@
 
 (-> test-symbolic-command-styles () null)
 (defun test-symbolic-command-styles ()
-  "Keep textual diagnosis states visible beyond their status icons."
+  "Test that textual diagnosis states are visible beyond their status icons."
   (let ((unsafe (format nil "endpoint~C[2J~%extra" #\Escape)))
       (dolist (case (list (list nil ':failure) (list (list unsafe "down") ':notice)
                          (list (list unsafe) ':success)))

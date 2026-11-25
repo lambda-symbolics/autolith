@@ -2,8 +2,8 @@
 
 ;;;; -- Procedure Commands --
 
-;;; (procedures) lists the procedures of this workspace; (run-procedure "ID"
-;;; :NAME VALUE ...) runs one with ordinary tool authorization;
+;;; (procedures) lists the procedures of this workspace. (run-procedure "ID"
+;;; :NAME VALUE ...) runs one with ordinary tool authorization.
 ;;; (retire-procedure) retires one until it is defined again.
 
 
@@ -11,7 +11,9 @@
 
 (-> application-procedures-entry (application) list)
 (defun application-procedures-entry (application)
-  "Return the procedures of the workspace of APPLICATION with their parameters and documentation."
+  "Return terminal spans for the procedures in the workspace of APPLICATION.
+
+Include the parameters and documentation of the procedures."
   (let* ((configuration (application-configuration application))
          (entries       (knowledge-base-procedures (knowledge-base-read configuration)
                                                    (knowledge--workspace configuration))))
@@ -44,7 +46,7 @@
 
 (-> application-procedure-run-entry (application string list) list)
 (defun application-procedure-run-entry (application identifier arguments)
-  "Run the procedure IDENTIFIER with the keyword ARGUMENTS and show the result."
+  "Run the procedure IDENTIFIER with the keyword ARGUMENTS. Return terminal spans for the result."
   (handler-case
       (list (terminal-span ':success "✓ ran  ")
             (terminal-span ':dim
@@ -57,7 +59,7 @@
 
 (-> application-procedure-retire-entry (application string) list)
 (defun application-procedure-retire-entry (application identifier)
-  "Retire procedure IDENTIFIER and confirm what changed."
+  "Retire the procedure IDENTIFIER. Return terminal spans for the result."
   (handler-case
       (progn
         (procedure-retire (application-configuration application) identifier)

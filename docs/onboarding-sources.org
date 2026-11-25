@@ -550,11 +550,11 @@ Unsatisfied requirements appear as blocked.
 :ID: symbolic-procedures
 :VERSION: 3
 :END:
-The agent stores repeated work as a *procedure*, which is a Lisp function that calls tools.
+The agent stores repeated work as *procedures*. Procedures are Lisp functions that call tools.
 
 =(procedures)=  list the procedures and their parameters
 
-Every request lists the procedures, so the agent can run them in one step.
+Active procedures are listed in the request context. The agent runs them with =procedure.run=.
 
 Use =(retire-procedure "NAME")= to stop a procedure until it is defined again.
 

@@ -36,7 +36,7 @@
 (defun procedure-form (source)
   "Return the LAMBDA form read from SOURCE.
 
-Signal KNOWLEDGE-ERROR if SOURCE is not a LAMBDA form with keyword parameters,
+Signal KNOWLEDGE-ERROR if SOURCE is not a LAMBDA form that has keyword parameters,
 a documentation string and a body."
   (let ((form (handler-case (self-read-form source :read-eval nil)
                 (error (condition)
@@ -48,7 +48,7 @@ a documentation string and a body."
                  (procedure--lambda-list-valid-p (second form))
                  (stringp (third form)))
       (knowledge--fail ':invalid-procedure source
-                       "The source must be a LAMBDA form with keyword parameters, a documentation string and a body."))
+                       "The source must be a LAMBDA form that has keyword parameters, a documentation string and a body."))
     form))
 
 (-> procedure-signature (list) string)
@@ -88,10 +88,10 @@ Step-procedure records are accepted until the next knowledge-log format migratio
 
 (-> procedure-entry-reduce ((option list) list) (option list))
 (defun procedure-entry-reduce (entry record)
-  "Return the procedure ENTRY after RECORD without modifying ENTRY.
+  "Return the procedure entry after applying RECORD without modifying ENTRY.
 
-An entry contains :ID, :SOURCE, :TIME and :RETIRED-P. Returns NIL if RECORD
-belongs to a step procedure."
+Entries contain :ID, :SOURCE, :TIME and :RETIRED-P. Return NIL if RECORD
+adds no procedure entry."
   (let ((properties (rest record)))
     (case (first record)
       (:lisp-procedure-defined
@@ -131,7 +131,7 @@ Signal KNOWLEDGE-ERROR if IDENTIFIER is not a valid name or SOURCE is not a
 valid procedure."
   (unless (knowledge-rule-name-p identifier)
     (knowledge--fail ':invalid-procedure identifier
-                     "A procedure name contains only lowercase letters, digits, hyphens and dots."))
+                     "Procedure names only contain lowercase letters, digits, hyphens and dots."))
   (procedure-form source)
   (knowledge-transact
    configuration

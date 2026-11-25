@@ -4,7 +4,7 @@
 
 (-> test-procedure-definition () null)
 (defun test-procedure-definition ()
-  "Test that a defined procedure calls tools as functions and that a retired one does not run."
+  "Test that a defined procedure calls tools as functions. Test that a retired one does not run."
   (with-test-configuration (base root)
     (let* ((configuration (configuration-copy base :working-directory root))
            (registry      (make-default-tool-registry :configuration configuration))

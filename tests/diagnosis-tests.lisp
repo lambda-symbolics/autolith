@@ -28,12 +28,12 @@
     :initarg       :respond
     :reader        diagnosis-tests--scripted-tool-respond
     :type          function
-    :documentation "Called with the arguments; returns a JSON object, or a string to fail with."))
-  (:documentation "A tool answering from a script."))
+    :documentation "A function that takes the arguments and returns a JSON object or a failure message."))
+  (:documentation "A scripted tool."))
 
 (defmethod tool-execute ((tool diagnosis-tests--scripted-tool) (context tool-context)
                          (arguments hash-table))
-  "Answer as the script says."
+  "Return a tool result from the scripted response."
   (declare (ignore context))
   (let ((answer (funcall (diagnosis-tests--scripted-tool-respond tool) arguments)))
     (if (stringp answer)
@@ -42,7 +42,7 @@
 
 (-> diagnosis-tests--tool (tool-registry string function) diagnosis-tests--scripted-tool)
 (defun diagnosis-tests--tool (registry tool respond)
-  "Register scripted TOOL, a NAMESPACE.NAME string answering through RESPOND, in REGISTRY."
+  "Register a scripted tool in REGISTRY under the NAMESPACE.NAME string TOOL. RESPOND is the response function."
   (let* ((dot      (position #\. tool))
          (instance (make-instance 'diagnosis-tests--scripted-tool
                                   :namespace (subseq tool 0 dot) :name (subseq tool (1+ dot))

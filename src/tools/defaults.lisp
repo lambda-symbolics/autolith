@@ -716,11 +716,11 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
    registry
    (list 'procedure-define-tool
          "procedure" "define"
-         "Define or replace a procedure of the workspace. A procedure is a Common Lisp LAMBDA form with keyword parameters, a documentation string and a body. The body runs in the AUTOLITH package of the active image and can use any Lisp. It calls tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). A tool function returns the result text and signals TOOL-ERROR if the call fails. Every request lists the procedures."
+          "Define or replace a procedure of the workspace. Procedures are Common Lisp LAMBDA forms that have keyword parameters, documentation strings and bodies. Procedure bodies run in the AUTOLITH package of the active image. They can contain any Lisp. Call tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). Tool functions return the result text. They signal TOOL-ERROR if a call fails. Active procedures are listed in the request context."
          (tool-object-schema
           (json-object
            "id" (tool-string-property
-                 "The name of the procedure, which contains lowercase letters, digits, hyphens and dots.")
+                 "The name of the procedure. The name contains lowercase letters, digits, hyphens and dots.")
            "source" (tool-string-property
                      "The LAMBDA form, such as (lambda (&key quarter) \"Write the report of QUARTER.\" ...)."))
           '("id" "source"))))
@@ -728,7 +728,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
    registry
    (list 'procedure-run-tool
          "procedure" "run"
-         "Call a procedure with keyword arguments. Its tool calls have the permissions of this conversation. The result contains the values and the output of the procedure."
+         "Call a procedure with keyword arguments. The tool calls have the permissions of this conversation. The result contains the values and the output of the procedure."
          (tool-object-schema
           (json-object
            "id" (tool-string-property "The name of the procedure.")
@@ -1044,7 +1044,11 @@ them."
           (list
            'self-eval-tool
            "self" "eval"
-           "Evaluate exploratory Common Lisp forms in order in the active image's AUTOLITH package. AUTOLITH: references accept internal symbols. Each form is read only after the one before it ran, so a later form may use a package an earlier form created. The result shows the last form's values; a failure stops the sequence and names the failing form. A restart reruns the whole sequence. In the active image, forms call tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). Target client runs the forms in the attached client's image instead, the process that owns the terminal, composes the screen and draws the sidebar; it fails when no attached client evaluates Lisp."
+           "Evaluate exploratory Common Lisp forms in order in the AUTOLITH package of the active image. AUTOLITH: references accept internal symbols. Forms are only read after the evaluation of the preceding forms. Later forms may use packages created by earlier forms. The result shows the values of the last form. The sequence stops if a form fails. The failing form is identified in the error. Restarts rerun the whole sequence. In the active image, forms call tools as functions with keyword arguments, such as (resource.read :uri \"workspace:README.org\"). The client target runs the forms in the image of the attached client. The attached client is the process that:
+- Owns the terminal.
+- Composes the screen.
+- Draws the sidebar.
+Evaluation fails if no attached clients evaluate Lisp."
            (tool-object-schema
             (json-object
              "forms" (tool-forms-property

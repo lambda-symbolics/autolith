@@ -536,10 +536,10 @@ saved diagnoses without clearing facts or notes.
 
 *** Procedures
 
-A /procedure/ is a Lisp function that is stored in the workspace. The agent
-defines procedures with =procedure.define= if it expects to repeat some work. A
-procedure is a =lambda= form with keyword parameters and a documentation
-string. Its body calls tools as functions, in the same way as Lisp at the
+Procedures are Lisp functions that are stored in the workspace. The agent
+defines procedures with =procedure.define= if it expects to repeat some work.
+Procedures are =lambda= forms that have keyword parameters and documentation
+strings. The bodies call tools as functions, in the same way as Lisp at the
 prompt:
 
 #+BEGIN_SRC lisp
@@ -548,9 +548,7 @@ prompt:
   (resource.read :uri (format nil "workspace:reports/~A.org" quarter)))
 #+END_SRC
 
-Every request lists the procedures for the agent, and the agent runs them with
-=procedure.run=. The tool calls of a procedure follow the tool approvals of the
-conversation that runs it.
+The agent receives a catalog of active procedures in the request context. The agent runs procedures with =procedure.run=. The tool calls have the approvals of the conversation in which the agent runs the procedure.
 
 #+BEGIN_SRC lisp
 (procedures)
@@ -560,7 +558,7 @@ conversation that runs it.
 
 =(procedures)= lists the procedures with their parameters.
 =(retire-procedure "NAME")= stops a procedure until it is defined again. The
-source of every procedure is in =memory:procedures=. Procedures require active
+sources of all procedures are in =memory:procedures=. Procedures require active
 structured knowledge.
 
 *** Diagnosis

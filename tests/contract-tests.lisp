@@ -43,7 +43,7 @@
 
 (-> test-contract-json-value-semantics () null)
 (defun test-contract-json-value-semantics ()
-  "Check contract reference roots, translated lookup failures and native observations."
+  "Test that contract references select the argument or result root. Test that observations use native data without text decoding."
   (let ((arguments (json-object "items" (vector (json-object "value" "argument"))))
         (result    (json-object "items" (vector (json-object "value" "result")))))
     (test-assert

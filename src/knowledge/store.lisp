@@ -132,7 +132,7 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-procedures-table
     :type          hash-table
-    :documentation "The procedure entries by (WORKSPACE IDENTIFIER).")
+    :documentation "The hash table contains procedure entries indexed by (WORKSPACE IDENTIFIER).")
    (diagnoses
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-diagnoses-table
