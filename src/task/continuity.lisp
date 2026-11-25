@@ -112,14 +112,31 @@ explicit safety declaration; admission alone grants no replay authority."
                    (getf record :owner-execution-ids) :test #'equal))
        t))
 
+(-> task-continuity-map-records (agent function &key (:execution-ids list)) null)
+(defun task-continuity-map-records (viewer function &key (execution-ids nil indexed-p))
+  "Call FUNCTION once per owned continuity entry visible to VIEWER.
+
+If EXECUTION-IDS is supplied, only the listed executions are scanned.
+Return NIL."
+  (let* ((root        (task--artifact-group-root
+                       (agent-configuration viewer) (task-parent-root-conversation-identifier viewer)))
+         (directories (if indexed-p
+                          (mapcar (lambda (identifier)
+                                    (merge-pathnames (format nil "~A/" identifier) root))
+                                  execution-ids)
+                          (when (uiop:directory-exists-p root)
+                            (uiop:subdirectories root)))))
+    (dolist (directory directories)
+      (dolist (entry (task-continuity-directory-entries viewer directory))
+        (funcall function entry))))
+  nil)
+
 (-> task-continuity-records (agent) list)
 (defun task-continuity-records (viewer)
   "Return owned durable records or bounded diagnostics from existing task storage."
-  (let ((root (task--artifact-group-root
-               (agent-configuration viewer) (task-parent-root-conversation-identifier viewer))))
-    (loop for directory in (when (uiop:directory-exists-p root)
-                             (uiop:subdirectories root))
-          append (task-continuity-directory-entries viewer directory))))
+  (let ((records nil))
+    (task-continuity-map-records viewer (lambda (entry) (push entry records)))
+    (nreverse records)))
 
 (-> task-continuity-directory-entries (agent pathname) list)
 (defun task-continuity-directory-entries (viewer directory)
@@ -173,19 +190,22 @@ The result is a list of at most one entry, so callers can append scans."
 
 (-> task-continuity--find (agent string) list)
 (defun task-continuity--find (viewer identifier)
-  "Find one owned durable job or execution IDENTIFIER; reject ambiguity."
-  (let ((matches
-          (remove-if-not
-           (lambda (entry)
-             (let ((record (getf entry :record)))
-               (and record
+  "Return the owned entry of IDENTIFIER. Reject ambiguous job or execution IDs."
+  (let ((match nil))
+    (task-continuity-map-records
+     viewer
+     (lambda (entry)
+       (let ((record (getf entry :record)))
+         (when (and record
                     (or (equal identifier (getf record :job-id))
-                        (equal identifier (getf record :execution-id))))))
-           (task-continuity-records viewer))))
-    (unless (= 1 (length matches))
-      (task-continuity--fail
-       "No unique owned continuity record exists; use an execution ID."))
-    (first matches)))
+                        (equal identifier (getf record :execution-id))))
+           (when match
+             (task-continuity--fail
+              "No unique owned continuity record exists. Use an execution ID."))
+           (setf match entry)))))
+    (or match
+        (task-continuity--fail
+         "No unique owned continuity record exists. Use an execution ID."))))
 
 (-> task-continuity--checkpoint-image (list configuration) (option lisp-image))
 (defun task-continuity--checkpoint-image (record configuration)
@@ -344,8 +364,10 @@ The result is a list of at most one entry, so callers can append scans."
 (-> task-continuity-inventory (agent task-orchestrator) list)
 (defun task-continuity-inventory (viewer orchestrator)
   "Return current durable classifications, including persisted unfinished work."
-  (mapcar (lambda (entry) (task-continuity-classify entry viewer orchestrator))
-          (task-continuity-records viewer)))
+  (let ((rows nil))
+    (task-continuity-map-records
+     viewer (lambda (entry) (push (task-continuity-classify entry viewer orchestrator) rows)))
+    (nreverse rows)))
 
 (-> task-continuity-declare
     (agent task-orchestrator string &key (:safety (option string))

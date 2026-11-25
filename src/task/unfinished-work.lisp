@@ -188,12 +188,10 @@ is never lost. The index is complete afterwards."
 
 (-> task-unfinished-work-snapshot (agent &key (:limit (integer 0))) list)
 (defun task-unfinished-work-snapshot (agent &key (limit 16))
-  "Read authoritative owned outstanding work with bounded complete reference rows.
+  "Return owned unfinished-work references and the count before output bounds.
 
-TOTAL counts all inspectable outstanding jobs before bounds. Omitted rows remain
-available through job.continuity and ordinary job operations. Partial agents
-without a configured conversation return an empty snapshot. This performs no
-completion delivery, recovery, mission mutation or persistence."
+The rows contain job identities and artifact paths. Limit the included rows
+to LIMIT. Agents without a configured conversation return an empty snapshot."
   (check-type limit (integer 0))
   (let* ((conversation (agent-conversation agent))
          (owner        (and conversation (conversation-identifier conversation)))
@@ -211,37 +209,42 @@ completion delivery, recovery, mission mutation or persistence."
                              (task-completion--index-read path)))
              (complete-p (getf index :complete-p))
              (indexed    (getf index :execution-ids))
-             (scanned    (if complete-p
-                             (loop for identifier in indexed
-                                   append (task-continuity-directory-entries
-                                           agent (merge-pathnames (format nil "~A/" identifier) root)))
-                             (task-continuity-records agent)))
+             (examined   (when complete-p indexed))
+             (seen       (make-hash-table :test #'equal))
              (receipts   (make-hash-table :test #'equal))
              (rows       nil))
-        (dolist (entry (task-unfinished-work--entries scanned live root))
-          (let* ((record           (getf entry :record))
-                 (completion-owner (getf record :completion-owner-conversation)))
-            (when record
-              (let* ((owner-receipts
-                       (when completion-owner
-                         (multiple-value-bind (cached found-p) (gethash completion-owner receipts)
-                           (if found-p cached
-                               (setf (gethash completion-owner receipts)
-                                     (task-unfinished-work--owner-receipts agent completion-owner))))))
-                     (row (task-unfinished-work--row
-                           entry :live (find (getf record :execution-id) live
-                                             :key #'session-job-execution-identifier :test #'equal)
-                           :viewer owner :receipts owner-receipts)))
-                (when row (push row rows))))))
+        (labels ((add-entry (entry)
+                   "Collect unfinished-work references from ENTRY."
+                   (let* ((record           (getf entry :record))
+                          (completion-owner (getf record :completion-owner-conversation)))
+                     (when record
+                       (let* ((owner-receipts
+                                (when completion-owner
+                                  (multiple-value-bind (cached found-p) (gethash completion-owner receipts)
+                                    (if found-p cached
+                                        (setf (gethash completion-owner receipts)
+                                              (task-unfinished-work--owner-receipts agent completion-owner))))))
+                              (row (task-unfinished-work--row
+                                    entry :live (find (getf record :execution-id) live
+                                                      :key #'session-job-execution-identifier :test #'equal)
+                                    :viewer owner :receipts owner-receipts)))
+                         (when row (push row rows)))))))
+          (apply #'task-continuity-map-records
+                 agent
+                 (lambda (entry)
+                   (when-let ((record (getf entry :record)))
+                     (let ((identifier (getf record :execution-id)))
+                       (setf (gethash identifier seen) t)
+                       (unless complete-p (push identifier examined))))
+                   (add-entry entry))
+                 (when complete-p (list :execution-ids indexed)))
+          (dolist (entry (task-unfinished-work--entries nil live root))
+            (unless (gethash (getf (getf entry :record) :execution-id) seen)
+              (add-entry entry))))
         (when (and runtime (not (typep agent 'task-child-agent)))
           (task-unfinished-work--index-settle
-           runtime path
-           :examined (if complete-p
-                         indexed
-                         (loop for entry in scanned
-                               for record = (getf entry :record)
-                               when record collect (getf record :execution-id)))
-           :kept     (mapcar (lambda (row) (getf row :execution-id)) rows)))
+           runtime path :examined examined
+           :kept                  (mapcar (lambda (row) (getf row :execution-id)) rows)))
         (setf rows (sort rows #'string< :key (lambda (row) (getf row :execution-id)))
               (getf snapshot :total) (length rows)
               (getf snapshot :omitted-count) (length rows))
