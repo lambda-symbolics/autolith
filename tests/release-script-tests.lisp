@@ -2441,7 +2441,7 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
 
 (-> release-script-tests--image-marker-platform (pathname pathname) null)
 (defun release-script-tests--image-marker-platform (source-root root)
-  "Exercise saved-image rebuilds when one tag switches Linux libc variants."
+  "Test that release images build quietly, report failures and rebuild for libc changes."
   (let* ((tag          (format nil "v~A" *release-script-tests-version*))
          (fixture-root (merge-pathnames "image-marker-platform/" root))
          (release-root (merge-pathnames "release/" fixture-root))
@@ -2452,10 +2452,11 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
          (fixture-bin  (merge-pathnames "fixture-bin/" fixture-root))
          (data-home    (merge-pathnames "data/" fixture-root))
          (log          (merge-pathnames "sbcl.log" fixture-root))
+         (temporary    (merge-pathnames "build-temp/" fixture-root))
          (marker       (merge-pathnames "autolith/release-images" data-home)))
     (release-script-tests--make-release
      source-root release-root :platform "x86_64-linux")
-    (uiop:ensure-all-directories-exist (list fixture-bin data-home))
+    (uiop:ensure-all-directories-exist (list fixture-bin data-home temporary))
     (release-script-tests--install-linux-host-tools fixture-bin)
     (test-write-text
      inner-launcher
@@ -2471,14 +2472,20 @@ target=
 for argument in \"$@\"; do target=$argument; done
 case \" $* \" in
   *'build-recovery.lisp'*)
+    printf 'RAW RECOVERY BUILD OUTPUT\\n'
     mkdir -p \"$(dirname \"$target\")\"
     : > \"$target\"
-    printf '(:RECOVERY-IMAGE :VERSION 2)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
+    printf '(:RECOVERY-IMAGE :VERSION 2 :fixture t)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
     ;;
   *'build-active.lisp'*)
+    printf 'RAW ACTIVE BUILD OUTPUT\\n'
+    if [ \"${AUTOLITH_TEST_IMAGE_FAILURE:-0}\" = 1 ]; then
+      printf 'fixture image compiler failure\\n' >&2
+      exit 23
+    fi
     mkdir -p \"$(dirname \"$target\")\"
     : > \"$target\"
-    printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
+    printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1 :fixture t)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
     ;;
 esac
 ")
@@ -2491,6 +2498,7 @@ esac
                         (string-right-trim "/" (namestring fixture-bin))
                         (or (uiop:getenv "PATH") ""))
                 (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                (format nil "TMPDIR=~A" (namestring temporary))
                 (format nil "AUTOLITH_TEST_SBCL_LOG=~A" (namestring log))))
 
              (build-count ()
@@ -2500,16 +2508,41 @@ esac
                        while position
                        count t
                        do (setf start (+ position 8))))))
-      (release-script-tests--run
-       (list (namestring launcher))
-       :environment (environment)
-       :output      nil)
+      (multiple-value-bind (output diagnostics status)
+          (release-script-tests--run
+           (list (namestring launcher))
+           :environment         (cons "AUTOLITH_TEST_IMAGE_FAILURE=1" (environment))
+           :ignore-error-status t)
+        (declare (ignore output))
+        (test-assert (and (= status 23)
+                          (search "fixture image compiler failure" diagnostics)
+                          (search "RAW ACTIVE BUILD OUTPUT" diagnostics)
+                          (not (probe-file marker))
+                          (null (uiop:directory-files temporary)))
+                     "failed image builds retain diagnostics and status without marking success"))
+      (test-write-text log "")
+      (let ((output (release-script-tests--run
+                     (list (namestring launcher))
+                     :environment (environment))))
+        (test-assert (and (search *release-script-tests-version* output)
+                          (search "0/2" output)
+                          (search "1/2" output)
+                          (search "2/2" output)
+                          (not (search "RAW" output))
+                          (null (uiop:directory-files temporary)))
+                     "successful image builds show versioned progress and remove captured output"))
       (test-assert
        (and (string= (string-trim '(#\Newline #\Return)
                                   (uiop:read-file-string marker))
                      (format nil "~A:x86_64-linux" tag))
             (= (build-count) 2))
        "the first glibc launch builds and marks both saved images")
+      (test-assert
+       (and (zerop (length (release-script-tests--run
+                            (list (namestring launcher))
+                            :environment (environment))))
+            (= (build-count) 2))
+       "a launch with valid images skips the build and progress display")
       (release-script-tests--record
        (merge-pathnames "RELEASE" release-root)
        tag

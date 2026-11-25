@@ -241,25 +241,62 @@ release_images_usable_p()
     --autolith-internal-active-image-probe >/dev/null 2>&1
 }
 
-release_images_build()
+release_images_progress()
 {
+  local completed=$1
+  local title=$2
+  local final=${3:-false}
+  local bars=('░░░░░░░░░░░░░░░░' '████████░░░░░░░░' '████████████████')
+
+  if [[ -t 2 ]]; then
+    printf '\r\033[2K' >&2
+  fi
+  printf '%s[%s]%s %s/2  %s' \
+    "$style_brand" "${bars[$completed]}" "$style_reset" "$completed" "$title" >&2
+  if [[ ! -t 2 || $final == true ]]; then
+    printf '\n' >&2
+  fi
+}
+
+release_image_build()
+{
+  local script=$1
+  local target=$2
+  local completed=$3
+  local title=$4
+  local status
+
+  release_images_progress "$completed" "$title"
+  if "$sbcl_command" --script "$source_root/script/$script" "$target" >"$build_log" 2>&1; then
+    return 0
+  else
+    status=$?
+    release_images_progress "$completed" "$title failed (exit status $status)" true
+    say_railed < "$build_log"
+    return "$status"
+  fi
+}
+
+release_images_build()
+(
   local marker_directory
   local temporary_marker
+  local build_log
 
+  build_log=$(mktemp "${TMPDIR:-/tmp}/autolith-images.XXXXXXXX")
+  trap 'rm -f -- "$build_log"' EXIT
   say_section "Autolith images"
-  say_note "building for this machine, once per release"
-  "$sbcl_command" --script "$source_root/script/build-recovery.lisp" \
-    "$recovery_core" 2>&1 | say_railed
-  "$sbcl_command" --script "$source_root/script/build-active.lisp" \
-    "$active_core" 2>&1 | say_railed
+  say_note "building machine-specific release image for $release_version"
+  release_image_build build-recovery.lisp "$recovery_core" 0 "Pristine recovery image"
+  release_image_build build-active.lisp "$active_core" 1 "Fast startup image"
   marker_directory=$(dirname -- "$image_marker")
   mkdir -p -- "$marker_directory"
   temporary_marker=$marker_directory/.release-images.$$
   printf '%s:%s\n' "$release_tag" "$release_platform" > "$temporary_marker"
   chmod 600 "$temporary_marker"
   mv -f -- "$temporary_marker" "$image_marker"
-  say_done "Autolith images are ready."
-}
+  release_images_progress 2 "Autolith images are ready." true
+)
 
 [[ -n $home ]] || fail "HOME is not set."
 host_platform=
