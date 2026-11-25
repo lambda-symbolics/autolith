@@ -2218,47 +2218,67 @@ Stop SERVER if endpoint cleanup or publication fails during recovery."
     null)
 (defun world-server--resume-channels
        (server application reconnect-id &key notice-function)
-  "Resume SERVER's paused channels, then admit opens and held turns.
+  "Resume the paused channels of SERVER and clear the checkpoint admission flags.
 
-Restart closed tool runtimes first. Report restart failures to the affected
-channel and serve it without the tools that failed. Send APPLICATION its
-notice directly if it never paused, as when a checkpoint fails early."
-  (dolist (host (world-server--hosts server))
-    (let ((served (world-host-application host))
-          (tools  (shiftf (world-host-quiesced-tools host) nil)))
-      (when tools
-        (handler-case
-         (tool-registry-resume-runtime-state (application-tool-registry served)
-                                             :tools tools)
-         (serious-condition (condition)
-          (application-present served
-                               (application-failure-line
-                                (format nil
-                                        "some tools did not restart after the checkpoint: ~A"
-                                        (bounded-string
-                                         (princ-to-string condition) :limit
-                                         400)))))))
-      (cond
-       ((world-host-paused-p host)
-        (with-lock-held ((world-server-lock server))
-          (setf (world-host-paused-p host) nil
-                (world-host-ready-p host) nil
-                (world-host-exit-reason host) nil
-                (world-host-state host) ':starting))
-        (world-server--serve-host server host :resume-p t :reconnect-id
-                                  reconnect-id :notice
-                                  (and notice-function
-                                       (funcall notice-function served))))
-       ((and notice-function (eq served application))
-        (application-present served (funcall notice-function served))))))
-  (with-lock-held ((world-server-lock server))
-    (setf (world-server-checkpointing-p server) nil
-          (world-server-holding-p server) nil)
-    (sb-thread:condition-broadcast (world-server-condition-variable server)))
-  (dolist (host (world-server--hosts server))
-    (when-let ((controller
-                (application-input-controller (world-host-application host))))
-      (with-lock-held ((application-input-controller-lock controller))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller)))))
+Record resume failures on the affected hosts and continue with the other channels."
+  (unwind-protect
+       (dolist (host (world-server--hosts server))
+         (handler-case
+             (world-server--resume-host server host :application    application
+                                                   :reconnect-id    reconnect-id
+                                                   :notice-function notice-function)
+           (serious-condition (condition)
+             (with-lock-held ((world-server-lock server))
+               (let* ((thread   (world-host-thread host))
+                      (paused-p (not (and thread (thread-alive-p thread)))))
+                 (setf (world-host-ready-p host) nil
+                       (world-host-paused-p host) paused-p
+                       (world-host-state host) (if paused-p ':paused ':closing))))
+             ;; The condition is recorded before diagnostics are written.
+             (handler-case (world-server--note-failure server host condition)
+               (error () nil)))))
+    (with-lock-held ((world-server-lock server))
+      (setf (world-server-checkpointing-p server) nil
+            (world-server-holding-p server) nil)
+      (sb-thread:condition-broadcast (world-server-condition-variable server)))
+    (dolist (host (world-server--hosts server))
+      (when-let ((controller
+                  (application-input-controller (world-host-application host))))
+        (with-lock-held ((application-input-controller-lock controller))
+          (sb-thread:condition-broadcast
+           (application-input-controller-condition-variable controller))))))
+  nil)
+
+(-> world-server--resume-host
+    (world-server world-host &key (:application application) (:reconnect-id string)
+                                 (:notice-function (option function)))
+    null)
+(defun world-server--resume-host (server host &key application reconnect-id notice-function)
+  "Restart quiesced tools and resume HOST if paused.
+
+Report tool restart failures to the channel. Present the notice directly to
+APPLICATION if the channel did not pause."
+  (let ((served (world-host-application host))
+        (tools  (shiftf (world-host-quiesced-tools host) nil)))
+    (when tools
+      (handler-case
+          (tool-registry-resume-runtime-state (application-tool-registry served) :tools tools)
+        (serious-condition (condition)
+          (application-present
+           served
+           (application-failure-line
+            (format nil "some tools did not restart after the checkpoint: ~A"
+                    (bounded-string (princ-to-string condition) :limit 400)))))))
+    (cond
+      ((world-host-paused-p host)
+       (with-lock-held ((world-server-lock server))
+         (setf (world-host-paused-p host) nil
+               (world-host-ready-p host) nil
+               (world-host-exit-reason host) nil
+               (world-host-state host) ':starting))
+       (world-server--serve-host server host :resume-p t :reconnect-id reconnect-id
+                                            :notice (and notice-function
+                                                         (funcall notice-function served))))
+      ((and notice-function (eq served application))
+       (application-present served (funcall notice-function served)))))
   nil)
