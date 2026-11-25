@@ -341,14 +341,14 @@
                                    nil)
                                (platform-error (condition)
                                  (platform-error-reason condition))))
-                         "the runtime refuses an unportable directory name")
+                         "the invalid directory name is rejected by the runtime")
             (test-assert (handler-case
                              (progn
                                (funcall script-root ':data)
                                nil)
                            (error ()
                              t))
-                         "standalone helpers refuse an unportable directory name"))))))
+                         "the invalid directory name is rejected by standalone helpers"))))))
   nil)
 
 (-> test-xdg-explicit-roots () null)

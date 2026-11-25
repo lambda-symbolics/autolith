@@ -827,19 +827,25 @@ variables before the launcher starts:
 
 - Set =AUTOLITH_DIRECTORY_NAME= to replace =autolith= in the per-user roots.
   Data is kept in =~/.local/share/NAME/= instead of =~/.local/share/autolith/=.
-  The name must start with an ASCII letter or digit and only contain ASCII
-  letters, digits, dots, hyphens and underscores.
-- Use =AUTOLITH_PRODUCT_NAME= for the product name in startup, update and
-  recovery messages.
+  The name must match the ASCII pattern =^[A-Za-z0-9][A-Za-z0-9._-]*$=.
+- Use =AUTOLITH_PRODUCT_NAME= for the product name in these messages:
+  - Startup messages.
+  - Update messages.
+  - Recovery messages.
 - Set =AUTOLITH_COMMAND_NAME= for the command name in help and suggested commands.
 
 Processes started by Autolith inherit these variables.
 
 Nix packagers can include defaults for these variables. Import
-=nix/package.nix= with =directoryName=, =productName=, =commandName=
-and =siteConfigRoot=. The packaged launcher sets the matching variables
-if they are unset or empty. The launcher is installed as =bin/COMMAND=
-instead of =bin/autolith=.
+=nix/package.nix= with any of these arguments:
+
+- =directoryName=
+- =productName=
+- =commandName=
+- =siteConfigRoot=
+
+The packaged launcher sets the matching variables if they are unset or
+empty. The launcher is installed as =bin/COMMAND= instead of =bin/autolith=.
 
 ** Project instructions and adaptation notes
 

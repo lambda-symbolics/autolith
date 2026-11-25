@@ -22,7 +22,7 @@ function Install-AutolithSandboxBundle([string]$Source, [string]$Root, [string]$
 }
 
 function Get-AutolithDirectoryName {
-  # Mirrors AUTOLITH-SCRIPT-APPLICATION-DIRECTORY in script/roots.lisp.
+  # Use the validation rules from AUTOLITH-SCRIPT-APPLICATION-DIRECTORY in script/roots.lisp.
   $name = $env:AUTOLITH_DIRECTORY_NAME
   if (-not $name) { return 'autolith' }
   if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') {

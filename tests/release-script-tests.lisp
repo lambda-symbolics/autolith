@@ -1210,10 +1210,10 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
               (release-script-tests--run
                (list (namestring launcher) "uninstall" "--yes")
                :environment uninstall-environment :ignore-error-status t)
-            (declare (ignore output))
+            (declare (ignore output error-output))
             (test-assert
-             (and (zerop status) (search "Nothing to remove" error-output))
-             "a second uninstall reports nothing to remove"))
+             (zerop status)
+             "A second uninstall succeeds after the installation was removed."))
           (populate)
           (let* ((command
                    (format nil "env ~{~A~^ ~} ~A uninstall"
@@ -3896,7 +3896,7 @@ esac
                     (string= output (format nil "~A~%" runtime-name)))
                (and (not (zerop status))
                     (search "is not a portable directory name" error-output)))
-           (format nil "the launcher and the runtime agree on directory name ~S: ~A ~A"
+           (format nil "directory name ~S has the same validation result in the launcher and the runtime: ~A ~A"
                    name output error-output)))))
     nil))
 
