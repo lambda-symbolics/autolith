@@ -67,8 +67,8 @@
     (error 'tool-error
            :message   "A scratchpad path must be a non-empty relative pathname."
            :tool-name "scratchpad"))
-  (let ((root (workspace-tool--canonical-path
-               (lisp-scratchpad-root context))))
+  (let ((root (tool-path-blacklist-check (lisp-scratchpad-root context)
+                                         :tool-name "scratchpad")))
     (when (string= relative-path ".")
       (return-from lisp-scratchpad-path root))
     (let* ((relative  (uiop:parse-native-namestring relative-path))
@@ -82,8 +82,8 @@
                :message   "Scratchpad paths must stay inside the conversation folder."
                :tool-name "scratchpad"))
       (let ((resolved
-              (workspace-tool--canonical-path
-               (merge-pathnames relative root))))
+              (tool-path-blacklist-check (merge-pathnames relative root)
+                                         :tool-name "scratchpad")))
         (unless (or (uiop:pathname-equal resolved root)
                     (uiop:subpathp resolved root))
           (error 'tool-error

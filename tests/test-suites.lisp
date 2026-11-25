@@ -1271,6 +1271,14 @@
   test-workspace-file-resources
   test-workspace-resource-ergonomics)
 
+(define-test-suite tool-path-blacklist
+  test-tool-path-blacklist-resources
+  test-tool-path-blacklist-native-paths
+  test-tool-path-blacklist-aliases
+  test-tool-path-blacklist-retained-change
+  test-tool-path-blacklist-configuration
+  test-tool-path-blacklist-inherited-shell-directory)
+
 (define-test-suite agenda-resource
   test-agenda-resource-long-text
   test-agenda-resources)

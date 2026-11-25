@@ -34,7 +34,9 @@ requested tree is checked."
       (error 'tool-error
              :message   "lisp.paren-check requires a non-empty path string."
              :tool-name "lisp.paren-check"))
-    (let* ((path  (workspace-tool-path context requested :tool-name "lisp.paren-check"))
+    (let* ((path  (tool-path-blacklist-check
+                   (workspace-tool-path context requested :tool-name "lisp.paren-check")
+                   :tool-name "lisp.paren-check" :recursive-p t))
            (roots (workspace-tool-readable-roots context)))
       (multiple-value-bind (success-p content)
           (lisp-paren-check-path

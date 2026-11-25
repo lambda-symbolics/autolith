@@ -44,6 +44,7 @@ which may no longer exist."
     string)
 (defun search-worker-request (worker configuration &key operation arguments)
   "Execute one isolated clifff request for CONFIGURATION."
+  (tool-path-blacklist-check (config :working-directory configuration) :tool-name "search")
   (handler-case
       (worker-request
        worker

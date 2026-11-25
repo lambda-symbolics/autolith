@@ -194,6 +194,11 @@
             (workspace-prepared-change-original-permissions change))))
   nil)
 
+(defmethod cl-resources:prepared-change-commit :before
+    ((change workspace-prepared-change) (context tool-context))
+  "Refuse newly denied targets before writing undo storage or publishing a change."
+  (workspace-file-check-path (cl-resources:prepared-change-resource change) context))
+
 (defmethod cl-resources:prepared-change-commit
     ((change workspace-prepared-change) (context tool-context))
   "Publish the prepared replacement with exact pre-publication validation."

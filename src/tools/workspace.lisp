@@ -105,7 +105,7 @@ with a slash; all separators are slashes, regardless of the host's native syntax
 
 (-> workspace-tool-resolve-path (tool-context (option string)) pathname)
 (defun workspace-tool-resolve-path (context path)
-  "Return PATH resolved against CONTEXT's working directory without confinement."
+  "Return resolved PATH after mandatory folder policy, without workspace confinement."
   (let* ((configuration     (tool-context-configuration context))
          (working-directory (config :working-directory configuration))
          (resolved
@@ -113,7 +113,10 @@ with a slash; all separators are slashes, regardless of the host's native syntax
                (merge-pathnames (uiop:parse-native-namestring path)
                                 working-directory)
                working-directory)))
-    (workspace-tool--canonical-path resolved)))
+    (workspace-tool--call-resolving
+     resolved
+     (lambda ()
+       (tool-path-blacklist-check resolved)))))
 
 (-> workspace-tool-readable-roots (tool-context) list)
 (defun workspace-tool-readable-roots (context)

@@ -816,6 +816,29 @@ contain =init.lisp=, =mcp.sexp=, =skills/= and =agents/=. A site
 =init.lisp= runs with the same privileges as personal configuration. Use an
 explicit site root in place of =XDG_CONFIG_DIRS=.
 
+** Folder blacklist
+
+Set =*tool-path-blacklist*= in trusted =init.lisp= to deny native tool path
+arguments beneath selected folders, including in full-access sessions:
+
+#+begin_src lisp
+(setf *tool-path-blacklist*
+      '("~/.ssh/" "/srv/private/"))
+#+end_src
+
+Entries are absolute directory pathnames or strings. A leading =~/= expands
+to your home directory. The default is =nil=. The check precedes permission
+approval and covers the folder itself, missing descendants, and current
+symlink targets. Retained resource observations and prepared edits are
+rechecked before access or publication. Recursive parenthesis checks reject
+an entire requested tree if it contains a denied folder. A refusal has code
+=path-blacklisted=.
+
+This policy governs native tool path arguments, such as workspace resources,
+images, explicit ASDF files and command working directories. It does not
+confine arbitrary shell commands, Lisp forms, indexed-search queries or
+external MCP servers. Use OS-level restrictions when those also need confinement.
+
 ** Settings
 
 Use =(settings)= to open the settings picker. Select a setting to see the

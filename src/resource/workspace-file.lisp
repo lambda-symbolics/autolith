@@ -292,6 +292,12 @@ Return NIL when NAME disappears during enumeration."
 (defgeneric workspace-file-check-path (resource context)
   (:documentation "Check resource-specific path constraints before observing or staging a file."))
 
+(defmethod workspace-file-check-path :before
+    ((resource workspace-file-resource) (context tool-context))
+  "Recheck the mandatory folder policy at observation and publication boundaries."
+  (declare (ignore context))
+  (tool-path-blacklist-check (workspace-file-resource-pathname resource)))
+
 (defmethod workspace-file-check-path ((resource workspace-file-resource) (context tool-context))
   "Ordinary workspace paths have no additional resource-specific constraints."
   (declare (ignore resource context))
@@ -594,6 +600,11 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
   "Call FUNCTION after authorizing out-of-root OPERATION on RESOURCE."
   (let* ((path  (workspace-file-resource-pathname resource))
          (roots (workspace-file-resource-access-roots resource context)))
+    (tool-path-blacklist-check path :tool-name (ecase operation
+                                                (:read
+                                                 "resource.read")
+                                                (:edit
+                                                 "resource.edit")))
     (if (workspace-tool--read-path-allowed-p path roots)
         (funcall function)
         (let ((tool-name
