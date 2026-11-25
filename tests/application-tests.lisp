@@ -463,7 +463,7 @@
 
 (-> test-startup-update-choice () null)
 (defun test-startup-update-choice ()
-  "Test cached update notices, attended release choices, and Nix advice."
+  "Test that startup update choices depend on the installation method."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (tag           "v99.0.0")
@@ -565,16 +565,34 @@
                                      :tag    tag
                                      :method ':nix))
                     (application
-                      (make-instance 'application
-                                     :configuration       configuration
-                                     :update-availability availability))
-                    (notice (application--update-notice application))
-                    (text   (format nil "~{~A~}"
-                                    (mapcar #'terminal-span-text notice))))
+                       (make-instance 'application
+                                      :configuration       configuration
+                                      :update-availability availability
+                                      :ui                  (terminal-ui-create
+                                                            :terminal (make-instance 'scripted-terminal
+                                                                                     :columns 72
+                                                                                     :events  nil))))
+                    (ui         (application-ui application))
+                    (notice     (application--update-notice application))
+                    (text       (format nil "~{~A~}"
+                                        (mapcar #'terminal-span-text notice)))
+                    (selections 0))
                (test-assert
-                (and (search "installed through Nix" text)
-                     (search "flake or profile" text))
-                "Nix receives package-manager advice without an update action"))
+                (and (search "Nix" text) (search "flake" text) (search "profile" text))
+                "The Nix notice contains manual update advice.")
+               (test-call-with-function-replacements
+                (list (list 'terminal-ui-select
+                            (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (incf selections)
+                              ':not-now)))
+                (lambda ()
+                  (with-terminal-ui (active-ui ui)
+                    (application--offer-startup-update application))))
+               (test-assert (zerop selections)
+                            "Users are not offered an in-app update for Nix installations.")
+               (test-assert (eq (application-update-availability application) availability)
+                            "The cached Nix update is available for manual installation."))
 
              (let* ((application (make-instance 'application))
                     (thread      (make-thread (lambda () (sleep 0.01))
