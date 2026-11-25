@@ -266,15 +266,15 @@ reason :MISSING when PATHNAME does not exist."))
       designator))
 
 (defparameter *platform-application-directory-name* "autolith"
-  "The name of the per-user directories when AUTOLITH_DIRECTORY_NAME is unset.")
+  "The name of the per-user directories if AUTOLITH_DIRECTORY_NAME is unset or empty.")
 
 (-> platform-application-directory-name () string)
 (defun platform-application-directory-name ()
   "Return the name of the per-user directories that Autolith keeps.
 
-The AUTOLITH_DIRECTORY_NAME environment variable gives the name. When the
+The AUTOLITH_DIRECTORY_NAME environment variable gives the name. If the
 variable is unset or empty, the name is *PLATFORM-APPLICATION-DIRECTORY-NAME*.
-Signal PLATFORM-ERROR with operation :ROOTS and reason :REFUSED when the
+Signal PLATFORM-ERROR with operation :ROOTS and reason :REFUSED if the
 variable does not name one portable directory."
   (let ((name (uiop:getenv "AUTOLITH_DIRECTORY_NAME")))
     (cond
@@ -295,7 +295,7 @@ variable does not name one portable directory."
 
 (-> platform--portable-directory-name-p (string) boolean)
 (defun platform--portable-directory-name-p (name)
-  "Return T when NAME starts with an ASCII letter or digit and contains only those, dots, hyphens and underscores."
+  "Return true if NAME starts with an ASCII letter or digit and only contains ASCII letters, digits, dots, hyphens and underscores."
   (flet ((portable-character-p (character)
            (and (char< character (code-char 128))
                 (or (alphanumericp character)

@@ -159,7 +159,7 @@ the terminal wraps the semantic spans."
        (terminal-span
         ':dim
         (if (eq (update-availability-method availability) ':nix)
-            (format nil "  installed through Nix; update the flake or profile that provides ~A"
+            (format nil "  This installation uses Nix. Update the flake or profile that provides ~A"
                     (product-name))
             "  choose whether to install it before continuing"))))))
 
@@ -1063,7 +1063,7 @@ still shows the boot panel keeps it until the user starts the session."
                                    (terminal--render-spans terminal content) content-width)))
         (let* ((lines    (rows spans))
                (warning  (rows (list (terminal-span ':notice
-                                      (format nil "! ~A executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"
+                                      (format nil "! ~A executes model-generated code with your user privileges. Sandboxing is no substitute for human oversight"
                                               (product-command-name))))))
                (tip-rows (when tip (rows tip))))
           (when (> (length lines) height)
@@ -1669,7 +1669,7 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
    (lambda (command)
      (when (getopt* command ':pristine)
        (error 'configuration-error
-              :message (format nil "ACP opens channels in the world server, which never runs pristine; start a pristine rescue session with ~A resume --pristine."
+              :message (format nil "ACP opens channels in the world server. The world server does not run pristine. Start a pristine rescue session with ~A resume --pristine."
                                (product-command-name))))
      (let ((endpoint        (main--acp-endpoint command))
            (configuration   (configuration-create :defer-provider-validation-p t))
@@ -1685,8 +1685,8 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
    :name         (product-command-name)
    :description  "a small, live, self-modifying Common Lisp agent"
    :long-description
-   (format nil "The stable launcher also accepts --recovery and --from-source, which
-select how ~A starts before this command line is parsed.
+   (format nil "The stable launcher also accepts --recovery and --from-source.
+These options select how ~A starts before this command line is parsed.
 Use -- to end option parsing. ~A update installs the latest packaged
 release and exits without starting a session.
 ~A uninstall removes the installation and keeps user data."
@@ -1792,7 +1792,7 @@ release and exits without starting a session.
                    (format nil "~A Observed lock owner PID ~D. ~A" original pid
                            (case reachability
                              (:reachable
-                              (format nil "A matching channel endpoint is reachable in this image selection; inspect it with ~A status or attach with ~:*~A open ID."
+                              (format nil "A matching channel endpoint is reachable in this image selection. Inspect it with ~A status or attach with ~:*~A open ID."
                                       (product-command-name)))
                              (:no-reachable-endpoint
                               (format nil "No matching channel endpoint was found in this image selection. Inspect and recheck PID ~D; if you choose to stop it, run kill ~D, then retry. The owner may have changed since this snapshot." pid pid))

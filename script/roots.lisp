@@ -108,11 +108,12 @@ next build performs."
              variable)))
 
 (defun autolith-script-application-directory ()
-  "Return the relative directory that AUTOLITH_DIRECTORY_NAME names, or autolith/ when it is unset.
+  "Return the relative directory pathname named by AUTOLITH_DIRECTORY_NAME.
 
-Signal an error when the variable does not name one portable directory: a name
-that starts with an ASCII letter or digit and contains only those, dots,
-hyphens and underscores."
+The default is autolith/ if the variable is unset or empty. Signal an error
+if the value is not a portable directory name. The name must start with an
+ASCII letter or digit and only contain ASCII letters, digits, dots, hyphens
+and underscores."
   (let ((name (uiop:getenv "AUTOLITH_DIRECTORY_NAME")))
     (cond
       ((or (null name) (zerop (length name)))

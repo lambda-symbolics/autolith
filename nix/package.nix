@@ -2,7 +2,7 @@
 , src
 , crane
   # Packagers that ship Autolith under another name set these defaults in the
-  # launcher. The matching AUTOLITH_* environment variables still override them.
+  # launcher. Nonempty AUTOLITH_* environment variables override these defaults.
 , directoryName ? null
 , productName ? null
 , commandName ? null
@@ -976,7 +976,7 @@ let
     fi
   '';
 
-  # A packaged default applies only when the caller left its variable unset.
+  # A packaged default applies if the corresponding variable is unset or empty.
   portableName = name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
   launcherName = if commandName == null then "autolith" else commandName;
   packagedDefault = variable: value:

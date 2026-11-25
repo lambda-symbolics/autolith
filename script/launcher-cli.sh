@@ -21,14 +21,14 @@ autolith_launcher_capture_asdf_environment()
 }
 
 # Print the name of the product in user-facing text. AUTOLITH_PRODUCT_NAME
-# gives the name, and the name is Autolith when the variable is unset or empty.
+# gives the name. The default is Autolith if the variable is unset or empty.
 autolith_product_name()
 {
   printf '%s\n' "${AUTOLITH_PRODUCT_NAME:-Autolith}"
 }
 
 # Print the name of the launcher command in user-facing text.
-# AUTOLITH_COMMAND_NAME gives the name, and the name is autolith when the
+# AUTOLITH_COMMAND_NAME gives the name. The default is autolith if the
 # variable is unset or empty.
 autolith_command_name()
 {
@@ -54,7 +54,7 @@ autolith_uninstall_usage()
 autolith_uninstall_help()
 {
   autolith_uninstall_usage
-  printf '\nRemove the %s installation, managed runtimes, built images, and caches\nwithout starting a session. User data stays: conversations, memories, agendas,\nimage commits, settings, credentials, and configuration. --yes skips the\nconfirmation prompt.\n' "$(autolith_product_name)"
+  printf '\nRemove the %s installation, managed runtimes, built images, and caches\nwithout starting a session. User data is kept: conversations, memories, agendas,\nimage commits, settings, credentials, and configuration. --yes skips the\nconfirmation prompt.\n' "$(autolith_product_name)"
 }
 
 autolith_launcher_parse()
@@ -184,7 +184,7 @@ autolith_launcher_parse()
 }
 
 # Print the name of the per-user directories. AUTOLITH_DIRECTORY_NAME gives
-# the name, and the name is autolith when the variable is unset or empty. The
+# the name. The default is autolith if the variable is unset or empty. The
 # name must start with an ASCII letter or digit and contain only those, dots,
 # hyphens and underscores, as PLATFORM-APPLICATION-DIRECTORY-NAME requires.
 autolith_directory_name()
