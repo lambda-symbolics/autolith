@@ -48,6 +48,8 @@
   test-context-admission-images
   test-context-admission-tool-output-images
   test-context-admission-tool-output-image-edges
+  test-context-admission-prepared-images
+  test-context-admission-prepared-image-bounds
   test-context-admission-checkpoint-transaction)
 
 (define-test-suite cache-review

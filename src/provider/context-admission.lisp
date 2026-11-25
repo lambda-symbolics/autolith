@@ -24,8 +24,16 @@ FIRST is :PENDING until a provider admits the request, then :ENTERED.
 REST holds the condition from a local refusal. Function entry and condition
 class do not establish zero usage.")
 
-(defparameter *provider-image-token-estimate* 16384
-  "Token allowance per image when provider token counts are unavailable.")
+(defparameter *provider-image-token-estimate* nil
+  "Token allowance per image when provider token counts are unavailable.
+
+NIL charges each image at the local preparation cap, *IMAGE-INPUT-MAXIMUM-PATCHES*,
+since prepared images never exceed it. Bind an integer for a different policy.")
+
+(-> provider-image-token-allowance () (integer 0))
+(defun provider-image-token-allowance ()
+  "Return the estimated input tokens charged for one image."
+  (or *provider-image-token-estimate* *image-input-maximum-patches*))
 
 (defgeneric provider-request-input-token-estimate (provider request)
   (:documentation
@@ -421,7 +429,7 @@ The library charges the allowance only for images in Responses content arrays.
 Images placed directly in a function_call_output's output are charged the same
 way, and the estimate is marked uncertain."
   (let ((provider  (or provider (make-instance 'model-provider)))
-        (allowance (* 4 *provider-image-token-estimate*)))
+        (allowance (* 4 (provider-image-token-allowance))))
     (multiple-value-bind (value images)
         (provider-context--without-tool-output-images provider value)
       (multiple-value-bind (characters uncertain-p)
