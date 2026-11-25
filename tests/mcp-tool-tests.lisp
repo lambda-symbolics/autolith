@@ -229,6 +229,11 @@
                 "mimeType" "image/png"
                 "data" *test-conversation-tiny-png*)
                (json-object
+                "type" "resource"
+                "resource" (json-object "uri" "test://embedded-image"
+                                        "mimeType" "image/png"
+                                        "blob" *test-conversation-tiny-png*))
+               (json-object
                 "type" "text"
                 "text" "after image"))
               "isError" (json-false))))
@@ -3619,21 +3624,23 @@
                    (test-assert
                     (and
                      (tool-result-success-p image-result)
-                     (= (length attachments) 1)
+                     (= (length attachments) 2)
                      (search
                       "before image"
                       (tool-result-content image-result))
                      (search
                       "after image"
                       (tool-result-content image-result))
-                     (probe-file
-                      (image-attachment-pathname
-                       (first attachments)))
-                     (= (length blocks) 3)
+                     (every (lambda (attachment)
+                              (probe-file (image-attachment-pathname attachment)))
+                            attachments)
+                     (= (length blocks) 5)
                      (string= (first blocks) "before image")
                      (typep (second blocks) 'image-attachment)
-                     (string= (third blocks) "after image"))
-                    "MCP image blocks retain exact provider-visible ordering"))))
+                     (search "test://embedded-image" (third blocks))
+                     (typep (fourth blocks) 'image-attachment)
+                     (string= (fifth blocks) "after image"))
+                    "MCP images and embedded image resources preserve content ordering"))))
              (let ((resources
                      (tool-registry-find registry "mcp" "resources"))
                    (templates

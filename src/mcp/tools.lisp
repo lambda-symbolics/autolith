@@ -1373,7 +1373,7 @@ retained value is credential-redacted or projected."
       ((and include-images-p
             (stringp blob)
             (stringp mime-type)
-            (mcp-tools--mime-extension mime-type))
+            (yolokuva:image-format-for-mime-type mime-type))
        (values
         (format nil "~A~%[Image #~D]" heading index)
         (mcp-tools--image-attachment
