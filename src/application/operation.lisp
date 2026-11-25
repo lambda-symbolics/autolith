@@ -967,7 +967,7 @@ Signal TOOL-ERROR if the call fails. Returns the tool result."
 (defun application-operation--binding-function (name)
   "Return the dynamic wrapper function for canonical operation NAME.
 
-The function calls the tool NAME in *TOOL-LISP-CONTEXT* if that is bound.
+The function calls the tool NAME in *TOOL-LISP-CONTEXT* if *TOOL-LISP-CONTEXT* is non-NIL.
 Otherwise it calls the operation NAME of the active local application."
   (lambda (&rest arguments)
     (cond
@@ -1020,7 +1020,7 @@ Otherwise it calls the operation NAME of the active local application."
 
 (-> application-operation-install-tool-bindings ((option tool-registry)) null)
 (defun application-operation-install-tool-bindings (registry)
-  "Install the function bindings of the tools of REGISTRY, if given, that do not conflict."
+  "Install non-conflicting function bindings for the tools of REGISTRY, if given."
   (dolist (tool (and registry (tool-registry-tools registry)))
     (application-operation--install-binding (application-operation--from-tool tool))))
 

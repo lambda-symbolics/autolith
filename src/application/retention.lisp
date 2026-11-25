@@ -7,14 +7,25 @@
 
 (-> application-retention (application) list)
 (defun application-retention (application)
-  "Return the resident counts and character weights of APPLICATION's bounded working sets.
+  "Return the resident counts and character weights of the bounded working sets of APPLICATION.
 
-The plist holds :TRANSCRIPT-CHUNKS, :TRANSCRIPT-CHARACTERS and
-:TRANSCRIPT-EVICTED, all NIL without a fullscreen transcript;
-:FINALIZED-IDENTIFIERS; :INPUT-RECALL-ENTRIES and :INPUT-RECALL-CHARACTERS;
-:KNOWLEDGE-CLAIMS,
-:KNOWLEDGE-SUPPORTS, :KNOWLEDGE-EVIDENCE and :KNOWLEDGE-ARCHIVED, the retracted
-supports kept only in the log, all NIL when the knowledge log cannot be read; and :HEAP-BYTES, the dynamic space in use."
+The plist contains these entries:
+- :TRANSCRIPT-CHUNKS
+- :TRANSCRIPT-CHARACTERS
+- :TRANSCRIPT-EVICTED
+- :FINALIZED-IDENTIFIERS
+- :INPUT-RECALL-ENTRIES
+- :INPUT-RECALL-CHARACTERS
+- :KNOWLEDGE-CLAIMS
+- :KNOWLEDGE-SUPPORTS
+- :KNOWLEDGE-EVIDENCE
+- :KNOWLEDGE-ARCHIVED
+- :HEAP-BYTES
+
+The transcript entries are NIL without a fullscreen transcript.
+The knowledge entries are NIL if the knowledge log cannot be read.
+:KNOWLEDGE-ARCHIVED is the count of retracted supports only kept in the log.
+:HEAP-BYTES is the dynamic space in use."
   (let* ((ui       (application-ui application))
          (viewport (and (typep ui 'fullscreen-terminal-ui)
                         (fullscreen-terminal-ui-viewport ui)))

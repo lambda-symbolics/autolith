@@ -18,7 +18,7 @@
         (change-class
          (make-context-contribution
           :identifier        "procedure-catalog"
-          :instruction       (format nil "## Procedures~2%The procedures of this workspace follow. Run one with procedure.run.~2%~:{- ~A: ~A~%~}"
+          :instruction       (format nil "## Procedures~2%These are the procedures of this workspace. Run one with procedure.run.~2%~:{- ~A: ~A~%~}"
                                      (mapcar (lambda (entry)
                                                (handler-case
                                                    (list (procedure-signature entry)

@@ -11,7 +11,7 @@
   (:documentation "A tool for running procedures."))
 
 (defmethod tool-execution-policy ((tool procedure-run-tool))
-  "Run procedure calls separately from other tool calls in the provider batch."
+  "Return the exclusive execution policy for procedure calls."
   (declare (ignore tool))
   ':exclusive)
 
@@ -19,8 +19,8 @@
 (defun procedure-run (context identifier arguments)
   "Call the procedure IDENTIFIER with the keyword ARGUMENTS.
 
-Tool functions in the procedure call tools in CONTEXT. Returns the rendered
-result and its evaluation sections. Signal KNOWLEDGE-ERROR if no active
+The tool calls in the procedure are executed in CONTEXT. Return the rendered
+result and the evaluation sections. Signal KNOWLEDGE-ERROR if no active
 procedure is named IDENTIFIER."
   (let* ((configuration (tool-context-configuration context))
          (entry         (knowledge-base-procedure (knowledge-base-read configuration)

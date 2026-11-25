@@ -230,7 +230,7 @@ Conflicted facts come first, then the rest by predicate and text."
 
 (-> memory-knowledge--render-procedures (knowledge-base string) string)
 (defun memory-knowledge--render-procedures (base workspace)
-  "Return the procedures of WORKSPACE with their status and source."
+  "Return the status and source of the procedures of WORKSPACE as text."
   (let ((entries (knowledge-base-procedures base workspace)))
     (with-output-to-string (stream)
       (format stream "collection: procedures~%count: ~D~%" (length entries))

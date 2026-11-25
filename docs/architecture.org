@@ -303,17 +303,17 @@ for removal by 0.68.0.
 | Papercuts     | user-visible defect reports and closure tombstones       |
 | Input vault   | queued follow-ups and steering after a crash             |
 
-- The knowledge log is append-only: a batch of records is one =:transaction=
-  form, so an interrupted write leaves none of it, and a reader folds only
-  what was appended since its cached read. It lives beside the memory log
-  rather than in it so older generations still read every memory after a
-  rollback; they never read the knowledge log. Derivations, statuses, and
-  conflicts are evaluated from the log, the cited files, and the time, and are
-  never stored.
-  New rule definitions carry =:activation :automatic=. Untagged
-  legacy definitions retain their original inactive semantics, and historical
-  admission records select their recorded versions. Remove these compatibility
-  readers with the 0.69.0 knowledge-log migration.
+- The knowledge log is append-only. Batches of records are written as single
+  =:transaction= forms. Readers ignore incomplete transaction forms.
+  Readers only fold what was appended since the cached read.
+  The knowledge log is stored beside the memory log.
+  Older generations can read memories after a rollback.
+  Derivations, statuses and conflicts are evaluated from the log, cited files and time.
+  The results are not stored.
+  New rule definitions contain =:activation :automatic=.
+  Untagged legacy definitions are inactive.
+  Rule versions are selected from historical admission records.
+  Remove these compatibility readers at the next knowledge-log format migration.
 - Procedures are =lambda= forms stored as source in the knowledge log.
   =procedure.run= evaluates one in the active image. Tool functions in the
   procedure call tools with the tool context of the caller.

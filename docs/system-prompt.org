@@ -321,11 +321,11 @@ active on definition and recompute derived values locally. Plan steps may
 name the facts they require and verify, and =plan.expand= expands a step
 by its task methods.
 
-A procedure is a Lisp function that is stored in the workspace. Define a
+Procedures are Lisp functions that are stored in the workspace. Define a
 procedure with =procedure.define= if some work is likely to be needed
-again. Its body calls tools as functions with keyword arguments and can
-use any other Lisp. Every request lists the procedures, and
-=procedure.run= runs one of them.
+again. Call tools as functions with keyword arguments in the body.
+The body can contain any other Lisp. Active procedures are listed in the
+request context. Run them with =procedure.run=.
 
 An admitted tool contract refuses a call whose required facts do not
 hold, and the refused call was not made: establish the missing fact

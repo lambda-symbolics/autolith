@@ -163,7 +163,7 @@
 
 (-> test-tool-native-result-boundaries () null)
 (defun test-tool-native-result-boundaries ()
-  "Exercise delivered native results, output consumers and invalidation boundaries."
+  "Test that delivered native data is detached from producer data. Test that result changes invalidate native data."
   (let* ((source (json-object "value" "delivered"))
          (result (tool-success (json-encode source) :native-value source :native-present-p t)))
     (setf (gethash "value" source) "changed")
@@ -187,7 +187,7 @@
                    "clipped and spilled results do not expose hidden complete native data")))
   (let ((result (tool-success "arbitrary report" :native-value (json-object) :native-present-p t)))
     (test-assert (not (tool-result-native-present-p result))
-                 "arbitrary reports use textual output fallback"))
+                 "arbitrary reports have no available native data"))
   nil)
 
 
