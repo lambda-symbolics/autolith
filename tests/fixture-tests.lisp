@@ -328,7 +328,7 @@
                    (dolist (kind '(:config :data :state :cache))
                      (dolist (actual (list (platform-application-root *platform* kind)
                                            (funcall script-root kind)))
-                       (test-assert (string= (concatenate 'string base expected)
+                       (test-assert (string= (uiop:native-namestring (merge-pathnames expected root))
                                              (uiop:native-namestring actual))
                                     "every root uses the configured directory name")))))
         (dolist (name (list "." ".." ".hidden" "-flag" "a/b" "a\\b" "star*"
