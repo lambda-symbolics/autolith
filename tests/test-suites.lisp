@@ -1727,6 +1727,7 @@
   test-idle-interrupt-exits-without-force-hint
   test-recalled-follow-up-interrupt
   test-active-turn-stop-keys
+  test-escape-submits-steering-together
   test-active-command-stop-key
   test-active-tool-stop-repairs-unknown-outcome
   test-interrupt-force-window

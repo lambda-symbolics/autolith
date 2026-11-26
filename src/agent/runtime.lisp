@@ -550,7 +550,7 @@ INITARGS supplies subclass assignment metadata, never participant state."
 (defgeneric agent-run-user-turn
     (agent content
      &key observer goal-context tools-p tool-allowlist tool-restriction-p
-          pending-input-identifier automatic-p operation-request)
+          pending-input-identifier automatic-p operation-request initial-steering-function)
   (:documentation
    "Persist user CONTENT, run model and optional tool rounds, and return the final provider result.
 
@@ -583,24 +583,25 @@ request that carries its expansion."
     ((agent agent) (content string)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
           tool-allowlist (tool-restriction-p nil) pending-input-identifier
-          automatic-p operation-request)
+          automatic-p operation-request initial-steering-function)
   "Normalize a textual user turn before running it through AGENT."
   (agent-run-user-turn agent
                        (user-message-input-create :text content)
-                       :observer                 observer
-                       :goal-context             goal-context
-                       :tools-p                  tools-p
-                       :tool-allowlist           tool-allowlist
-                       :tool-restriction-p       tool-restriction-p
-                       :pending-input-identifier pending-input-identifier
-                       :automatic-p              automatic-p
-                       :operation-request        operation-request))
+                       :observer                  observer
+                       :goal-context              goal-context
+                       :tools-p                   tools-p
+                       :tool-allowlist            tool-allowlist
+                       :tool-restriction-p        tool-restriction-p
+                       :pending-input-identifier  pending-input-identifier
+                       :automatic-p               automatic-p
+                       :operation-request         operation-request
+                       :initial-steering-function initial-steering-function))
 
 (defmethod agent-run-user-turn
     ((agent agent) (content user-message-input)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
           tool-allowlist (tool-restriction-p nil) pending-input-identifier
-          automatic-p operation-request)
+          automatic-p operation-request initial-steering-function)
   "Run one serialized user turn through AGENT while presenting events to OBSERVER."
   (unless (or (non-empty-string-p (user-message-input-text content))
               (user-message-input-image-pathnames content))
@@ -636,13 +637,18 @@ request that carries its expansion."
               (when pending-input-identifier
                 (list :pending-input-identifier pending-input-identifier)))))
           (unwind-protect
-               (agent--run-provider-loop
-                agent observer
-                :goal-context       goal-context
-                :tools-p            tools-p
-                :tool-allowlist     tool-allowlist
-                :tool-restriction-p tool-restriction-p
-                :request-number     compaction-requests)
+               (progn
+                (when initial-steering-function
+                  (agent--persist-steering-input
+                   agent observer :messages       (funcall initial-steering-function)
+                                  :request-number (1+ compaction-requests)))
+                (agent--run-provider-loop
+                 agent observer
+                 :goal-context       goal-context
+                 :tools-p            tools-p
+                 :tool-allowlist     tool-allowlist
+                 :tool-restriction-p tool-restriction-p
+                 :request-number     compaction-requests))
             (conversation-clear-ephemeral-input-items conversation))))))))
 
 

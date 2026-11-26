@@ -4803,6 +4803,7 @@ replaces only that name, once, and a process stops asking after
     (application (or string user-message-input)
      &key (:continuation-p boolean)
           (:steering-function (option function))
+          (:initial-steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
           (:pending-operations-function (option function))
@@ -4815,6 +4816,7 @@ replaces only that name, once, and a process stops asking after
 (defun application--run-turn
     (application content
      &key continuation-p steering-function steering-persisted-function
+          initial-steering-function
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) operation-request)
@@ -4832,25 +4834,26 @@ refusal, as a secondary value."
                (agent-run-user-turn
                 (application-agent application)
                 content
-                :observer                 (application-agent-observer
-                                            application
-                                            :steering-function  steering-function
-                                            :steering-persisted-function
-                                            steering-persisted-function
-                                            :user-message-persisted-function
-                                            user-message-persisted-function
-                                            :pending-operations-function
-                                            pending-operations-function
-                                            :user-message-input content
-                                            :continuation-p     continuation-p
-                                            :operation-request  operation-request)
-                :goal-context             (application-goal-context application)
-                :tools-p                  tools-p
-                :tool-allowlist           tool-allowlist
-                :tool-restriction-p       tool-restriction-p
-                :pending-input-identifier pending-input-identifier
-                :automatic-p              (or continuation-p (not (null operation-request)))
-                :operation-request        operation-request)
+                :observer                  (application-agent-observer
+                                             application
+                                             :steering-function  steering-function
+                                             :steering-persisted-function
+                                             steering-persisted-function
+                                             :user-message-persisted-function
+                                             user-message-persisted-function
+                                             :pending-operations-function
+                                             pending-operations-function
+                                             :user-message-input content
+                                             :continuation-p     continuation-p
+                                             :operation-request  operation-request)
+                :goal-context              (application-goal-context application)
+                :tools-p                   tools-p
+                :tool-allowlist            tool-allowlist
+                :tool-restriction-p        tool-restriction-p
+                :pending-input-identifier  pending-input-identifier
+                :automatic-p               (or continuation-p (not (null operation-request)))
+                :operation-request         operation-request
+                :initial-steering-function initial-steering-function)
              (provider-context-budget-error (condition)
                (application-present-context-refusal application condition)
                (setf turn-result ':failed))
@@ -4936,6 +4939,7 @@ scheduled wakeup before continuing."
 (-> application-run-message
     (application (or string user-message-input)
      &key (:steering-function (option function))
+          (:initial-steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
           (:pending-operations-function (option function))
@@ -4948,6 +4952,7 @@ scheduled wakeup before continuing."
 (defun application-run-message
     (application content
      &key steering-function steering-persisted-function
+          initial-steering-function
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t))
@@ -4964,6 +4969,7 @@ the controller's steering hooks for command-driven messages."
                               (application--run-turn
                                application content
                                :steering-function               steering-function
+                               :initial-steering-function       initial-steering-function
                                :steering-persisted-function     steering-persisted-function
                                :user-message-persisted-function user-message-persisted-function
                                :pending-operations-function     pending-operations-function

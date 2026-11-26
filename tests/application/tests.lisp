@@ -1771,6 +1771,66 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-escape-submits-steering-together () null)
+(defun test-escape-submits-steering-together ()
+  "Test that Escape submits both steers in one request and leaves a follow-up queued."
+  (let ((*conversation-title-refresh-turn-count* most-positive-fixnum))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration :identifier "escape-steering"))
+             (provider     (make-instance 'gated-provider
+                                          :results (list (agent-test-result "steered" (list (agent-test-message "steered answer")))
+                                                         (agent-test-result "follow-up" (list (agent-test-message "follow-up answer")))
+                                                         (agent-test-result "extra" (list (agent-test-message "extra answer"))))))
+             (terminal     (make-instance 'queued-recording-terminal :columns 80))
+             (ui           (terminal-ui-create :terminal terminal))
+             (registry     (agent-test-registry))
+             (agent        (agent-create :configuration configuration
+                                         :provider      provider
+                                         :conversation  conversation
+                                         :tool-registry registry
+                                         :worker        nil))
+             (application  (make-instance 'application
+                                          :configuration configuration
+                                          :conversation  conversation
+                                          :provider      provider
+                                          :tool-registry registry
+                                          :worker        nil
+                                          :agent         agent
+                                          :ui            ui))
+             (producer     nil))
+        (queued-recording-terminal-enqueue terminal '(:insert "original request"))
+        (queued-recording-terminal-enqueue terminal ':submit)
+        (setf producer
+              (make-thread
+               (lambda ()
+                 (unwind-protect
+                      (when (task-tests--wait-until (lambda () (gated-provider-entered-p provider)) 5)
+                        (dolist (event '((:insert "first steer") :submit
+                                         (:insert "second steer") :submit
+                                         (:insert "ordinary follow-up") :complete :escape))
+                          (queued-recording-terminal-enqueue terminal event))
+                        (task-tests--wait-until
+                         (lambda ()
+                           (and (>= (gated-provider-request-count provider) 3)
+                                (not (application-input-controller-turn-active-p
+                                      (application-input-controller application))))) 5))
+                   (gated-provider-release provider)
+                   (queued-recording-terminal-enqueue terminal ':stream-end)))))
+        (unwind-protect (application-tests--serve-host application)
+          (gated-provider-release provider)
+          (join-thread producer))
+        (let ((requests (reverse (scripted-provider-input-snapshots provider))))
+          (test-assert
+           (equal
+            (loop for request in requests
+                  collect (loop for item in request
+                                when (equal (json-get item "role") "user")
+                                  collect (context--message-text item)))
+            '(("original request" "first steer" "second steer")
+              ("original request" "first steer" "second steer" "ordinary follow-up")))
+           "both steers reach the first request after Escape, before the separately queued follow-up")))))
+  nil)
+
 
 ;;;; -- Active Command Cancellation --
 

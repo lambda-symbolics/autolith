@@ -148,6 +148,11 @@
     :accessor      application-input-controller-active-work-identifier
     :type          (option string)
     :documentation "The durable identifier of ACTIVE-WORK, when present.")
+   (active-promoted-steering-p
+    :initform      nil
+    :accessor      application-input-controller-active-promoted-steering-p
+    :type          boolean
+    :documentation "Whether the active queued message came from the steering prefix.")
    (active-command-input
     :initform      nil
     :accessor      application-input-controller-active-command-input
@@ -1384,6 +1389,35 @@ the ordinary FIFO queue."
       (application-input-controller--persist-pending controller))
     (application-input-controller--publish-counts controller)
     entries))
+
+(-> application-input-controller--take-promoted-steering (application-input-controller) list)
+(defun application-input-controller--take-promoted-steering (controller)
+  "Take consecutive promoted messages for the first request of the active turn."
+  (let ((entries nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (when (and (application-input-controller-active-promoted-steering-p controller)
+                 (not (application-input-controller-stopping-p controller))
+                 (not (application-input-controller-turn-cancellation-p controller)))
+        (let ((work-items (application-input-controller-work-items controller))
+              (in-flight  (application-input-controller-steering-in-flight-items controller)))
+          (sb-sys:without-interrupts
+            (loop while (and (plusp (application-input-controller-steering-promotion-prefix-count controller))
+                             (not (eql (application-input-controller-follow-up-edit-index controller) 0))
+                             (not (deque-empty-p work-items)))
+                  do (let ((work (deque-ref work-items 0)))
+                       (unless (eq (first work) ':message)
+                         (return))
+                       (let ((entry (application-input-controller--steering-entry (second work))))
+                         (deque-push-back in-flight entry)
+                         (deque-pop-front work-items)
+                         (decf (application-input-controller-steering-promotion-prefix-count controller))
+                         (when (application-input-controller-follow-up-edit-index controller)
+                           (decf (application-input-controller-follow-up-edit-index controller)))
+                         (push entry entries))))))))
+    (when entries
+      (application-input-controller--persist-pending controller)
+      (application-input-controller--publish-counts controller))
+    (nreverse entries)))
 
 (-> application-input-controller--take-primary-steering (application-input-controller) list)
 (defun application-input-controller--take-primary-steering (controller)
@@ -2998,6 +3032,9 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
           (setf work (deque-pop-front (application-input-controller-work-items controller))
                 (application-input-controller-active-p controller) t
                 (application-input-controller-active-work-kind controller) (first work)
+                (application-input-controller-active-promoted-steering-p controller)
+                (and (eq (first work) ':message)
+                     (plusp (application-input-controller-steering-promotion-prefix-count controller)))
                 (application-input-controller-active-command-input controller)
                 (and (typep (second work) 'command-message-input) (second work))
                 (application-input-controller-active-work-interactive-p controller) t)
@@ -3079,6 +3116,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                 (incf (application-input-controller-follow-up-edit-index controller)))
               (setf (application-input-controller-active-p controller) nil
                     (application-input-controller-active-work-kind controller) nil
+                    (application-input-controller-active-promoted-steering-p controller) nil
                     (application-input-controller-active-work controller) nil
                     (application-input-controller-active-work-identifier controller) nil
                     (application-input-controller-active-work-interactive-p controller) nil)))
@@ -3494,6 +3532,7 @@ user model turn, while retaining cancellation and error presentation."
 (-> application--run-message-input
     (application (or string user-message-input)
      &key (:steering-function (option function))
+          (:initial-steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
           (:pending-operations-function (option function))
@@ -3507,6 +3546,7 @@ user model turn, while retaining cancellation and error presentation."
 (defun application--run-message-input
     (application input
      &key steering-function steering-persisted-function
+          initial-steering-function
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
@@ -3522,6 +3562,7 @@ submission-time sharing request."
      (application-run-message
       application input
       :steering-function               steering-function
+      :initial-steering-function       initial-steering-function
       :steering-persisted-function     steering-persisted-function
       :user-message-persisted-function user-message-persisted-function
       :pending-operations-function     pending-operations-function
@@ -3674,6 +3715,9 @@ however it ended."
                        :steering-function
                        (lambda ()
                          (application-input-controller--take-primary-steering controller))
+                       :initial-steering-function
+                       (lambda ()
+                         (application-input-controller--take-promoted-steering controller))
                        :steering-persisted-function
                        (lambda (identifier)
                          (application-input-controller--acknowledge-primary-steering controller identifier))
