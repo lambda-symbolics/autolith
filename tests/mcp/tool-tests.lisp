@@ -4231,3 +4231,74 @@
                  "search reports a query with no matches"))))
         (mcp-manager-close manager))))
   nil)
+
+
+;;;; -- Provider Regex Portability --
+
+(-> test-mcp-provider-schema-regex-portability () null)
+(defun test-mcp-provider-schema-regex-portability ()
+  "Test provider schemas carry only regex escapes every provider engine compiles."
+  (let ((configuration (test-configuration))
+        (surrogate     "^[^\\uD800-\\uDFFF]*$"))
+    (unwind-protect
+        (multiple-value-bind (manager transport)
+            (test-mcp--manager configuration)
+          (declare (ignore transport))
+          (unwind-protect
+              (let* ((runtime (first (mcp-manager-runtimes manager)))
+                     (schema
+                       (json-object
+                        "type" "object"
+                        "properties"
+                        (json-object
+                         "output_root"
+                         (json-object
+                          "type" "string"
+                          "allOf"
+                          (vector (json-object "pattern" "^[^\\x00]*$")
+                                  (json-object "pattern" surrogate)
+                                  (json-object "pattern" "^\\/"))))
+                        "patternProperties"
+                        (json-object surrogate (json-object "type" "string")
+                                     "x.*" (json-object "type" "integer")))))
+                (test-assert (null (mcp-tools--portable-pattern surrogate))
+                             "a surrogate escape has no portable spelling")
+                (test-assert (string= "A+"
+                                      (mcp-tools--portable-pattern "\\u0041+"))
+                             "an escaped ASCII word character becomes literal text")
+                (test-assert (string= "\\."
+                                      (mcp-tools--portable-pattern "\\u002E"))
+                             "an escaped syntax character keeps its backslash")
+                (test-assert
+                 (string= "^[^\\x00]*$"
+                          (mcp-tools--portable-pattern "^[^\\x00]*$"))
+                 "a portable pattern is unchanged")
+                (multiple-value-bind (projected bytes)
+                    (mcp-tools--provider-schema runtime schema)
+                  (let* ((encoded  (json-encode projected))
+                         (branches
+                           (json-get
+                            (json-get (json-get projected "properties")
+                                      "output_root")
+                            "allOf"))
+                         (patterns (json-get projected "patternProperties")))
+                    (test-assert (plusp bytes)
+                                 "projection still reports retained schema bytes")
+                    (test-assert (not (search "uD800" encoded))
+                                 "no surrogate escape reaches the provider")
+                    (test-assert
+                     (and (= 3 (length branches))
+                          (string= "^[^\\x00]*$"
+                                   (json-get (aref branches 0) "pattern"))
+                          (null
+                           (nth-value
+                            1 (json-get-present (aref branches 1) "pattern")))
+                          (string= "^\\/" (json-get (aref branches 2) "pattern")))
+                     "only the unportable pattern is dropped")
+                    (test-assert
+                     (and (hash-table-p patterns)
+                          (null (nth-value 1 (json-get-present patterns surrogate)))
+                          (hash-table-p (json-get patterns "x.*")))
+                      "unportable pattern property keys are dropped"))))
+            (mcp-manager-close manager)))
+      nil)))
