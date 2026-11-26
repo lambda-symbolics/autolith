@@ -29,10 +29,6 @@
 
 ;;;; -- Tool Executions --
 
-(defmethod tool-child-safe-p ((tool papercut-report-tool))
-  "Allow explicit reporting grants in task roles and noninteractive jobs."
-  t)
-
 (defmethod tool-conversation-persistence ((tool papercut-report-tool))
   "Keep papercut calls and their acknowledgements across responses and compaction."
   (declare (ignore tool))

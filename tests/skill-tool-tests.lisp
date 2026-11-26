@@ -165,7 +165,7 @@
 
 (-> test-skill-load-tool () null)
 (defun test-skill-load-tool ()
-  "Test exact, ephemeral, child-safe Skill selection through skill.load."
+  "Test exact, ephemeral Skill selection through skill.load."
   (let* ((base-configuration (test-configuration))
          (root               (test-configuration-root base-configuration))
          (project            (merge-pathnames "project/" root))
@@ -214,8 +214,6 @@
                              "skill"
                              "load"))
                         "skill registry augmentation is idempotent")
-           (test-assert (tool-child-safe-p tool)
-                        "skill.load is available across the child-agent boundary")
            (test-assert
              (and (eq (tool-conversation-persistence tool) ':durable)
                   (tool-provider-round-trip-barrier-p tool))

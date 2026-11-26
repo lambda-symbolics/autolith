@@ -30,8 +30,7 @@ Create =${XDG_CONFIG_HOME:-~/.config}/autolith/mcp.sexp=:
    :required-p              nil
    :startup-timeout-seconds 15
    :tool-timeout-seconds    60
-   :approval                :prompt
-   :child-tools             ("lookup"))))
+   :approval                :prompt)))
 #+END_SRC
 
 - Server names are case-sensitive
@@ -130,9 +129,8 @@ Local command sandboxing cannot confine an external server. In =sandbox= mode,
 a server call needs an exact remembered grant or separate approval. Automatic
 classification cannot grant sandboxed execution to an external call.
 
-A child agent gets a server tool only when both the server's
-=:child-tools= list names its exact raw name and the selected child
-role permits that resulting tool.
+Child agents use the MCP tools configured for their parent. Normal server
+approval policies and permission modes apply.
 
 * Connect, inspect, and refresh
 

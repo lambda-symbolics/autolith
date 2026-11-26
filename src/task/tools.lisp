@@ -2,11 +2,6 @@
 
 ;;;; -- Task Provider Tools --
 
-(defmethod tool-child-safe-p ((tool task-job-tool))
-  "Permit job management with the existing executing-agent visibility checks."
-  (declare (ignore tool))
-  t)
-
 (-> task--repair-prose (t) t)
 (defun task--repair-prose (value)
   "Repair a provider string that was JSON-encoded one extra time."
@@ -950,7 +945,7 @@ poll a job whose completion will wake it."
     (tool-registry-register registry
                             (make-instance 'task-run-tool :orchestrator orchestrator
                                            :namespace "child" :name "spawn" :description
-                                           "Spawn one detached in-process child agent with explicit identity, restricted tools, recursion policy, progress, and artifacts."
+                                            "Start a detached child agent with an assignment and optional name and context."
                                            :parameters                  (task-run-parameters-schema)))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator orchestrator

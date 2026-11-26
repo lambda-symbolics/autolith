@@ -392,19 +392,14 @@ that worker, while cancellation after a completed request leaves the REPL intact
          (list :system       system
                :asd-pathname (and asd-pathname (namestring asd-pathname)))))))))
 
-(-> lisp-tool--active-target-p (tool-context hash-table string) boolean)
-(defun lisp-tool--active-target-p (context arguments tool-name)
-  "Return true for an authorized self target, rejecting unknown targets."
+(-> lisp-tool--active-target-p (hash-table string) boolean)
+(defun lisp-tool--active-target-p (arguments tool-name)
+  "Return true for a self target, rejecting unknown targets."
   (let ((target (or (tool-argument arguments "target") "worker")))
     (cond
       ((string= target "worker")
        nil)
       ((string= target "self")
-       (when (resource-context-child-agent-p context)
-         (error 'tool-authority-denied
-                :message   "Task child agents cannot inspect the active image."
-                :code      ':authority
-                :tool-name tool-name))
        t)
       (t
        (error 'tool-error
@@ -423,7 +418,7 @@ that worker, while cancellation after a completed request leaves the REPL intact
   "Describe the required designator in a worker or the active image."
   (declare (ignore tool))
   (let ((designator (tool-argument arguments "designator" :required t)))
-    (if (lisp-tool--active-target-p context arguments "lisp.describe")
+    (if (lisp-tool--active-target-p arguments "lisp.describe")
         (lisp-describe-active-image context arguments)
         (lisp-tool-invoke-execution
          context arguments
@@ -442,7 +437,7 @@ that worker, while cancellation after a completed request leaves the REPL intact
   (declare (ignore tool))
   (let ((name (tool-argument arguments "name" :required t))
         (kind (tool-argument arguments "kind")))
-    (if (lisp-tool--active-target-p context arguments "lisp.source")
+    (if (lisp-tool--active-target-p arguments "lisp.source")
         (lisp-source-active-image context arguments)
         (lisp-tool-invoke-execution
          context arguments

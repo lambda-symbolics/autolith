@@ -306,15 +306,28 @@
 
 (-> test-refinement-journal-integrity nil null)
 (defun test-refinement-journal-integrity ()
-  "Handle interrupted tails, confine workspaces and reject discontinuous revisions."
+  "Read historical metadata and handle interrupted tails, workspace confinement and revisions."
   (refinement-tests--fixture
    (lambda (configuration context state)
-     (declare (ignore state))
-     (let ((proposal (refinement-tests--proposal configuration context)))
+     (let ((proposal   (refinement-tests--proposal configuration context))
+           (historical nil))
+       (dolist (target '(:role :retired-adaptation))
+         (let ((record (copy-tree proposal)))
+           (setf (getf record :id)     (make-identifier)
+                 (getf record :target) target
+                 record (rest (mutation-journal-append configuration
+                                                       (cons :refinement record))))
+           (push record historical)
+           (fiveam:is (eq :invalid (refinement-tests--error-code
+                                    (lambda () (refinement-tests--run context record :experiment)))))))
+       (fiveam:is (zerop (refinement-test-changes state)))
+       (setf historical (nreverse historical)
+             proposal   (refinement-tests--run context proposal :experiment))
+       (fiveam:is (= 1 (refinement-test-changes state)))
        (with-open-file (stream (configuration-journal-path configuration)
                                :direction :output :if-exists :append :external-format :utf-8)
          (write-string "(:refinement :id \"incomplete" stream))
-       (fiveam:is (equal (list proposal) (refinement-list configuration)))
+       (fiveam:is (equal (cons proposal historical) (refinement-list configuration)))
        (test-call-with-function-replacements
         (list (list 'log-read
                     (lambda (&rest arguments)
@@ -327,7 +340,7 @@
                                         :working-directory (merge-pathnames "other/" (config ':working-directory configuration)))))
          (fiveam:is (null (refinement-list other))))
        (let ((broken (copy-tree proposal)))
-         (setf (getf broken :revision) 3)
+         (setf (getf broken :revision) (+ 2 (getf proposal :revision)))
          (mutation-journal-append configuration (cons :refinement broken))
          (fiveam:is (eq :corrupt (refinement-tests--error-code
                                   (lambda () (refinement-list configuration)))))

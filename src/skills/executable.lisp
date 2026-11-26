@@ -16,11 +16,6 @@
               :documentation "Invoke, self-test, or verify the selected executable."))
   (:documentation "Run an explicitly authorized Skill in a fresh isolated worker."))
 
-(defmethod tool-child-safe-p ((tool executable-skill-tool))
-  "Allow children to use their own ordinary restricted execution authority."
-  (declare (ignore tool))
-  t)
-
 (-> executable-skill--fail (keyword string) nil)
 (defun executable-skill--fail (code message)
   "Reject admission without loading executable definitions."

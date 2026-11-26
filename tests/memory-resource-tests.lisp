@@ -245,13 +245,6 @@
                                  :configuration empty-configuration
                                  :worker        nil
                                  :conversation  empty-conversation))
-                (child-context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker        nil
-                                 :conversation  first-conversation
-                                 :agent         (allocate-instance
-                                                 (find-class 'task-child-agent))))
                 (workspace-memory
                   (memory-remember
                    configuration
@@ -549,14 +542,6 @@
                   (and (not (tool-result-success-p missing-read))
                        (search "does not exist" (tool-result-content missing-read)))
                   "missing exact memory identifiers fail clearly")))
-             (let ((collection-read (read-resource child-context "memory:relevant"))
-                   (item-read       (read-resource
-                                     child-context
-                                     (format nil "memory:~A" (memory-identifier global-memory)))))
-               (test-assert (tool-result-success-p collection-read)
-                            "child agents may read shared memory collections")
-               (test-assert (tool-result-success-p item-read)
-                            "child agents may read exact shared memories"))
              (let ((sample (merge-pathnames "sample.lisp" first-workspace)))
                (with-open-file (stream sample
                                        :direction         ':output
@@ -686,13 +671,13 @@
                                  :configuration switched-configuration
                                  :worker        nil
                                  :conversation  conversation))
-                (child-context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker        nil
-                                 :conversation  conversation
-                                 :agent         (allocate-instance
-                                                 (find-class 'task-child-agent)))))
+                (unregistered-context
+                   (make-instance 'tool-context
+                                  :configuration configuration
+                                  :worker        nil
+                                  :conversation  conversation
+                                  :agent         (allocate-instance
+                                                  (find-class 'agent)))))
            (labels ((read-resource (selected-context uri)
                       "Read one complete memory resource."
                       (test-resource-call
@@ -1037,7 +1022,7 @@
              (let* ((collection (read-resource context "memory:workspace"))
                     (denied
                       (edit-resource
-                       child-context "memory:workspace" (revision collection)
+                       unregistered-context "memory:workspace" (revision collection)
                        (json-object
                         "op" "memory-remember"
                          "title" "Denied unregistered memory"

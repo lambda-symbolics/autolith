@@ -41,9 +41,7 @@
              (and (every (lambda (key) (non-empty-string-p (getf properties key)))
                          '(:id :workspace :owner :reason))
                   (typep (getf properties :revision) '(integer 1 *))
-                  (member (getf properties :target)
-                          '(:none :memory :repository-fact :context :skill :role
-                            :rlm-policy :live-change))
+                  (keywordp (getf properties :target))
                   (member (getf properties :scope) '(:session :project :global))
                   (member (getf properties :state)
                           '(:no-op :proposed :applying :experiment :evaluating :observed
@@ -167,7 +165,7 @@ observations, not instructions. New proposals always begin at session scope."
     (unless (and (consp evidence) (<= (length evidence) 16))
       (refinement--reject ':invalid "Supply one to sixteen trajectory evidence fields."))
     (mapc #'refinement--text evidence)
-    (unless (member target '(:none :memory :repository-fact :context :skill :role
+    (unless (member target '(:none :memory :repository-fact :context :skill
                              :rlm-policy :live-change))
       (refinement--reject ':invalid "Unknown refinement adaptation target."))
     (unless (eq target :none)
@@ -184,10 +182,12 @@ observations, not instructions. New proposals always begin at session scope."
 
 (-> refinement--current (tool-context string integer) list)
 (defun refinement--current (context identifier revision)
-  "Check revision and child authority before a lifecycle transition."
-  (when (resource-context-child-agent-p context)
-    (refinement--reject ':authority "Refinement transitions belong to the primary agent."))
+  "Check target, revision and session ownership before a lifecycle transition."
   (let ((proposal (refinement-find (tool-context-configuration context) identifier)))
+    (unless (member (getf proposal :target)
+                    '(:none :memory :repository-fact :context :skill
+                      :rlm-policy :live-change))
+      (refinement--reject ':invalid "Unknown refinement adaptation target."))
     (unless (and (integerp revision) (= revision (getf proposal :revision)))
       (refinement--reject ':stale "Reread the refinement and use its current revision."))
     (when (and (eq (getf proposal :scope) :session)
@@ -249,7 +249,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
          (case target
            ((:memory :repository-fact)
             (and (equal namespace "resource") (equal name "edit")))
-           ((:context :role :live-change)
+           ((:context :live-change)
             (or (and (equal namespace "resource") (equal name "edit"))
                 (and (equal namespace "self")
                      (member name '("define" "set" "eval" "commit"
@@ -307,8 +307,8 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
          (registry  (tool-context-registry context)))
     (unless (and registry
                  (member (cons (json-get operation "namespace") (json-get operation "name"))
-                         '(("resource" . "read") ("self" . "diff") ("self" . "status")
-                           ("child" . "roles")) :test #'equal))
+                         '(("resource" . "read") ("self" . "diff")
+                           ("self" . "status")) :test #'equal))
       (refinement--reject ':invalid "The adaptation guard must inspect read-only owner state."))
     (let ((result (tool-registry-execute-call registry operation context)))
       (unless (tool-result-success-p result)

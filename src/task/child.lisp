@@ -33,117 +33,30 @@
     (t
      0)))
 
-(-> task--tool-spec-matches-p (string tool) boolean)
-(defun task--tool-spec-matches-p (spec tool)
-  "Return true when agent tool SPEC permits TOOL."
-  (let* ((normalized (string-downcase spec))
-         (canonical  (string-downcase (tool-canonical-name tool)))
-         (namespace  (string-downcase (tool-namespace tool))))
-    (or (string= normalized canonical)
-        (string= normalized (format nil "~A.*" namespace)))))
-
-(-> task--delegation-source (tool-registry) tool-registry)
-(defun task--delegation-source (registry)
-  "Return the configured owner of borrowed capabilities."
-  (or (tool-registry-delegation-source registry) registry))
-
-(-> task--delegation-tools (tool-registry) list)
-(defun task--delegation-tools (source)
-  "Return the configured native and MCP helper tools available for delegation."
-  (or (tool-registry-delegation-tools source)
-      (remove-if (lambda (tool) (typep tool 'mcp-provider-tool))
-                 (tool-registry-tools source))))
-
-(-> task-tool-registry-remember-delegation-tools (tool-registry) null)
-(defun task-tool-registry-remember-delegation-tools (registry)
-  "Keep the configured catalogue and its runtime ownership separate from dispatch."
-  (setf (tool-registry-delegation-tools registry) (task--delegation-tools registry))
-  nil)
-
-(-> task-child-restrict-tool-registry (tool-registry &key (:tools t) (:depth (integer 0))) tool-registry)
-(defun task-child-restrict-tool-registry (registry &key (tools ':all) (depth 1))
-  "Restrict the owner's dispatch map to direct child grants and structural depth."
-  (task-child-validate-tool-grants tools registry)
-  (let ((permitted
-         (task--child-tool-predicate tools
-          (tool-registry-runtime-binding registry 'task-orchestrator) depth)))
-    (task-tool-registry-remember-delegation-tools registry)
-    (mcp-tool-registry-restrict-discovered-tools registry permitted)
-    (tool-registry-delete-if registry (complement permitted))))
-
-(-> task-child-validate-tool-grants (t tool-registry) null)
-(defun task-child-validate-tool-grants (grants registry)
-  "Reject malformed, forbidden, or unavailable explicit execution tool grants."
-  (unless (or (eq grants :all)
-              (and (proper-list-p grants) (every #'non-empty-string-p grants)
-                   (task--unique-list-p grants)))
-    (error 'task-error :message "Child tool grants must be :ALL or a unique list of canonical tool names." :tool-name "child.spawn"))
-  (when (listp grants)
-    (let* ((source  (task--delegation-source registry))
-           (manager (mcp-tool-registry-manager source))
-           (tools   (append (task--delegation-tools source)
-                            (when manager (with-lock-held ((mcp-manager-lock manager))
-                                            (mcp-tools--manager-tool-objects manager))))))
-      (dolist (grant grants)
-        (let* ((separator (position #\. grant))
-               (namespace (and separator (subseq grant 0 separator))))
-          (unless (or (string= grant "web_search")
-                      (and separator (plusp separator)
-                           (= separator (position #\. grant :from-end t))
-                           (string= grant (string-downcase grant))
-                           (not (member namespace *task-forbidden-child-tool-namespaces* :test #'string=))
-                           (some (lambda (tool)
-                                   (and (tool-child-safe-p tool)
-                                        (task--tool-spec-matches-p grant tool))) tools)))
-            (error 'task-error :message (format nil "Unavailable or forbidden child tool grant ~S." grant)
-                               :code ':authority :tool-name "child.spawn"))))))
-  nil)
-
-(-> task--child-tool-predicate (t (option task-orchestrator) (integer 0)) function)
-(defun task--child-tool-predicate (grants orchestrator depth)
-  "Filter direct grants through child safety, forbidden namespaces and depth."
-  (lambda (tool)
-    (and (if (string= (tool-namespace tool) "child")
-             (and orchestrator (< depth (task-orchestrator-maximum-depth orchestrator))
-                  (eq grants :all)
-                  (member (tool-name tool) '("spawn" "rename" "update" "remove") :test #'string=))
-             (and (not (member (tool-namespace tool) *task-forbidden-child-tool-namespaces* :test #'string=))
-                  (tool-child-safe-p tool)
-                  (or (eq grants :all)
-                      (and (listp grants)
-                           (some (lambda (grant) (task--tool-spec-matches-p grant tool)) grants)))))
-         t)))
-
 (-> task-child-tool-registry
-    (tool-registry list &key (:orchestrator (option task-orchestrator)) (:depth (integer 0)))
+    (tool-registry &key (:orchestrator (option task-orchestrator)))
     tool-registry)
-(defun task-child-tool-registry (parent-registry item &key orchestrator (depth 1))
-  "Borrow configured runtimes and project this execution's child-safe tool grants."
-  (let* ((source  (task--delegation-source parent-registry))
-         (registry
+(defun task-child-tool-registry (parent-registry &key orchestrator)
+  "Copy the configured tools and borrow the shared runtimes of PARENT-REGISTRY."
+  (let* ((registry
           (make-instance 'tool-registry :resource-registry
-                         (tool-registry-resource-registry source)))
-         (permitted
-          (task--child-tool-predicate (getf item :tools ':all) orchestrator depth))
-         (manager (mcp-tool-registry-manager source)))
-    (progn
-     (task-child-validate-tool-grants (getf item :tools ':all) source)
-     (setf (tool-registry-delegation-source registry) source))
-    (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
-    (tool-registry-bind-runtime registry 'shell-session-pool
-                                (tool-registry-runtime-binding source
-                                                               'shell-session-pool))
-    (maphash
-     (lambda (namespace description)
-       (tool-registry-describe-namespace registry namespace description))
-     (tool-registry-namespace-descriptions source))
-    (dolist (tool (task--delegation-tools source))
-      (when (funcall permitted tool) (tool-registry-register registry tool)))
-    (when manager
-      (mcp-tool-registry-bind-manager registry manager permitted)
-      (mcp-tool-registry-refresh registry :only-dirty-p t)
-      (mcp-tool-registry-activate-discovered-tools registry))
-    registry))
+                         (tool-registry-resource-registry parent-registry)))
+         (manager (mcp-tool-registry-manager parent-registry)))
+   (maphash
+    (lambda (key binding) (unless (eq key :mcp) (tool-registry-bind-runtime registry key binding)))
+    (tool-registry-runtime-bindings parent-registry))
+   (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
+   (maphash
+    (lambda (namespace description)
+      (tool-registry-describe-namespace registry namespace description))
+    (tool-registry-namespace-descriptions parent-registry))
+   (dolist (tool (tool-registry-tools parent-registry))
+     (unless (typep tool 'mcp-provider-tool) (tool-registry-register registry tool)))
+   (when manager
+     (mcp-tool-registry-bind-manager registry manager)
+     (mcp-tool-registry-refresh registry :only-dirty-p t)
+     (mcp-tool-registry-activate-discovered-tools registry))
+   registry))
 
 (defparameter *task-default-reasoning-effort*
   "medium"
@@ -151,21 +64,15 @@
 
 (-> task-child-configuration (configuration list) configuration)
 (defun task-child-configuration (parent-configuration item)
-  "Apply direct execution options, medium child effort, and child web grants."
-  (let* ((tools           (getf item :tools ':all))
-         (model           (or (find-if (lambda (candidate)
-                                        (member candidate *supported-models* :test #'string=))
-                                      (getf item :models))
-                              (config :model parent-configuration)))
-         (effort          (or (getf item :reasoning-effort) *task-default-reasoning-effort*))
-         (web-search-mode (or (config :configured-web-search-mode parent-configuration)
-                              (config :web-search-mode parent-configuration)))
-         (web-enabled-p   (or (eq tools :all)
-                              (member "web_search" tools :test #'string=))))
+  "Copy PARENT-CONFIGURATION with the model and effort selected by ITEM."
+  (let ((model  (or (find-if (lambda (candidate)
+                               (member candidate *supported-models* :test #'string=))
+                             (getf item :models))
+                    (config :model parent-configuration)))
+        (effort (or (getf item :reasoning-effort) *task-default-reasoning-effort*)))
+
     (configuration-copy parent-configuration
-                        :model model :reasoning-effort effort :codex-fast-mode-p nil
-                        :configured-web-search-mode web-search-mode
-                        :web-search-mode            (if web-enabled-p web-search-mode ':disabled))))
+                        :model model :reasoning-effort effort :codex-fast-mode-p nil)))
 
 (-> task-child-reference-history-p (agent configuration) boolean)
 (defun task-child-reference-history-p (parent child-configuration)
@@ -530,16 +437,15 @@ Live executions retain their pool ownership and remain inspectable after return.
                                        (task--artifact-root configuration job)
                                        :parent-identifier
                                        (session-job-completion-owner-conversation job)
-                                       :agent-name (job-name job) :tool-grants
-                                       (getf item :tools ':all))))
+                                       :agent-name (job-name job))))
              (setf (getf (task-job-execution-metadata job) :conversation-file)
                    (namestring (conversation-pathname conversation)))
              conversation)))
          (worker       (lisp-worker-pool-create configuration))
          (taken        (make-hash-table :test #'equal))
          (registry
-          (task-child-tool-registry (agent-tool-registry parent) item :orchestrator
-                                    orchestrator :depth depth))
+          (task-child-tool-registry (agent-tool-registry parent) :orchestrator
+                                    orchestrator))
          (provider     (provider-with-configuration (agent-provider parent) configuration))
          (child
           (agent-create :class 'task-child-agent :configuration configuration :provider

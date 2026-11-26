@@ -122,12 +122,6 @@
 
 ;;;; -- URI Resolution and Authority --
 
-(defmethod resource-resolver-child-safe-p
-    ((resolver scratchpad-resolver) context)
-  "Permit child agents to use their inherited conversation scratchpad."
-  (declare (ignore resolver context))
-  t)
-
 (defmethod resource-resolver-read-documentation ((resolver scratchpad-resolver))
   "Document scratchpad: reads."
   (declare (ignore resolver))

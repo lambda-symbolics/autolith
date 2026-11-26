@@ -84,12 +84,6 @@
 
 ;;;; -- URI Resolution --
 
-(defmethod resource-resolver-child-safe-p
-    ((resolver workspace-file-resolver) context)
-  "Permit child agents to resolve files through the existing workspace boundary."
-  (declare (ignore resolver context))
-  t)
-
 (-> workspace-file--uri-safe-octet-p ((unsigned-byte 8)) boolean)
 (defun workspace-file--uri-safe-octet-p (octet)
   "Return true when OCTET may appear literally in a workspace URI identifier."

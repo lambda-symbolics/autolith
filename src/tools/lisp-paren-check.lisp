@@ -7,11 +7,6 @@
   (:documentation
    "Check workspace Lisp-family files for unmatched or mismatched delimiters."))
 
-(defmethod tool-child-safe-p ((tool lisp-paren-check-tool))
-  "Permit bounded Lisp-family source checks inside child agents."
-  (declare (ignore tool))
-  t)
-
 (defmethod tool-storm-guard-exempt-p ((tool lisp-paren-check-tool))
   "Exempt bounded source delimiter checks from the mutating-call storm guard."
   t)

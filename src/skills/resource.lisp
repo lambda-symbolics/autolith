@@ -17,11 +17,6 @@
   ()
   (:documentation "Resolve skill:NAME to a skill of the caller's catalog."))
 
-(defmethod resource-resolver-child-safe-p ((resolver skill-resolver) context)
-  "Let a child agent read the descriptions of the skills it may load."
-  (declare (ignore resolver context))
-  t)
-
 (defmethod resource-resolver-read-documentation ((resolver skill-resolver))
   "Document skill: reads."
   (declare (ignore resolver))

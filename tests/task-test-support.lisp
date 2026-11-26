@@ -34,15 +34,7 @@
   ()
   (:documentation "Signal the task cancellation control condition on execution."))
 
-(defclass task-test-default-deny-tool (tool)
-  ()
-  (:documentation "Represent an ordinary extension that children must not inherit."))
-
-(defclass task-test-child-safe-tool (task-test-default-deny-tool)
-  ()
-  (:documentation "Represent an extension that deliberately opts into child use."))
-
-(defclass task-test-blocking-tool (task-test-child-safe-tool)
+(defclass task-test-blocking-tool (tool)
   ((lock
     :initform      (make-lock "Autolith blocking tool test")
     :reader        task-test-blocking-tool-lock
@@ -61,7 +53,7 @@
     :accessor      task-test-blocking-tool-released-p
     :type          boolean
     :documentation "True when the test permits normal tool completion."))
-  (:documentation "Block an ordinary child-safe tool call at a test barrier."))
+  (:documentation "Block an ordinary tool call at a test barrier."))
 
 (defclass task-test-publication-barrier ()
   ((lock
@@ -89,11 +81,6 @@
     :type          (option keyword)
     :documentation "The optional ordinary error or task abort signalled on release."))
   (:documentation "A readable test value that pauses terminal artifact output."))
-
-(defmethod tool-child-safe-p ((tool task-test-child-safe-tool))
-  "Permit this test extension to cross the child capability boundary."
-  (declare (ignore tool))
-  t)
 
 (defmethod tool-execute
     ((tool task-test-blocking-tool)
@@ -396,8 +383,7 @@
                                                                :parent-agent parent :root-identifier
                                                                (conversation-identifier parent-conversation)))
                                         (registry
-                                         (task-child-tool-registry parent-registry item :orchestrator orchestrator
-                                                                   :depth                             1))
+                                         (task-child-tool-registry parent-registry :orchestrator orchestrator))
                                         (conversation
                                          (conversation-create configuration :identifier
                                                               (format nil "~A-child" identifier)))

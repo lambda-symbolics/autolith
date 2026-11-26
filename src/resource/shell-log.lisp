@@ -23,11 +23,6 @@
 (defclass shell-log-resolver (resource-resolver) ()
   (:documentation "Resolve exact references to retained shell captures."))
 
-(defmethod resource-resolver-child-safe-p ((resolver shell-log-resolver) context)
-  "Allow child agents to read exact retained references."
-  (declare (ignore resolver context))
-  t)
-
 (defmethod resource-resolver-read-documentation ((resolver shell-log-resolver))
   "Document shell-log: reads."
   (declare (ignore resolver))

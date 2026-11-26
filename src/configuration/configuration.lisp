@@ -315,13 +315,6 @@ exist yet, and is only put in directory form."
                                    (list ':cached ':indexed ':live ':disabled))
   :default                       ':cached)
 
-(define-setting :configured-web-search-mode (choice-setting)
-  :group                                    :model
-  :documentation                            "The configured web search mode before a child role restricts it, or NIL before role projection."
-  :type                                     '(member nil :cached :indexed :live :disabled)
-  :scope                                    :process
-  :visible-p                                nil)
-
 (define-setting :context-window (derived-setting)
   :label                        "Context window"
   :group                        :model

@@ -359,7 +359,7 @@
   (declare (ignore configuration))
   provider)
 
-(defclass mission-inference-test-drain-tool (task-test-child-safe-tool)
+(defclass mission-inference-test-drain-tool (tool)
   ((entered :initform (bt:make-semaphore :count 0) :reader mission-inference-test-drain-entered
             :documentation "Signals entry into the child tool.")
    (release :initform (bt:make-semaphore :count 0) :reader mission-inference-test-drain-release
@@ -392,7 +392,7 @@
                            "block" :description "Hold the admitted child." :parameters
                            (tool-object-schema (json-object) nil)))
            (orchestrator (task-orchestrator-create))
-           (definition   (list :tools ':all))
+           (definition   nil)
            (entry
             (list :detached t :item
                   (append (list :task "Finish admitted work.")
@@ -498,7 +498,7 @@
                              "block" :description "Hold the admitted child." :parameters
                              (tool-object-schema (json-object) nil)))
              (orchestrator  (task-orchestrator-create))
-             (definition    (list :tools ':all))
+             (definition    nil)
              (entry
               (list :detached t :item
                     (append (list :task "Finish admitted work.")
@@ -673,7 +673,7 @@
             (provider        (make-instance 'mission-child-unknown-test-provider :mode mode))
             (orchestrator
              (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-            (definition      (list :tools ':all))
+            (definition      nil)
             (entry
              (list :detached t :item
                    (append (list :task "Attempt one turn.")
@@ -1030,7 +1030,7 @@
              (provider    (make-instance 'mission-child-unknown-test-provider :mode mode))
              (orchestrator
               (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-             (definition  (list :tools ':all))
+             (definition  nil)
              (entry
               (list :detached t :item
                     (append

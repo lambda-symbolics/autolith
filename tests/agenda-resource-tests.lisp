@@ -90,14 +90,7 @@
                   (make-instance 'tool-context
                                  :configuration second-configuration
                                  :worker        nil
-                                 :conversation  first-conversation))
-                (child-context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker        nil
-                                 :conversation  first-conversation
-                                 :agent         (allocate-instance
-                                                 (find-class 'task-child-agent)))))
+                                 :conversation  first-conversation)))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one agenda resource fixture call."
                       (test-resource-call registry context
@@ -129,45 +122,6 @@
                 (search "The workspace agenda is empty."
                         (tool-result-content empty-read))
                 "empty agenda resource read uses the existing readable rendering")
-               (let* ((child-read (read-agenda child-context))
-                      (child-edit
-                        (edit-agenda
-                         child-context empty-revision
-                         (agenda-resource-tests--operation
-                          "agenda-add" "text" "child mutation"))))
-                 (test-assert
-                  (and (not (tool-result-success-p child-read))
-                       (eq ':access-denied (tool-result-error-code child-read)))
-                  "task child contexts cannot read agenda resources")
-                 (test-assert
-                  (and (not (tool-result-success-p child-edit))
-                       (eq ':access-denied (tool-result-error-code child-edit)))
-                  "task child contexts cannot edit agenda resources"))
-               (let* ((file        (merge-pathnames "child-safe.txt" first-workspace))
-                      (read-result nil)
-                      (edit-result nil))
-                 (test-write-text
-                  file (format nil "before~%"))
-                 (setf read-result
-                       (call child-context "resource" "read"
-                             "uri" "workspace:child-safe.txt")
-                       edit-result
-                       (call child-context "resource" "edit"
-                             "uri" "workspace:child-safe.txt"
-                             "base-revision" (revision read-result)
-                             "operations"
-                             (json-array
-                              (agenda-resource-tests--operation
-                               "replace-lines"
-                               "start-line" 1
-                               "end-line" 1
-                               "content" "after"))))
-                 (test-assert
-                  (and (tool-result-success-p read-result)
-                       (tool-result-success-p edit-result)
-                       (string= (uiop:read-file-string file)
-                                (format nil "after~%")))
-                  "task child contexts retain revision-gated workspace resources"))
                (test-assert
                 (not (tool-result-success-p
                       (call first-context "resource" "read"

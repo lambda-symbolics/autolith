@@ -170,11 +170,6 @@ are not substitutes for a registered identity."
     (let ((*memory-owner* owner))
       (funcall function))))
 
-(defmethod resource-resolver-child-safe-p ((resolver memory-resolver) context)
-  "Admit memory resources; enforce participant authority at each operation."
-  (declare (ignore resolver context))
-  t)
-
 (defmethod resource-resolver-resolve :around
     ((resolver memory-resolver) identifier (context tool-context))
   "Confine exact and short-identifier resolution to accessible memories."

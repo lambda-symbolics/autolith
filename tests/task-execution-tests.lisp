@@ -2,23 +2,20 @@
 
 ;;;; -- Task Child Execution Tests --
 
-(-> task-tests--child-registry (list task-orchestrator) tool-registry)
-(defun task-tests--child-registry (definition orchestrator)
-                                  "Return a child registry with the ordinary command-authorization fixture."
-                                  (let ((registry
-                                          (task-child-tool-registry
-                                           (make-instance 'tool-registry)
-                                           definition
-                                           :orchestrator orchestrator
-                                           :depth        1)))
-                                    (tool-registry-register
-                                     registry
-                                     (make-instance 'task-test-authorization-tool
-                                                    :namespace   "test"
-                                                    :name        "authorize"
-                                                    :description "Authorize a harmless command."
-                                                    :parameters  (tool-object-schema (json-object) nil)))
-                                    registry))
+(-> task-tests--child-registry (task-orchestrator) tool-registry)
+(defun task-tests--child-registry (orchestrator)
+  "Return a child registry with the ordinary command-authorization fixture."
+  (let ((registry
+          (task-child-tool-registry (make-instance 'tool-registry)
+                                    :orchestrator orchestrator)))
+    (tool-registry-register
+     registry
+     (make-instance 'task-test-authorization-tool
+                    :namespace   "test"
+                    :name        "authorize"
+                    :description "Authorize a harmless command."
+                    :parameters  (tool-object-schema (json-object) nil)))
+    registry))
 
 (-> test-task-abort-control-condition () null)
 (defun test-task-abort-control-condition ()
@@ -66,135 +63,52 @@
 
 (-> test-task-orchestration () null)
 (defun test-task-orchestration ()
-  "Test generic child tools, direct grants, extension safety and inherited configuration."
+  "Test task tool registration and inherited configuration."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
-        (progn
-         (let ((registry (make-default-tool-registry)))
-           (task-augment-tool-registry registry)
-           (dolist (name '("spawn"))
-             (test-assert (tool-registry-find registry "child" name)
-                          (format nil "task augmentation registers child.~A" name)))
-           (dolist (name '("list" "get" "wait" "cancel"))
-             (test-assert (tool-registry-find registry "job" name)
-                          (format nil "task augmentation registers job.~A" name)))
-           (test-assert (eq registry (task-augment-tool-registry registry))
-                        "task augmentation is idempotent")
-           (let* ((orchestrator
-                   (task-run-tool-orchestrator
-                    (tool-registry-find registry "child" "spawn")))
-                  (definition              nil)
-                  (child-registry
-                   (task-child-tool-registry registry definition :orchestrator
-                                             orchestrator :depth 1))
-                  (non-spawning-definition (list :tools nil))
-                  (non-spawning-registry
-                   (task-child-tool-registry registry non-spawning-definition
-                                             :orchestrator orchestrator :depth 1)))
-             (test-assert (tool-registry-find child-registry "search" "content")
-                          "general task children inherit native repository search")
+         (progn
+           (let ((registry (make-default-tool-registry)))
+             (task-augment-tool-registry registry)
+             (dolist (name '("spawn"))
+               (test-assert (tool-registry-find registry "child" name)
+                            (format nil "task augmentation registers child.~A" name)))
+             (dolist (name '("list" "get" "wait" "cancel"))
+               (test-assert (tool-registry-find registry "job" name)
+                            (format nil "task augmentation registers job.~A" name)))
+             (test-assert (eq registry (task-augment-tool-registry registry))
+                          "task augmentation is idempotent"))
+           (let* ((immutable
+                    (configuration-copy configuration :immutable-p t :reasoning-effort
+                                        "xhigh" :codex-fast-mode-p t))
+                  (child-configuration (task-child-configuration immutable nil))
+                  (explicit-definition (list :reasoning-effort "high"))
+                  (explicit-configuration
+                    (task-child-configuration immutable explicit-definition)))
              (test-assert
-              (and (null (tool-registry-find child-registry "self" "status"))
-                   (null (tool-registry-find child-registry "lisp" "apropos")))
-              "task children never inherit active-image tools")
+              (string= (config :reasoning-effort child-configuration)
+                       *task-default-reasoning-effort*)
+              "an unspecified child effort resolves to the routine default")
              (test-assert
-              (and (tool-registry-find child-registry "child" "spawn")
-                   (every (lambda (name) (tool-registry-find child-registry "job" name))
-                          '("list" "get" "wait" "cancel")))
-              "task children can manage jobs within their existing visibility scope")
+              (string= (config :reasoning-effort explicit-configuration) "high")
+              "an explicit child effort is honored")
              (test-assert
-              (and (null (tool-registry-find non-spawning-registry "child" "spawn"))
-                   (every
-                    (lambda (name)
-                      (null (tool-registry-find non-spawning-registry "job" name)))
-                    '("list" "get" "wait" "cancel")))
-              "children without spawn authority receive no task controls")))
-         (let* ((registry           (make-default-tool-registry))
-                (local-definition   (list :tools '("resource.read")))
-                (hosted-definition  (list :tools '("web_search")))
-                (missing-definition (list :tools '("missing.operation"))))
-           (test-assert
-            (handler-case
-             (progn
-              (task-child-validate-tool-grants (getf local-definition :tools ':all)
-               registry)
-              t)
-             (task-error nil nil))
-            "available child-safe local grants validate against the registry")
-           (test-assert
-            (handler-case
-             (progn
-              (task-child-validate-tool-grants (getf hosted-definition :tools ':all)
-               registry)
-              t)
-             (task-error nil nil))
-            "web_search remains a recognized hosted provider grant")
-           (test-assert
-            (handler-case
-             (progn
-              (task-child-validate-tool-grants (getf missing-definition :tools ':all)
-               registry)
-              nil)
-             (task-error nil t))
-            "unavailable local tool grants fail closed with typed metadata"))
-         (let* ((parent-registry (make-instance 'tool-registry))
-                (definition      (list :tools ':all))
-                (orchestrator    (task-tests--orchestrator)))
-           (tool-registry-register parent-registry
-                                   (make-instance 'task-test-default-deny-tool :namespace
-                                                  "extension" :name "denied" :description
-                                                  "Remain unavailable to children."
-                                                  :parameters
-                                                  (tool-object-schema (json-object)
-                                                                      nil)))
-           (tool-registry-register parent-registry
-                                   (make-instance 'task-test-child-safe-tool :namespace
-                                                  "extension" :name "allowed"
-                                                  :description
-                                                  "Opt into child availability."
-                                                  :parameters
-                                                  (tool-object-schema (json-object)
-                                                                      nil)))
-           (let ((child-registry
-                  (task-child-tool-registry parent-registry definition :orchestrator
-                                            orchestrator :depth 1)))
-             (test-assert (null (tool-registry-find child-registry "extension" "denied"))
-                          "ordinary extension tools default closed for child agents")
-             (test-assert (tool-registry-find child-registry "extension" "allowed")
-                          "a class-specific child-safe method opts an extension in")))
-         (let* ((immutable
-                 (configuration-copy configuration :immutable-p t :reasoning-effort
-                                     "xhigh" :codex-fast-mode-p t))
-                (definition          (list :tools ':all))
-                (child-configuration (task-child-configuration immutable definition))
-                (explicit-definition (list :tools ':all :reasoning-effort "high"))
-                (explicit-configuration
-                 (task-child-configuration immutable explicit-definition)))
-           (test-assert
-            (string= (config :reasoning-effort child-configuration)
-                     *task-default-reasoning-effort*)
-            "an unspecified child effort resolves to the routine default")
-           (test-assert
-            (string= (config :reasoning-effort explicit-configuration) "high")
-            "an explicit child effort is honored")
-           (test-assert
-            (and (not (config :codex-fast-mode-p child-configuration))
-                 (not (config :codex-fast-mode-p explicit-configuration)))
-            "children never inherit Codex Fast mode")
-           (test-assert
-            (and (config :immutable-p child-configuration)
-                 (equal (config :config-root child-configuration)
-                        (config :config-root immutable))
-                 (equal (config :data-root child-configuration)
-                        (config :data-root immutable))
-                 (equal (config :state-root child-configuration)
-                        (config :state-root immutable))
-                 (equal (config :cache-root child-configuration)
-                        (config :cache-root immutable))
-                 (equal (config :provider-endpoint child-configuration)
-                        (config :provider-endpoint immutable)))
-            "task model selection preserves every parent runtime boundary")))
+              (and (not (config :codex-fast-mode-p child-configuration))
+                   (not (config :codex-fast-mode-p explicit-configuration)))
+              "children never inherit Codex Fast mode")
+             (test-assert
+              (and (config :immutable-p child-configuration)
+                   (equal (config :config-root child-configuration)
+                          (config :config-root immutable))
+                   (equal (config :data-root child-configuration)
+                          (config :data-root immutable))
+                   (equal (config :state-root child-configuration)
+                          (config :state-root immutable))
+                   (equal (config :cache-root child-configuration)
+                          (config :cache-root immutable))
+                   (equal (config :provider-endpoint child-configuration)
+                          (config :provider-endpoint immutable)))
+              "task model selection preserves every parent runtime boundary")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
                                       ':ignore)))
   nil)
@@ -209,7 +123,7 @@
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
          (run-tool      (tool-registry-find registry "child" "spawn"))
          (orchestrator  (task-run-tool-orchestrator run-tool))
-         (definition    (list :tools '("lisp.eval")))
+         (definition    nil)
          (parent
           (agent-create :configuration configuration :provider
                         (make-instance 'model-provider) :conversation
@@ -222,8 +136,7 @@
                                  definition)
                                 :parent-agent parent))
          (child-registry
-          (task-child-tool-registry registry definition :orchestrator orchestrator :depth
-                                    1))
+          (task-child-tool-registry registry :orchestrator orchestrator))
          (child
           (make-instance 'task-child-agent :configuration configuration :provider
                          (make-instance 'model-provider) :conversation
@@ -318,7 +231,7 @@
          (child
           (make-instance 'task-child-agent :configuration configuration :provider
                          provider :conversation conversation :tool-registry
-                         (task-tests--child-registry definition orchestrator) :worker nil
+                         (task-tests--child-registry orchestrator) :worker nil
                          :identity (task-job-identity job) :depth 1 :orchestrator
                          orchestrator :job job))
          (observer
@@ -357,14 +270,13 @@
     (let* ((registry   (task-augment-tool-registry (make-default-tool-registry)))
            (orchestrator
             (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-           (definition (list :tools ':all))
+           (definition nil)
            (primary    (task-tests--primary-agent configuration "child-jobs" registry))
            (child-job
             (task-tests--register-job orchestrator primary definition :name
                                       "child-owner"))
            (child-registry
-            (task-child-tool-registry registry definition :orchestrator orchestrator
-                                      :depth                            1))
+            (task-child-tool-registry registry :orchestrator orchestrator))
            (child
             (task-tests--child-viewer configuration child-job :registry child-registry))
            (context
@@ -436,7 +348,7 @@
 (defun test-task-participant-state ()
   "Exercise real task setup through the shared execution factory and goal persistence."
   (with-test-configuration (configuration)
-    (let* ((definition        (list :tools '("resource.read" "resource.edit")))
+    (let* ((definition        nil)
            (orchestrator      (task-tests--orchestrator))
            (provider          (make-instance 'task-test-provider :mode ':concurrent))
            (parent

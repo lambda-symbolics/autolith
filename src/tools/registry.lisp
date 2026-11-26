@@ -635,22 +635,6 @@ ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
   (declare (ignore tool))
   (json-decode source))
 
-(defgeneric tool-child-safe-p (tool)
-  (:documentation
-   "Return true when TOOL may cross the ordinary child-agent boundary."))
-
-(defmethod tool-child-safe-p ((tool tool))
-  "Keep tools unavailable to child agents unless their class opts in."
-  nil)
-
-(defmethod tool-child-safe-p ((tool lisp-tool))
-  "Permit disposable Lisp-worker tools inside child agents."
-  t)
-
-(defmethod tool-child-safe-p ((tool lisp-apropos-tool))
-  "Withhold lisp.apropos from child agents, since it only inspects the active image."
-  nil)
-
 (defgeneric tool-storm-guard-exempt-p (tool)
   (:documentation
    "Return true when repeated calls to TOOL must remain available to the model."))
@@ -1018,14 +1002,6 @@ so direct adapter calls never accumulate notes in the global value.")
                                       tool context arguments)))
       (tool-result-append-notes result (reverse *resource-tool-notes*)))))
 
-(defmethod tool-child-safe-p ((tool resource-read-tool))
-  "Permit authority-confined resource reads inside child agents."
-  t)
-
-(defmethod tool-child-safe-p ((tool resource-edit-tool))
-  "Permit authority-confined resource edits inside child agents."
-  t)
-
 
 ;;;; -- Registry and Dispatch --
 
@@ -1048,16 +1024,6 @@ so direct adapter calls never accumulate notes in the global value.")
     :type     hash-table
     :documentation
     "Subsystem-specific bindings used to reconcile shared dynamic runtimes.")
-   (delegation-source
-    :initform      nil
-    :accessor      tool-registry-delegation-source
-    :type          (option tool-registry)
-    :documentation "The owning registry from which delegated role views take their configured tools.")
-   (delegation-tools
-    :initform      nil
-    :accessor      tool-registry-delegation-tools
-    :type          list
-    :documentation "Tools kept by this owner for role projection after pruning its dispatch map.")
    (resource-registry
     :initform      (make-resource-registry)
     :initarg       :resource-registry
@@ -1115,11 +1081,10 @@ so direct adapter calls never accumulate notes in the global value.")
     (tool-registry &key (:reverse-p boolean))
     list)
 (defun tool-registry--runtime-representatives (registry &key reverse-p)
-  "Return one representative for every runtime this registry can see or retains."
+  "Return one representative for every runtime in REGISTRY."
   (let ((tools
           (remove-if-not #'tool-runtime-identity
-                         (append (tool-registry-tools registry)
-                                 (tool-registry-delegation-tools registry)))))
+                         (tool-registry-tools registry))))
     (remove-duplicates (if reverse-p (nreverse tools) tools)
                        :key      #'tool-runtime-identity
                        :test     #'eq

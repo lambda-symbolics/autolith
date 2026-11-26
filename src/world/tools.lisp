@@ -27,11 +27,6 @@
             normalized))
         arguments)))
 
-(defmethod tool-child-safe-p ((tool channel-tool))
-  "Children are participants too: a task's conversation is a nested channel with its own resident, so it messages, subscribes and unsubscribes like any participant."
-  (declare (ignore tool))
-  t)
-
 (defmethod tool-execution-policy ((tool channel-tool))
   "Channel operations touch only the world stores, so they run in parallel."
   (declare (ignore tool))

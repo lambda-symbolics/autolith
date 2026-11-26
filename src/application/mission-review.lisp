@@ -132,10 +132,10 @@ across changed snapshots and is not reset by retries or restarts."
           (list :name (format nil "review-~A" (getf policy :id)) :context background
                 :task
                 "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
-                :tools nil :models (getf policy :models))))
-    (unless (and (typep parent 'agent) (not (typep parent 'task-child-agent)))
+                 :models (getf policy :models))))
+    (unless (typep parent 'agent)
       (mission--reject ':review-authority
-                       "Only the primary agent may request mission review."))
+                       "Mission review requires an executing agent."))
     (unless (typep runtime 'task-orchestrator)
       (mission--reject ':unavailable "Mission review requires a task runtime."))
     (let* ((entries    (task--admit-items parent runtime (list item)))

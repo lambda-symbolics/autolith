@@ -1635,9 +1635,9 @@ forgotten again when no thread could start."
                               :tool-registry-function
                               (when-let ((servers (getf arguments :mcp-servers)))
                                 (lambda (configuration conversation)
+                                  (declare (ignore conversation))
                                   (acp-mcp-create-tool-registry
-                                   configuration (coerce servers 'list)
-                                   :conversation conversation)))))
+                                   configuration (coerce servers 'list))))))
          (host   (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))

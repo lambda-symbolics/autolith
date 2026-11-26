@@ -128,7 +128,6 @@
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (orchestrator                   (task-orchestrator-create))
-           (definition                     (list :tools '("resource.read")))
            (job
             (task-tests--make-job orchestrator :identifier "current-child"
                                   :root-identifier         "shell-receiver"))
@@ -137,8 +136,8 @@
                                   :root-identifier         "shell-producer"))
            (registry
             (task-child-tool-registry
-             (make-default-tool-registry :configuration configuration) definition
-             :orchestrator orchestrator :depth 1))
+             (make-default-tool-registry :configuration configuration)
+             :orchestrator orchestrator))
            (child                          (task-tests--child-viewer configuration job :registry registry))
            (producer
             (task-tests--child-viewer configuration producer-job :registry registry))

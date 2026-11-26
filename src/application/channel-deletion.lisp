@@ -147,7 +147,7 @@ turn, external work on another thread, pending input, and live asynchronous jobs
       ((not (application--standalone-deletion-ready-p application))
        (channel--busy identifier "(delete)" :state ':running))
       (t
-       ;; Claim the inbox before retiring the previous runtime and its child role.
+       ;; Claim the inbox before retiring the previous runtime.
        (application--resume-deletion-inbox application destination)
        (application-render-records application)
        (application--delete-channel application identifier))))

@@ -367,11 +367,6 @@ requested window rather than the complete trace."
   (declare (ignore resolver))
   "context: exposes bounded, line-windowed stored context objects by digest: context:index lists them.")
 
-(defmethod resource-resolver-child-safe-p ((resolver context-object-resolver) context)
-  "Allow task children to read stored context objects and their index."
-  (declare (ignore resolver context))
-  t)
-
 (defmethod resource-resolver-resolve
     ((resolver context-object-resolver) identifier (context tool-context))
   "Resolve the stored context index or one exact digest."

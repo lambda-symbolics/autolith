@@ -20,11 +20,8 @@
 (defparameter *mcp-server-name-maximum-characters* 64
   "The maximum character length of an MCP server name.")
 
-(defparameter *mcp-child-tool-name-maximum-characters* 256
-  "The maximum character length of one raw MCP child tool name.")
-
-(defparameter *mcp-maximum-child-tools* 128
-  "The maximum number of tools one MCP server may grant to child agents.")
+(defparameter *mcp-trusted-read-only-tool-name-maximum-characters* 256
+  "The maximum character length of a raw MCP tool name in :TRUSTED-READ-ONLY-TOOLS.")
 
 (defparameter *mcp-maximum-trusted-read-only-tools* 128
   "The maximum exact tool names trusted for read-only MCP annotations.")
@@ -45,7 +42,7 @@
 (defparameter *mcp-configuration-native-keywords*
   '(:version :servers :directories
     :name :transport :required-p :startup-timeout-seconds
-    :tool-timeout-seconds :approval :trusted-read-only-tools :child-tools
+    :tool-timeout-seconds :approval :trusted-read-only-tools
     :type :stdio :command :arguments :directory :workspace :environment
     :http :url :headers :connect-timeout-seconds
     :read-only :prompt :allow :deny)
@@ -129,13 +126,7 @@
     :reader   mcp-server-configuration-trusted-read-only-tools
     :type     list
     :documentation
-    "Exact raw tools whose read-only annotations the user explicitly trusts.")
-   (child-tools
-    :initarg       :child-tools
-    :initform      nil
-    :reader        mcp-server-configuration-child-tools
-    :type          list
-    :documentation "Exact raw MCP tool names explicitly granted to child agents."))
+    "Exact raw tools whose read-only annotations the user explicitly trusts."))
   (:documentation "One complete native Autolith MCP server definition."))
 
 (defclass mcp-server-registration ()
@@ -306,7 +297,6 @@ bound policy takes effect without reloading this file."
           (:tool-timeout-seconds t)
           (:approval t)
           (:trusted-read-only-tools t)
-          (:child-tools t)
           (:pathname (option pathname)))
     mcp-server-configuration)
 (defun mcp-server-configuration-create
@@ -316,7 +306,6 @@ bound policy takes effect without reloading this file."
       (tool-timeout-seconds *mcp-default-tool-timeout-seconds*)
       (approval :prompt)
       (trusted-read-only-tools nil)
-      (child-tools nil)
       pathname)
   "Create one validated MCP server configuration from native Lisp values."
   (unless
@@ -347,7 +336,7 @@ bound policy takes effect without reloading this file."
         (lambda (tool-name)
           (mcp-configuration--bounded-string-p
            tool-name
-           *mcp-child-tool-name-maximum-characters*))
+           *mcp-trusted-read-only-tool-name-maximum-characters*))
         trusted-read-only-tools)
        (= (length trusted-read-only-tools)
           (length
@@ -364,21 +353,6 @@ bound policy takes effect without reloading this file."
      :pathname    pathname
      :server-name name
      :field       ':trusted-read-only-tools))
-  (unless (and (proper-list-p child-tools)
-               (<= (length child-tools) *mcp-maximum-child-tools*)
-               (every
-                (lambda (tool-name)
-                  (mcp-configuration--bounded-string-p
-                   tool-name
-                   *mcp-child-tool-name-maximum-characters*))
-                child-tools)
-               (= (length child-tools)
-                  (length (remove-duplicates child-tools :test #'string=))))
-    (mcp-configuration--error
-     "MCP :CHILD-TOOLS must be a bounded proper list of unique bounded raw tool names."
-     :pathname    pathname
-     :server-name name
-     :field       ':child-tools))
   (make-instance
    'mcp-server-configuration
    :name            (copy-seq name)
@@ -402,8 +376,7 @@ bound policy takes effect without reloading this file."
     :server-name name)
    :approval-policy approval
    :trusted-read-only-tools
-   (mapcar #'copy-seq trusted-read-only-tools)
-   :child-tools     (mapcar #'copy-seq child-tools)))
+   (mapcar #'copy-seq trusted-read-only-tools)))
 
 (-> mcp-configuration--server
     (t &key (:pathname (option pathname)))
@@ -413,7 +386,7 @@ bound policy takes effect without reloading this file."
   (mcp-configuration--validate-plist
    form
    '(:name :transport :required-p :startup-timeout-seconds
-     :tool-timeout-seconds :approval :trusted-read-only-tools :child-tools)
+     :tool-timeout-seconds :approval :trusted-read-only-tools)
    :pathname pathname)
   (let ((name
           (mcp-configuration--property
@@ -444,8 +417,6 @@ bound policy takes effect without reloading this file."
      (or
       (mcp-configuration--property form :trusted-read-only-tools)
       nil)
-     :child-tools
-     (or (mcp-configuration--property form :child-tools) nil)
      :pathname pathname)))
 
 (-> mcp-configuration--read-source (pathname) string)

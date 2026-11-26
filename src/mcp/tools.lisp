@@ -660,12 +660,6 @@ McParen may already hold its lifecycle lock or be joining the listener."
     :accessor      mcp-registry-binding-reconciled-revisions
     :type          list
     :documentation "Runtime tool revisions already projected into the registry.")
-   (provider-tool-predicate
-    :initarg  :provider-tool-predicate
-    :accessor mcp-registry-binding-provider-tool-predicate
-    :type     function
-    :documentation
-    "The registry-specific capability predicate for discovered provider tools.")
    (discovered-tools
     :initarg       :discovered-tools
     :initform      nil
@@ -1050,12 +1044,7 @@ retained value is credential-redacted or projected."
     :reader  mcp-provider-tool-trusted-read-only-p
     :type    boolean
     :documentation
-    "Whether the user trusts this exact raw tool's read-only annotations.")
-   (child-safe-p
-    :initarg       :child-safe-p
-    :reader        mcp-provider-tool-configured-child-safe-p
-    :type          boolean
-    :documentation "Whether this exact raw tool is explicitly granted to children."))
+    "Whether the user trusts this exact raw tool's read-only annotations."))
   (:documentation "An ordinary Autolith tool backed by one raw MCP tool."))
 
 (defclass mcp-resource-tool (mcp-managed-tool tool)
@@ -1154,10 +1143,6 @@ retained value is credential-redacted or projected."
    registry (mcp-managed-tool-manager tool) nil)
   (mcp-tools--clear-environment-fingerprint-key)
   nil)
-
-(defmethod tool-child-safe-p ((tool mcp-provider-tool))
-  "Permit TOOL in a child only through an exact native configuration grant."
-  (and (mcp-provider-tool-configured-child-safe-p tool) t))
 
 (-> mcp-provider-tool-read-only-p (mcp-provider-tool) boolean)
 (defun mcp-provider-tool-read-only-p (tool)
@@ -1984,18 +1969,12 @@ retained value is credential-redacted or projected."
         (tool-failure (format nil "MCP refresh failed: ~A" condition))))))
 
 (-> mcp-tool-registry-bind-manager
-    (tool-registry mcp-manager function)
+    (tool-registry mcp-manager)
     mcp-registry-binding)
-(defun mcp-tool-registry-bind-manager
-    (registry manager provider-tool-predicate)
-  "Bind REGISTRY to MANAGER under PROVIDER-TOOL-PREDICATE."
+(defun mcp-tool-registry-bind-manager (registry manager)
+  "Bind REGISTRY to MANAGER and return the new MCP registry binding."
   (tool-registry-bind-runtime
-   registry
-   ':mcp
-   (make-instance
-    'mcp-registry-binding
-    :manager                 manager
-    :provider-tool-predicate provider-tool-predicate)))
+   registry ':mcp (make-instance 'mcp-registry-binding :manager manager)))
 
 (-> mcp-tool-registry-binding
     (tool-registry)
@@ -2060,13 +2039,6 @@ retained value is credential-redacted or projected."
                        raw-name
                        (mcp-server-configuration-trusted-read-only-tools
                         configuration)
-                       :test #'string=)
-                      t)
-                     :child-safe-p
-                     (and
-                      (member
-                       raw-name
-                       (mcp-server-configuration-child-tools configuration)
                        :test #'string=)
                       t))))))))
 
@@ -2273,19 +2245,6 @@ Evict the oldest activation first when either activation bound is exceeded."
    registry (mcp-tool-registry-discovered-tools registry))
   registry)
 
-(-> mcp-tool-registry-restrict-discovered-tools
-    (tool-registry function)
-    tool-registry)
-(defun mcp-tool-registry-restrict-discovered-tools (registry predicate)
-  "Keep only discovered MCP tools satisfying PREDICATE and activate them."
-  (when-let ((binding (mcp-tool-registry-binding registry)))
-    (setf (mcp-registry-binding-provider-tool-predicate binding) predicate)
-    (setf (mcp-registry-binding-discovered-tools binding)
-          (remove-if-not
-           predicate (mcp-registry-binding-discovered-tools binding)))
-    (mcp-tool-registry-activate-discovered-tools registry))
-  registry)
-
 (defmethod tool-execute
     ((tool mcp-search-tool)
      (context tool-context)
@@ -2324,15 +2283,8 @@ Evict the oldest activation first when either activation bound is exceeded."
 (defun mcp-tool-registry--replace-dynamic-tools
     (registry manager replacements)
   "Replace MANAGER's discovered tools and reconcile active ones in REGISTRY."
-  (let* ((binding (mcp-tool-registry-binding registry))
-         (predicate
-           (and binding
-                (mcp-registry-binding-provider-tool-predicate binding)))
-         (effective-replacements
-           (if predicate
-               (remove-if-not predicate replacements)
-               nil))
-         (seen    (make-hash-table :test #'equal)))
+  (let ((binding (mcp-tool-registry-binding registry))
+        (seen    (make-hash-table :test #'equal)))
     (unless (and binding
                  (eq manager (mcp-registry-binding-manager binding)))
       (error 'tool-error
@@ -2342,7 +2294,7 @@ Evict the oldest activation first when either activation bound is exceeded."
       (unless (and (typep tool 'mcp-provider-tool)
                    (eq (mcp-managed-tool-manager tool) manager))
         (setf (gethash (tool-canonical-name tool) seen) t)))
-    (dolist (tool effective-replacements)
+    (dolist (tool replacements)
       (let ((name (tool-canonical-name tool)))
         (when (gethash name seen)
           (error 'tool-error
@@ -2354,7 +2306,7 @@ Evict the oldest activation first when either activation bound is exceeded."
     ;; Hold the new discovery set and replace active survivors in place, so a
     ;; refresh with the same capabilities in any order leaves the active tool
     ;; declarations, and with them a provider's cached prefix, unchanged.
-    (setf (mcp-registry-binding-discovered-tools binding) effective-replacements)
+    (setf (mcp-registry-binding-discovered-tools binding) replacements)
     (mcp-tool-registry--reconcile-active-tools registry))
   registry)
 
@@ -2424,9 +2376,7 @@ Evict the oldest activation first when either activation bound is exceeded."
   (tool-registry-describe-namespace
    registry "mcp"
    "MCP server status, discovery refresh, tool search, resources, and prompts.")
-  (let* ((binding
-           (mcp-tool-registry-bind-manager
-            registry manager (constantly t)))
+  (let* ((binding (mcp-tool-registry-bind-manager registry manager))
          (optional-server-schema
            (tool-object-schema
             (json-object

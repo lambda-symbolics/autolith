@@ -315,8 +315,7 @@
             :transport
             '(:type :stdio :command "/bin/true")
             :approval                ':read-only
-            :trusted-read-only-tools '("read file")
-            :child-tools             '("read file")))
+            :trusted-read-only-tools '("read file")))
          (transport
            (make-instance
             'test-mcp-transport
@@ -803,8 +802,8 @@
                 (list
                  (list
                   'application--create-tool-registry
-                  (lambda (new-configuration &key shared-mcp-manager conversation)
-                    (declare (ignore new-configuration shared-mcp-manager conversation))
+                  (lambda (new-configuration &key shared-mcp-manager)
+                    (declare (ignore new-configuration shared-mcp-manager))
                     (with-lock-held (barrier-lock)
                       (setf reload-paused-p t)
                       (condition-notify barrier)
@@ -3529,12 +3528,6 @@
                                    (= (text-cell-width (terminal-span-text prefix)) 28)))
                   "wide labels and structured continuation lines align by terminal cells"))
                (test-assert
-                (and
-                 (tool-child-safe-p read-tool)
-                 (not (tool-child-safe-p collision-tool))
-                 (not (tool-child-safe-p mutating-tool)))
-                "only exact raw child grants cross the child boundary")
-               (test-assert
                 (= (tool-runtime-close-priority read-tool) 50)
                 "MCP runtime closes after dependent task workers")
                (let ((decoded
@@ -3730,17 +3723,12 @@
                   (getf record :task-required-tool-reason))
                  (eq (mcp-tool-registry-manager registry) manager))
                 "MCP status reports task-required tools without exposing them"))
-             (let* ((runtime             (first (mcp-manager-runtimes manager)))
-                    (all-tools-registry  (make-instance 'tool-registry))
-                    (child-safe-registry (make-instance 'tool-registry)))
+             (let* ((runtime            (first (mcp-manager-runtimes manager)))
+                    (all-tools-registry (make-instance 'tool-registry)))
                (mcp-tool-registry-bind-manager
-                all-tools-registry manager (constantly t))
-               (mcp-tool-registry-bind-manager
-                child-safe-registry manager #'tool-child-safe-p)
+                all-tools-registry manager)
                (mcp-tool-registry-refresh
                 all-tools-registry :only-dirty-p t)
-               (mcp-tool-registry-refresh
-                child-safe-registry :only-dirty-p t)
                (test-assert
                 (null
                  (with-lock-held ((mcp-manager-lock manager))
@@ -3838,22 +3826,6 @@
                     (tool-registry-delete-if all-tools-registry
                                              (lambda (tool)
                                                (eq tool local)))))
-               (test-assert
-                (and
-                 (test-mcp--tool-with-raw-name
-                  all-tools-registry "read file")
-                 (test-mcp--tool-with-raw-name
-                  child-safe-registry "read file")
-                 (null
-                  (test-mcp--tool-with-raw-name
-                   all-tools-registry "background-only"))
-                 (null
-                  (test-mcp--tool-with-raw-name
-                   child-safe-registry "background-only"))
-                 (null
-                  (test-mcp--tool-with-raw-name
-                   child-safe-registry "mutate")))
-                "registry predicates cannot expose task-required MCP tools")
                (with-lock-held ((mcp-server-runtime-lock runtime))
                  (setf
                   (mcp-server-runtime-tools runtime)
@@ -3866,32 +3838,23 @@
                (mcp-tool-registry-refresh registry :only-dirty-p t)
                (mcp-tool-registry-refresh
                 all-tools-registry :only-dirty-p t)
-               (mcp-tool-registry-refresh
-                child-safe-registry :only-dirty-p t)
                (test-assert
                 (and
                  (null
                   (test-mcp--tool-with-raw-name registry "read file"))
                  (null
                   (test-mcp--tool-with-raw-name
-                   all-tools-registry "read file"))
-                 (null
-                  (test-mcp--tool-with-raw-name
-                   child-safe-registry "read file")))
+                   all-tools-registry "read file")))
                 "every registry reconciles one shared runtime revision")
                (mcp-server-runtime-request-tool-refresh runtime)
                (mcp-tool-registry-refresh
                 all-tools-registry :only-dirty-p t)
                (mcp-tool-registry-refresh registry :only-dirty-p t)
-               (mcp-tool-registry-refresh
-                child-safe-registry :only-dirty-p t)
                (test-assert
                 (and
                  (test-mcp--tool-with-raw-name registry "read file")
                  (test-mcp--tool-with-raw-name
-                  all-tools-registry "read file")
-                 (test-mcp--tool-with-raw-name
-                  child-safe-registry "read file"))
+                  all-tools-registry "read file"))
                 "one registry discovers a change and every registry reconciles it"))
              (tool-registry-close-runtime-state registry)
              (test-assert

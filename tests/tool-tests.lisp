@@ -389,8 +389,6 @@
       (test-assert
        (gethash "url" (json-get (tool-parameters tool) "properties"))
        "web_extra.gist declares its url argument")
-      (test-assert (null (tool-child-safe-p tool))
-                   "ordinary child agents cannot use web_extra.gist")
       (test-call-with-function-replacements
        (list (list 'fetch-gist:markdown-from-url
                    (lambda (url)

@@ -646,7 +646,7 @@ pool must reject the cancelled parent without creating a descendant."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (orchestrator  (task-tests--orchestrator))
-         (definition    (list :tools ':all :reasoning-effort "high"))
+         (definition    (list :reasoning-effort "high"))
          (primary       (task-tests--primary-agent configuration "publication-primary")))
     (unwind-protect
         (progn

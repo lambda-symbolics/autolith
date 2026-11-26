@@ -32,10 +32,6 @@
   ()
   (:documentation "Search indexed workspace file contents."))
 
-(defmethod tool-child-safe-p ((tool search-tool))
-  "Permit isolated indexed workspace searches inside child agents."
-  t)
-
 (defmethod tool-storm-guard-exempt-p ((tool search-tool))
   "Exempt indexed workspace discovery from the mutating-call storm guard."
   t)

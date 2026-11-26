@@ -29,11 +29,6 @@
 
 ;;;; -- Tool Protocol --
 
-(defmethod tool-child-safe-p ((tool child-tool))
-  "Let a child that may spawn look after its own children."
-  (declare (ignore tool))
-  t)
-
 (defmethod tool-execute ((tool child-rename-tool) (context tool-context) arguments)
   "Rename the child ARGUMENTS name."
   (task--validate-tool-arguments arguments '("child" "name") "child.rename")
@@ -159,10 +154,9 @@
 
 (-> task-child--agent (child-tool tool-context string) agent)
 (defun task-child--agent (tool context channel)
-  "Create an agent with the child's saved model, effort and direct tool grants."
+  "Create an agent with the saved model and effort of the child at CHANNEL."
   (let* ((parent       (tool-context-agent context))
          (conversation (conversation-load-by-id (tool-context-configuration context) channel))
-         (item         (list :tools (conversation-tool-grants conversation)))
          (configuration
            (application--configuration-for-conversation
             (configuration-copy (agent-configuration parent) :model-selection-override-p nil)
@@ -171,9 +165,8 @@
                   :provider      (provider-with-configuration (agent-provider parent) configuration)
                   :conversation  conversation
                   :tool-registry (task-child-tool-registry
-                                  (agent-tool-registry parent) item
-                                  :orchestrator (child-tool-orchestrator tool)
-                                  :depth        (task-conversation-depth configuration conversation))
+                                  (agent-tool-registry parent) :orchestrator (child-tool-orchestrator tool))
+
                   :worker        nil)))
 
 

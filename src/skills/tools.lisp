@@ -27,11 +27,6 @@
   (:documentation
    "Select one discovered Autolith skill for the active logical turn."))
 
-(defmethod tool-child-safe-p ((tool skill-load-tool))
-  "Permit child agents to select skills from their own request context."
-  (declare (ignore tool))
-  t)
-
 (defmethod tool-conversation-persistence ((tool skill-load-tool))
   "Retain selection metadata as history, without retaining skill instructions."
   (declare (ignore tool))

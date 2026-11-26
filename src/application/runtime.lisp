@@ -563,7 +563,7 @@ An explicit model selection for this launch overrides the recorded selection."
   (when (conversation-parent-identifier conversation)
     (let ((child
            (task-child-configuration configuration
-            (list :tools (conversation-tool-grants conversation)))))
+            nil)))
       (setf configuration
               (if (config :model-selection-override-p configuration)
                   (configuration-copy child :model (config :model configuration)
@@ -836,14 +836,13 @@ An explicit model selection for this launch overrides the recorded selection."
   nil)
 
 (-> application--create-tool-registry
-    (configuration &key (:shared-mcp-manager (option mcp-manager))
-                        (:conversation (option conversation)))
+    (configuration &key (:shared-mcp-manager (option mcp-manager)))
+
     (values tool-registry list))
 (defun application--create-tool-registry
-       (configuration &key shared-mcp-manager conversation)
+       (configuration &key shared-mcp-manager)
   "Create one complete registry and close its base runtimes on later failure.
 
-A child's channel gets its recorded tool grants, filtered for child safety and depth.
 When SHARED-MCP-MANAGER serves CONFIGURATION, the registry reuses it rather than
 reconnecting its servers. The second value lists shared runtimes the registry did
 not create: either an empty list or SHARED-MCP-MANAGER alone. The registry's owner
@@ -862,11 +861,6 @@ must neither close nor lose those shared runtimes."
            (when (and manager (eq manager shared-mcp-manager))
              (setf retained (list manager)))
            (setf registry augmented)
-           (task-tool-registry-remember-delegation-tools registry)
-           (when (and conversation (conversation-parent-identifier conversation))
-             (task-child-restrict-tool-registry registry :tools
-              (conversation-tool-grants conversation) :depth
-              (task-conversation-depth configuration conversation)))
            (setf completed-p t)
            (values registry retained)))
       (unless completed-p
@@ -1050,7 +1044,7 @@ the conversation. A warning follows if the previous runtime was not fully restor
                         (application-reasoning-traces-p application))
                        new-registry
                        (application--create-tool-registry
-                        configuration :conversation (application-conversation application)))
+                        configuration))
                  (multiple-value-setq (added-tools removed-tools)
                    (tool-registry-capability-diff old-registry new-registry))
                  (setf new-agent
@@ -1446,7 +1440,7 @@ MCP servers. Release acquired resources if construction fails."
                  (application--prepare-connection-provider configuration)
                (setf registry (if tool-registry-function
                                    (funcall tool-registry-function configuration conversation)
-                                   (application--create-tool-registry configuration :conversation conversation))
+                                   (application--create-tool-registry configuration))
                      worker   (lisp-worker-pool-create configuration)
                      application
                      (application--make-connected-application
@@ -1623,7 +1617,7 @@ MCP servers. Release acquired resources if construction fails."
                                        prepared-configuration recovery-conversation-id)))))
                          (setf (config :hurry-up-p configuration) hurry-up-p
                                worker (lisp-worker-pool-create configuration)
-                                registry (application--create-tool-registry configuration :conversation conversation)
+                                registry (application--create-tool-registry configuration)
                                new-application
                                (application--make-connected-application
                                 :configuration           configuration
@@ -1890,8 +1884,7 @@ retiring the old registry."
            (multiple-value-setq (registry retained)
              (application--create-tool-registry
               configuration
-               :conversation      conversation
-              :shared-mcp-manager (and share-mcp-p previous-registry
+               :shared-mcp-manager (and share-mcp-p previous-registry
                                        (mcp-tool-registry-manager previous-registry))))
            (let ((agent
                    (agent-create :participant-state (application-participant-state application)

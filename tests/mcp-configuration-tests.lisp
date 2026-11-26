@@ -35,22 +35,19 @@
     (&key (:name string)
           (:transport list)
           (:approval keyword)
-          (:trusted-read-only-tools list)
-          (:child-tools list))
+          (:trusted-read-only-tools list))
     list)
 (defun test-mcp-configuration--server-form
     (&key
        (name "test")
        (transport '(:type :stdio :command "/bin/true"))
        (approval :prompt)
-       (trusted-read-only-tools nil)
-       (child-tools nil))
+       (trusted-read-only-tools nil))
   "Return one native MCP server form for focused validation tests."
   (list :name                    name
         :transport               transport
         :approval                approval
-        :trusted-read-only-tools trusted-read-only-tools
-        :child-tools             child-tools))
+        :trusted-read-only-tools trusted-read-only-tools))
 
 (-> test-mcp-configuration--http-server-form
     (string &key (:headers list))
@@ -147,7 +144,7 @@
                 "stdio directories do not require a trailing slash")))
            (test-mcp-configuration--write
             pathname
-            "(:version 1 :servers ((:name\"adjacent\" :transport (:type :stdio :command\"/bin/true\") :approval :deny :trusted-read-only-tools () :child-tools ())))")
+            "(:version 1 :servers ((:name\"adjacent\" :transport (:type :stdio :command\"/bin/true\") :approval :deny :trusted-read-only-tools ())))")
            (let ((definitions (mcp-configuration-read configuration)))
              (test-assert
               (and (= (length definitions) 1)
@@ -249,8 +246,7 @@
                  :required-p t
                  :startup-timeout-seconds 3
                  :tool-timeout-seconds 9
-                 :approval :prompt
-                 :child-tools (\"lookup\"))
+                 :approval :prompt)
                 (:name \"remote\"
                  :transport
                  (:type :http
@@ -290,10 +286,7 @@
                (= (mcp-server-configuration-tool-timeout-seconds local)
                   9)
                (eq (mcp-server-configuration-approval-policy local)
-                   :prompt)
-               (equal
-                (mcp-server-configuration-child-tools local)
-                '("lookup")))
+                   :prompt))
               "server policy is validated without JSON compatibility state")
              (test-assert
               (and
@@ -629,22 +622,6 @@
               :approval                ':prompt
               :trusted-read-only-tools '("unused")))
             "trusted read-only MCP tools require the read-only policy")
-           (test-assert
-            (test-mcp-configuration--server-signals-p
-             (test-mcp-configuration--server-form
-              :child-tools
-              (loop for index below (1+ *mcp-maximum-child-tools*)
-                    collect (format nil "tool-~D" index))))
-            "MCP child tool grants are bounded")
-           (test-assert
-            (test-mcp-configuration--server-signals-p
-             (test-mcp-configuration--server-form
-              :child-tools
-              (list
-               (make-string
-                (1+ *mcp-child-tool-name-maximum-characters*)
-                :initial-element #\t))))
-            "individual MCP child tool names are bounded")
            (dolist
                (url
                  '("http://localhost:3000/mcp"

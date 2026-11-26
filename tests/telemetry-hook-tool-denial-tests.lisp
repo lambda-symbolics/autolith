@@ -156,7 +156,7 @@
                                        :raw-tool    (first (mcp-server-runtime-tools runtime))
                                        :description "Server-denied tool."
                                        :parameters  (tool-object-schema (json-object) nil)
-                                       :approval-policy ':deny :trusted-read-only-p nil :child-safe-p nil))
+                                       :approval-policy ':deny :trusted-read-only-p nil))
               (multiple-value-bind (spans outputs)
                   (test-telemetry-hooks--tool-attempts
                    configuration (list (agent-test-call :call-id "mcp-deny" :namespace "mcp" :name "refused" :arguments "{}"))
@@ -350,33 +350,4 @@
            (test-assert (and (= (length outputs) (length calls))
                              (every (lambda (output) (search uri output)) outputs))
                         (format nil "~A: Every refusal still reaches the model with its original resource identity." (first case))))))))
-  (test-telemetry--call
-   (lambda (configuration)
-     (let ((provider
-             (make-instance
-              'run-job-test-provider :configuration configuration
-              :results
-              (list
-               (agent-test-result
-                "child-read"
-                (list (agent-test-call :call-id "read" :namespace "resource" :name "read"
-                                       :arguments "{\"uri\":\"papercut:current\"}")))
-               (agent-test-result
-                "child-edit"
-                (list (agent-test-call :call-id "edit" :namespace "resource" :name "edit"
-                                       :arguments "{\"uri\":\"papercut:current\",\"base-revision\":\"\",\"operations\":[]}")))
-               (agent-test-result "terminal" (list (agent-test-message "Done.")))))))
-       (multiple-value-bind (spans results)
-            (test-telemetry-hooks--run-job configuration provider)
-         (let ((tools (remove-if-not
-                       (lambda (span) (equal (test-telemetry--attribute span "autolith.event.kind") "tool"))
-                       spans)))
-           (test-assert (eq (first results) ':succeeded) "The real child recovers from its resource denials.")
-           (test-assert (= (length tools) 2) "Both child-resource denials are exported.")
-           (dolist (span tools)
-            (test-assert
-             (and (equal (test-telemetry--attribute span "autolith.tool.outcome") "permission_denied")
-                  (equal (test-telemetry--attribute span "autolith.tool.error_code") "access-denied")
-                  (equal (test-telemetry--attribute span "error.type") "permission"))
-             "The E2E papercut read and edit are child-policy denials even with full command access.")))))))
   nil)

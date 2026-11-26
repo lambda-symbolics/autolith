@@ -49,14 +49,7 @@
                   (make-instance 'tool-context
                                  :configuration configuration
                                  :worker        nil
-                                 :conversation  first-conversation))
-                (child-context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker        nil
-                                 :conversation  first-conversation
-                                 :agent         (allocate-instance
-                                                 (find-class 'task-child-agent)))))
+                                 :conversation  first-conversation)))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one papercut resource fixture call."
                       (test-resource-call
@@ -105,10 +98,6 @@
                 (not (tool-result-success-p
                       (read-resource first-context "papercut:id/missing")))
                 "exact papercut resources reject missing active reports")
-               (test-assert
-                (not (tool-result-success-p
-                      (read-resource child-context "papercut:current")))
-                "task children cannot resolve papercut resources")
                (let* ((papercut (papercut-report configuration :title "Resource papercut"
                                                  :content             "Complete resource report content."))
                       (uri      (resource-item-uri "papercut" (papercut-identifier papercut))))

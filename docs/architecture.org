@@ -478,7 +478,7 @@ values retain source access state before ordered moves remove their source paths
   its manifest matches the source and runtime exactly, and loads the system
   from source otherwise; the choice is made again at every start.
 - Worker images never participate in active startup or recovery
-- =sexp-config= reads skills, MCP configuration, child roles, etc.
+- =sexp-config= reads skills, MCP configuration, etc.
 - Tasks use =cl-jobpond= for admission, threads, deadlines, cancellation, and
   generic durable completion subscriptions. =src/task/completions.lisp= projects
   bounded outcomes and reconciles mailbox claims with durable conversation receipts.

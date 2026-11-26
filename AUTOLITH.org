@@ -374,22 +374,6 @@ generations, and the original pointer archived as
 - Removal condition: remove the exploratory override after booting a runtime
   with the tracked definition.
 
-** Child execution job controls
-
-- Problem: Children could start asynchronous commands but could not collect their
-  results because =task-job-tool= lacked the child-safe method.
-- Behavior: Allow =job.*= through child role grants, with the existing job-owner
-  and ancestry checks. Bundled reviewer and librarian roles grant job access.
-- Scope and location: tracked =src/task/tools.lisp=, =src/task/contracts.lisp=,
-  and =src/task/agents.lisp=. The live method and explicit-grant policy are
-  retained in private image commit =c3ec5281-3622-4c30-9bc9-a223fecccd47=,
-  private Git =ef5e3ed06e3ee5129b27fe4eb29c0905c53b7b54=.
-- Verification: active registry exercise passed. Child =child-job-smoke-4=
-  launched a 12-second asynchronous command, awaited =exec:114= through
-  =job.wait=, and returned its successful output. Private replay probe passed.
-- Removal condition: the installed runtime contains the tracked child-safe
-  method, making its private override redundant.
-
 ** Intentional foreign definitions
 
 - Problem: The replay ownership guard treated intentional foreign definitions as

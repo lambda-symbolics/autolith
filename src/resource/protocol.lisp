@@ -202,21 +202,11 @@ consumer in errors."))
     content))
 
 (defgeneric resource-context-child-agent-p (context)
-  (:documentation "Return true when CONTEXT belongs to a restricted task child agent."))
+  (:documentation "Return true when CONTEXT executes a task child agent."))
 
 (defmethod resource-context-child-agent-p (context)
-  "Treat unknown authority contexts as primary contexts."
+  "Treat unknown contexts as non-child contexts."
   (declare (ignore context))
-  nil)
-
-(defgeneric resource-resolver-child-safe-p (resolver context)
-  (:documentation
-   "Return true when RESOLVER may resolve resources for child-agent CONTEXT."))
-
-(defmethod resource-resolver-child-safe-p
-    ((resolver resource-resolver) context)
-  "Disallow resource resolution for task child agents by default."
-  (declare (ignore resolver context))
   nil)
 
 (defgeneric resource-resolver-read-documentation (resolver)
@@ -250,14 +240,12 @@ for REGISTRY's resolvers in scheme order."
 
 (-> resource-registry-resolve (resource-registry t t) resource)
 (defun resource-registry-resolve (registry uri context)
-  "Resolve URI after enforcing Autolith's scheme and child authority policy."
+  "Resolve URI within the current read-frame scheme restriction."
   (cl-resources:resource-registry-resolve
    registry uri context
    :before-resolve
    (lambda (scheme resolver)
-     (when (or (and *resource-readable-schemes*
-                    (not (member scheme *resource-readable-schemes* :test #'string=)))
-               (and resolver
-                    (resource-context-child-agent-p context)
-                    (not (resource-resolver-child-safe-p resolver context))))
+     (declare (ignore resolver))
+     (when (and *resource-readable-schemes*
+                (not (member scheme *resource-readable-schemes* :test #'string=)))
        (error 'resource-access-denied :uri uri)))))

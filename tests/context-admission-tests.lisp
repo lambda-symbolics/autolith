@@ -896,7 +896,7 @@
               (task-augment-tool-registry (application-tool-registry application)))
              (orchestrator
               (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-             (definition   (list :tools ':all))
+             (definition   nil)
              (entry
               (list :detached t :item
                     (append (list :task "Attempt one request.")

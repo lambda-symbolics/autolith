@@ -13,10 +13,6 @@
   (:documentation
    "A task request, child run, or task job violated its contract."))
 
-(defparameter *task-forbidden-child-tool-namespaces*
-  '("self" "child")
-  "Tool namespaces unavailable to explicit child tool grants.")
-
 (-> task--trim (string) string)
 (defun task--trim (text)
   "Return TEXT without surrounding horizontal or line whitespace."

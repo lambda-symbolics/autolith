@@ -84,11 +84,6 @@
                          (arguments hash-table))
   "List defined active-image names matching the required query."
   (declare (ignore tool))
-  (when (resource-context-child-agent-p context)
-    (error 'tool-authority-denied
-           :message   "Task child agents cannot inspect the active image."
-           :code      ':authority
-           :tool-name "lisp.apropos"))
   (let ((query (tool-argument arguments "query" :required t)))
     (unless (non-empty-string-p query)
       (error 'tool-error

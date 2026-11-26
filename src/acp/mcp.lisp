@@ -155,8 +155,8 @@
   "Return the client-supplied header values."
   (acp-mcp-header-values transport))
 
-(-> acp-mcp-create-tool-registry (configuration list &key (:conversation (option conversation))) tool-registry)
-(defun acp-mcp-create-tool-registry (configuration declarations &key conversation)
+(-> acp-mcp-create-tool-registry (configuration list) tool-registry)
+(defun acp-mcp-create-tool-registry (configuration declarations)
   "Build the native registry with session-local client servers and no global mutation.
 
 ACP validates its wire requests separately. World :OPEN arguments may come
@@ -175,7 +175,7 @@ transport policy or decoding literal credentials."
           (agentcomms:acp-invalid-params "MCP server name ~A is already registered." name))
         (setf (gethash name names) t)
         (register-mcp-server server :source ':runtime)))
-    (application--create-tool-registry configuration :conversation conversation)))
+    (application--create-tool-registry configuration)))
 
 (-> acp-mcp-release-credentials ((option mcp-manager)) null)
 (defun acp-mcp-release-credentials (manager)

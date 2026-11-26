@@ -427,7 +427,7 @@ reuse with its evidence. An agent can edit its own notes through
 =memory:personal=. That scope follows the agent across channels and restarts.
 When the turn allows =memory:=, agents can read shared workspace and global
 memories with =resource.read=. Registered agents can write them with
-=resource.edit=. Child agents need the corresponding tool grant.
+=resource.edit=.
 
 #+BEGIN_SRC lisp
 (memories)
@@ -1891,13 +1891,12 @@ Run the optional checks with =(asdf:test-system "autolith/debug/tests")=.
 ** Child agents
 
 Use =child.spawn= to start a child with a self-contained assignment and an
-optional name and context. Children use the parent's model, medium reasoning
-effort, and the configured child-safe tools. Codex Fast mode is not inherited.
+optional name and context. Children use the parent's model and configured tools.
+Children use medium reasoning effort. Codex Fast mode is not inherited.
 
 Reuse a child by sending work to its channel. An agent can have up to 32
 children. Read =channel:current= to see which are busy. Use =child.rename=
 to rename one and =child.remove= to delete an idle child and its descendants.
-When you open a child's channel, its recorded tool grants apply.
 
 Use =child.update= to change an idle child. Only =child= is required. These
 options are optional:

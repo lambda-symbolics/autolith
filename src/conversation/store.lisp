@@ -154,9 +154,6 @@
            (agent-name :initarg :agent-name :initform nil :reader conversation-agent-name
             :type (option non-empty-string) :documentation
             "The readable name the parent gave this child agent, or NIL for a top-level one.")
-           (tool-grants :initarg :tool-grants :initform ':all :reader
-            conversation-tool-grants :type t :documentation
-            "Direct tool grants recorded for this conversation's execution.")
            (inbox-p :initarg :inbox-p :initform nil :reader conversation-inbox-p :type
             boolean :documentation
             "Whether this is the history of the person's inbox channel, which no agent ever reads.")
@@ -944,8 +941,7 @@ person's inbox says it is one."
          (append
           (and (conversation-parent-identifier conversation)
                (list :parent (conversation-parent-identifier conversation) :agent-name
-                     (conversation-agent-name conversation) :tool-grants
-                     (conversation-tool-grants conversation)))
+                     (conversation-agent-name conversation)))
           (and (conversation-inbox-p conversation) (list :inbox-p t)))))
 
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
@@ -1272,17 +1268,16 @@ The revision is durable source coordination, not a regenerable search payload."
 (-> conversation-create
     (configuration &key (:identifier (option string)) (:prompt-cache-key (option string))
      (:storage-root (option pathname)) (:created-at (option timestamp))
-     (:parent-identifier (option string)) (:agent-name (option string)) (:tool-grants t)
-     (:inbox-p boolean) (:origin-directory (option string)))
+     (:parent-identifier (option string)) (:agent-name (option string)) (:inbox-p boolean) (:origin-directory (option string)))
     conversation)
 (defun conversation-create
                   (configuration
                    &key identifier prompt-cache-key storage-root created-at parent-identifier
-                   agent-name (tool-grants ':all) inbox-p origin-directory)
+                   agent-name inbox-p origin-directory)
                   "Create an in-memory conversation that persists under optional STORAGE-ROOT.
 
-A child's conversation records its PARENT-IDENTIFIER, AGENT-NAME, and direct
-TOOL-GRANTS. INBOX-P marks the history of the person's inbox channel.
+Child conversations record PARENT-IDENTIFIER and AGENT-NAME.
+INBOX-P marks the history of the person's inbox channel.
 ORIGIN-DIRECTORY replaces the configured working directory as the directory
 it began in."
                   (let* ((created-at   (or created-at (get-universal-time)))
@@ -1313,7 +1308,7 @@ it began in."
                                    (let ((name (config :model-provider configuration)))
                                      (and (non-empty-string-p name) name))
                                    :reasoning-effort (config :reasoning-effort configuration)
-                                   :next-sequence 1 :input-items nil :tool-grants tool-grants)))
+                                   :next-sequence 1 :input-items nil)))
 
 (-> conversation--repair-incomplete-tail (conversation) null)
 (defun conversation--repair-incomplete-tail (conversation)
@@ -1798,7 +1793,7 @@ already owns its metadata and is installed without an additional remap."
      'string
      "Everything before this message is inherited reference context from the "
      "parent task. It is not your current assignment. Use it only as background, "
-     "then follow the child role instructions and the user assignment that follows.")
+     "then follow the child instructions and the user assignment that follows.")
   "The developer boundary separating inherited parent history from child work.")
 
 (-> conversation--inherited-reference-text-part (t) (option json-object))
@@ -3820,8 +3815,8 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
                             (and (non-empty-string-p model) model) :model-provider
                             model-provider :reasoning-effort
                             (and (non-empty-string-p reasoning-effort) reasoning-effort)
-                            :next-sequence chunk-start-sequence :input-items nil
-                            :tool-grants (getf properties :tool-grants ':all))))
+                            :next-sequence chunk-start-sequence :input-items nil)))
+
         (conversation--restore-image-manifest conversation
                                               (getf properties :image-artifact-manifest))
         (when (= chunk-start-sequence 1)

@@ -40,10 +40,6 @@
                  :documentation "Registry-owned reusable shell pool."))
   (:documentation "Inspect or explicitly replace owner-local reusable shells."))
 
-(defmethod tool-child-safe-p ((tool shell-session-tool))
-  "Keep reusable shell management available to isolated child agents."
-  t)
-
 (defvar *shell-session-lock* (make-lock "shell sessions")
   "Protect the owner-local session registry.")
 
