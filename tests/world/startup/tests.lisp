@@ -125,7 +125,7 @@ With PERSISTED-P its conversation holds a message."
 
 (-> test-world-terminal-conversation-identity () null)
 (defun test-world-terminal-conversation-identity ()
-  "Test active IDs through resume selection, new, fork, reconnect and conflicts."
+  "Test that the endpoint names the active conversation through switches and conflicts."
   (with-test-configuration (configuration)
    (let ((application nil) (controller nil) (connection nil) (await nil) (session nil))
      (unwind-protect
@@ -168,7 +168,6 @@ With PERSISTED-P its conversation holds a message."
                       await      client-await)
                 (test-assert (eq (first (world-terminal-client-connection-attached client)) ':attached)
                  "the initial picker conversation accepts a client"))
-              (conversation-append-user-message first "source")
               (conversation-append-user-message saved "saved")
               (let ((port       (image-daemon:daemon-runtime-port session))
                     (token      (image-daemon:daemon-runtime-token session))
@@ -181,10 +180,6 @@ With PERSISTED-P its conversation holds a message."
                 (let ((new (conversation-create configuration)))
                   (application-install-conversation application new)
                   (assert-identity new))
-                (let ((fork
-                       (conversation-fork configuration (conversation-identifier first))))
-                  (application-install-conversation application fork)
-                  (assert-identity fork))
                 (test-assert
                  (and (eq session (application-channel-endpoint application))
                       (= port (image-daemon:daemon-runtime-port session))

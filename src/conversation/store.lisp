@@ -781,6 +781,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
                (eq (first record) ':message)
                (eq (getf (rest record) :role) ':user)
                (not (getf (rest record) :automatic-p)))))
+    ;; Older logs in this format may contain a copy marker. It records no work.
     (when (typep time 'timestamp)
       (when (and last-activity-at
                  (not user-message-p)

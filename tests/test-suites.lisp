@@ -1074,15 +1074,9 @@
 
 (define-test-suite conversation-replay
   test-conversation-replay-projection
-  test-conversation-fork-storage
   test-conversation-image-archive-ownership
   test-conversation-image-maintenance-failures
-  test-conversation-image-publication-roots
-  test-conversation-fork-rejections
-  test-conversation-fork-chunks-and-selectors
-  test-conversation-fork-source-tails
-  test-conversation-fork-copy-failures
-  test-conversation-fork-command-line)
+  test-conversation-image-publication-roots)
 
 (define-test-suite conversation-resource
   test-conversation-resource-search
