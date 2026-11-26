@@ -1896,9 +1896,29 @@ effort, and the configured child-safe tools. Codex Fast mode is not inherited.
 
 Reuse a child by sending work to its channel. An agent can have up to 32
 children. Read =channel:current= to see which are busy. Use =child.rename=
-to rename one, =child.compact= to summarize an idle child's history, or
-=child.remove= to delete an idle child and its descendants. When you open a
-child's channel, its recorded tool grants apply.
+to rename one and =child.remove= to delete an idle child and its descendants.
+When you open a child's channel, its recorded tool grants apply.
+
+Use =child.update= to change an idle child. Only =child= is required. These
+options are optional:
+
+- =compact=: compact the child's history if true.
+- =model=: select a registered model, with a provider prefix if needed.
+- =effort=: select a reasoning effort supported by the child's model.
+- =permissions=: select =ask=, =auto=, =sandboxed= or =full-access= within
+  the parent's authority. A full-access parent may select any mode. Other
+  parents may select their own mode. An auto parent may also select ask.
+
+An update without options reports that nothing changed. A false =compact=
+option also leaves the history unchanged. Model, effort and permission
+selections are saved for later child turns. A model change preserves the
+current effort if supported. Otherwise, it uses medium or the first
+supported effort.
+
+#+begin_src lisp
+(child.update :child "helper" :model "gpt-6.1-terra" :effort "low")
+(child.update :child "helper" :compact t)
+#+end_src
 
 Channel deletion validates the whole selection first. If storage cleanup
 fails after deletion, use the =retry-cleanup= restart or let the next server

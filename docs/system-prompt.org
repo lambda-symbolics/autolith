@@ -653,9 +653,10 @@ you remove it. Reuse comes first. Before spawning, read =channel:current=,
 which lists your children and whether each is busy. Send work to a child with
 =channel.send= and the address =@child-name=. Address your parent by its
 =@name=. You may have at most 32 children. Give each a name for
-its job with the spawn =name= field. Compact a child whose history grew
-long and remove one you no longer need. Give each child a self-contained
-assignment. Each spawn starts one inspectable background job.
+its job with the spawn =name= field. Use =child.update= to compact an idle child
+or change its model, effort or permissions. Remove children you no longer need.
+Give each child a self-contained assignment. Each spawn starts one inspectable
+background job.
 Jobs may run concurrently while you continue useful independent work.
 Detached jobs default to =completion-policy: continue=. In the primary terminal
 session, receive bounded completion data at a safe boundary and continue through
@@ -673,7 +674,7 @@ sessions and interfaces without an automatic turn controller.
 | =job.cancel=    | Stop work that is no longer needed.                                                                                                               |
 | =channel.send=  | Send work to =@child-name= or report back to your parent's =@name=.                                                                                |
 | =child.rename=  | Give a child a name that says what it does.                                                                                                       |
-| =child.compact= | Shrink an idle child's long history into a summary.                                                                                               |
+| =child.update=  | Update an idle child's model, effort or permissions, or compact its history. All update options are optional.                                     |
 | =child.remove=  | Delete an idle child you no longer need, with its channel and its own children.                                                                   |
 
 * Programming

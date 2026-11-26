@@ -2,10 +2,9 @@
 
 ;;;; -- Child Lifecycle Tools --
 
-;;; A parent keeps its children: it sends them work through their channels,
-;;; and child.remove looks after them. Each names one child by its name or its channel, among the channels
-;;; nested in the caller's own. A child that runs, or whose channel is open,
-;;; is busy, and only renaming does not wait for it to be idle.
+;;; A parent manages the children in its nested channels. Renaming and empty
+;;; updates can run while a child is busy. Other updates and removal require
+;;; an idle child.
 
 (defclass child-tool (tool)
   ((orchestrator
@@ -19,9 +18,9 @@
   ()
   (:documentation "Give a child a new name."))
 
-(defclass child-compact-tool (child-tool)
+(defclass child-update-tool (child-tool)
   ()
-  (:documentation "Compact an idle child's history, as (compact) does for a session."))
+  (:documentation "Update an idle child's model, effort, permissions or history."))
 
 (defclass child-remove-tool (child-tool)
   ()
@@ -47,18 +46,25 @@
                                 name)
       (tool-success (format nil "@~A is now @~A." (participant-name agent) name)))))
 
-(defmethod tool-execute ((tool child-compact-tool) (context tool-context) arguments)
-  "Compact the history of the idle child ARGUMENTS name."
-  (task--validate-tool-arguments arguments '("child") "child.compact")
-  (multiple-value-bind (channel agent)
-      (task-child--find context (tool-argument arguments "child" :required t) "child.compact")
-    (task-child--call-with-lease
-     context channel
-     (lambda ()
-       (agent-compact-conversation (task-child--agent tool context channel)
-                                   (make-instance 'agent-observer)))
-     :tool-name "child.compact")
-    (tool-success (format nil "Compacted @~A's history." (participant-name agent)))))
+(defmethod tool-execute ((tool child-update-tool) (context tool-context) arguments)
+  "Update the named child's requested options, or report that nothing changed."
+  (let ((mode (task-child--validate-update arguments context)))
+    (multiple-value-bind (channel participant)
+        (task-child--find context (tool-argument arguments "child" :required t) "child.update")
+      (let ((changed nil))
+        (when (or (eq (gethash "compact" arguments) t)
+                  (gethash "model" arguments) (gethash "effort" arguments) mode)
+          (task-child--call-with-lease
+           context channel
+           (lambda ()
+              (setf changed (task-child--apply-update tool context :channel channel
+                                                     :participant           participant
+                                                     :arguments arguments :mode mode)))
+           :tool-name "child.update"))
+        (tool-success
+         (if changed
+             (format nil "Updated @~A: ~{~A~^, ~}." (participant-name participant) changed)
+             (format nil "Nothing changed for @~A." (participant-name participant))))))))
 
 (defmethod tool-execute ((tool child-remove-tool) (context tool-context) arguments)
   "Delete the idle children ARGUMENTS name, with everything they own, in one pass."
@@ -84,32 +90,37 @@
 
 (-> task-children-register-tools (tool-registry task-orchestrator) tool-registry)
 (defun task-children-register-tools (registry orchestrator)
-  "Register the tools a parent looks after its children with."
+  "Register tools for renaming, updating and removing children."
   (let ((child (tool-string-property "The child's name, or its channel.")))
-    (flet ((register (class name description
-                      &optional (properties (json-object "child" child)) (required '("child")))
+    (flet ((register (class name description &key properties required)
+             "Register a child lifecycle tool with its argument schema."
              (tool-registry-register
               registry
-              (make-instance class
-                             :orchestrator orchestrator
-                             :namespace    "child"
-                             :name         name
-                             :description  description
-                             :parameters   (tool-object-schema properties required)))))
+              (make-instance class :orchestrator orchestrator :namespace "child"
+                                   :name name :description description
+                                   :parameters (tool-object-schema properties required)))))
       (register 'child-rename-tool "rename"
                 "Give one of your children a new name, which @mentions use."
-                (json-object "child" child
-                             "name"  (tool-string-property "The new name: letters, digits, hyphens and underscores."))
-                '("child" "name"))
-      (register 'child-compact-tool "compact"
-                "Compact an idle child's history into a summary, so it keeps working with less context.")
+                :properties (json-object "child" child
+                             "name" (tool-string-property "The new name: letters, digits, hyphens and underscores."))
+                :required   '("child" "name"))
+      (register 'child-update-tool "update"
+                "Update an idle child's model, reasoning effort, permissions or history. With no options, report that nothing changed."
+                :properties (json-object
+                             "child" child
+                             "compact" (tool-boolean-property "Compact the child's history. Defaults to false.")
+                             "model" (tool-string-property "An optional registered model name, with a provider prefix if needed.")
+                             "effort" (tool-string-property "An optional supported reasoning effort. A model change preserves the current effort if supported. Otherwise, it uses medium or the first supported effort.")
+                             "permissions" (cl-llm-provider-api:provider-enum-schema
+                                            '("ask" "auto" "sandboxed" "full-access")
+                                            "An optional permission mode within the parent's authority. A full-access parent may select any mode. Other parents may select their own mode. An auto parent may also select ask."))
+                :required   '("child"))
       (register 'child-remove-tool "remove"
-                "Delete idle children for good, several at once: their channels, histories, worktrees and own children."
-                (json-object "children" (json-object "type"        "array"
+                "Delete idle children, including their channels, histories and worktrees."
+                :properties (json-object "children" (json-object "type" "array" "minItems" 1
                                                      "description" "The children to remove, by name or channel."
-                                                     "minItems"    1
-                                                     "items"       child))
-                '("children"))))
+                                                     "items" child))
+                :required   '("children"))))
   registry)
 
 
@@ -148,11 +159,14 @@
 
 (-> task-child--agent (child-tool tool-context string) agent)
 (defun task-child--agent (tool context channel)
-  "Create an agent over the child's history and its recorded direct tool grants."
-  (let* ((parent        (tool-context-agent context))
-         (conversation  (conversation-load-by-id (tool-context-configuration context) channel))
-         (item          (list :tools (conversation-tool-grants conversation)))
-         (configuration (task-child-configuration (agent-configuration parent) item)))
+  "Create an agent with the child's saved model, effort and direct tool grants."
+  (let* ((parent       (tool-context-agent context))
+         (conversation (conversation-load-by-id (tool-context-configuration context) channel))
+         (item         (list :tools (conversation-tool-grants conversation)))
+         (configuration
+           (application--configuration-for-conversation
+            (configuration-copy (agent-configuration parent) :model-selection-override-p nil)
+            conversation)))
     (agent-create :configuration configuration
                   :provider      (provider-with-configuration (agent-provider parent) configuration)
                   :conversation  conversation
@@ -161,3 +175,154 @@
                                   :orchestrator (child-tool-orchestrator tool)
                                   :depth        (task-conversation-depth configuration conversation))
                   :worker        nil)))
+
+
+;;; Child update options
+
+(-> task-child--permission-mode (tool-context) (member :ask :auto :sandboxed :full-access))
+(defun task-child--permission-mode (context)
+  "Return the caller's live or inherited permission mode, with a saved-mode fallback."
+  (declare (special *active-application*))
+  (let* ((configuration (tool-context-configuration context))
+         (conversation  (tool-context-conversation context))
+         (origin        (and (typep *active-application* 'application)
+                             *active-application*))
+         (server        (and origin (application-world-server origin))))
+    (labels ((owner (identifier)
+               "Return the application hosting IDENTIFIER, or NIL."
+               (when origin
+                 (if (equal identifier
+                            (conversation-identifier (application-conversation origin)))
+                     origin
+                     (when server
+                       (when-let ((host (world-server--find-host server identifier)))
+                         (world-host-application host)))))))
+      (let ((application
+              (or (owner (conversation-identifier conversation))
+                  (loop for agent = (tool-context-agent context)
+                          then (and (typep agent 'task-child-agent)
+                                    (task-job-parent-agent (task-child-agent-job agent)))
+                        for application = (and agent (owner (conversation-identifier (agent-conversation agent))))
+                        while agent
+                        when application return application))))
+        (or (and application (application-permission-mode application))
+            (permissions-channel-mode configuration (conversation-pathname conversation)
+                                      (conversation-created-at conversation))
+            ':ask)))))
+
+(-> task-child--validate-update (json-object tool-context) (option keyword))
+(defun task-child--validate-update (arguments context)
+  "Validate update options and the caller's permission ceiling before changing a child."
+  (task--validate-tool-arguments arguments
+                                 '("child" "compact" "model" "effort" "permissions")
+                                 "child.update")
+  (tool-boolean-argument arguments "compact" :tool-name "child.update")
+  (dolist (key '("model" "effort"))
+    (multiple-value-bind (value present-p) (gethash key arguments)
+      (when (and present-p (not (non-empty-string-p value)))
+        (error 'task-error :tool-name "child.update"
+                           :message   (format nil "~A must be a non-empty string." key)))))
+  (multiple-value-bind (value present-p) (gethash "permissions" arguments)
+    (when present-p
+      (let* ((modes       '(("ask" . :ask) ("auto" . :auto)
+                            ("sandboxed" . :sandboxed) ("full-access" . :full-access)))
+             (mode        (and (stringp value) (rest (assoc value modes :test #'string=))))
+             (parent-mode (task-child--permission-mode context)))
+        (unless mode
+          (error 'task-error :tool-name "child.update"
+                             :message   "permissions must be ask, auto, sandboxed or full-access."))
+        (unless (or (eq parent-mode :full-access)
+                    (eq mode parent-mode)
+                    (and (eq parent-mode :auto) (eq mode :ask)))
+          (error 'task-error :tool-name "child.update" :code ':authority
+                             :message (format nil "Cannot grant ~A permissions from a parent with ~(~A~) permissions."
+                                              value parent-mode)))
+        (when (and (eq mode :sandboxed)
+                   (not (application--command-sandbox-available-p)))
+          (error 'task-error :tool-name "child.update" :code ':authority
+                             :message (application--command-sandbox-unavailable-message)))
+        mode))))
+
+(-> task-child--updated-configuration (configuration json-object) configuration)
+(defun task-child--updated-configuration (configuration arguments)
+  "Resolve a child's requested model and effort without changing persistent state."
+  (let ((model    (config :model configuration))
+        (provider (config :model-provider configuration)))
+    (when (gethash "model" arguments)
+      (multiple-value-bind (identifier registration)
+          (provider-resolve-model (gethash "model" arguments))
+        (unless registration
+          (error 'task-error :tool-name "child.update"
+                             :message   (format nil "Unknown model ~S." (gethash "model" arguments))))
+        (setf model identifier
+              provider (provider-registration-name registration))))
+    (let* ((efforts (configuration--reasoning-efforts-for model provider))
+           (effort  (or (gethash "effort" arguments)
+                        (and (member (config :reasoning-effort configuration) efforts :test #'string=)
+                             (config :reasoning-effort configuration))
+                        (find "medium" efforts :test #'string=)
+                        (first efforts))))
+      (unless (member effort efforts :test #'string=)
+        (error 'task-error :tool-name "child.update"
+                           :message   (format nil "Model ~A supports these efforts: ~{~A~^, ~}."
+                                              model efforts)))
+      (configuration-copy configuration :model model :model-provider provider
+                                        :reasoning-effort effort))))
+
+(-> task-child--apply-update (child-tool tool-context &key (:channel string) (:participant participant) (:arguments json-object) (:mode (option keyword))) list)
+(defun task-child--apply-update (tool context &key channel participant arguments mode)
+  "Apply validated options under the child's lease and report any completed changes."
+  (let* ((conversation (conversation-load-by-id (tool-context-configuration context) channel))
+         (configuration
+           (application--configuration-for-conversation
+            (configuration-copy (tool-context-configuration context)
+                                :model-selection-override-p nil)
+            conversation))
+         (updated      (task-child--updated-configuration configuration arguments))
+         (selection-changed-p
+           (or (not (equal (config :model configuration) (config :model updated)))
+               (not (equal (config :model-provider configuration) (config :model-provider updated)))
+               (not (equal (config :reasoning-effort configuration) (config :reasoning-effort updated)))))
+         (changed      nil))
+    (handler-case
+        (progn
+          (when (eq (gethash "compact" arguments) t)
+            (agent-compact-conversation (task-child--agent tool context channel)
+                                        (make-instance 'agent-observer))
+            (push "history" changed)
+            (setf conversation
+                  (conversation-load-by-id (tool-context-configuration context) channel)))
+          (when selection-changed-p
+            (conversation-set-model-selection conversation (config :model updated)
+                                              (config :reasoning-effort updated)
+                                              :provider (config :model-provider updated))
+            (push "model/effort" changed))
+          (when (or (gethash "model" arguments) (gethash "effort" arguments))
+            (let ((settings (copy-list (participant-settings participant))))
+              (setf (getf settings :model) (config :model updated)
+                    (getf settings :model-provider) (config :model-provider updated)
+                    (getf settings :reasoning-effort) (config :reasoning-effort updated))
+              (unless (equal settings (participant-settings participant))
+                (world-participant-update (tool-context-configuration context)
+                                          (participant-identifier participant)
+                                          :settings settings)
+                (unless selection-changed-p
+                  (push "model metadata" changed)))))
+          (when (and mode
+                     (not (eq mode
+                              (permissions-channel-mode
+                               (tool-context-configuration context)
+                               (conversation-pathname conversation)
+                               (conversation-created-at conversation)))))
+            (task-child--validate-update arguments context)
+            (permissions-save-channel-mode (tool-context-configuration context)
+                                           (conversation-pathname conversation)
+                                           (conversation-created-at conversation)
+                                           :mode mode)
+            (push "permissions" changed))
+          (nreverse changed))
+      (error (condition)
+        (error 'task-error :tool-name "child.update"
+                           :message   (format nil "Update of @~A failed~@[ after changing ~{~A~^, ~}~]: ~A"
+                                              (participant-name participant) (reverse changed)
+                                              condition))))))

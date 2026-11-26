@@ -446,7 +446,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                                            (conversation-lease-busy-p configuration
                                                                       "bmaintkid")
                                            "maintenance holds the child's lease"))
-                                        :tool-name "child.compact")
+                                        :tool-name "child.update")
            (test-assert called "compaction can operate on a visited child"))
          (let* ((host        (visit))
                 (application (world-host-application host))

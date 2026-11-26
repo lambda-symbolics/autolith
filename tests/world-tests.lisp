@@ -1823,7 +1823,7 @@
 
 (-> test-world-child-lifecycle () null)
 (defun test-world-child-lifecycle ()
-  "Test a parent renames, compacts and removes its children, and waits while one is busy."
+  "Test child updates, compaction, renaming and removal through registered tools."
   (with-test-configuration (configuration)
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
       (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent
@@ -1832,7 +1832,8 @@
                                        "bkid11" :name "aide" :created-at 1600)
       (world-tests--child-conversation configuration "bsib11" :root "broot11" :parent
                                        "broot11" :name "sibling" :created-at 1700)
-      (let* ((orchestrator (task-tests--orchestrator))
+      (let* ((*active-application* nil)
+             (orchestrator         (task-tests--orchestrator))
              (parent
               (agent-create :configuration configuration :provider
                             (make-instance 'model-provider) :conversation root
@@ -1841,19 +1842,17 @@
               (make-instance 'tool-context :configuration configuration :worker nil
                              :conversation root :agent parent :registry
                              (make-instance 'tool-registry))))
-        (flet ((call (class arguments)
-                 "Run the child tool of CLASS with ARGUMENTS for the root agent."
-                 (tool-execute
-                  (make-instance class :orchestrator orchestrator :namespace "child"
-                                 :name "test" :description "Exercise child lifecycle."
-                                 :parameters (tool-object-schema (json-object) nil))
-                  context arguments))
+        (task-children-register-tools (tool-context-registry context) orchestrator)
+        (flet ((call (name arguments)
+                 "Execute the registered child tool NAME with ARGUMENTS."
+                 (tool-execute (tool-registry-find (tool-context-registry context) "child" name)
+                               context arguments))
                (refused-p (thunk)
                  "Return true when THUNK signals a task error."
                  (handler-case (progn (funcall thunk) nil) (task-error nil t))))
           (unwind-protect
               (progn
-               (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
+                (call "rename" (json-object "child" "@helper" "name" "keeper"))
                (test-assert
                 (string=
                  (participant-name
@@ -1862,12 +1861,18 @@
                 "a parent renames its child by its name")
                (let ((lease (conversation-lease-acquire configuration "bkid11")))
                  (unwind-protect
-                     (test-assert
-                      (refused-p
-                       (lambda ()
-                         (call 'child-remove-tool
-                          (json-object "children" (vector "keeper")))))
-                      "a busy child cannot be removed")
+                    (progn
+                      (test-assert
+                       (refused-p
+                        (lambda ()
+                          (call "remove" (json-object "children" (vector "keeper")))))
+                       "a busy child cannot be removed")
+                      (dolist (options (list nil (list "compact" (json-false))))
+                        (test-assert
+                         (search "Nothing changed"
+                                 (tool-result-content
+                                  (call "update" (apply #'json-object "child" "keeper" options))))
+                         "an empty update does not acquire a busy child's lease")))
                    (conversation-lease-release lease)))
                (let ((compacted nil))
                  (test-call-with-function-replacements
@@ -1880,14 +1885,45 @@
                                     (conversation-identifier (agent-conversation agent))
                                     (conversation-lease-busy-p configuration "bkid11")))
                            (values 1 nil))))
-                  (lambda () (call 'child-compact-tool (json-object "child" "keeper"))))
+                  (lambda () (call "update" (json-object "child" "keeper" "compact" t
+                                                         "model" "gpt-6.1-terra" "effort" "low"))))
                  (test-assert (equal compacted '("bkid11" t))
                               "compaction uses the child's history while holding its lease"))
+               (let ((child (conversation-load-by-id configuration "bkid11")))
+                 (test-assert (and (string= "gpt-6.1-terra" (conversation-model child))
+                                   (string= "low" (conversation-reasoning-effort child)))
+                              "model and effort updates survive a cold load")
+                 (test-assert (string= "high" (config :reasoning-effort configuration))
+                              "a child update leaves the parent effort unchanged")
+                 (call "update" (json-object "child" "keeper" "permissions" "ask"))
+                 (test-assert (eq ':ask (permissions-channel-mode configuration
+                                                                 (conversation-pathname child)
+                                                                 (conversation-created-at child)))
+                              "child permissions are stored privately")
+                 (test-assert
+                  (refused-p (lambda () (call "update" (json-object "child" "keeper"
+                                                                   "permissions" "full-access"))))
+                  "a parent cannot grant permissions above its own mode"))
+               (test-call-with-function-replacements
+                (list (list 'world-participant-update
+                            (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (error 'world-error :operation ':update :message "Injected metadata failure."))))
+                (lambda ()
+                  (test-assert
+                   (refused-p (lambda () (call "update" (json-object "child" "keeper" "effort" "medium"))))
+                   "a failed metadata update is reported")))
+               (call "update" (json-object "child" "keeper" "effort" "medium"))
+               (test-assert
+                (string= "medium" (getf (participant-settings
+                                         (world-participant-find (world-load configuration) "bkid11"))
+                                        :reasoning-effort))
+                "retry reconciles metadata after a selection was already saved")
                (test-assert
                 (search "Removed @keeper, @sibling, and the 1 channels below them"
                         (tool-result-content
-                         (call 'child-remove-tool
-                          (json-object "children" (vector "keeper" "sibling")))))
+                          (call "remove"
+                           (json-object "children" (vector "keeper" "sibling")))))
                 "one call removes several children and the children below them")
                (let ((world (world-load configuration)))
                  (test-assert
