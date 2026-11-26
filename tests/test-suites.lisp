@@ -1577,16 +1577,6 @@
   test-worker-host-capabilities
   test-worker-host-persistent-transport)
 
-(define-test-suite refinement
-  test-refinement-progression
-  test-refinement-no-op
-  test-refinement-failed-evaluation
-  test-refinement-stale-promotion
-  test-refinement-authority
-  test-refinement-interrupted-recovery
-  test-refinement-pending-owner
-  test-refinement-journal-integrity)
-
 (when (find-class 'win32-platform nil)
   (define-test-suite windows-sandbox
     test-windows-sandbox-bundle-installation

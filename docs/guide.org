@@ -1740,21 +1740,6 @@ precedence over that policy. If a turn is active, the command waits for idle.
 (fix-skipped-definitions "Drop all of these. They were temporary development experiments.")
 #+END_SRC
 
-** Refinement
-
-Use =(refine)= to inspect proposals. Record a local task assessment before
-promotion:
-
-#+BEGIN_SRC lisp
-(refine :assess "PROPOSAL-ID" :revision 3 :verdict :passed
-        :evidence "Evidence from a separate task")
-#+END_SRC
-
-Promote from session to project to global scope. Each step requires renewed
-evaluation and checks for intervening owner changes. If an operation was
-interrupted, use the recorded evidence to recover it explicitly. Replay does
-not repeat the operation.
-
 ** Executable Skills
 
 Use =skill.load= with the exact catalog name to load instructions for the
