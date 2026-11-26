@@ -12,7 +12,7 @@
 
 (-> test-world-server-restart-marker () null)
 (defun test-world-server-restart-marker ()
-  "Test a restart marker keeps the world server running while its launcher lives, and is dropped once stale."
+  "Test restart liveness, lease-guarded admission, and checkpoint failure recovery."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let ((pathname (world-server-restart-pathname configuration))
@@ -35,9 +35,234 @@
                     nil "an unreadable marker is stale"))
             do (snapshot-write pathname form)
                (test-assert (and (eq (world-server-running-p configuration) running-p)
-                                 (eq (not (null (probe-file pathname))) running-p))
-                            (format nil "~A, and ~:[is removed~;stays~]" description running-p))
+                                 (probe-file pathname))
+                            description)
+               (unless running-p
+                 (let ((lease (world-server--lease-acquire configuration)))
+                   (unwind-protect
+                        (test-assert (not (probe-file pathname))
+                                     "the new world lease owner removes a stale marker")
+                     (lease-release lease))))
                (world-server--restart-unmark configuration))))
+  (world-restart-tests--handoff)
+  (world-restart-tests--reader-replacement)
+  (world-restart-tests--failed-recovery)
+  nil)
+
+(-> world-restart-tests--failed-recovery () null)
+(defun world-restart-tests--failed-recovery ()
+  "Run both real quiescer unwinds after ownership recovery fails."
+  (dolist (stage '(:reclaim :unmark))
+    (with-test-configuration (configuration)
+      (configuration-ensure-directories configuration)
+      (let* ((server                 (make-instance 'world-server :configuration configuration))
+             (application            (make-instance 'application :configuration configuration :worker nil))
+             (backend                (allocate-instance (find-class 'checkpoint-backend)))
+             (restart                (list :server server :application application
+                                           :generation-id "g-recovery" :launcher-pid (current-process-id)))
+             (primary                (make-condition 'checkpoint-error :message "Save failed" :stage ':save :pathname nil))
+             (secondary              (make-condition 'checkpoint-error :message "Recovery failed" :stage ':save :pathname nil))
+             (reclaim                (symbol-function 'world-server--restart-reclaim-leases))
+             (unmark                 (symbol-function 'world-server--restart-unmark))
+             (*world-server-restart* nil)
+             (*active-application*   nil)
+             (events                 nil)
+             (caught                 nil))
+        (setf (world-server-lease server) (world-server--lease-acquire configuration))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list
+               (list 'world-server--runtime-stop (lambda (server) (declare (ignore server)) nil))
+               (list 'management-repl-call-quiesced
+                     (lambda (server thunk) (declare (ignore server)) (funcall thunk)))
+               (list 'slynk-call-quiesced (lambda (thunk) (funcall thunk)))
+               (list 'telemetry-detach (lambda () nil))
+               (list 'world-server--runtime-start
+                     (lambda (server &rest options) (declare (ignore server options)) (push :endpoint events)))
+               (list 'world-server--resume-channels
+                     (lambda (&rest arguments) (declare (ignore arguments)) (push :channels events)))
+               (list 'world-server-stop
+                     (lambda (server &rest options) (declare (ignore server options)) (error secondary)))
+               (list 'world-server--restart-reclaim-leases
+                     (lambda (server leases &key restart)
+                       (when (eq stage ':reclaim) (error secondary))
+                       (funcall reclaim server leases :restart restart)))
+               (list 'world-server--restart-unmark
+                     (lambda (configuration &key restart)
+                       (when (eq stage ':unmark) (error secondary))
+                       (funcall unmark configuration :restart restart)))
+               (list 'checkpoint-restart-save
+                     (lambda (backend generation &key ready-function)
+                       (declare (ignore backend))
+                       (funcall ready-function generation)
+                       (error primary))))
+              (lambda ()
+                (handler-bind ((world-session-warning #'muffle-warning))
+                  (handler-case
+                      (world-server--call-with-quiescer
+                       server :application application :reconnect-id "recovery-test"
+                       :function
+                       (lambda ()
+                         (funcall *checkpoint-thread-quiescer*
+                                  (lambda ()
+                                    (world-server--restart-save
+                                     server :application application :backend backend :generation nil
+                                     :restart restart
+                                     :ready-function
+                                     (lambda (generation)
+                                       (declare (ignore generation))
+                                       (world-server--restart-mark configuration
+                                        :launcher-pid (current-process-id) :generation-id "g-recovery")))))))
+                    (checkpoint-error (condition) (setf caught condition))))
+                (test-assert (and (eq caught primary)
+                                  (world-server-stopping-p server)
+                                  (null events)
+                                  (probe-file (world-server-restart-pathname configuration)))
+                             (format nil "~A recovery failure prevents endpoint/channel restart and preserves the save error" stage))))
+          (when (world-server-lease server) (lease-release (world-server-lease server)))))))
+  nil)
+
+(-> world-restart-tests--reader-replacement () null)
+(defun world-restart-tests--reader-replacement ()
+  "Replace a stale marker after a poll reads it, before the poll returns."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((pathname (world-server-restart-pathname configuration))
+           (read     (symbol-function 'world-server--restart-mark-read))
+           (identity (list :launcher-pid (current-process-id) :generation-id "replacement")))
+      (world-server--restart-mark configuration
+       :launcher-pid (world-restart-tests--ended-process-id) :generation-id "stale")
+      (test-call-with-function-replacements
+       (list (list 'world-server--restart-mark-read
+                   (lambda (pathname)
+                     (prog1 (funcall read pathname)
+                       (let ((lease (lease-acquire (world-server-lock-pathname configuration))))
+                         (unwind-protect
+                              (world-server--restart-mark configuration
+                               :launcher-pid (current-process-id) :generation-id "replacement")
+                           (lease-release lease)))))))
+       (lambda ()
+         (test-assert (not (world-server-restarting-p configuration))
+                      "the in-flight poll reports its stale observation")))
+      (test-assert (world-server-restarting-p configuration)
+                   "a stale poll cannot remove the owner's replacement marker")
+      (let ((lease (world-server--lease-acquire configuration :restart identity)))
+        (unwind-protect
+             (progn
+               (world-server--restart-unmark configuration
+                :restart (list :launcher-pid (current-process-id) :generation-id "stale"))
+               (test-assert (probe-file pathname) "rollback cannot remove a different restart's marker")
+               (world-server--restart-unmark configuration :restart identity)
+               (test-assert (not (probe-file pathname)) "the matching lease owner removes its own marker"))
+          (lease-release lease)))))
+  nil)
+
+(-> world-restart-tests--handoff () null)
+(defun world-restart-tests--handoff ()
+  "Exercise the ready boundary and partial rollback without saving or launching a process."
+  (dolist (stage '(:validation :marker :release :detach :save))
+    (with-test-configuration (configuration)
+      (configuration-ensure-directories configuration)
+      (let* ((application            (make-instance 'application :configuration configuration :worker nil))
+             (host                   (make-instance 'world-host :application application))
+             (server                 (make-instance 'world-server :configuration configuration))
+             (backend                (allocate-instance (find-class 'checkpoint-backend)))
+             (restart                (list :server server :application application
+                                           :generation-id "g-handoff" :launcher-pid (current-process-id)))
+             (failure                (make-condition 'checkpoint-error :message "Injected handoff failure"
+                                                     :stage ':save :pathname nil))
+             (release                (symbol-function 'application-release-conversation-lease))
+             (release-lease          (symbol-function 'conversation-lease-release))
+             (*world-server-restart* nil)
+             (*active-application*   nil)
+             (caught                 nil))
+        (setf (world-server-hosts server) (list host)
+              (world-server-lease server) (world-server--lease-acquire configuration)
+              (application-conversation-lease application)
+              (conversation-lease-acquire configuration "handoff-test"))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list
+               (list 'world-server--quiesce-host-tools (lambda (host) (declare (ignore host)) nil))
+               (list 'lisp-worker-manager-stop (lambda (worker) (declare (ignore worker)) nil))
+               (list 'world-server--attach-telemetry (lambda (server) (declare (ignore server)) nil))
+               (list 'telemetry-detach (lambda () (when (eq stage ':detach) (error failure))))
+               (list 'conversation-lease-release
+                     (lambda (lease)
+                       (funcall release-lease lease)
+                       (when (eq stage ':release)
+                         (test-assert (and (eq (application-conversation-lease application) lease)
+                                           (not (conversation-lease-held-p lease)))
+                                      "the injected failure occurs before the released lease slot is cleared")
+                         (error failure))))
+               (list 'checkpoint-restart-save
+                     (lambda (backend generation &key ready-function)
+                       (declare (ignore backend))
+                       (test-assert (and (world-server-lease server)
+                                         (application-conversation-lease application)
+                                         (not (probe-file (world-server-restart-pathname configuration))))
+                                    "validation runs before ownership is released or restart is marked")
+                       (when (eq stage ':validation) (error failure))
+                       ;; Catch inside the backend, as its fatal-save handler does.
+                       (handler-case
+                           (funcall ready-function generation)
+                         (checkpoint-error (condition)
+                           (test-assert (and (world-server-lease server)
+                                           (ls-flock:lease-held-p (world-server-lease server))
+                                           (application-conversation-lease application)
+                                           (conversation-lease-held-p (application-conversation-lease application))
+                                           (not (probe-file (world-server-restart-pathname configuration))))
+                                        "callback recovery completes before the backend handles its failure")
+                           (error condition)))
+                       (test-assert (and (world-server-running-p configuration)
+                                         (null (world-server-lease server))
+                                         (null (application-conversation-lease application))
+                                         (equal (getf *world-server-restart* :generation-id) "g-handoff")
+                                         (= (length (getf *world-server-restart* :leases)) 1))
+                                    "the marked restart records released conversation ownership before saving")
+                       (dolist (identity (list nil
+                                             (list :generation-id "other" :launcher-pid (current-process-id))
+                                             (list :generation-id "g-handoff" :launcher-pid (1+ (current-process-id)))))
+                         (let ((refused-p nil))
+                           (handler-case
+                               (lease-release (world-server--lease-acquire configuration :restart identity))
+                             (world-error () (setf refused-p t)))
+                           (test-assert refused-p "fresh or mismatched starts cannot acquire a restarting world")))
+                       (world-server--restart-reclaim-leases
+                        server (getf *world-server-restart* :leases) :restart restart)
+                       (test-assert (and (world-server-lease server)
+                                         (application-conversation-lease application)
+                                         (probe-file (world-server-restart-pathname configuration)))
+                                    "the matching restart reclaims ownership without deleting its marker")
+                       (error failure))))
+              (lambda ()
+                (handler-case
+                    (world-server--restart-save
+                     server :application application :backend backend :generation nil
+                     :restart restart
+                     :ready-function
+                     (lambda (generation)
+                       (declare (ignore generation))
+                       (test-assert (and (world-server-lease server)
+                                         (application-conversation-lease application))
+                                    "the final-generation callback still holds both leases")
+                       (world-server--restart-mark configuration
+                        :launcher-pid (current-process-id) :generation-id "g-handoff")
+                       (test-assert (world-server-running-p configuration)
+                                    "marker publication overlaps world lease ownership")
+                       (when (eq stage ':marker) (error failure))))
+                  (checkpoint-error (condition) (setf caught condition)))
+                (test-assert (and (eq caught failure)
+                                  (world-server-lease server)
+                                  (ls-flock:lease-held-p (world-server-lease server))
+                                  (application-conversation-lease application)
+                                  (conversation-lease-held-p (application-conversation-lease application))
+                                  (null *world-server-restart*)
+                                  (not (probe-file (world-server-restart-pathname configuration))))
+                             (format nil "~A failure preserves the original condition and recovers ownership" stage))))
+          (funcall release application)
+          (when (world-server-lease server) (lease-release (world-server-lease server)))
+          (world-server--restart-unmark configuration)))))
   nil)
 
 (-> world-restart-tests--submit (cons string &key (:until function)) list)

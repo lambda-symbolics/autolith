@@ -652,10 +652,11 @@ compile and install --> checks --> replay script and manifest
   work, clears credentials, detaches workers, and checks provenance
 - Windows cannot fork. A checkpoint there saves the exact heap through
   =save-lisp-and-die= and exits, and the stable Lisp launcher publishes the
-  saved core from the active image and boots it. The world server first
-  records itself in the heap, releases its leases, and leaves a marker naming
-  the launcher, so clients wait instead of starting a second server; the
-  booted heap takes the leases back and serves its paused channels again
+  saved core from the active image and boots it. The world server publishes a
+  marker with the launcher and generation before releasing its leases. A new
+  server must recheck that marker under the world lease. After the saved heap
+  boots, the server reclaims the leases for the matching restart and serves its
+  paused channels again.
 - Locks the saving thread held stay recorded in a saved heap, so each such
   lock is freed when a saved heap boots
 - A worker saves its image the same way, by exiting through

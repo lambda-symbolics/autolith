@@ -345,17 +345,36 @@ images use their own endpoint namespace."
   "Return the file whose process lease says a world server runs for CONFIGURATION's data root."
   (merge-pathnames "server.lock" (world-endpoint-directory configuration)))
 
-(-> world-server--lease-acquire (configuration) t)
-(defun world-server--lease-acquire (configuration)
-  "Take the process lease on CONFIGURATION's world, or signal that another server holds it."
-  (let ((pathname (world-server-lock-pathname configuration)))
-    (handler-case
-        (lease-acquire pathname)
-      (file-lock-busy ()
-        (error 'world-error
-               :message   "Another world server already runs for this data root."
-               :pathname  pathname
-               :operation ':start)))))
+(-> world-server--lease-acquire (configuration &key (:restart list)) t)
+(defun world-server--lease-acquire (configuration &key restart)
+  "Acquire the world lease of CONFIGURATION for a new server or matching RESTART."
+  (let* ((pathname    (world-server-lock-pathname configuration))
+         (lease
+           (handler-case (lease-acquire pathname)
+             (file-lock-busy ()
+               (error 'world-error
+                      :message   "Another world server already runs for this data root."
+                      :pathname  pathname
+                      :operation ':start))))
+         (completed-p nil))
+    (unwind-protect
+         (progn
+           (when (world-server-restarting-p configuration)
+             (let ((marker (world-server--restart-mark-read
+                            (world-server-restart-pathname configuration))))
+               (unless (and restart
+                            (eql (getf restart :launcher-pid) (getf marker :launcher-pid))
+                            (equal (getf restart :generation-id) (getf marker :generation-id)))
+                 (error 'world-error
+                        :message   "The world server is restarting from its saved heap."
+                        :pathname  pathname
+                        :operation ':start))))
+           (unless restart
+             (world-server--restart-unmark configuration))
+           (setf completed-p t)
+           lease)
+      (unless completed-p
+        (lease-release lease)))))
 
 (-> world-server-running-p (configuration) boolean)
 (defun world-server-running-p (configuration)

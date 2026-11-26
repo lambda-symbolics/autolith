@@ -32,30 +32,28 @@ conversation leases it released for the save.")
   "Return true while CONFIGURATION's world server restarts from its saved heap.
 
 The marker names the launcher booting the saved core. A marker whose launcher
-ended, or older than *WORLD-SERVER-RESTART-MARK-SECONDS*, was left by a
-restart that failed, and is removed."
-  (let ((pathname (world-server-restart-pathname configuration)))
-    (when (probe-file pathname)
-      (let ((record (world-server--restart-mark-read pathname)))
-        (if (and record
-                 (< (- (get-universal-time) (getf record :created-at))
-                    *world-server-restart-mark-seconds*)
-                 (platform-process-alive-p *platform* (getf record :launcher-pid)))
-            t
-            (progn
-              (world-server--restart-unmark configuration)
-              nil))))))
+ended, or older than *WORLD-SERVER-RESTART-MARK-SECONDS*, is stale. Only the
+world lease owner removes stale markers."
+  (let* ((pathname (world-server-restart-pathname configuration))
+         (record   (world-server--restart-mark-read pathname)))
+    (and record
+         (< (- (get-universal-time) (getf record :created-at))
+            *world-server-restart-mark-seconds*)
+         (not (null (platform-process-alive-p *platform* (getf record :launcher-pid)))))))
 
 (-> world-server--restart-mark-read (pathname) list)
 (defun world-server--restart-mark-read (pathname)
-  "Return the :LAUNCHER-PID and :CREATED-AT plist of the restart marker at PATHNAME, or NIL when it is unreadable."
+  "Return the restart marker identity and creation time at PATHNAME, or NIL when unreadable."
   (handler-case
       (let ((form (snapshot-read pathname)))
         (when (and (consp form) (eq (first form) ':autolith-world-restart))
-          (let ((launcher-pid (getf (rest form) :launcher-pid))
-                (created-at   (getf (rest form) :created-at)))
-            (when (and (typep launcher-pid '(integer 1)) (integerp created-at))
-              (list :launcher-pid launcher-pid :created-at created-at)))))
+          (let ((launcher-pid  (getf (rest form) :launcher-pid))
+                (generation-id (getf (rest form) :generation-id))
+                (created-at    (getf (rest form) :created-at)))
+            (when (and (typep launcher-pid '(integer 1)) (integerp created-at)
+                       (non-empty-string-p generation-id))
+              (list :launcher-pid launcher-pid :generation-id generation-id
+                    :created-at created-at)))))
     (error ()
       nil)))
 
@@ -70,16 +68,18 @@ restart that failed, and is removed."
                         :generation-id generation-id))
   nil)
 
-(-> world-server--restart-unmark (configuration) null)
-(defun world-server--restart-unmark (configuration)
-  "Remove CONFIGURATION's restart marker when it exists."
-  (let ((pathname (world-server-restart-pathname configuration)))
-    (handler-case
-        (when (probe-file pathname)
-          (delete-file pathname))
-      (file-error ()
-        ;; Another waiter removed the stale marker first.
-        nil)))
+(-> world-server--restart-unmark (configuration &key (:restart list)) null)
+(defun world-server--restart-unmark (configuration &key restart)
+  "Remove CONFIGURATION's restart marker while holding its world lease.
+
+When RESTART is supplied, remove only the marker with its generation and launcher."
+  (let* ((pathname (world-server-restart-pathname configuration))
+         (record   (and restart (world-server--restart-mark-read pathname))))
+    (when (and (probe-file pathname)
+               (or (null restart)
+                   (and (equal (getf record :generation-id) (getf restart :generation-id))
+                        (eql (getf record :launcher-pid) (getf restart :launcher-pid)))))
+      (delete-file pathname)))
   nil)
 
 (-> world-server--launcher-pid () (integer 1))
@@ -104,11 +104,10 @@ restart that failed, and is removed."
   "Save SERVER's exact heap for the checkpoint APPLICATION asked for, and exit for the launcher to boot it.
 
 The generation is reserved while the channels still serve. Then every channel
-pauses, its tools close and its Lisp workers stop, the conversation leases
-and the world's lease are released, the restart is recorded in the heap and
-marked for clients, and the heap is saved. When anything fails before the
-save, the channels are served again and told why. A failure after the save
-began ends the process, and the next client starts a new server."
+pauses, its tools close and its Lisp workers stop. After final validation the
+restart marker is published, leases are released, and the heap is saved.
+A propagated failure restores ownership before the channels serve again.
+The saver exits on a fatal save failure, leaving recovery to the launcher."
   (let ((configuration (world-server-configuration server))
         (failure       nil))
     (flet ((notice (served)
@@ -141,7 +140,8 @@ began ends the process, and the next client starts a new server."
                                :restart     (list :server        server
                                                   :application   application
                                                   :reconnect-id  reconnect-id
-                                                  :generation-id generation-id)
+                                                  :generation-id generation-id
+                                                  :launcher-pid  launcher-pid)
                                :ready-function
                                (lambda (saved)
                                  (world-server--restart-mark
@@ -166,28 +166,66 @@ Run with every channel paused. APPLICATION's tools close here, since its
 checkpoint backend would close them where nothing restarts them after the
 boot. Telemetry detaches, and no application is active while the heap is
 saved, so the saver strips no channel the booted heap serves again.
-READY-FUNCTION receives the final generation just before the save. If the
-save cannot begin, the leases and telemetry are taken again and the
-condition is signaled for the channels to be served again."
+READY-FUNCTION receives the final generation while the world lease is held.
+Only after it publishes the marker are leases released and the restart recorded.
+A propagated pre-save failure reclaims released leases before removing this
+restart's marker. A recovery failure stops the server instead of serving it
+without ownership."
   (when-let ((requester (find application (world-server--hosts server) :key #'world-host-application)))
     (world-server--quiesce-host-tools requester))
   (dolist (host (world-server--hosts server))
     (lisp-worker-manager-stop (application-worker (world-host-application host))))
-  (let ((leases (world-server--restart-release-leases server)))
-    (setf *world-server-restart* (append restart (list :leases leases)))
-    (telemetry-detach)
-    (handler-bind ((serious-condition
-                     (lambda (condition)
-                       (declare (ignore condition))
-                       (setf *world-server-restart* nil
-                             *active-application*   application)
-                       (world-server--restart-reclaim-leases server leases)
-                       (world-server--attach-telemetry server))))
-      ;; The world quiescer already holds the channels; the backend must not
-      ;; pause them again.
-      (let ((*checkpoint-thread-quiescer* nil))
-        (setf *active-application* nil)
-        (checkpoint-restart-save backend generation :ready-function ready-function))))
+  (let ((leases      nil)
+        (ready-p     nil)
+        (recovered-p nil))
+    (flet ((recover (condition)
+             "Restore ownership once before a save failure is handled or propagated."
+             (declare (ignore condition))
+             (unless recovered-p
+               (setf recovered-p t
+                     *world-server-restart* nil
+                     *active-application* application)
+               (handler-case
+                   (progn
+                     (when (world-server--restart-reclaim-leases server leases :restart restart)
+                       (error 'world-error
+                              :message   "A checkpoint could not reclaim every conversation."
+                              :pathname  (world-server-lock-pathname (world-server-configuration server))
+                              :operation ':restart))
+                     (when ready-p
+                       (world-server--restart-unmark (world-server-configuration server)
+                                                    :restart restart))
+                     (world-server--attach-telemetry server))
+                (serious-condition (recovery)
+                  (with-lock-held ((world-server-lock server))
+                    (setf (world-server-stopping-p server) t))
+                  (handler-case
+                      (world-server-stop server :reason "The checkpoint could not recover its world ownership.")
+                    (serious-condition (stopping)
+                      (warn 'world-session-warning
+                            :pathname (world-server-lock-pathname (world-server-configuration server))
+                            :cause    stopping)))
+                  (warn 'world-session-warning
+                        :pathname (world-server-lock-pathname (world-server-configuration server))
+                        :cause    recovery))))))
+      (handler-bind ((serious-condition #'recover))
+        ;; The world quiescer already holds the channels; the backend must not
+        ;; pause them again or strip the requesting application from the heap.
+        (let ((*checkpoint-thread-quiescer* nil))
+          (setf *active-application* nil)
+          (checkpoint-restart-save
+           backend generation
+           :ready-function
+           (lambda (saved)
+             ;; Recover callback failures before the backend's fatal-save handler.
+             (handler-bind ((serious-condition #'recover))
+               (setf ready-p t)
+               (funcall ready-function saved)
+               (world-server--restart-release-leases
+                server :released-function (lambda (released) (push released leases)))
+               (setf *world-server-restart*
+                     (append restart (list :leases (reverse leases))))
+               (telemetry-detach))))))))
   nil)
 
 (-> world-server--attach-telemetry (world-server) null)
@@ -198,42 +236,50 @@ condition is signaled for the channels to be served again."
       (telemetry--call-safely (lambda () (telemetry-attach configuration)))))
   nil)
 
-(-> world-server--restart-release-leases (world-server) list)
-(defun world-server--restart-release-leases (server)
-  "Release SERVER's world lease and its channels' conversation leases, and return the (HOST . IDENTIFIER) pairs released.
+(-> world-server--restart-release-leases
+    (world-server &key (:released-function (option function))) list)
+(defun world-server--restart-release-leases (server &key released-function)
+  "Release SERVER's conversation leases, then its world lease, returning released pairs.
 
-A saved heap must hold no lock: its descriptors mean nothing in the process
-that boots it."
+Call RELEASED-FUNCTION with each (HOST . IDENTIFIER) before releasing it so a
+partial failure can recover the leases whose application slot was cleared."
   (let ((released nil))
     (dolist (host (world-server--hosts server))
       (let* ((application (world-host-application host))
              (lease       (application-conversation-lease application)))
         (when lease
-          (push (cons host (conversation-lease-identifier lease)) released)
-          (application-release-conversation-lease application))))
-    (when-let ((lease (shiftf (world-server-lease server) nil)))
-      (lease-release lease))
+          (let ((pair (cons host (conversation-lease-identifier lease))))
+            (push pair released)
+            (when released-function (funcall released-function pair))
+            (application-release-conversation-lease application)))))
+    (when-let ((lease (world-server-lease server)))
+      (lease-release lease)
+      (setf (world-server-lease server) nil))
     (nreverse released)))
 
-(-> world-server--restart-reclaim-leases (world-server list) list)
-(defun world-server--restart-reclaim-leases (server leases)
-  "Take SERVER's world lease and the conversation LEASES again, and return the hosts whose conversation is taken elsewhere.
+(-> world-server--restart-reclaim-leases (world-server list &key (:restart list)) list)
+(defun world-server--restart-reclaim-leases (server leases &key restart)
+  "Reclaim missing world and conversation LEASES for RESTART, returning conflicted hosts.
 
-LEASES are the (HOST . IDENTIFIER) pairs a restart released. The world lease
-failing is an error: another server took the world."
-  (setf (world-server-lease server)
-        (world-server--lease-acquire (world-server-configuration server)))
+Already-owned leases are kept, including those not released before a partial
+failure. The world lease must be acquired before any conversation is reclaimed."
+  (unless (and (world-server-lease server)
+               (ls-flock:lease-held-p (world-server-lease server)))
+    (setf (world-server-lease server)
+          (world-server--lease-acquire (world-server-configuration server) :restart restart)))
   (loop for (host . identifier) in leases
         for application = (world-host-application host)
-        unless (handler-case
-                   (progn
-                     (setf (application-conversation-lease application)
-                           (conversation-lease-acquire (application-configuration application)
-                                                       identifier))
-                     t)
-                 (conversation-error ()
-                   nil))
-          collect host))
+        unless (or (let ((lease (application-conversation-lease application)))
+                     (and lease (conversation-lease-held-p lease)))
+                   (handler-case
+                       (progn
+                         (setf (application-conversation-lease application)
+                               (conversation-lease-acquire (application-configuration application)
+                                                           identifier))
+                         t)
+                     (conversation-error ()
+                       nil)))
+        collect host))
 
 
 ;;;; -- Resuming --
@@ -272,10 +318,11 @@ leases, publishes its endpoint under the token its clients hold, starts the
 process services, removes the restart marker, and serves every paused
 channel again under the reconnect ID its clients wait for. A channel whose
 conversation another process took meanwhile is dropped."
-  (destructuring-bind (&key server application reconnect-id generation-id leases) restart
+  (destructuring-bind (&key server application reconnect-id generation-id launcher-pid leases) restart
+    (declare (ignore launcher-pid))
     (let ((configuration (world-server-configuration server)))
       (handler-case
-          (dolist (host (world-server--restart-reclaim-leases server leases))
+          (dolist (host (world-server--restart-reclaim-leases server leases :restart restart))
             (format *error-output* "~&Channel ~A did not resume: its conversation is open elsewhere.~%"
                     (conversation-identifier-display (world-host-channel host)))
             (world-server--release-host server host))
@@ -289,7 +336,7 @@ conversation another process took meanwhile is dropped."
              (management-repl-start server)
              (slynk-start configuration :background-p t)
              (world-server--attach-telemetry server)
-             (world-server--restart-unmark configuration)
+             (world-server--restart-unmark configuration :restart restart)
              (world-server--resume-channels
               server application reconnect-id
               :notice-function
