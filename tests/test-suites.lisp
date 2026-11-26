@@ -90,7 +90,7 @@
   test-plan-state-context-rebuilds-requirements-and-receipts)
 
 (define-test-suite telemetry-hooks
-  ;; telemetry-hook-model-tests.lisp
+  ;; telemetry/hooks/model-tests.lisp
   test-telemetry-context-window-streams
   test-telemetry-returned-model-hook
   test-telemetry-cache-write-usage
@@ -98,13 +98,13 @@
   test-telemetry-chatgpt-cache-write-usage
   test-telemetry-compaction-roles
   test-telemetry-request-roles
-  ;; telemetry-hook-provider-tests.lisp
+  ;; telemetry/hooks/provider-tests.lisp
   test-telemetry-provider-retry-hooks
   test-telemetry-grok-empty-response-hooks
   test-telemetry-provider-transport-hooks
   test-telemetry-provider-failure-hooks
   test-telemetry-provider-fallback-hooks
-  ;; telemetry-hook-run-tests.lisp
+  ;; telemetry/hooks/run-tests.lisp
   test-telemetry-terminal-outcomes
   test-telemetry-run-owner-token
   test-telemetry-late-report-presentation
@@ -129,26 +129,26 @@
   test-telemetry-job-cancellation-hooks
   test-telemetry-configuration-owner-hook
   test-telemetry-secondary-root-settings
-  ;; telemetry-hook-report-tests.lisp
+  ;; telemetry/hooks/report-tests.lisp
   test-telemetry-duplicate-flushed-tool-report-link
   test-telemetry-duplicate-consent-transition
   test-telemetry-tool-report-link
   test-telemetry-flushed-tool-report-link
   test-telemetry-papercut-metadata-hooks
   test-telemetry-issue-correlation
-  ;; telemetry-hook-repair-tests.lisp
+  ;; telemetry/hooks/repair-tests.lisp
   test-telemetry-evaluation-repair-intent
   test-telemetry-incident-repair-lifecycle
   test-telemetry-invalid-incident-link
   test-telemetry-repair-hook-projections
-  ;; telemetry-hook-tool-outcome-tests.lisp
+  ;; telemetry/hooks/tool-outcome-tests.lisp
   test-telemetry-explicit-correction-hook
   test-telemetry-shell-exit-hook
   test-telemetry-tool-failure-categories
   test-telemetry-outside-resource-failures
   test-telemetry-tool-error-code-boundary
   test-telemetry-parallel-tool-hooks
-  ;; telemetry-hook-tool-denial-tests.lisp
+  ;; telemetry/hooks/tool-denial-tests.lisp
   test-telemetry-tool-denial-hooks
   test-telemetry-recovered-denial-hook
   test-telemetry-mcp-policy-denial-hook
@@ -156,12 +156,12 @@
   test-telemetry-managed-denial-hook
   test-telemetry-outside-path-denial-hooks
   test-telemetry-resource-policy-denial-hooks
-  ;; telemetry-hook-authority-tests.lisp
+  ;; telemetry/hooks/authority-tests.lisp
   test-telemetry-mission-authority-hooks
   test-telemetry-continuity-authority-hooks
   test-telemetry-worker-host-admission-hooks
   test-telemetry-worktree-authority-hook
-  ;; telemetry-hook-os-permission-tests.lisp
+  ;; telemetry/hooks/os-permission-tests.lisp
   test-telemetry-os-permission-failure-hooks)
 
 (define-test-suite redaction

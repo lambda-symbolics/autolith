@@ -489,7 +489,7 @@
                      "--load" (uiop:native-namestring
                                (merge-pathnames "emacs/autolith.el" source))
                      "--load" (uiop:native-namestring
-                               (merge-pathnames "tests/autolith-emacs-tests.el" source))
+                                (merge-pathnames "tests/emacs/ert-tests.el" source))
                      "-f" "ert-run-tests-batch-and-exit")
                :output ':string :error-output ':string :ignore-error-status t)
             (test-assert (zerop status)

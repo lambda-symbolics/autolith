@@ -1,4 +1,4 @@
-;;; autolith-emacs-tests.el --- IDE window contracts -*- lexical-binding: t; -*-
+;;; ert-tests.el --- IDE window contracts -*- lexical-binding: t; -*-
 
 (require 'ert)
 (require 'cl-lib)
