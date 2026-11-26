@@ -492,7 +492,7 @@
                                           (:file "world/repository-groups-tests")
                                           (:file "preferences/tests")
                                           (:file "prompt/cache-tests")
-                                          (:file "idle/compaction-tests")
+                                          (:file "idle-autocompaction/compaction-tests")
                                           (:file "permissions/tests")
                                           (:file "context/tests")
                                           (:file "context/rule-tests")
