@@ -26,9 +26,9 @@ Run every relevant check before reporting success.
 #+END_SRC
 
 The YAML frontmatter requires =name= and =description=. It may also contain
-=license=, =compatibility=, =metadata=, and =allowed-tools=. Unknown and
-duplicate fields are rejected. =metadata= must map strings to strings. The
-other optional fields must be strings.
+=license=, =compatibility=, =metadata=, and =allowed-tools=. Unknown fields are
+ignored. Duplicate fields are rejected. =metadata= must map strings to
+strings. The other optional fields must be strings.
 
 Standard names contain 1 to 64 lowercase ASCII letters, digits, or single
 hyphens. A name cannot begin or end with a hyphen, contain consecutive
@@ -69,9 +69,9 @@ Run every relevant check before reporting success.")
 
 A native file is one bounded top-level form with required =:version=,
 =:name=, =:description=, and =:instructions= fields after
-=:autolith-skill=. Autolith rejects unsupported versions, unknown or
-duplicate fields, malformed data, extra forms, reader labels, circular or
-shared structure, and values of the wrong type.
+=:autolith-skill=. Unknown fields are ignored. Autolith rejects unsupported
+versions, duplicate fields, malformed data, extra forms, reader labels,
+circular or shared structure, and values of the wrong type.
 
 * Locations and precedence
 
