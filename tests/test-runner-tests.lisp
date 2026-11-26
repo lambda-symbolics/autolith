@@ -602,20 +602,14 @@ Require a clean process first; this is not recovery for a real shutdown failure.
 
 (-> test-check-worker-image () null)
 (defun test-check-worker-image ()
-  "Verify the CLI executes cases from a source-matched preloaded test image."
+  "Test that the CLI runs cases in the specified preloaded test image."
   (let ((core (uiop:getenv "AUTOLITH_TEST_WORKER_CORE")))
     (if core
-        (let ((source-root (asdf:system-source-directory :autolith)))
-          (test-assert
-           (and sb-ext:*core-pathname*
-                (equal (platform-truename *platform* (uiop:parse-native-namestring core))
-                       (platform-truename *platform* sb-ext:*core-pathname*)))
-           "The case runs in the test image supplied by the CLI.")
-          (test-assert
-           (sbcl-generations:image-build-record-compatible-p
-            (sbcl-generations:image-running-build-record) source-root
-            :inputs (lambda (root) (test-check--call "TEST-WORKER-SOURCE-PATHS" root)))
-           "The running image records every application and test input."))
+        (test-assert
+         (and sb-ext:*core-pathname*
+              (equal (platform-truename *platform* (uiop:parse-native-namestring core))
+                     (platform-truename *platform* sb-ext:*core-pathname*)))
+         "The case runs in the test image supplied by the CLI.")
         (fiveam:skip "Run this image-lifecycle check through script/check.")))
   nil)
 

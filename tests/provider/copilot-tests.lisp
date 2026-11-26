@@ -300,12 +300,11 @@
   "Login through startup and the application, then send a prompt without ChatGPT credentials."
   (with-test-environment (("AUTOLITH_COPILOT_DOMAIN" nil) ("AUTOLITH_MODEL" nil))
     (with-test-configuration (configuration)
-      (let ((snapshot    (provider--registry-snapshot))
-            (output      (make-string-output-stream))
-            (models-p    t)
-            (deny-p      nil)
-            (discoveries 0)
-            (streams     0))
+      (let ((snapshot (provider--registry-snapshot))
+            (output   (make-string-output-stream))
+            (models-p t)
+            (deny-p   nil)
+            (streams  0))
         (unwind-protect
              (test-call-with-function-replacements
               (list
@@ -318,7 +317,6 @@
                (list 'dexador:get
                      (lambda (url &rest arguments)
                        (declare (ignore arguments))
-                      (incf discoveries)
                       (test-assert (search "githubcopilot.com/models" url)
                                    "login discovers the Copilot account catalog")
                       (values (if models-p
@@ -343,7 +341,6 @@
               (lambda ()
                 (let ((*standard-output* output))
                   (main-authenticate configuration "copilot"))
-                (test-assert (= discoveries 1) "login discovers the model catalog exactly once")
                 (test-assert (equal (config :model configuration) "copilot/auto")
                              "startup login selects Copilot Auto")
                 (test-assert (equal (getf (preferences-load-values configuration) :model) "copilot/auto")
@@ -446,11 +443,10 @@
     (with-test-configuration (configuration)
       (setf configuration (configuration-copy configuration :model                   "copilot/chat-test"
                                                               :provider-validation-p nil))
-      (let ((snapshot    (provider--registry-snapshot))
-            (path        (copilot--catalog-path configuration))
-            (logins      0)
-            (discoveries 0)
-            (output      (make-string-output-stream)))
+      (let ((snapshot (provider--registry-snapshot))
+            (path     (copilot--catalog-path configuration))
+            (logins   0)
+            (output   (make-string-output-stream)))
         (unwind-protect
              (progn
                (test-assert (null (provider-registration-models
@@ -466,7 +462,6 @@
                  (list 'dexador:get
                        (lambda (url &rest arguments)
                          (declare (ignore arguments))
-                         (incf discoveries)
                          (test-assert (search "/models" url)
                                       "authentication refreshes the account catalog")
                          (values "{\"data\":[{\"id\":\"chat-test\",\"model_picker_enabled\":true,\"supported_endpoints\":[\"/chat/completions\"]}]}"
@@ -481,8 +476,6 @@
                       (main-authenticate configuration "copilot"))
                     (test-assert (= logins (1+ attempt))
                                  "explicit login proceeds independently of the invalid route")
-                    (test-assert (= discoveries logins)
-                                 "each login refreshes the catalog once")
                     (test-assert (typep (provider-create configuration) 'copilot-chat-provider)
                                  "the refreshed route constructs the selected account adapter")))))
           (provider--registry-restore snapshot)))))

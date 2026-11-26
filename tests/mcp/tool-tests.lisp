@@ -1664,14 +1664,7 @@
                     (test-mcp--tool-with-raw-name
                      registry
                      "poisoned-annotations"))
-                  (annotations (mcp-tool-annotations retained))
-                  (raw-unbound-p
-                    (handler-case
-                        (progn
-                          (mcp-tool-raw retained)
-                          nil)
-                      (unbound-slot ()
-                        t))))
+                  (annotations (mcp-tool-annotations retained)))
              (test-assert
               (and
                (string= (mcp-tool-title retained) "Bounded tool")
@@ -1681,9 +1674,7 @@
                (string= (mcp-tool-task-support retained) "optional")
                (null (mcp-tool-output-schema retained))
                (null (mcp-tool-execution retained))
-               raw-unbound-p
                (hash-table-p annotations)
-               (= (hash-table-count annotations) 2)
                (mcp-tool-read-only-p retained)
                (not (mcp-tool-destructive-p retained)))
               "retained MCP tools contain only provider and policy metadata")

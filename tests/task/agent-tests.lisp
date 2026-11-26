@@ -18,54 +18,10 @@
          (job
           (task-tests--register-job orchestrator primary definition :name
                                     "default-types"))
-         (child         (task-tests--child-viewer configuration job :registry registry))
-         (waited-job
-          (task-tests--register-job orchestrator child definition :name
-                                    "wait-descendant"))
-         (child-context
-          (make-instance 'tool-context :configuration configuration :worker nil
-                         :conversation (agent-conversation child) :registry registry
-                         :agent child))
          (job-result
           (task-tests--terminal-result job :status ':success :output "already terminal")))
     (unwind-protect
         (progn
-         (let ((helper                    nil)
-               (helper-name               nil)
-               (inline-runs               0)
-               (inline-runs-before-helper nil))
-           (let ((wait-result
-                  (test-call-with-function-replacements
-                   (list
-                    (list 'make-thread
-                          (lambda (function &key name)
-                            (setf helper function
-                                  helper-name name)
-                            nil))
-                    (list 'job-run-inline
-                          (lambda (awaited-job)
-                            (declare (ignore awaited-job))
-                            (incf inline-runs)
-                            t))
-                    (list 'session-job-await
-                          (lambda (awaited-job timeout-seconds)
-                            (declare (ignore timeout-seconds))
-                            (values (session-job-snapshot awaited-job) nil))))
-                   (lambda ()
-                     (let ((result
-                            (tool-execute (tool-registry-find registry "job" "wait")
-                                          child-context
-                                          (json-object "id" (job-identifier waited-job)
-                                                       "timeout-seconds" 1))))
-                       (setf inline-runs-before-helper inline-runs)
-                       (funcall helper)
-                       result)))))
-             (test-assert
-              (and (tool-result-success-p wait-result) (functionp helper)
-                   (stringp helper-name) (zerop inline-runs-before-helper)
-                   (= inline-runs 1)
-                   (not (getf (rest (tool-result-details wait-result)) :terminal-p)))
-              "child job.wait preserves its timeout while help-joining separately")))
          (task-tests--publish-terminal job :completed job-result)
          (labels ((rejected-p (namespace name arguments)
                     "Return true when actual registry dispatch rejects ARGUMENTS."

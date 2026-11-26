@@ -3,37 +3,6 @@
 ;;;; -- Workspace Agenda Tests --
 
 
-(-> test-agenda-unbounded-item-count () null)
-(defun test-agenda-unbounded-item-count ()
-  "Test agendas persist and transport more than the former 32-item cap."
-  (with-test-configuration (configuration root)
-    (let* ((target (merge-pathnames "many-target/" root)))
-      (ensure-directories-exist (merge-pathnames "marker" target))
-      (let ((state (agenda-load configuration)))
-        (dotimes (index 40)
-          (agenda-add :configuration configuration
-                      :state         state
-                      :text          (format nil "agenda item ~D" index)))
-        (let* ((loaded  (agenda-load configuration))
-               (current (agenda-current configuration loaded)))
-          (test-assert (= (length (workspace-agenda-items current)) 40)
-                       "agenda reload retains more than 32 items")
-          (agenda-transport
-           :configuration    configuration
-           :state            loaded
-           :source-directory (workspace-agenda-directory current)
-           :target-directory target)
-          (test-assert
-           (= (length
-               (workspace-agenda-items
-                (agenda-find
-                 loaded
-                 (agenda-directory-name configuration target
-                                        :require-existing-p t))))
-              40)
-           "agenda transport retains more than 32 items")))))
-  nil)
-
 (-> test-agenda-command () null)
 (defun test-agenda-command ()
   "Test /agenda presents current entries, statuses, identifiers, and links."

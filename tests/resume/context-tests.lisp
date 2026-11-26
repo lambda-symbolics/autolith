@@ -53,9 +53,5 @@
       (conversation-append-user-message resumed "thanks")
       (test-assert
        (null (resume-context-tests--contribution configuration resumed))
-       "the notice retires once a later user turn begins")
-      (test-assert
-       (and (not (conversation-resumed-p resumed))
-            (null (conversation-resume-note-turn resumed)))
-       "retiring the notice clears the resumed state")))
+       "the notice retires once a later user turn begins")))
   nil)

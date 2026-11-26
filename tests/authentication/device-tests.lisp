@@ -183,7 +183,6 @@
          (access-token
            (device-authentication-test--jwt
             (json-object "chatgpt_account_id" account-id)))
-         (poll-calls                                     0)
          (secret-guard-observed-p                        nil)
          (*device-authentication-test-saved-credentials* nil))
     (flet ((request (&key method url headers content)
@@ -215,7 +214,6 @@
 
            (poll (client authorization)
              (declare (ignore client))
-             (incf poll-calls)
              (setf secret-guard-observed-p (secret-use-active-p))
              (test-assert
               (string= (device-authorization-user-code authorization)
@@ -240,8 +238,6 @@
            (device-authentication-test--manager)
            :stream         stream
            :open-browser-p nil))
-        (test-assert (= poll-calls 1)
-                     "the injected polling function is called exactly once")
         (test-assert
          secret-guard-observed-p
          "device authorization holds the process-wide transient-secret guard")

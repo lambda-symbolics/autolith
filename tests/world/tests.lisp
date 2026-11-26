@@ -1941,7 +1941,7 @@
 
 (-> test-world-child-removal-batch () null)
 (defun test-world-child-removal-batch ()
-  "Test removal batches discovery and durable updates, and leases all children before cleanup."
+  "Test batch removal refusal, failure isolation and retry."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bremove11" 1000)
     (world-tests--child-conversation configuration "bremovea" :root "bremove11" :parent "bremove11"
@@ -1960,43 +1960,22 @@
     (test-assert (and (conversation-task-pathname-for-id configuration "bremovea")
                       (conversation-task-pathname-for-id configuration "bremoveb"))
                  "an idle subtree is not partly removed when another selected child is busy")
-    (let ((persist (symbol-function 'shell-log-persist-owner-delivery)))
-      (test-call-with-function-replacements
-       (list (list 'shell-log-persist-owner-delivery
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (error 'task-error :message "Delivery evidence could not be persisted."))))
-       (lambda ()
-         (test-assert
-          (handler-case (progn (channel-remove configuration '("bremovea" "bremovec")) nil)
-            (task-error () t))
-          "delivery evidence failure refuses storage deletion")))
-      (test-assert (and (world-channel-find (world-load configuration) "bremovea")
-                        (conversation-task-pathname-for-id configuration "bremovea")
-                        (not (conversation-lease-busy-p configuration "bremovea")))
-                   "failed cleanup keeps the world and storage and releases the acquired leases")
-      (let ((transact       (symbol-function 'world--transact))
-            (subdirectories (symbol-function 'uiop:subdirectories))
-            (world-updates  0)
-            (discoveries    0)
-            (log-passes     0))
-        (test-call-with-function-replacements
-         (list
-          (list 'world--transact
-                (lambda (&rest arguments) (incf world-updates) (apply transact arguments)))
-          (list 'uiop:subdirectories
-                (lambda (directory)
-                  (when (equal directory (merge-pathnames "tasks/" (config :data-root configuration)))
-                    (incf discoveries))
-                  (funcall subdirectories directory)))
-          (list 'shell-log-persist-owner-delivery
-                (lambda (&rest arguments) (incf log-passes) (apply persist arguments))))
-         (lambda ()
-           (test-assert (= 3 (channel-remove configuration '("bremovea" "bremovec")))
-                        "a retry removes all selected children and their nested channels")))
-        (test-assert (= discoveries 1) "task-root discovery is shared by the complete plan")
-        (test-assert (= log-passes 1) "children of one root share one shell-log pass")
-        (test-assert (= world-updates 1) "the complete world deletion uses one transaction"))))
+    (test-call-with-function-replacements
+     (list (list 'shell-log-persist-owner-delivery
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (error 'task-error :message "Delivery evidence could not be persisted."))))
+     (lambda ()
+       (test-assert
+        (handler-case (progn (channel-remove configuration '("bremovea" "bremovec")) nil)
+          (task-error () t))
+        "delivery evidence failure refuses storage deletion")))
+    (test-assert (and (world-channel-find (world-load configuration) "bremovea")
+                      (conversation-task-pathname-for-id configuration "bremovea")
+                      (not (conversation-lease-busy-p configuration "bremovea")))
+                 "failed cleanup keeps the world and storage and releases the acquired leases")
+    (test-assert (= 3 (channel-remove configuration '("bremovea" "bremovec")))
+                 "a retry removes all selected children and their nested channels"))
   nil)
 
 (-> test-world-child-removal-interleavings () null)

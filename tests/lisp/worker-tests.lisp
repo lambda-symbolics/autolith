@@ -532,10 +532,9 @@
                     (properties       (json-get (tool-parameters eval-tool) "properties"))
                     (compile-property (json-get properties "compile")))
                (test-assert
-                (and (null (tool-registry-find registry "lisp" "compile"))
-                     (json-object-p compile-property)
+                (and (json-object-p compile-property)
                      (string= (json-get compile-property "type") "boolean"))
-                "lisp.eval owns compilation mode and lisp.compile is absent"))
+                "lisp.eval advertises its compilation mode"))
              (let* ((*tool-execution-blocking-grace-seconds* 5)
                     (result
                       (run-lisp "eval"

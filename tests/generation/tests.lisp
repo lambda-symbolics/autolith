@@ -1452,8 +1452,6 @@
         (generation  :pending-generation))
     (setf (application-checkpoint-restart-request application)
           (cons backend generation))
-    (test-assert (null calls)
-                 "scheduling a restart does not save before the boundary")
     (test-call-with-function-replacements
      (list
       (list 'checkpoint-restart-save

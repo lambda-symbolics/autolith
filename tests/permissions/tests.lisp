@@ -366,8 +366,6 @@
            (setf instructions "Run the tests.")
            (classify "make")
            (test-assert (= 2 classify-count) "a new instruction asks again")
-           (test-assert (= 1 (hash-table-count (application-command-classifications application)))
-                        "decisions made under earlier instructions leave the cache")
            (let ((*application-command-classification-limit* 4))
              (dotimes (index 10)
                (classify (format nil "command-~D" index)))

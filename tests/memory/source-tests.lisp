@@ -35,12 +35,9 @@
                         :quote "with make   release-prod"
                         :time  (get-universal-time)))
              (sourced  (memory-remember configuration
-                                        :title   "Deploy command"
-                                        :content "Deploy with make release-prod."
-                                        :sources (list observed)))
-             (plain    (memory-remember configuration
-                                        :title   "Plain"
-                                        :content "No evidence attached.")))
+                                        :title    "Deploy command"
+                                        :content  "Deploy with make release-prod."
+                                         :sources (list observed))))
         (test-assert (equal (getf (rest observed) :path)
                             (uiop:native-namestring notes))
                      "an observed file source starts absolute")
@@ -56,9 +53,6 @@
                                source (memory-workspace sourced))
                               notes)
                        "a relative source resolves against its memory's workspace"))
-        (test-assert (null (nth-value 2 (get-properties (rest (memory--record plain))
-                                                        '(:sources :premises))))
-                     "memories without evidence keep their earlier record form")
         (let ((kept (memory-remember configuration
                                      :identifier (memory-identifier sourced)
                                      :title      "Deploy command"

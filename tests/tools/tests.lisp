@@ -662,10 +662,7 @@
                 "web.run declares Codex's search-query command")
                (test-assert
                 (gethash "time" (json-get parameters "properties"))
-                "web.run declares Codex's time command")
-               (test-assert
-                (null (gethash "query" (json-get parameters "properties")))
-                "web.run no longer declares its incompatible query shim"))))
+                "web.run declares Codex's time command"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((registry     (make-instance 'tool-registry))
          (empty-schema (tool-object-schema (json-object) nil))

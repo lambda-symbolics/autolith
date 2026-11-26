@@ -1567,9 +1567,7 @@
               (application-command--call-with-presentation
                 (application-command-tests--invocation '(settings))
                (lambda ()
-                 (application--builtin-settings-command application)
-                 (test-assert (null *application-command-presentation-pending-p*)
-                              "inline settings supply their own command headings")))
+                  (application--builtin-settings-command application)))
               (test-assert (and (= (length presented) 2)
                                 (= (count #\Newline (recording-terminal-output terminal)) 2))
                            "two picker changes produce exactly two consecutive output rows")

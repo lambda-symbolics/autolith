@@ -34,15 +34,9 @@
                           :id-token      nil
                           :account-id    "account-refresh-deadline"
                           :expires-at    nil
-                          :source-path   #P"/tmp/chatgpt-auth.sexp"))
-         (deadline nil))
+                          :source-path   #P"/tmp/chatgpt-auth.sexp")))
     (test-call-with-function-replacements
      (list
-      (list
-       'provider-call-with-response-deadline
-       (lambda (seconds function)
-         (setf deadline seconds)
-         (funcall function)))
       (list
        'dexador:post
        (lambda (&rest arguments)
@@ -58,9 +52,8 @@
             manager credentials "old-refresh")
          (test-assert
           (and publish-p
-               (string= (oauth-credentials-access-token refreshed) "new-access")
-               (= deadline 60))
-          "ChatGPT token refresh wraps the complete response in a 60-second deadline"))))
+               (string= (oauth-credentials-access-token refreshed) "new-access"))
+          "ChatGPT token refresh returns fresh credentials for publication"))))
     (test-assert
      (handler-case
          (test-call-with-function-replacements

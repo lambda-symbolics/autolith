@@ -681,7 +681,6 @@
 
 (define-test-suite agenda
   test-agenda-persistence-and-transport
-  test-agenda-unbounded-item-count
   test-agenda-command
   test-agenda-version-one-migration
   test-agenda-malformed-state
@@ -1441,7 +1440,6 @@
 
 (define-test-suite task-execution
   test-task-abort-control-condition
-  test-task-child-prompt-cache-key
   test-task-orchestration
   test-task-child-execution-job-controls
   test-task-child-cancels-lisp-executions

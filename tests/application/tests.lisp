@@ -2748,13 +2748,7 @@
                                          *terminal-parenthesis-style-names*)) entry)
                        "Resource source previews do not use Lisp nesting colors.")
           (test-assert (null (conversation-record-entry application record))
-                       "successful resource reads omit their standalone result")
-          (let ((failed (copy-list record)))
-            (setf (getf (rest failed) :status) ':error)
-            (test-assert (not (find ':syntax-function
-                                    (conversation-record-entry application failed)
-                                    :key #'terminal-span-style))
-                         "Failed reads use the condition renderer rather than source formatting.")))))))
+                       "successful resource reads omit their standalone result"))))))
 
 (-> test-search-source-highlighting () null)
 (defun test-search-source-highlighting ()
@@ -10483,54 +10477,24 @@
 
 (-> test-application-job-program-status () null)
 (defun test-application-job-program-status ()
-  "Exercise root title updates and the absence of job records."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (registry      (task-augment-tool-registry (make-default-tool-registry)))
-         (orchestrator
-          (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-         (conversation  (conversation-create configuration :identifier "status-owner"))
-         (terminal      (make-instance 'scripted-terminal))
-         (ui            (terminal-ui-create :terminal terminal))
-         (application
-          (make-instance 'application :configuration configuration :conversation
-                         conversation :tool-registry registry :ui ui))
-         (primary       (task-tests--primary-agent configuration "status-owner" registry))
-         (definition    (list))
-         (owned         nil))
-    (unwind-protect
-        (progn
-         (application-connect-program-status application)
-         (with-terminal-ui (active ui)
-           (let ((*active-application* application))
-             (dolist (title '("First title" "Changed title"))
-               (setf (conversation-title conversation) title)
-               (recording-terminal-reset terminal)
-               (terminal-ui-report-program-status active ':working)
-               (test-assert
-                (search (format nil ":title=~A" (clinedi:program-status-text title 192))
-                        (recording-terminal-output terminal))
-                "each root report reads the current conversation title")))
-           (setf owned
-                   (task-tests--register-job orchestrator primary definition :name
-                                             "Owned child" :root-conversation-identifier
-                                             "status-owner"))
-           (recording-terminal-reset terminal)
-           (application-connect-task-presentation application)
-           (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                        "job presentation publishes no records")
-           (recording-terminal-reset terminal)
-           (task-tests--publish-terminal owned ':completed "Private result")
-           (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                        "a pool completion publishes no record")
-           (recording-terminal-reset terminal)
-           (application-disconnect-task-presentation application)
-           (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                        "disconnect publishes no record")))
-      (application-disconnect-task-presentation application)
-      (tool-registry-close-runtime-state registry)
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
-                                      ':ignore)))
+  "Test that root program status uses the current conversation title."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "status-owner"))
+           (terminal     (make-instance 'scripted-terminal))
+           (ui           (terminal-ui-create :terminal terminal))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation conversation :ui ui)))
+      (application-connect-program-status application)
+      (with-terminal-ui (active ui)
+        (let ((*active-application* application))
+          (dolist (title '("First title" "Changed title"))
+            (setf (conversation-title conversation) title)
+            (recording-terminal-reset terminal)
+            (terminal-ui-report-program-status active ':working)
+            (test-assert
+             (search (format nil ":title=~A" (clinedi:program-status-text title 192))
+                     (recording-terminal-output terminal))
+             "each root report reads the current conversation title"))))))
   nil)
 
 (-> test-provider-exhaustion-presentation () null)

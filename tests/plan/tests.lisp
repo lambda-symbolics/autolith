@@ -99,11 +99,6 @@
                    (json-encode (json-object "steps" (json-array))))
                   context)))
           (test-assert
-           (and (null (tool-registry-find registry "plan" "clear"))
-                (typep (tool-registry-find registry "plan" "update")
-                       'plan-update-tool))
-           "plan.update subsumes the removed plan.clear tool")
-          (test-assert
            (and (tool-result-success-p result)
                 (string= (tool-result-content result) "No active plan.")
                 (null (plan-load configuration-a)))

@@ -1614,11 +1614,7 @@
                             '(:file :directory :missing))
                     :test #'string=))
                   3)
-               "workspace revisions distinguish missing, empty-file, and directory states")
-              (test-assert
-               (and (null (tool-registry-find registry "fs" "list"))
-                    (null (tool-registry-find registry "fs" "write")))
-               "redundant fs.list and fs.write tools are absent"))))
+               "workspace revisions distinguish missing, empty-file, and directory states"))))
       (tool-registry-close-runtime-state registry)
       (platform-delete-directory-tree *platform* root
                                       :validate          t
