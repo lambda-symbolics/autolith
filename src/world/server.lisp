@@ -239,26 +239,12 @@ the process could fork, and a new thread serves the application again."))
                                                                                           :documentation "The process's management evaluation endpoint, when enabled."))
                                                                                         (:documentation "The process hosting every open channel of one world."))
 
-(defclass world-endpoint (image-daemon:daemon-runtime)
+(defclass world-endpoint (recoverable-world-endpoint)
   ((server
     :initarg       :server
     :reader        world-endpoint-server
     :type          world-server
-    :documentation "The server answering at this endpoint.")
-   (failure-thread
-    :initform      nil
-    :accessor      world-endpoint-failure-thread
-    :documentation "The exact failed accept thread waiting for owner recovery.")
-   (failure
-    :initform      nil
-    :accessor      world-endpoint-failure
-    :type          (option serious-condition)
-    :documentation "The pending accept-loop failure, protected by the server lock.")
-   (repair-attempted-p
-    :initform      nil
-    :accessor      world-endpoint-repair-attempted-p
-    :type          boolean
-    :documentation "Whether this endpoint already used its one automatic transport repair."))
+    :documentation "The server answering at this endpoint."))
   (:documentation "The authenticated endpoint through which clients open channels."))
 
 (defmethod image-daemon:daemon-runtime-request-valid-p ((endpoint world-endpoint) request)
@@ -422,60 +408,104 @@ If omitted, use the token and creation time already recorded on SERVER."
           (world-server-created-at server) (image-daemon:daemon-runtime-created-at runtime)))
   nil)
 
-(-> world-server--endpoint-failed (world-server world-endpoint serious-condition) null)
+(-> world-server--endpoint-failed (world-server recoverable-world-endpoint serious-condition) null)
 (defun world-server--endpoint-failed (server runtime condition)
-  "Coalesce RUNTIME's failure and ask its owner to recover after this thread exits."
-  (when-let ((enqueue-p
-               (with-lock-held ((world-server-lock server))
-                 (unless (world-endpoint-failure runtime)
-                   (setf (world-endpoint-failure-thread runtime) (current-thread)
-                         (world-endpoint-failure runtime) condition)
-                   t))))
-    (world-server--enqueue server
-                           (lambda () (world-server--recover-endpoint server runtime))))
+  "Record the failed listener generation and wake SERVER to recover it."
+  (with-lock-held ((world-server-lock server))
+    (unless (world-endpoint-failure runtime)
+      (setf (world-endpoint-failure-thread runtime)    (current-thread)
+            (world-endpoint-failure runtime)           condition
+            (world-endpoint-failure-backtrace runtime) (application-safe-backtrace))
+      (sb-thread:condition-broadcast (world-server-condition-variable server))))
   nil)
 
-(-> world-server--recover-endpoint (world-server world-endpoint) null)
-(defun world-server--recover-endpoint (server runtime)
-  "Repair RUNTIME once after its failed accept thread exits, or stop SERVER normally.
+(defgeneric world-endpoint-current-p (runtime server)
+  (:documentation "Return true if RUNTIME is still an endpoint owned by SERVER."))
 
-The existing sweep revisits a handler still exiting; no recovery job requeues
-itself. A stopped, checkpointed or superseded endpoint is never restarted.
-Known timer failures are escalated without invoking their callbacks again."
-  (let ((failure nil))
+(defmethod world-endpoint-current-p ((runtime world-endpoint) (server world-server))
+  "Check ownership of the world control endpoint."
+  (eq runtime (world-server-runtime server)))
+
+(defmethod world-endpoint-current-p ((runtime channel-endpoint) (server world-server))
+  "Check ownership of a channel endpoint that is not closing."
+  (let* ((application (channel-endpoint-application runtime))
+         (host        (find application (world-server-hosts server) :key #'world-host-application))
+         (controller  (application-input-controller application)))
+    (and host
+         (eq server (application-world-server application))
+         (eq runtime (application-channel-endpoint application))
+         (not (member (world-host-state host) '(:closing :retired)))
+         (null (world-host-failure host))
+         (or (null (world-host-exit-reason host))
+             (eq (world-host-exit-reason host) ':checkpoint))
+         (not (channel-endpoint-closing-p runtime))
+         (not (and controller (application-input-controller-stopping-p controller)))
+         t)))
+
+(defgeneric world-endpoint-fatal (runtime server condition &key backtrace)
+  (:documentation "Report a fatal endpoint failure to the owner of RUNTIME."))
+
+(defmethod world-endpoint-fatal ((runtime world-endpoint) (server world-server) condition &key backtrace)
+  "Stop the world after a fatal control endpoint failure."
+  (declare (ignore runtime backtrace))
+  (handler-case
+      (format *error-output* "~&World endpoint failed: ~A~%" (condition--report-text condition))
+    (serious-condition ()
+      nil))
+  (world-server-stop
+   server :reason "the world's control endpoint failed; stopping the world so it can be opened again"))
+
+(defmethod world-endpoint-fatal ((runtime channel-endpoint) (server world-server) condition &key backtrace)
+  "End the channel after a fatal endpoint failure."
+  (declare (ignore server))
+  (world-terminal--endpoint-fatal runtime condition backtrace))
+
+(-> world-server--recover-endpoint (world-server recoverable-world-endpoint) null)
+(defun world-server--recover-endpoint (server runtime)
+  "Replace a failed listener or report a timer or replacement failure to the owner."
+  (let ((failure   nil)
+        (backtrace nil))
     (with-lock-held ((world-server-lock server))
       (let ((thread    (world-endpoint-failure-thread runtime))
             (condition (world-endpoint-failure runtime)))
         (when condition
           (cond
             ((or (world-server-stopping-p server)
-                 (not (eq runtime (world-server-runtime server)))
+                 (not (world-endpoint-current-p runtime server))
                  (image-daemon:daemon-runtime-stopping-p runtime)
                  (not (eq thread (image-daemon:daemon-runtime-server-thread runtime))))
-             (setf (world-endpoint-failure runtime) nil
-                   (world-endpoint-failure-thread runtime) nil))
+             (setf (world-endpoint-failure runtime)           nil
+                   (world-endpoint-failure-thread runtime)    nil
+                   (world-endpoint-failure-backtrace runtime) nil))
             ((or (world-server-checkpointing-p server)
                  (world-server-holding-p server)
                  (and thread (thread-alive-p thread)))
              nil)
             (t
-             (setf (world-endpoint-failure runtime) nil
-                   (world-endpoint-failure-thread runtime) nil)
-             (if (or (world-endpoint-repair-attempted-p runtime)
-                     (and (typep condition 'image-daemon:daemon-error)
-                          (eq (image-daemon:daemon-error-operation condition) ':timer)))
+             (setf backtrace                                 (world-endpoint-failure-backtrace runtime)
+                   (world-endpoint-failure runtime)           nil
+                   (world-endpoint-failure-thread runtime)    nil
+                   (world-endpoint-failure-backtrace runtime) nil)
+             (if (and (typep condition 'image-daemon:daemon-error)
+                      (eq (image-daemon:daemon-error-operation condition) ':timer))
                  (setf failure condition)
-                 (progn
-                   (setf (world-endpoint-repair-attempted-p runtime) t)
-                   (handler-case
-                       (image-daemon:daemon-runtime-start runtime)
-                     (error (condition)
-                       (setf failure condition))))))))))
+                 (handler-case (image-daemon:daemon-runtime-start runtime)
+                   (serious-condition (condition)
+                     (unless (image-daemon:daemon-runtime-stopping-p runtime)
+                       (setf failure   condition
+                             backtrace (application-safe-backtrace)))))))))))
     (when failure
-      (format *error-output* "~&World endpoint failed: ~A~%" failure)
-      (world-server-stop
-       server :reason "the world's control endpoint failed; stopping the world so it can be opened again")))
+      (world-endpoint-fatal runtime server failure :backtrace backtrace)))
   nil)
+
+(-> world-server--pending-endpoints (world-server) list)
+(defun world-server--pending-endpoints (server)
+  "Return the endpoints with a pending listener failure under the server lock."
+  (remove-if-not
+   (lambda (runtime) (and runtime (world-endpoint-failure runtime)))
+   (cons (world-server-runtime server)
+         (loop for host in (world-server-hosts server)
+               collect (application-channel-endpoint (world-host-application host))))))
 
 (-> world-server-run
     (configuration &key (:permission-mode (member :ask :auto :sandboxed :full-access)))
@@ -507,36 +537,43 @@ Return the launcher status a hosted session asked for, or NIL."
          (due  (+ (get-internal-real-time) interval))
          (sweep
           (lambda ()
-            (when-let ((runtime (world-server-runtime server)))
-              (world-server--recover-endpoint server runtime))
             (world-server--retire-unhealthy-hosts server)
             (world-server--unload-cold-hosts server)
             (world-server--maintain-shell-logs server)
             (setf due (+ (get-internal-real-time) interval)))))
     (loop
      (if-let ((job
-               (with-lock-held (lock)
-                 (loop
-                  (let ((left (- due (get-internal-real-time))))
-                    (cond
-                     ((and (deque-empty-p (world-server-jobs server))
-                           (world-server-stopping-p server)
-                           (null (world-server-hosts server))
-                           (notany
-                            (lambda (startup)
-                              (member (world-startup-phase startup)
-                                      '(:reserved :building)))
-                            (world-server-startups server)))
-                      (return nil))
-                     ((<= left 0)
-                      (return sweep))
-                     ((not (deque-empty-p (world-server-jobs server)))
-                      (return (deque-pop-front (world-server-jobs server))))
-                     (t
-                      (condition-wait (world-server-condition-variable server)
-                                      lock :timeout
-                                      (/ left
-                                         internal-time-units-per-second)))))))))
+                (with-lock-held (lock)
+                  (loop
+                   (let* ((left    (- due (get-internal-real-time)))
+                          (pending (unless (or (world-server-checkpointing-p server)
+                                               (world-server-holding-p server))
+                                     (world-server--pending-endpoints server)))
+                          (ready   (find-if-not (lambda (runtime)
+                                                  (when-let ((thread (world-endpoint-failure-thread runtime)))
+                                                    (thread-alive-p thread)))
+                                                pending)))
+                     (cond
+                       ((and (deque-empty-p (world-server-jobs server))
+                             (world-server-stopping-p server)
+                             (null (world-server-hosts server))
+                             (notany
+                              (lambda (startup)
+                                (member (world-startup-phase startup)
+                                        '(:reserved :building)))
+                              (world-server-startups server)))
+                        (return nil))
+                       ((<= left 0)
+                        (return sweep))
+                       (ready
+                        (return (lambda () (world-server--recover-endpoint server ready))))
+                       ((not (deque-empty-p (world-server-jobs server)))
+                        (return (deque-pop-front (world-server-jobs server))))
+                       (t
+                        ;; The failure hook returns before its listener exits.
+                        (let ((seconds (/ left internal-time-units-per-second)))
+                          (condition-wait (world-server-condition-variable server)
+                                          lock :timeout (if pending (min seconds 1/20) seconds))))))))))
          (funcall job)
          (return (world-server-exit-status server))))))
 
@@ -821,8 +858,8 @@ REASON, when given, is what each attached terminal is told before it lets go."
                                    (condition--report-text condition))
                              (when
                                  (and (typep condition 'world-error)
-                                      (eq (world-error-operation condition)
-                                          ':checkpointing))
+                                      (member (world-error-operation condition)
+                                              '(:checkpointing :recovering)))
                                (list :retry-p t)))))))
                (daemon-write-packet stream response))))
       (if (eq operation ':open)
@@ -1132,10 +1169,7 @@ started must not end one another terminal attached to since."
 
 (-> world-host-health (world-host) keyword)
 (defun world-host-health (host)
-  "Return HOST's availability without changing its reservation or lease.
-
-A checkpoint pause and endpoint publication before the input reader starts
-are legitimate lifecycle states, not evidence of owner failure."
+  "Return HOST's availability without changing its reservation or lease."
   (let* ((application (world-host-application host))
          (thread      (world-host-thread host))
          (controller  (application-input-controller application))
@@ -1155,6 +1189,12 @@ are legitimate lifecycle states, not evidence of owner failure."
        ':failed)
       ((or (eq (world-host-state host) ':starting) (null thread))
        ':starting)
+      ((and session controller
+            (not (channel-endpoint-closing-p session))
+            (not (image-daemon:daemon-runtime-stopping-p session))
+            (not (application-input-controller-stopping-p controller))
+            (image-daemon:daemon-runtime-failure session))
+       ':recovering)
       ((and (world-host-ready-p host) controller
             (not (application-input-controller-exit-requested-p controller))
             (null (application-input-controller-failure controller))
@@ -1177,8 +1217,14 @@ are legitimate lifecycle states, not evidence of owner failure."
 (defun world-server--check-host-opening (host)
   "Refuse unavailable retained owners instead of constructing competitors."
   (let ((health (world-host-health host)))
-    (when (member health '(:closing :failed :retired :paused))
-      (error 'world-error :operation (if (eq health ':paused) ':checkpointing ':closing)
+    (when (member health '(:closing :failed :retired :paused :recovering))
+      (error 'world-error :operation (case health
+                                       (:paused
+                                        ':checkpointing)
+                                       (:recovering
+                                        ':recovering)
+                                       (otherwise
+                                        ':closing))
                          :identifier (world-host-channel host)
                          :message    (format nil "Channel ~A is ~A; retry after its owner finishes the transition."
                                              (conversation-identifier-display (world-host-channel host))

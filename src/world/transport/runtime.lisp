@@ -1,6 +1,23 @@
 (in-package #:autolith)
 
-(defclass channel-endpoint (image-daemon:daemon-runtime)
+(defclass recoverable-world-endpoint (image-daemon:daemon-runtime)
+  ((failure-thread
+    :initform      nil
+    :accessor      world-endpoint-failure-thread
+    :documentation "The failed listener generation pending owner recovery.")
+   (failure
+    :initform      nil
+    :accessor      world-endpoint-failure
+    :type          (option serious-condition)
+    :documentation "The pending listener failure, protected by the server lock.")
+   (failure-backtrace
+    :initform      nil
+    :accessor      world-endpoint-failure-backtrace
+    :type          list
+    :documentation "The backtrace captured by the failed listener."))
+  (:documentation "A world endpoint whose listener can be replaced by the owner."))
+
+(defclass channel-endpoint (recoverable-world-endpoint)
           ((application :initarg :application :reader channel-endpoint-application :type
             application :documentation "The primary application exposed by this endpoint.")
            (paused-p :initform nil :accessor channel-endpoint-paused-p :type boolean
@@ -43,13 +60,17 @@ Durable catalogues and channel writer leases are shared across selections."
   (image-daemon:daemon-registry-pathname
    (world-channel-endpoint-directory configuration) session-id))
 
-(-> world-terminal--registry-record (channel-endpoint) list)
-(defun world-terminal--registry-record (session)
-  "Return SESSION's authenticated discovery record."
-  (append (image-daemon:daemon-runtime-record session)
+(defmethod image-daemon:daemon-runtime-record ((session channel-endpoint))
+  "Return the discovery record for SESSION, including the checkpoint reconnect identifier if set."
+  (append (call-next-method)
           (when (channel-endpoint-checkpoint-reconnect-id session)
             (list :checkpoint-reconnect-id
                   (channel-endpoint-checkpoint-reconnect-id session)))))
+
+(-> world-terminal--registry-record (channel-endpoint) list)
+(defun world-terminal--registry-record (session)
+  "Return the authenticated discovery record for SESSION."
+  (image-daemon:daemon-runtime-record session))
 
 (-> world-terminal--publish-registry (channel-endpoint) null)
 (defun world-terminal--publish-registry (session)
@@ -427,7 +448,6 @@ clients present it; one that already left costs nothing."
                (setf (client-hub-admitting-p hub) t)))
            (application-mission-schedules-host application session)
            (image-daemon:daemon-runtime-start session)
-           (world-terminal--publish-registry session)
            (setf completed-p t)
            session)
       (unless completed-p
@@ -436,18 +456,25 @@ clients present it; one that already left costs nothing."
 
 (-> world-terminal--endpoint-failed (channel-endpoint serious-condition) null)
 (defun world-terminal--endpoint-failed (session condition)
-  "End SESSION through its application's fatal path, preserving accepted input.
+  "Report the listener failure to the hosted owner or end the direct session."
+  (if-let ((server (application-world-server (channel-endpoint-application session))))
+    (world-server--endpoint-failed server session condition)
+    (world-terminal--endpoint-fatal session condition (application-safe-backtrace)))
+  nil)
 
-A failed scheduling callback is not retried. Other channels in the world
-continue independently while this application's normal teardown releases its lease."
+(-> world-terminal--endpoint-fatal (channel-endpoint serious-condition list) null)
+(defun world-terminal--endpoint-fatal (session condition backtrace)
+  "End SESSION through the application fatal path and preserve accepted input."
   (let* ((application (channel-endpoint-application session))
          (controller  (application-input-controller application)))
     (when (and (eq session (application-channel-endpoint application))
-               (not (image-daemon:daemon-runtime-stopping-p session)))
+               (not (image-daemon:daemon-runtime-stopping-p session))
+               (not (channel-endpoint-closing-p session)))
       (if controller
-          (application-input-controller--record-failure
-           controller condition (application-safe-backtrace))
-          (format *error-output* "~&World-Terminal endpoint failed: ~A~%" condition))))
+          (unless (application-input-controller-stopping-p controller)
+            (application-input-controller--record-failure controller condition backtrace))
+          (format *error-output* "~&World-Terminal endpoint failed: ~A~%"
+                  (condition--report-text condition)))))
   nil)
 
 (-> world-terminal--message-dispatch (application list) t)
@@ -517,19 +544,12 @@ Any other message is rejected, as a request this process has no use for."
 
 (-> world-terminal-stop (application) null)
 (defun world-terminal-stop (application)
-  "Attempt every endpoint cleanup stage, retaining ownership until all succeed."
-  (let ((session  (application-channel-endpoint application))
-        (failures nil))
-    (when session
-      (with-lock-held ((image-daemon:daemon-runtime-lock session))
-        (setf (image-daemon:daemon-runtime-stopping-p session) t))
-      (flet ((attempt (stage function)
-               (handler-case (funcall function)
-                 (error (condition) (push (list stage condition) failures)))))
-        (attempt ':runtime (lambda () (image-daemon:daemon-runtime-stop session)))
-        (attempt ':registry (lambda () (world-terminal--delete-owned-registry session))))
-      (when failures
-        (error 'world-terminal-stop-error :session session :failures (nreverse failures)))
-      (when (eq session (application-channel-endpoint application))
-        (setf (application-channel-endpoint application) nil))))
+  "Stop the channel endpoint and retain ownership if cleanup fails."
+  (when-let ((session (application-channel-endpoint application)))
+    (handler-case (image-daemon:daemon-runtime-stop session)
+      (error (condition)
+        (error 'world-terminal-stop-error :session session
+              :failures                            (list (list ':runtime condition)))))
+    (when (eq session (application-channel-endpoint application))
+      (setf (application-channel-endpoint application) nil)))
   nil)

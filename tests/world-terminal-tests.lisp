@@ -150,43 +150,33 @@ Each transcript event takes a line of its own."
 
 (-> test-world-terminal-stop-retry () null)
 (defun test-world-terminal-stop-retry ()
-  "Attempt independent cleanup stages and retain endpoint ownership for retry."
-  (dolist (failing-stage '(:runtime :registry))
-    (let* ((application (make-instance 'application))
-           (session     (make-instance 'channel-endpoint :application application))
-           (cause       (make-condition 'simple-error :format-control "cleanup failed"))
-           (attempts    nil)
-           (fail-p      t))
-      (setf (application-channel-endpoint application) session)
-      (flet ((attempt (stage)
-               (push stage attempts)
-               (when (and fail-p (eq stage failing-stage))
-                 (error cause))))
-        (test-call-with-function-replacements
-         (list (list 'image-daemon:daemon-runtime-stop
-                     (lambda (runtime) (declare (ignore runtime)) (attempt ':runtime)))
-               (list 'world-terminal--delete-owned-registry
-                     (lambda (runtime) (declare (ignore runtime)) (attempt ':registry))))
-         (lambda ()
-           (let ((failure (handler-case (world-terminal-stop application)
-                            (world-terminal-stop-error (condition) condition))))
-             (test-assert
-              (and (typep failure 'world-terminal-stop-error)
-                   (eq session (application-channel-endpoint application))
-                   (equal (reverse attempts) '(:runtime :registry))
-                   (eq cause (second (first (world-terminal-stop-error-failures failure)))))
-              "cleanup preserves the original stage failure, attempts every stage, and retains ownership"))
-           (setf fail-p nil attempts nil)
-           (world-terminal-stop application)
-           (test-assert
-            (and (null (application-channel-endpoint application))
-                 (equal (reverse attempts) '(:runtime :registry)))
-            "retry completes owned cleanup before releasing the application slot"))))))
+  "Test that failed endpoint cleanup retains ownership for a later stop."
+  (let* ((application (make-instance 'application))
+         (session     (make-instance 'channel-endpoint :application application))
+         (cause       (make-condition 'simple-error :format-control "Cleanup failed."))
+         (fail-p      t))
+    (setf (application-channel-endpoint application) session)
+    (test-call-with-function-replacements
+     (list (list 'image-daemon:daemon-runtime-stop
+                 (lambda (runtime)
+                   (test-assert (eq runtime session) "cleanup uses the owned endpoint")
+                   (when fail-p (error cause)))))
+     (lambda ()
+       (let ((failure (handler-case (world-terminal-stop application)
+                        (world-terminal-stop-error (condition) condition))))
+         (test-assert
+          (and (eq session (application-channel-endpoint application))
+               (eq cause (second (first (world-terminal-stop-error-failures failure)))))
+          "the original cleanup failure is reported without releasing ownership"))
+       (setf fail-p nil)
+       (world-terminal-stop application)
+       (test-assert (null (application-channel-endpoint application))
+                    "a successful retry releases the endpoint"))))
   nil)
 
 (-> test-world-terminal-endpoint-failure-isolation () null)
 (defun test-world-terminal-endpoint-failure-isolation ()
-  "Exercise the installed daemon failure hook, pending storage and hosted-channel isolation."
+  "Test channel listener repair and isolation if a timer fails."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry       (world-client-entry configuration))
@@ -202,18 +192,43 @@ Each transcript event takes a line of its own."
             (session     (application-channel-endpoint application))
             (healthy     (world-server-tests--session server healthy-id))
             (runtime     (world-server-runtime server))
-            (failure     (make-condition 'simple-error :format-control "Injected channel accept failure.")))
+            (pathname    (image-daemon:daemon-runtime-registry-pathname session))
+            (generation  (image-daemon:daemon-runtime-server-thread session))
+            (failure     (make-condition 'image-daemon:daemon-error
+                                         :message "Injected timer failure." :operation ':timer))
+            (record      nil))
        (with-lock-held ((image-daemon:daemon-runtime-lock session))
-         (setf (channel-endpoint-paused-p session) t))
+         (setf (channel-endpoint-paused-p session) t
+               (channel-endpoint-checkpoint-reconnect-id session) "checkpoint-reconnect")
+         (world-terminal--publish-registry session)
+         (setf record (image-daemon:daemon-registry-read pathname)))
        (test-assert (and (application-input-controller--enqueue controller ':message "accepted before failure")
                          (application-input-controller--enqueue controller ':lisp "(help)"))
                     "the paused channel accepts input before its endpoint fails")
-       (interrupt-thread (image-daemon:daemon-runtime-server-thread session)
-                         (lambda () (error failure)))
+       (world-server-tests--call-with-endpoint-failure
+        session nil (lambda (inject) (funcall inject)))
+       (test-assert
+        (task-tests--wait-until
+         (lambda ()
+           (and (not (eq generation (image-daemon:daemon-runtime-server-thread session)))
+                (image-daemon:daemon-runtime-live-p session))) 10)
+        "the world owner replaces the closed channel listener")
+       (let ((replacement (image-daemon:daemon-registry-read pathname))
+             (expected    (copy-list record)))
+         (setf (getf (rest expected) :port) (image-daemon:daemon-runtime-port session))
+         (test-assert
+          (and (eq session (application-channel-endpoint application))
+               (eq host (world-server--find-host server failed-id))
+               (equal replacement expected)
+               (equal (getf (rest replacement) :checkpoint-reconnect-id) "checkpoint-reconnect")
+               (eq (first (world-terminal-query-record (cons pathname replacement) ':status)) ':ok))
+          "the same channel serves requests from a discovery record with the new port and original metadata"))
+       (world-server-tests--call-with-endpoint-failure
+        session failure (lambda (inject) (funcall inject)))
        (test-assert
         (task-tests--wait-until
          (lambda () (null (world-server--find-host server failed-id))) 10)
-        "the installed endpoint hook ends its failed channel")
+        "the timer failure ends only its channel")
        (test-assert
         (and (eq (application-input-controller-failure controller) failure)
              (application-input-controller-failure-backtrace controller)

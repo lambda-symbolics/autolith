@@ -80,13 +80,9 @@
         (error "Channel ~A has no session." identifier))))
 
 (-> world-server-tests--call-with-endpoint-failure
-    (image-daemon:daemon-runtime serious-condition function) null)
+    (image-daemon:daemon-runtime (option serious-condition) function) null)
 (defun world-server-tests--call-with-endpoint-failure (runtime failure function)
-  "Call FUNCTION with an injector for FAILURE inside the captured accept handler.
-
-FUNCTION calls its injector within any hook-release cleanup it needs. A private
-connection wakes an existing wait before the synchronous failure is released.
-Keep the override until the captured thread exits; replacement threads pass through."
+  "Call FUNCTION with an injector that signals FAILURE or closes the listener."
   (let ((thread    (image-daemon:daemon-runtime-server-thread runtime))
         (connected (sb-thread:make-semaphore))
         (wait      (symbol-function 'image-daemon::daemon-runtime--wait-for-client)))
@@ -97,7 +93,12 @@ Keep the override until the captured thread exits; replacement threads pass thro
                        (progn
                          (unless (sb-thread:wait-on-semaphore connected :timeout 10)
                            (error "The failure injection connection was not established."))
-                         (error failure))
+                         (if failure
+                             (error failure)
+                             (progn
+                              (sb-bsd-sockets:socket-close
+                               (image-daemon:daemon-runtime-listener candidate))
+                              (funcall wait candidate))))
                        (funcall wait candidate)))))
      (lambda ()
        (flet ((inject ()
@@ -117,7 +118,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
 
 (-> test-world-server-endpoint-recovery () null)
 (defun test-world-server-endpoint-recovery ()
-  "Exercise one owner repair, accepted-client survival and repeated-failure shutdown."
+  "Test that repeated failures are repaired without losing accepted clients."
   (let ((*world-server-sweep-seconds* 1/100))
     (world-server-tests--call
      (lambda (server configuration root)
@@ -165,7 +166,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                                             "an exiting handler does not block unrelated owner jobs")
                                (test-assert
                                 (and (thread-alive-p thread)
-                                     (not (world-endpoint-repair-attempted-p runtime))
+                                     (eq thread (image-daemon:daemon-runtime-server-thread runtime))
                                      (eq (world-endpoint-failure runtime) failure))
                                 "duplicate reports coalesce and repair waits for the old handler to exit"))
                           (sb-thread:signal-semaphore release))))
@@ -175,12 +176,11 @@ Keep the override until the captured thread exits; replacement threads pass thro
                          (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
                            (and (not (eq thread replacement))
                                 (thread-alive-p replacement)))) 10)
-                      "the ordinary sweep starts a replacement accept thread")
+                      "the owner starts a replacement listener after the handler exits")
                      (test-assert
                       (and (eq runtime (world-server-runtime server))
                            (equal token (image-daemon:daemon-runtime-token runtime))
                            (eql created-at (image-daemon:daemon-runtime-created-at runtime))
-                           (world-endpoint-repair-attempted-p runtime)
                            (world-client-entry configuration))
                       "repair preserves runtime identity and discoverability")
                      (daemon-write-packet
@@ -191,16 +191,20 @@ Keep the override until the captured thread exits; replacement threads pass thro
                      (test-assert
                       (eq (first (world-terminal-query-record (world-client-entry configuration) ':status)) ':ok)
                       "new authenticated connections reach the repaired endpoint")
-                     (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
-                       (world-server-tests--call-with-endpoint-failure
-                        runtime failure
-                        (lambda (inject)
-                          (funcall inject)
-                          (test-assert
-                           (task-tests--wait-until (lambda () (world-server-stopping-p server)) 10)
-                           "a failure of the repaired accept thread requests normal world stop")
-                          (test-assert (eq replacement (image-daemon:daemon-runtime-server-thread runtime))
-                                       "the lifetime repair budget forbids a second transport restart")))))
+                     (loop for previous = (image-daemon:daemon-runtime-server-thread runtime)
+                           repeat 2
+                           do (world-server-tests--call-with-endpoint-failure
+                               runtime nil (lambda (inject) (funcall inject)))
+                              (test-assert
+                               (task-tests--wait-until
+                                (lambda ()
+                                  (and (not (eq previous (image-daemon:daemon-runtime-server-thread runtime)))
+                                       (image-daemon:daemon-runtime-live-p runtime))) 10)
+                               "each closed listener is replaced")
+                              (test-assert
+                               (eq (first (world-terminal-query-record
+                                           (world-client-entry configuration) ':status)) ':ok)
+                               "each replacement serves authenticated requests")))
                 (close stream)
                 (sb-bsd-sockets:socket-close socket)))))))))
   nil)
@@ -271,8 +275,8 @@ Keep the override until the captured thread exits; replacement threads pass thro
 
 (-> test-world-server-endpoint-escalation () null)
 (defun test-world-server-endpoint-escalation ()
-  "Exercise repeated, timer and repair failures through normal shutdown and lease release."
-  (dolist (mode '(:repeated :timer :repair))
+  "Test that timer and replacement failures stop the world and release its lease."
+  (dolist (mode '(:timer :repair))
     (with-test-configuration (configuration root)
       (let ((timer-calls 0))
         (world-server-tests--call-with-server
@@ -289,7 +293,6 @@ Keep the override until the captured thread exits; replacement threads pass thro
              (multiple-value-bind (connection seen await)
                  (test-world-terminal--present (world-server-tests--session server identifier))
                (declare (ignore seen))
-               (setf (world-endpoint-repair-attempted-p runtime) (eq mode ':repeated))
                (unwind-protect
                     (test-call-with-function-replacements
                      (list (list 'image-daemon:daemon-runtime-start
