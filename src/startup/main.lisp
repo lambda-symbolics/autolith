@@ -293,6 +293,21 @@ controller, only the update check and the endpoint are quiesced."
           (application-input-controller-call-with-reader-paused controller #'quiesced)
           (quiesced)))))
 
+(-> application--fatal-debugger-hook (application) function)
+(defun application--fatal-debugger-hook (application)
+  "Return a noninteractive fatal debugger hook for APPLICATION."
+  (let ((sb-ext:*invoke-debugger-hook* nil)
+        (sb-debug::*old-debugger-hook* nil))
+    (sb-ext:disable-debugger)
+    (let ((fallback sb-ext:*invoke-debugger-hook*))
+      (lambda (condition previous-hook)
+        (declare (ignore previous-hook))
+        (let ((sb-ext:*invoke-debugger-hook* fallback)
+              (*debugger-hook*               nil))
+          (funcall (fdefinition 'application-raise-fatal)
+                   application condition (application-safe-backtrace))
+          (funcall fallback condition fallback))))))
+
 (-> application-serve
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
@@ -449,13 +464,8 @@ controller's exit reason."
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer* quiescer)
-                          (*debugger-hook*
-                            (lambda (condition hook)
-                              (declare (ignore hook))
-                              (application-raise-fatal
-                               application
-                               condition
-                               (application-safe-backtrace)))))
+                          (sb-ext:*invoke-debugger-hook*
+                            (application--fatal-debugger-hook application)))
                       (handler-case
                           (loop
                             for work =

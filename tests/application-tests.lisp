@@ -3408,6 +3408,7 @@
                                        :application application
                                        :main-thread (current-thread)))
            (reported    nil)
+           (origin      nil)
            (failure     (lambda ()
                           (error "Injected fatal failure."))))
       (setf (application-input-controller application) controller)
@@ -3415,7 +3416,7 @@
            (test-call-with-function-replacements
             (list (list 'application-raise-fatal
                         (lambda (application condition backtrace)
-                          (declare (ignore application condition))
+                          (setf origin (list application condition))
                           (throw 'test-fatal backtrace))))
 
             (lambda ()
@@ -3424,6 +3425,23 @@
               (test-assert (and (consp reported) (every #'stringp reported)
                                 (find "ERROR" reported :test #'search))
                            "a fatal model failure keeps its signal frames")
+              (let* ((condition (make-condition 'sb-ext:timeout))
+                     (hooks     (list sb-ext:*invoke-debugger-hook*
+                                      (sb-ext:symbol-global-value 'sb-ext:*invoke-debugger-hook*)
+                                      (sb-ext:symbol-global-value 'sb-debug::*old-debugger-hook*)))
+                     (hook      (application--fatal-debugger-hook application)))
+                (let ((sb-ext:*invoke-debugger-hook* hook))
+                  (setf reported (catch 'test-fatal (invoke-debugger condition))))
+                (test-assert (and (eq (first origin) application)
+                                  (eq (second origin) condition)
+                                  (consp reported) (every #'stringp reported)
+                                  (find "INVOKE-DEBUGGER" reported :test #'search))
+                             "the owner debugger hook reports its condition and live failure frames")
+                (test-assert (equal hooks
+                                    (list sb-ext:*invoke-debugger-hook*
+                                          (sb-ext:symbol-global-value 'sb-ext:*invoke-debugger-hook*)
+                                          (sb-ext:symbol-global-value 'sb-debug::*old-debugger-hook*)))
+                             "the owner debugger hook preserves its surrounding hook bindings"))
               (multiple-value-bind (values status report)
                   (application-lisp-call-with-debugger failure :application application)
                 (declare (ignore values))

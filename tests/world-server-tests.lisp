@@ -2,6 +2,18 @@
 
 ;;;; -- World Server Tests --
 
+(define-condition world-server-test-interruption (serious-condition)
+  ((report-failure-p
+    :initarg       :report-failure-p
+    :initform      nil
+    :reader        world-server-test-report-failure-p
+    :documentation "True if printing this condition signals another interruption."))
+  (:documentation "A non-error serious condition injected into an owned world operation.")
+  (:report (lambda (condition stream)
+             (if (world-server-test-report-failure-p condition)
+                 (error 'world-server-test-interruption)
+                 (write-string "Synthetic world interruption." stream)))))
+
 (-> world-server-tests--stubs () list)
 (defun world-server-tests--stubs ()
   "Return the loader replacements keeping a test world server off private state."
@@ -1236,6 +1248,81 @@ the version the client says it is, when it says one."
 (defun test-world-server-hosting ()
   "Exercise hosted startup and reopening."
   (world-server-tests--hosting-lifecycle)
+  (world-server-tests--host-failure)
+  nil)
+
+(-> world-server-tests--host-failure () null)
+(defun world-server-tests--host-failure ()
+  "Contain serving and reporting interruptions while another channel responds."
+  (dolist (report-failure-p '(nil t))
+    (world-server-tests--call
+     (lambda (server configuration root)
+       (let* ((entry       (world-client-entry configuration))
+              (other-id    (getf (rest (world-server-tests--open
+                                        entry (world-tests--workspace root "healthy"))) :session-id))
+              (workspace   (uiop:ensure-directory-pathname
+                            (world-tests--workspace root "interrupted")))
+              (failure     (make-condition 'world-server-test-interruption
+                                           :report-failure-p report-failure-p))
+              (serve       (symbol-function 'application-serve))
+              (failed-host nil)
+              (lease       nil)
+              (observed    nil)
+              (connection  (test-world-terminal--present
+                            (world-server-tests--session server other-id))))
+         (unwind-protect
+              (progn
+                (test-call-with-function-replacements
+                 (list (list 'application-serve
+                             (lambda (application &rest arguments)
+                               (if (equal workspace (config :working-directory
+                                                            (application-configuration application)))
+                                   (progn
+                                     (setf failed-host (world-server--find-host
+                                                        server (conversation-identifier
+                                                                (application-conversation application)))
+                                           lease       (application-conversation-lease application))
+                                     (error failure))
+                                   (apply serve application arguments)))))
+                 (lambda ()
+                   (handler-case (world-server-open server (list :directory (namestring workspace)))
+                     (serious-condition (condition) (setf observed condition)))
+                   (test-assert (and failed-host
+                                     (task-tests--wait-until
+                                      (lambda () (eq (world-host-state failed-host) ':retired)) 20)
+                                     (eq (world-host-failure failed-host) failure)
+                                     (typep observed 'world-error)
+                                     (not (conversation-lease-held-p lease)))
+                                "the original serving interruption is available after cleanup releases the lease")))
+                (let ((output       (make-string-output-stream))
+                      (dispatch     (symbol-function 'world-server--dispatch))
+                      (write-packet (symbol-function 'daemon-write-packet)))
+                  (test-call-with-function-replacements
+                   (list (list 'world-server--dispatch
+                               (lambda (candidate operation arguments)
+                                 (if (and (eq candidate server) (eq operation ':open))
+                                     (error failure)
+                                     (funcall dispatch candidate operation arguments))))
+                         (list 'daemon-write-packet
+                               (lambda (stream packet)
+                                 (if (eq stream output)
+                                     (write packet :stream stream :readably t)
+                                     (funcall write-packet stream packet)))))
+                   (lambda ()
+                     (world-server--handle-request
+                      (world-server-runtime server)
+                      '(:world-terminal-request :operation :open :arguments nil)
+                      :stream output)))
+                  (let* ((*read-eval* nil)
+                         (reply       (read-from-string (get-output-stream-string output))))
+                    (test-assert (and (eq (first reply) ':error)
+                                      (stringp (getf (rest reply) :message))
+                                      (zerop (world-server-open-count server)))
+                                 "a dispatch interruption produces an error reply and releases open admission")))
+                (test-assert (and (getf (world-terminal-client-call connection ':state) :state)
+                                  (member other-id (world-server--channels-of entry) :test #'equal))
+                             "another hosted channel responds after serving and request failures"))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> world-server-tests--hosting-lifecycle () null)
@@ -1537,7 +1624,96 @@ the version the client says it is, when it says one."
                                 (= builds 1) (= leases 1)
                                 (= 1 (count identifier (world-server--hosts server) :key #'world-host-channel :test #'equal))
                                 (conversation-lease-held-p (application-conversation-lease (world-host-application host))))
-                           "all A waiters settle on one host, one construction owner and one live lease"))))))))
+                           "all A waiters settle on one host, one construction owner and one live lease"))))))
+     (world-server-tests--startup-failure server configuration root)))
+  nil)
+
+(-> world-server-tests--startup-failure (world-server configuration pathname) null)
+(defun world-server-tests--startup-failure (server configuration root)
+  "Settle shared construction and spawn failures while an existing channel responds."
+  (let* ((workspace  (uiop:ensure-directory-pathname
+                      (world-tests--workspace root "failed-construction")))
+         (other      (first (world-server--hosts server)))
+         (connection (test-world-terminal--present
+                      (world-server-tests--session server (world-host-channel other))))
+         (failure    (make-condition 'world-server-test-interruption))
+         (build      (symbol-function 'application--build))
+         (await      (symbol-function 'world-server--wait-startup))
+         (entered    (sb-thread:make-semaphore))
+         (release    (sb-thread:make-semaphore))
+         (waiting    (sb-thread:make-semaphore))
+         (results    (make-array 2 :initial-element nil))
+         (threads    nil)
+         (flights    nil)
+         (builds     0))
+    (unwind-protect
+         (progn
+           (test-call-with-function-replacements
+            (list
+             (list 'application--build
+                   (lambda (candidate &rest arguments)
+                     (when (equal workspace (config :working-directory candidate))
+                       (incf builds)
+                       (sb-thread:signal-semaphore entered)
+                       (sb-thread:wait-on-semaphore release)
+                       (error failure))
+                     (apply build candidate arguments)))
+             (list 'world-server--wait-startup
+                   (lambda (candidate startup)
+                    (with-lock-held ((world-server-lock server))
+                      (push startup flights))
+                    (sb-thread:signal-semaphore waiting)
+                    (funcall await candidate startup))))
+            (lambda ()
+              (labels ((open-on-thread (index)
+                         "Retain the settled construction result of one opener."
+                         (push (make-thread
+                                (lambda ()
+                                  (setf (aref results index)
+                                        (handler-case (world-server-open server (list :directory (namestring workspace)))
+                                          (serious-condition (condition) condition))))
+                                :name "Autolith interrupted startup waiter") threads)))
+                (unwind-protect
+                     (progn
+                       (open-on-thread 0)
+                       (test-assert (sb-thread:wait-on-semaphore entered :timeout 20)
+                                    "construction reaches the interruption latch")
+                       (open-on-thread 1)
+                       (test-assert (and (sb-thread:wait-on-semaphore waiting :timeout 20)
+                                         (sb-thread:wait-on-semaphore waiting :timeout 20))
+                                    "both openers wait on the reserved construction"))
+                  (sb-thread:signal-semaphore release)
+                  (dolist (thread threads) (join-thread thread)))
+                (let ((startup (first flights)))
+                  (join-thread (world-startup-thread startup))
+                  (test-assert (and (= builds 1) (= (length flights) 2)
+                                    (eq startup (second flights))
+                                    (every (lambda (result) (eq result failure)) results)
+                                    (eq (world-startup-failure startup) failure)
+                                    (eq (world-startup-phase startup) ':failed))
+                               "all construction waiters receive the original non-error interruption")))))
+           (let ((spawn    (symbol-function 'make-thread))
+                 (owner    (current-thread))
+                 (observed nil))
+             (test-call-with-function-replacements
+              (list (list 'make-thread
+                          (lambda (function &rest arguments)
+                            (when (eq (current-thread) owner) (error failure))
+                            (apply spawn function arguments))))
+              (lambda ()
+                (handler-case
+                    (world-server-open server (list :directory (world-tests--workspace root "failed-spawn")))
+                  (serious-condition (condition) (setf observed condition)))))
+             (let ((startup (first (world-server-startups server))))
+               (test-assert (and (eq observed failure)
+                                 (eq (world-startup-failure startup) failure)
+                                 (eq (world-startup-phase startup) ':failed))
+                            "a thread-spawn interruption is published as the original startup failure")))
+           (test-assert (and (getf (world-terminal-client-call connection ':state) :state)
+                             (world-host-live-p other)
+                             (world-client-entry configuration))
+                        "another channel and the world endpoint respond after startup interruptions"))
+      (world-terminal-client-close connection)))
   nil)
 
 (-> test-world-server-starting-host () null)
@@ -2202,7 +2378,7 @@ the version the client says it is, when it says one."
 
 (-> test-world-server-close-without-search-rebuild () null)
 (defun test-world-server-close-without-search-rebuild ()
-  "Release a stale-search conversation without archive work and retain its lease after a release error."
+  "Retain ownership after a cleanup interruption and retry without archive work."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry        (world-client-entry configuration))
@@ -2211,41 +2387,46 @@ the version the client says it is, when it says one."
             (application  (world-host-application host))
             (conversation (application-conversation application))
             (lease        (application-conversation-lease application))
+            (other-id     (getf (rest (world-server-tests--open entry (world-tests--workspace root "close-other"))) :session-id))
+            (connection   (test-world-terminal--present (world-server-tests--session server other-id)))
+            (failure      (make-condition 'world-server-test-interruption))
             (original     (symbol-function 'conversation-lease-release))
             (find-index   (symbol-function 'conversation-picker-search-find))
             (map-records  (symbol-function 'conversation--map-storage-records))
-            (queries 0) (scans 0))
+            (retry-p nil) (queries 0) (scans 0))
        (dotimes (index 128)
          (conversation-append-user-message conversation (format nil "~D ~A" index (make-string 1024 :initial-element #\x))))
        (conversation-picker-search-find (conversation-pathname conversation))
        (conversation-append-user-message conversation "invalidate the prewarmed search sidecar")
-       (test-call-with-function-replacements
-        (list (list 'conversation-lease-release
-                    (lambda (candidate)
-                      (if (eq candidate lease)
-                          (error 'world-error :operation ':close :message "Injected lease-release failure.")
-                          (funcall original candidate)))))
-        (lambda ()
-          (test-assert (handler-case (progn (application-release-conversation-lease application) nil)
-                         (world-error () t))
-                       "the real release error is observable")
-          (test-assert (and (eq lease (application-conversation-lease application))
-                            (conversation-lease-held-p lease))
-                       "a failed release retains the actual owned handle for retry")))
-       (test-call-with-function-replacements
-        (list (list 'conversation-picker-search-find
-                    (lambda (pathname) (incf queries) (funcall find-index pathname)))
-              (list 'conversation--map-storage-records
-                    (lambda (&rest arguments) (incf scans) (apply map-records arguments))))
-        (lambda ()
-          (let ((started (get-internal-real-time)))
-            (world-server-close server identifier)
-            (join-thread (world-host-thread host))
-            (test-assert (and (zerop queries) (zerop scans)
-                              (not (conversation-lease-held-p lease))
-                              (eq (world-host-state host) ':retired)
-                              (>= (- (get-internal-real-time) started) 0))
-                         "closing a large stale cache performs zero search queries or archive scans before releasing ownership")))))))
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list (list 'conversation-lease-release
+                         (lambda (candidate)
+                           (when (and (eq candidate lease) (not retry-p)) (error failure))
+                           (funcall original candidate)))
+                   (list 'conversation-picker-search-find
+                         (lambda (pathname) (incf queries) (funcall find-index pathname)))
+                   (list 'conversation--map-storage-records
+                         (lambda (&rest arguments) (incf scans) (apply map-records arguments))))
+             (lambda ()
+               (world-server-close server identifier)
+               (join-thread (world-host-thread host))
+               (test-assert (and (eq lease (application-conversation-lease application))
+                                 (conversation-lease-held-p lease)
+                                 (eq (world-host-state host) ':closing)
+                                 (eq (world-host-failure host) failure))
+                            "failed host cleanup retains its original condition and actual lease for retry")
+               (test-assert (and (getf (world-terminal-client-call connection ':state) :state)
+                                 (world-client-entry configuration))
+                            "another channel responds while the failed owner awaits retirement")
+               (setf retry-p t)
+               (world-server--close-host host)
+               (test-assert (and (zerop queries) (zerop scans)
+                                 (not (conversation-lease-held-p lease))
+                                 (eq (world-host-state host) ':retired))
+                            "retirement retries without search queries or archive scans and releases ownership")))
+         (setf retry-p t)
+         (world-terminal-client-close connection)))))
   nil)
 
 (-> test-world-server-close-ownership () null)

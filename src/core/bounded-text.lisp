@@ -28,6 +28,15 @@ prefix without a notice."
               (bounded-string-prefix-length (length text) :limit limit :uri uri)
             (concatenate 'string (subseq text 0 kept) notice))))))
 
+(-> condition--report-text (condition &key (:limit (integer 0 *))) string)
+(defun condition--report-text (condition &key (limit 1000))
+  "Return a bounded report of CONDITION, or a fallback if reporting fails."
+  (check-type limit (integer 0))
+  (handler-case
+      (bounded-string (princ-to-string condition) :limit limit)
+    (serious-condition ()
+      (bounded-string "Condition reporting failed." :limit limit))))
+
 (-> text--bounded-ellipsis (string integer &key (:ellipsis string) (:prefix-limit integer)) string)
 (defun text--bounded-ellipsis (text limit &key (ellipsis "...")
                                            (prefix-limit (max 0 (- limit (length ellipsis)))))

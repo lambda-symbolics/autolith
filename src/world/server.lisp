@@ -547,8 +547,12 @@ Return the launcher status a hosted session asked for, or NIL."
     (handler-case
         (when (shell-log-maintenance-step (world-server-configuration server))
           (world-server--enqueue server (lambda () (world-server--maintain-shell-logs server))))
-      (error (condition)
-        (format *error-output* "~&Shell log maintenance failed: ~A~%" condition))))
+      (serious-condition (condition)
+        (handler-case
+            (format *error-output* "~&Shell log maintenance failed: ~A~%"
+                    (condition--report-text condition))
+          (serious-condition ()
+            nil)))))
   nil)
 
 (-> world-server-wake-channel (world-server string) null)
@@ -590,12 +594,14 @@ channel that cannot be served keeps its message waiting."
                                                            channel)
                                                           :arguments
                                                           (list :switch-p t))))
-                            (error (condition)
-                                   (format *error-output*
-                                           "~&World server could not serve channel ~A for its message: ~A~%"
-                                           (conversation-identifier-display
-                                            identifier)
-                                           condition)))))
+                            (serious-condition (condition)
+                              (handler-case
+                                  (format *error-output*
+                                          "~&World server could not serve channel ~A for its message: ~A~%"
+                                          (conversation-identifier-display identifier)
+                                          (condition--report-text condition))
+                                (serious-condition ()
+                                  nil))))))
   nil)
 
 (-> world-server--host-idle-p (world-host) boolean)
@@ -628,7 +634,7 @@ The controller lock must be held if HOST has a controller."
     (dolist (host (world-server--hosts server))
       (when (world-host-closing-p host)
         (handler-case (world-server--close-host host)
-          (error (condition)
+          (serious-condition (condition)
             (unless (world-host-failure host)
               (setf (world-host-failure host) condition)))))))
   nil)
@@ -809,11 +815,10 @@ REASON, when given, is what each attached terminal is told before it lets go."
                                                                     (channel-loading-progress-description
                                                                      progress)))))))
                        (world-server--dispatch server operation arguments))
-                     (error (condition)
+                     (serious-condition (condition)
                             (append
                              (list :error :message
-                                   (bounded-string (princ-to-string condition)
-                                                   :limit 1000))
+                                   (condition--report-text condition))
                              (when
                                  (and (typep condition 'world-error)
                                       (eq (world-error-operation condition)
@@ -1519,7 +1524,7 @@ running keeps the mode it started under."
               (when (world-host-ready-p host)
                 (setf (getf (world-startup-timings startup) :endpoint-ready-at)
                       (get-internal-real-time)))))))
-       (error (condition)
+       (serious-condition (condition)
               (with-lock-held ((world-server-lock server))
                 (setf (world-startup-failure startup) condition
                       (world-startup-phase startup) ':failed))))
@@ -1601,7 +1606,7 @@ running keeps the mode it started under."
                    :name
                    (format nil "Autolith ~A"
                            (world-startup-identifier startup))))
-            (error (condition)
+            (serious-condition (condition)
                    (with-lock-held ((world-server-lock server))
                      (setf (world-startup-failure startup) condition
                            (world-startup-phase startup) ':failed)
@@ -1677,7 +1682,7 @@ forgotten again when no thread could start."
                                 (null (getf arguments :recovery-diagnosis))
                                 :boot-screen-p
                                 (not (getf arguments :switch-p))))
-     (error (condition)
+     (serious-condition (condition)
             (unwind-protect
                 (application--discard-connection-resources application
                                                            (application-tool-registry
@@ -1800,7 +1805,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                   ':finished)))
          (main-launcher-exit-condition (condition)
           (world-server--note-launcher-exit server host condition))
-         (error (condition)
+         (serious-condition (condition)
                 (world-server--note-failure server host condition)))
       (if (eq (world-host-exit-reason host) ':checkpoint)
           (with-lock-held ((world-server-lock server))
@@ -1809,7 +1814,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
             (sb-thread:condition-broadcast
              (world-server-condition-variable server)))
           (handler-case (world-server--release-host server host)
-            (error (condition)
+            (serious-condition (condition)
               (world-server--note-failure server host condition))))))
   nil)
 
@@ -1839,9 +1844,12 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
       (setf (world-host-failure host) condition))
     (setf (world-host-exit-reason host) ':failed)
     (sb-thread:condition-broadcast (world-server-condition-variable server)))
-  (format *error-output* "~&Channel ~A ended: ~A~%"
-          (conversation-identifier-display (world-host-channel host))
-          condition)
+  (handler-case
+      (format *error-output* "~&Channel ~A ended: ~A~%"
+              (conversation-identifier-display (world-host-channel host))
+              (condition--report-text condition))
+    (serious-condition ()
+      nil))
   nil)
 
 (-> world-server--note-launcher-exit (world-server world-host condition) null)
@@ -1868,7 +1876,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
         (application-assignment-finish application :stop-p t)
         (flet ((attempt (function)
                  (handler-case (funcall function)
-                   (error (condition) (push condition failures)))))
+                   (serious-condition (condition) (push condition failures)))))
           (attempt (lambda () (world-terminal-stop application)))
          (attempt (lambda () (tool-registry-close-runtime-state (application-tool-registry application))))
          (attempt (lambda () (application-disconnect-task-presentation application)))
@@ -1911,9 +1919,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
         ((world-host-failure host)
          (error 'world-error :message
                 (format nil "The channel failed: ~A"
-                        (bounded-string
-                         (princ-to-string (world-host-failure host)) :limit
-                         400))
+                        (condition--report-text (world-host-failure host) :limit 400))
                 :operation ':open :identifier (world-host-channel host)))
         ((world-host-live-p host)
          (return host))
