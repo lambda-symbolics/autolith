@@ -322,6 +322,9 @@ preserving the calling thread's provider bindings and authorization callbacks."
             (cond
               ((eq (getf snapshot :state) ':completed)
                (getf snapshot :result))
+              ((typep terminal-condition 'sb-sys:deadline-timeout)
+               ;; The inline job is settled, but the caller owns this native deadline.
+               (error terminal-condition))
               ((eq (getf snapshot :cancellation-reason) ':timeout)
                (if (and timeout (or (not milliseconds) (< timeout milliseconds)))
                    (mission--reject ':gate-timeout "Gate execution reached its deadline.")
