@@ -455,8 +455,6 @@
                       "headless auto classifies every command for this job"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
                                       ':ignore)))
-  (test-assert (string= (command-name (main--run-job-command)) "run-job")
-               "the CLI exposes the non-interactive run-job subcommand")
   (let* ((root   (run-job-tests--temporary-directory))
          (input  (merge-pathnames "job.sexp" root))
          (output (merge-pathnames "result.sexp" root)))

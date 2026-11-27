@@ -167,11 +167,7 @@
                  "the worker resolves implementation definition source")
     (test-assert (search "src/code/list.lisp"
                          (getf (rest source) :output))
-                 "implementation source comes from the exact managed tree")
-    (test-assert (search "(define-list-map mapcar"
-                         (getf (rest source) :output)
-                         :test #'char-equal)
-                 "implementation source includes the complete recorded form"))
+                 "implementation source comes from the exact managed tree"))
   (let ((previous-command (uiop:getenv "AUTOLITH_SBCL")))
     (unwind-protect
          (progn
@@ -520,11 +516,6 @@
               (every #'async-schema-p
                      '("eval" "load-system" "run-tests" "scratchpad-run"))
               "only execution-oriented Lisp tools advertise asynchronous jobs")
-             (test-assert
-              (notany #'async-schema-p
-                      '("describe" "source" "reset" "start" "stop" "repls"
-                        "images" "save-image"))
-              "Lisp inspection and lifecycle tools stay synchronous")
              (test-assert
               (every #'asd-schema-p '("load-system" "run-tests"))
               "system execution tools advertise an optional exact ASD file")

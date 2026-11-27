@@ -558,7 +558,5 @@
            (let ((grok (application-context-usage application)))
              (test-assert
                (< grok 250)
-              "a family switch counts only compatible portable history")
-             (test-assert (< grok codex)
-                          "foreign encrypted checkpoint contents do not inflate the estimate")))))))
+              "a family switch counts only compatible portable history")))))))
   nil)

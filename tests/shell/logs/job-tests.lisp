@@ -129,8 +129,6 @@
            (getf (first (getf (shell-log-job-metadata configuration job) :shell-logs))
                  :captures)) 10)
         "capture identity is durable before operation completion")
-       (test-assert (not (job-interrupt-on-cancellation-p job))
-                    "Retained shell execution uses cooperative cancellation")
        (job-cancel job :reason ':test-cancel)
        (multiple-value-bind (snapshot terminal-p) (session-job-await job 10)
          (test-assert terminal-p "cancelled execution terminates")

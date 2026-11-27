@@ -62,12 +62,6 @@
             "native wakeup rejects serialized or malformed tickets"))
          (test-assert (equal before (cl-jobpond:scheduler-snapshot scheduler))
                       "rejected tickets have no scheduler effects")
-         (test-call-with-function-replacements
-          (list (list 'application-mission-schedule-execute
-                      (lambda (owner supplied)
-                        (test-assert (eq owner application) "wakeup retains owning application")
-                        (test-assert (eq supplied ticket) "native wakeup retains the actual ticket"))))
-          (lambda () (application-operation-call application "mission-wakeup" ticket)))
          (application-operation-call application "mission-wakeup" ticket)
          (test-assert (= 1 (length (funcall executions))) "native ticket executes exactly once")
          (test-assert

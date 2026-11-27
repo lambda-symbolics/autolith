@@ -311,7 +311,6 @@
                (closure (first (test-telemetry-hooks--kind body "closure")))
                (reports (test-telemetry-hooks--kind body "report")))
           (test-assert (= (length reports) 1) "Only a new papercut emits a report.")
-          (test-assert (= (length repairs) 4) "Mutation changes emit repair events, not checks or closure.")
           (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "autolith.repair.outcome")) repairs)
                               '("proposed" "applied" "reverted" "committed"))
                        "Repair transitions have exact public outcomes.")

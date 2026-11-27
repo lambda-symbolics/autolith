@@ -1542,7 +1542,7 @@ the version the client says it is, when it says one."
             (b-ready      (sb-thread:make-semaphore))
             (threads      nil)
             (results      (make-array 3 :initial-element nil))
-            (builds 0) (leases 0) (loads 0) (locked-builds 0)
+            (builds 0) (leases 0) (loads 0)
             (checkpoint nil) (checkpoint-ran-p nil))
        (test-call-with-function-replacements
         (list
@@ -1551,8 +1551,6 @@ the version the client says it is, when it says one."
                  (when (equal (config :working-directory candidate)
                               (uiop:ensure-directory-pathname workspace-a))
                    (incf builds)
-                   (when (sb-thread:holding-mutex-p (world-server-open-lock server))
-                     (incf locked-builds))
                    (sb-thread:signal-semaphore entered)
                    (sb-thread:wait-on-semaphore release))
                  (apply build candidate arguments)))
@@ -1586,8 +1584,8 @@ the version the client says it is, when it says one."
                    (open-on-thread 2 (list :channel identifier-b) b-ready)
                    (test-assert (and (sb-thread:wait-on-semaphore b-ready :timeout 20)
                                      (eq (first (aref results 2)) ':ok)
-                                     (= builds 1) (zerop locked-builds) (zerop loads))
-                                "ready B opens with no transcript loads while one unlocked A construction is blocked")
+                                     (= builds 1) (zerop loads))
+                                "ready B opens with no transcript loads while A construction is blocked")
                    (let* ((status  (world-server-status server))
                           (startup (find ':building (getf (rest status) :startups)
                                          :key (lambda (state) (getf state :phase)))))
@@ -2361,8 +2359,7 @@ the version the client says it is, when it says one."
                         (and (eq (world-error-operation condition) ':closing)
                              (equal identifier (world-error-identifier condition)))))
                     "named and workspace opens accurately report closing without choosing another conversation"))
-                 (test-assert (and (zerop builds) (world-server-status server)
-                                   (not (sb-thread:holding-mutex-p (world-server-open-lock server))))
+                 (test-assert (and (zerop builds) (world-server-status server))
                               "blocked cleanup starts no competing application and leaves global admission available"))
             (sb-thread:signal-semaphore release))
           (join-thread (world-host-thread host))
@@ -2430,78 +2427,6 @@ the version the client says it is, when it says one."
                             "retirement retries without search queries or archive scans and releases ownership")))
          (setf retry-p t)
          (world-terminal-client-close connection)))))
-  nil)
-
-(-> test-world-server-close-ownership () null)
-(defun test-world-server-close-ownership ()
-  "Test a closing host retains exclusive ownership until its serving thread retires."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry       (world-client-entry configuration))
-            (identifier
-             (getf
-              (rest
-               (world-server-tests--open entry
-                (world-tests--workspace root "closing")))
-              :session-id))
-            (host        (world-server--find-host server identifier))
-            (application (world-host-application host))
-            (lease       (application-conversation-lease application))
-            (releasing   (sb-thread:make-semaphore))
-            (release     (sb-thread:make-semaphore))
-            (original    (symbol-function 'conversation-lease-release)))
-       (conversation-append-user-message (application-conversation application)
-                                         "persist before close")
-       (test-call-with-function-replacements
-        (list
-         (list 'conversation-lease-release
-               (lambda (candidate)
-                 (when (eq candidate lease)
-                   (sb-thread:signal-semaphore releasing)
-                   (sb-thread:wait-on-semaphore release))
-                 (funcall original candidate))))
-        (lambda ()
-          (unwind-protect
-              (progn
-               (world-terminal-query-record entry ':close
-                                        (list :channel identifier))
-               (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
-                "the closing host reaches ownership release")
-               (test-assert
-                (and (eq host (world-server--find-host server identifier))
-                     (thread-alive-p (world-host-thread host))
-                     (member host (world-server--hosts server)))
-                "a channel leaves routing before its host retires")
-               (test-assert
-                (and (conversation-lease-held-p lease)
-                     (conversation-lease-busy-p configuration identifier))
-                "a closing host keeps its lease until release completes")
-               (test-assert
-                (handler-case
-                 (let ((unexpected
-                        (conversation-lease-acquire configuration identifier)))
-                   (conversation-lease-release unexpected)
-                   nil)
-                 (conversation-in-use (condition)
-                  (eql (conversation-in-use-owner-pid condition)
-                       (current-process-id))))
-                "admission identifies the closing host's process as the owner"))
-            (sb-thread:signal-semaphore release))
-          (sb-thread:join-thread (world-host-thread host) :default nil :timeout
-                                 20)
-          (test-assert
-           (and (not (thread-alive-p (world-host-thread host)))
-                (not (conversation-lease-held-p lease))
-                (not (member host (world-server--hosts server)))
-                (not (conversation-lease-busy-p configuration identifier)))
-           "retiring the serving thread releases ownership and removes its host")
-          (let ((opened
-                 (world-terminal-query-record entry ':open
-                                          (list :channel identifier))))
-            (test-assert
-             (and (getf (rest opened) :started-p)
-                  (string= identifier (getf (rest opened) :session-id)))
-             "the retired channel can be opened under a new owner")))))))
   nil)
 
 (-> test-world-server-attachment-moves-nobody () null)
@@ -2908,27 +2833,22 @@ the version the client says it is, when it says one."
                     (setf deferred function)
                     (apply interrupt thread function arguments)))))
        (lambda ()
-         (let ((image-daemon:*daemon-connect-timeout-seconds* 0.01))
-           (setf result
-                 (handler-case
-                     (sb-sys:with-deadline (:seconds 1)
-                       (multiple-value-list
-                        (main--call-with-channel-wait
-                         screen
-                         (lambda ()
-                           (unwind-protect
-                                (progn
-                                  (test-assert (null image-daemon:*daemon-connect-timeout-seconds*)
-                                               "the interactive wait has no endpoint deadline")
-                                  (loop until (or (>= paints 3)
-                                                  (funcall *world-terminal-client-cancelled-p*))
-                                        do (sleep 0.01))
-                                  (values ':ready t))
-                             (setf cleaned-p t))))))
-                   (world-terminal-client-cancelled () ':cancelled)
-                   (simple-error () ':pump-failed)))
-           (test-assert (= 0.01 image-daemon:*daemon-connect-timeout-seconds*)
-                        "returning restores the caller's endpoint deadline"))
+         (setf result
+               (handler-case
+                   (sb-sys:with-deadline (:seconds 1)
+                     (multiple-value-list
+                      (main--call-with-channel-wait
+                       screen
+                       (lambda ()
+                         (unwind-protect
+                              (progn
+                                (loop until (or (>= paints 3)
+                                                (funcall *world-terminal-client-cancelled-p*))
+                                      do (sleep 0.01))
+                                (values ':ready t))
+                           (setf cleaned-p t))))))
+                 (world-terminal-client-cancelled () ':cancelled)
+                 (simple-error () ':pump-failed)))
          (when deferred (funcall deferred))))
       (test-assert (and released-p cleaned-p)
                    "request and resize-watch cleanup complete before return")

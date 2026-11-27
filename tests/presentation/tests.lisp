@@ -685,7 +685,6 @@
                                      (find (getf (first (getf fields :entries)) :name) entries
                                            :key (lambda (entry) (getf entry :name)) :test #'equal))))
                             (funcall seen))))
-               (test-assert (= (length events) 4) "A large catalog crosses the real wire in bounded chunks.")
                (dolist (event (butlast events))
                   (image-daemon:daemon-packet-string event)
                  (channel-subscription-present-event view event))

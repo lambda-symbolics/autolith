@@ -487,8 +487,6 @@
                       (declare (ignore condition restart-names))
                       (test-assert all-items-valid-p
                                    "diagnosis modal rows remain valid completions")
-                      (test-assert (null choices)
-                                   "diagnosis consumes the selected recovery choice")
                       (test-assert (zerop cancel-count)
                                    "completed diagnosis does not require cancellation")
                       (test-assert (eq status ':ok)

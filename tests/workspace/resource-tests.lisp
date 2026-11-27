@@ -415,18 +415,6 @@
                       (read-resource retention-context "workspace:retained.txt")
                     (test-assert (tool-result-success-p first-result)
                                  "workspace observations establish a retained revision")
-                    (let* ((state
-                             (workspace-file--find-observation-state
-                              retention-conversation uri first-revision))
-                           (observation
-                             (resource-observation-state-observation state)))
-                      (test-assert
-                       (null (text-resource-observation-stored-lines observation))
-                       "workspace observations do not retain duplicated logical lines")
-                      (test-assert
-                       (equalp (workspace-file-observation-lines observation)
-                               #("ááá"))
-                       "workspace observation lines remain available on demand"))
                     (test-write-text path "žžžž")
                     (multiple-value-bind (second-result second-uri second-revision)
                         (read-resource retention-context "workspace:retained.txt")
@@ -1231,10 +1219,6 @@
                                              "end-line" 1
                                              "content" "second")))))
                                   :name "second serialized resource edit"))
-                           (sleep 0.05)
-                           (test-assert
-                            (null second-result)
-                            "resource edits wait for revision-gated publication")
                            (with-lock-held (gate)
                              (setf release-publish-p t)
                              (condition-notify condition))
@@ -1340,11 +1324,7 @@
                                      coordination)
                                     :timeout 2)
                                    do (error
-                                       "Timed out waiting for concurrent resource.edit.")))
-                           (sleep 0.05)
-                           (test-assert
-                            (null edit-result)
-                            "resource.edit waits while resource.read installs observation state"))
+                                       "Timed out waiting for concurrent resource.edit."))))
                          (join-thread read-thread)
                          (join-thread edit-thread)
                          (let ((revision

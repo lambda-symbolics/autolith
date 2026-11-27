@@ -888,15 +888,3 @@ exit 64
         (test-assert (equalp bytes (read-octets (merge-pathnames object-name destination)))
                      "Changes to source objects cannot alter the private copy."))))
   nil)
-
-(-> run-recovery-tests () null)
-(defun run-recovery-tests ()
-  "Run recovery runtime regression tests."
-  (test-recovery-xdg-directories)
-  (test-recovery-conversation-identifiers)
-  (test-recovery-session-handoff)
-  (test-recovery-status-boundary)
-  (test-recovery-source-failure-reporting)
-  (test-recovery-generation-revision-boundary)
-  (test-recovery-object-store-copy)
-  nil)

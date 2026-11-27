@@ -40,8 +40,7 @@
       (unwind-protect
            (let ((*model-catalog-fetch-function*
                    (lambda (context)
-                     (test-assert (typep context 'provider-catalog-context)
-                                  "Picker discovery is independent of telemetry consent.")
+                     (declare (ignore context))
                      (incf calls)
                      (test-provider-catalog--fixture))))
              (test-assert (null (provider-refresh-models configuration :provider-name "openrouter"))

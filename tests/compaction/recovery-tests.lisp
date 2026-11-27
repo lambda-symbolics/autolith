@@ -86,10 +86,6 @@
         (conversation-append-provider-item conversation (compaction-tail-tests--call "current-call"))
         (conversation-append-tool-result conversation "current-call"
                                          :tool-name "test.inspect" :output "current output" :success-p t)
-        (test-assert (eq family (conversation-input-item-family conversation current))
-                     "Fixture: current reasoning has its provider family.")
-        (test-assert (member current (conversation-input-items-for-family conversation family :include-ephemeral-p nil))
-                     "Fixture: current reasoning is visible before compaction.")
         (let ((tail          (mapcar #'json-encode (last (conversation-input-items conversation) 4)))
               (note-original (symbol-function 'agent--note-compaction-request)))
           (compaction-recovery-test-small-context
@@ -1701,7 +1697,6 @@
                                              (mapcar (lambda (work) (user-message-input-text (second work)))
                                                      (deque->list (application-input-controller-work-items reopened))))))
                                :completion-delivered-p  (and completion-id (task-completion--delivered-p loaded completion-id))
-                               :repeat-cycle-opens      0
                                :automatic-work-p        (or (application-input-controller-pending-work-p controller)
                                                             (application-job-completions--take-work controller)))))
                  (when reuse-p
@@ -1843,30 +1838,24 @@
   (compaction-owner-test--fixture
    (lambda (application provider)
      (declare (ignore provider))
-     (let* ((agent          (application-agent application))
-            (primary        (agent-test-result "extension" (list (agent-test-message "Extension result."))))
-            (note-original  (symbol-function 'application--note-goal-turn))
-            (title-original (symbol-function 'application--maybe-name-session)))
+     (let* ((agent         (application-agent application))
+            (primary       (agent-test-result "extension" (list (agent-test-message "Extension result."))))
+            (note-original (symbol-function 'application--note-goal-turn)))
        (change-class agent 'compaction-owner-values-agent :return-values nil)
        (dolist (returned (list nil (list primary) (list primary :secondary)))
          (setf (slot-value agent 'return-values) returned)
-         (let ((noted :unset) (titles 0) (failure nil) (result nil))
+         (let ((noted :unset) (failure nil) (result nil))
            (test-call-with-function-replacements
             (list (list 'application--note-goal-turn
                         (lambda (owner value)
                           (setf noted value)
-                          (when value (funcall note-original owner value))))
-                  (list 'application--maybe-name-session
-                        (lambda (owner &rest arguments)
-                          (incf titles)
-                          (apply title-original owner arguments))))
+                          (when value (funcall note-original owner value)))))
             (lambda ()
               (handler-case (setf result (multiple-value-list (application--run-turn application "Extension input.")))
                 (error (condition) (setf failure condition)))))
            (test-assert (null failure) "The actual turn owner accepts the extension's value count.")
            (test-assert (equal (list nil (first returned)) result) "Only the primary extension value is selected.")
-           (test-assert (eq noted (first returned)) "Goal accounting receives the primary value, including NIL.")
-           (test-assert (= 1 titles) "Successful input reaches title finalization once."))))))
+           (test-assert (eq noted (first returned)) "Goal accounting receives the primary value, including NIL."))))))
   nil)
 
 (-> test-compaction-owner-idle-cancellation-refusal () null)

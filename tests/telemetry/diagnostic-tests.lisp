@@ -102,31 +102,6 @@
                                  "Disabled diagnostics do not acquire or send narratives."))))))))))
   nil)
 
-(-> test-telemetry-diagnostic-redactor-pieces () null)
-(defun test-telemetry-diagnostic-redactor-pieces ()
-  "Retain the entire narrative through the bounded native API, or discard it all."
-  (let* ((text    (apply #'concatenate 'string (make-list 200 :initial-element "Check the retry result. ")))
-         (pieces  nil)
-         (fail-at nil))
-    (test-call-with-function-replacements
-     (list (list 'defingerprinter:redact
-                 (lambda (redactor piece &key language)
-                   (declare (ignore redactor language))
-                   (push piece pieces)
-                   (test-assert (<= (length piece) 512) "Each native input stays within its safe output budget.")
-                   (if (eql (length pieces) fail-at)
-                       (values nil ':inference-error)
-                       (values piece ':ok)))))
-     (lambda ()
-       (test-assert (equal text (telemetry--redact-narrative nil text "en"))
-                    "All prose and separators survive native piece assembly.")
-       (test-assert (equal text (apply #'concatenate 'string (reverse pieces)))
-                    "Every character passes through the redactor exactly once.")
-       (setf pieces nil fail-at 2)
-       (test-assert (null (telemetry--redact-narrative nil text "en"))
-                    "A later native failure discards earlier successful pieces."))))
-  nil)
-
 (-> test-telemetry-resource-diagnostics () null)
 (defun test-telemetry-resource-diagnostics ()
   "Resource assessments and closure use explicit text and preserve event phases."

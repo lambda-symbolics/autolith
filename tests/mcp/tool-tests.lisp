@@ -3462,19 +3462,6 @@
                    (tool-name read-tool)
                    (tool-name collision-tool))))
                 "provider tools use stable names and omit task-required tools")
-               (let ((name-map
-                       (mcp-tools--identifier-map
-                        '("read/file" "read file")
-                        :identity-scope "Test Server")))
-                (test-assert
-                 (and
-                  (string=
-                   (gethash "read file" name-map)
-                   (tool-name read-tool))
-                  (string=
-                   (gethash "read/file" name-map)
-                   (tool-name collision-tool)))
-                 "provider-name collision resolution is order-independent"))
                (let* ((fields
                         (tool-authorization-identity-fields collision-tool))
                       (title

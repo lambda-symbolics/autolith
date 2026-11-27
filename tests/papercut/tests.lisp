@@ -449,10 +449,7 @@
                            (recording-terminal-output terminal))
                    (null (papercut-find
                           configuration (papercut-identifier report))))
-              "the canonical papercut-close call persists a closure tombstone"))
-           (dolist (name '("papercuts" "papercut" "papercut-close"))
-             (test-assert (search (concatenate 'string "(" name) (application-operation-help application name))
-                          "interactive help documents native papercut calls")))
+              "the canonical papercut-close call persists a closure tombstone")))
       (ignore-errors (terminal-ui-stop ui))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

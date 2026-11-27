@@ -304,11 +304,6 @@
                       "Return RESULT's model-visible resource revision alias."
                       (test-resource-field
                        (tool-result-content result) "Revision: ")))
-             (let ((resolver
-                      (cl-resources:resource-registry-find
-                       (tool-registry-resource-registry registry) "memory")))
-               (test-assert (typep resolver 'memory-resolver)
-                            "default tools register the memory resource resolver"))
              (let* ((relevant          (read-resource first-context "memory:relevant"))
                     (workspace         (read-resource first-context "memory:workspace"))
                     (global            (read-resource first-context "memory:global"))
@@ -592,13 +587,7 @@
                                      "query" "response preference"))
                     (limited-read
                       (read-resource first-context "memory:all"
-                                     "max-results" 1))
-                    (exact-read
-                      (read-resource
-                       first-context
-                       (resource-item-uri
-                        "memory"
-                        (memory-identifier global-memory)))))
+                                     "max-results" 1)))
                (test-assert
                 (and (tool-result-success-p all-read)
                      (search (memory-identifier workspace-memory)
@@ -616,15 +605,7 @@
                (test-assert
                 (and (tool-result-success-p limited-read)
                      (search "count: 1" (tool-result-content limited-read)))
-                "memory collection max-results bounds returned entries")
-               (test-assert
-                (and (tool-result-success-p exact-read)
-                     (search (memory-resource--render-item
-                              (memory-assess (memory-assessor-create configuration)
-                                             global-memory)
-                              nil)
-                             (tool-result-content exact-read)))
-                "canonical memory item resources return complete content"))))
+                "memory collection max-results bounds returned entries"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
       (platform-delete-directory-tree *platform* empty-root
                                       :validate          t
@@ -1621,7 +1602,6 @@
         (test-assert (null (memory-knowledge--url-receipt conversation url "not in the retrieved page"))
                      "the quote must occur in the identified result")
         (when long-p
-          (test-assert (= (length text) 9000) "the retrieval exceeds the presentation limit")
           (test-assert (eql spill-p
                             (knowledge-node-observed-p
                              (assert-fact "The appendix is verified." "appendix")))

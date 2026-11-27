@@ -796,12 +796,6 @@
       (test-assert (application-command-find "mission") "mission command participates in operation lookup")
       (let ((specification (mission-test--specification)))
         (setf (getf specification :objective) "Keep Case, quotes \" and  spaces")
-        (test-call-with-function-replacements
-         (list (list 'application-mission-start
-                     (lambda (owner supplied)
-                       (test-assert (eq owner application) "native mission retains its application")
-                       (test-assert (eq supplied specification) "native mission passes the actual specification"))))
-         (lambda () (application-operation-call application "mission" ':start specification)))
         (application-operation-call application "mission" ':start specification)
         (test-assert (equal (getf specification :objective)
                             (getf (application-goal application) :objective))

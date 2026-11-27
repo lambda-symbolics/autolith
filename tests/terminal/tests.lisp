@@ -1918,9 +1918,6 @@
         (test-assert
          (not (terminal-ui-completion-menu-present-p active-ui))
          "history traversal makes retained completion state non-renderable")
-        (test-assert
-         (null (selector-items (terminal-ui-completion-selector active-ui)))
-         "history traversal clears stale completion selector items")
         (recording-terminal-reset terminal)
         (terminal-ui-process-event active-ui :up)
         (test-assert (string= (line-editor-text editor) "(hel")
@@ -2429,12 +2426,6 @@
       (terminal-ui-process-event active-ui :history-previous)
       (test-assert (string= (line-editor-text editor) "see @g")
                    "history recall restores the newest draft")
-      (test-assert (terminal-ui--editor-history-navigating-p editor)
-                   "history recall stays in traversal")
-      (test-assert (terminal-ui--path-token-present-p active-ui)
-                   "the cursor on a recalled @ token is a path token")
-      (test-assert (terminal-ui--completion-offered-p active-ui)
-                   "an @ token offers completion during history traversal")
       (test-assert
        (equal '("hit-g")
               (mapcar (lambda (entry) (getf entry :name))

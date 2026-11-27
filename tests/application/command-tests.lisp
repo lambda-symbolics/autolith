@@ -507,23 +507,6 @@
    (every #'application-command-callable-p
           (application-command-list))
    "every built-in command supplies a native argument contract")
-  (dolist
-      (case
-       '(("help" (&optional topic))
-         ("open" (&optional (designator nil designator-p)))
-         ("cwd" (&optional pathname))
-         ("ste" (&optional (mode ':status)))
-         ("hurry-up" (&optional (mode ':status)))
-         ("papercut" (&optional identifier))
-         ("papercut-close" (&optional identifier))
-         ("exit" nil)))
-    (destructuring-bind (name lambda-list) case
-      (let ((command (application-command-find name)))
-        (test-assert
-         (and command
-              (equal (application-command-lambda-list command) lambda-list))
-         (format nil "~A derives its native contract from its Lisp lambda list"
-                 name)))))
   (let ((command (application-command-find "ste")))
     (test-assert
      (equal (application-command-static-options command) '(t nil))

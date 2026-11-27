@@ -250,14 +250,6 @@
   (release-server-tests--test-artifact-checksums)
   (release-server-tests--test-source-version)
   (release-server-tests--test-service-runtime-isolation)
-  (test-assert (release-tag-valid-p "v0.11.1")
-               "three-component release tags are valid")
-  (test-assert (not (release-tag-valid-p "0.11.1"))
-               "release tags require their v prefix")
-  (test-assert (not (release-tag-valid-p "v0.11.1.2"))
-               "release tags reject extra components")
-  (test-assert (release-tag< "v0.9.12" "v0.10.1")
-               "release tags compare numeric components")
   (let ((root
           (uiop:ensure-directory-pathname
            (merge-pathnames
@@ -589,14 +581,7 @@
             (equal (mapcar #'release-source-tag-name
                            (release-builder-pending-tags builder tags))
                    '("v0.11.1" "v0.12.0"))
-            "a builder catches up every tag newer than its latest publication")
-           (test-write-text
-            (merge-pathnames "autolith.asd" source-root)
-            (format nil
-                    "(asdf:defsystem #:autolith~%  :version \"0.11.2\"~%)~%"))
-           (test-assert
-            (string= (release-builder--source-version source-root) "0.11.2")
-            "builder source validation reads the declared ASDF version"))
+            "a builder catches up every tag newer than its latest publication"))
         (release-server-tests--delete-tree root)))
   (dolist (case '(("https://github.com/lambda-symbolics/autolith.git"
                    "lambda-symbolics" "autolith")

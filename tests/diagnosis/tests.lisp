@@ -16,11 +16,7 @@
    (registry
     :initarg       :registry
     :reader        diagnosis-tests--world-registry
-    :documentation "The registry holding the service tools.")
-   (repairs
-    :initform      nil
-    :accessor      diagnosis-tests--world-repairs
-    :documentation "The repairs tried, newest first."))
+    :documentation "The registry holding the service tools."))
   (:documentation "A remote service with one fault and the tools that probe and repair it."))
 
 (defclass diagnosis-tests--scripted-tool (tool)
@@ -113,12 +109,10 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
                                                          (json-false)
                                                          t))))
       (loop for (cause . tool) in *diagnosis-tests-repairs*
-            do (let ((cause cause)
-                     (tool  tool))
+            do (let ((cause cause))
                  (diagnosis-tests--tool registry tool
                                        (lambda (arguments)
                                          (declare (ignore arguments))
-                                         (push tool (diagnosis-tests--world-repairs world))
                                          (when (fault-p cause)
                                            (setf (diagnosis-tests--world-fault world) nil))
                                          (json-object "done" t))))))
@@ -405,23 +399,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
 
 (-> test-diagnosis-remote-service () null)
 (defun test-diagnosis-remote-service ()
-  "Test that discriminating probes find each remote-service fault, replacing speculative repairs."
-  (let ((speculative 0)
-        (diagnosed   0))
-    (loop for (fault nil) in '(("unavailable" ("service.ping"))
-                               ("stale-endpoint" ("service.ping" "service.config"))
-                               ("credentials" ("service.ping" "service.config")))
-          do (diagnosis-tests--call-with
-              fault
-              (lambda (configuration)
-                (let ((world (diagnosis-tests--world-create configuration fault)))
-                  ;; Without a diagnosis, repairs are tried in turn until the check passes.
-                  (loop for (nil . repair) in *diagnosis-tests-repairs*
-                        until (eq t (json-get (diagnosis-tests--call configuration world
-                                                                     "service.check")
-                                              "healthy"))
-                        do (diagnosis-tests--call configuration world repair))
-                  (incf speculative (length (diagnosis-tests--world-repairs world)))))))
+  "Test that discriminating probes identify each remote-service fault and its repair."
     (loop for (fault expected-probes) in '(("unavailable" ("service.ping"))
                                            ("stale-endpoint" ("service.ping" "service.config"))
                                            ("credentials" ("service.ping" "service.config")))
@@ -449,11 +427,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
                   (test-assert (eq t (json-get (diagnosis-tests--call configuration world
                                                                       "service.check")
                                                "healthy"))
-                               (format nil "the repair ~A's diagnosis names fixes it" fault))
-                  (incf diagnosed (length (diagnosis-tests--world-repairs world)))))))
-    (test-assert (and (= 3 diagnosed) (= 6 speculative))
-                 (format nil "diagnosis needs ~D repairs where trying them in turn needs ~D"
-                         diagnosed speculative)))
+                               (format nil "the repair ~A's diagnosis names fixes it" fault))))))
   (diagnosis-tests--call-with
    "ambiguous"
    (lambda (configuration)

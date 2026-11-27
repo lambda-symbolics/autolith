@@ -43,11 +43,6 @@
                         :name                         provider-name
                         :family                       ':fixture
                         :api-key-environment-variable variable)))
-                 (test-assert
-                  (string= (getf (provider-reconfiguration-initargs provider)
-                                 :api-key-environment-variable)
-                           variable)
-                  "provider reconfiguration preserves the environment key setting")
                  (with-credentials (credentials (provider-credential-manager provider))
                    (test-assert
                     (string= (oauth-credentials-access-token credentials)

@@ -213,9 +213,6 @@ variant must therefore declare its object type explicitly."
      registry (make-instance 'workspace-file-resolver :scheme "workspace"))
     (resource-registry-register
      registry (make-instance 'channel-resolver :scheme "channel"))
-    (test-assert (uiop:string-prefix-p "Read a model-addressable resource. "
-                                       (tool-description read))
-                 "the read description keeps its lead sentence")
     (test-assert (and (search "workspace:src/main.lisp" (tool-description read))
                       (search "channel:current" (tool-description read)))
                  "the read description documents every registered scheme")

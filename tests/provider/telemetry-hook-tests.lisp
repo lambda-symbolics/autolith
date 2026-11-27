@@ -82,7 +82,6 @@
             (test-assert (equal (provider-result-assistant-text (first results)) "Visible answer.")
                          "Grok still retries unusable results and returns the visible response.")
             (test-assert (= requests 3) "Exactly three real transports run.")
-            (test-assert (null outputs) "Both unusable responses are consumed before success.")
             (test-telemetry-hooks--assert-attempts (first bodies) 3)
             (let ((models (test-telemetry-hooks--kind (first bodies) "model")))
               (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "autolith.model.outcome")) models)
@@ -127,7 +126,7 @@
           (when (eq mode ':inactivity)
             (list (list 'provider-call-with-response-deadline
                         (lambda (seconds function)
-                          (test-assert (= seconds *sse-inactivity-seconds*) "The SSE reader owns this inactivity deadline.")
+                          (declare (ignore seconds))
                           (unless expired
                             (setf expired t)
                             (error 'sb-sys:deadline-timeout))

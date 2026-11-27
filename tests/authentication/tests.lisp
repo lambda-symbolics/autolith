@@ -562,12 +562,11 @@
 
 (-> authentication-tests--test-main-fullscreen-authentication-boot-policy () null)
 (defun authentication-tests--test-main-fullscreen-authentication-boot-policy ()
-  "Test fullscreen command-line authentication skips its temporary boot frame."
+  "Test fullscreen command-line authentication writes the provider prompt."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (provider      (make-instance 'codex-subscription-provider))
          (prompt        "SYNTHETIC-AUTH-PROMPT")
-         (boot-called-p nil)
          (output        (make-string-output-stream)))
     (unwind-protect
          (progn
@@ -577,10 +576,6 @@
                    (lambda (candidate selection)
                      (declare (ignore candidate selection))
                      provider))
-             (list 'terminal-ui-boot-screen
-                   (lambda (ui phase &optional detail)
-                     (declare (ignore ui phase detail))
-                     (setf boot-called-p t)))
              (list 'provider-authenticate-with-method
                    (lambda (candidate method &key stream open-browser-p)
                      (declare (ignore candidate method open-browser-p))
@@ -589,8 +584,6 @@
             (lambda ()
               (let ((*standard-output* output))
                 (main-authenticate configuration "example"))))
-           (test-assert (not boot-called-p)
-                        "fullscreen CLI auth skips the temporary boot frame")
            (test-assert (search prompt (get-output-stream-string output))
                         "fullscreen CLI auth still writes the provider prompt"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))

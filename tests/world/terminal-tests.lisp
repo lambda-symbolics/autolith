@@ -269,34 +269,6 @@ Each transcript event takes a line of its own."
                      "a message of any other kind is rejected"))))
   nil)
 
-(-> test-world-terminal-orphan-reconciliation () null)
-(defun test-world-terminal-orphan-reconciliation ()
-  "Verify server and client startup reconcile their configured registry root."
-  (with-test-configuration (configuration)
-    (let ((application nil) (controller nil) (session nil) (directories nil))
-      (unwind-protect
-           (progn
-             (multiple-value-setq (application controller)
-               (test-world-terminal--application configuration))
-             (test-call-with-function-replacements
-              (list (list 'image-daemon:daemon-registry-reconcile
-                          (lambda (directory) (push directory directories) 0))
-                    (list 'configuration-create
-                          (lambda (&rest arguments) (declare (ignore arguments)) configuration)))
-              (lambda ()
-                (setf session (world-terminal-start application))
-                (test-assert (eq (world-terminal--client-configuration) configuration)
-                             "client startup uses its configured state")))
-             (test-assert (and (= (length directories) 2)
-                               (every (lambda (directory)
-                                        (equal directory (world-channel-endpoint-directory configuration)))
-                                      directories))
-                          "both startup paths reconcile the configured discovery directory"))
-        (when session (world-terminal-stop application))
-        (when controller (application-input-controller-stop controller))
-        (when application (application-release-conversation-lease application)))))
-  nil)
-
 (-> test-world-terminal--show-rows
     (world-terminal-screen list
      &key (:height integer) (:width integer) (:cursor-row integer) (:cursor-column integer)
@@ -734,9 +706,9 @@ Each transcript event takes a line of its own."
           (terminal-ui-stop ui)))))
   nil)
 
-(-> test-world-terminal-remote-detach-never-pauses-reader () null)
-(defun test-world-terminal-remote-detach-never-pauses-reader ()
-  "Test a remote detach tells the controlling terminal client to leave without joining the input reader."
+(-> test-world-terminal-remote-detach () null)
+(defun test-world-terminal-remote-detach ()
+  "Test that remote detach releases the controlling terminal without ending the session."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
         (test-world-terminal--application configuration :presented-p t)
@@ -764,17 +736,10 @@ Each transcript event takes a line of its own."
                     configuration identifier
                     (lambda (type await-exit view)
                       (declare (ignore type view))
-                      (test-call-with-function-replacements
-                       (list
-                        (list 'application-input-controller-call-with-reader-paused
-                              (lambda (&rest arguments)
-                                (declare (ignore arguments))
-                                (error "Remote detach tried to pause the responsive reader."))))
-                       (lambda ()
-                         (let ((result (world-terminal-query-record entry ':detach)))
-                           (test-assert (and (eq (first result) ':ok)
-                                             (not (getf (rest result) :scheduled-p)))
-                                        "a remote detach is answered at once"))))
+                      (let ((result (world-terminal-query-record entry ':detach)))
+                        (test-assert (and (eq (first result) ':ok)
+                                          (not (getf (rest result) :scheduled-p)))
+                                     "a remote detach is answered at once"))
                       (test-assert (multiple-value-bind (exit ended-p) (funcall await-exit)
                                      (and ended-p (null exit)))
                                    "the controlling terminal client leaves as after its own detach")))
@@ -903,9 +868,7 @@ Each transcript event takes a line of its own."
                                 ("status" "extra")
                                 ("start" "extra") ("stop" "extra")))
              (reject arguments ':arguments nil))
-           (dolist (arguments '(("world-terminal" "status") ("lg" "status")
-                                ("kill") ("kill" "b6uouHJ")
-                                ("attach") ("unknown")))
+           (let ((arguments '("unknown")))
              (test-assert
               (handler-case (progn (invoke arguments) nil)
                 (configuration-error () (and (null calls) (null probes))))

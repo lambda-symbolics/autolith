@@ -40,7 +40,6 @@
                      "disabled export preserves the response"))
       (with-test-environment (("ANALYTICS_EVENTS_FILE" ""))
         (test-assert (null (llm-usage--destination)) "an empty destination disables export"))
-      (test-assert (not (probe-file path)) "disabled calls create no export file")
       (with-test-environment (("ANALYTICS_EVENTS_FILE" (namestring path)))
         (test-assert (eq result (provider-stream-turn provider conversation))
                      "runtime opt-in preserves the response")

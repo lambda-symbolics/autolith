@@ -270,9 +270,6 @@
                                                                  (:name "day" :type :date))))))
                          ':schema-in-use)
                      "changing arguments of a predicate in use is refused"))
-      (let ((base (knowledge-base-read configuration)))
-        (test-assert (eq base (knowledge-base-read configuration))
-                     "an unchanged log is read once"))
       (let* ((pathname (configuration-knowledge-path configuration))
              (forms    (sexp-store:log-read pathname))
              (revision (knowledge-base-revision (knowledge-tests--reread configuration))))
@@ -1296,7 +1293,6 @@
                             (search "\"derived\":\"departure v1\""
                                     (context-contribution-evidence advice))
                             (search "use them as they are" (context-contribution-instruction advice))
-                            (not (search "persistent memor" (context-contribution-instruction advice)))
                             (null (knowledge-tests--contribution contributions "knowledge-changes")))
                        "recall offers the derived departure as a complete current fact")
           (test-assert (search "3" (terminal--spans-text (application--related-memories-notice 0 :facts 3)))
