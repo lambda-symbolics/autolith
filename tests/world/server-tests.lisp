@@ -1963,6 +1963,39 @@ the version the client says it is, when it says one."
                       "another workspace has no candidates")))))
   nil)
 
+(-> test-world-server-named-open-directory () null)
+(defun test-world-server-named-open-directory ()
+  "Test a named open builds the channel in its recorded workspace, else where its conversation began."
+  (with-test-configuration (configuration root)
+    (let* ((recorded (world-tests--workspace root "recorded"))
+           (origin   (world-tests--workspace root "origin"))
+           (client   (world-tests--workspace root "client"))
+           (server   (make-instance 'world-server
+                                    :configuration            configuration
+                                    :permission-mode          ':ask
+                                    :mutation-replay-failures nil)))
+      (world-tests--persisted-conversation
+       (configuration-copy configuration :working-directory recorded) "brecord1" 1000)
+      (world-tests--persisted-conversation
+       (configuration-copy configuration :working-directory origin) "bunseen1" 1000
+       :register-p nil)
+      (flet ((built-directory (identifier)
+               (catch 'built
+                 (test-call-with-function-replacements
+                  (list (list 'world-server--start-host
+                              (lambda (candidate &key directory &allow-other-keys)
+                                (declare (ignore candidate))
+                                (throw 'built directory))))
+                  (lambda ()
+                    (world-server--host-for server (list :channel   identifier
+                                                         :directory client)))))))
+        (test-assert (string= (built-directory "brecord1") recorded)
+                     "a channel the world records opens in its recorded workspace")
+        (test-assert (and (null (world-channel-find (world-load configuration) "bunseen1"))
+                          (string= (built-directory "bunseen1") origin))
+                     "a conversation the world does not record yet opens where it began, not where the server runs"))))
+  nil)
+
 (-> test-world-server-open-latest-touched () null)
 (defun test-world-server-open-latest-touched ()
   "Open the newest unattached channel across hosted and cold candidates, streaming real milestones."
