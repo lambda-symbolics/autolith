@@ -426,8 +426,7 @@
          (pool               (lisp-worker-pool-create configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool           (tool-registry-find registry "child" "spawn"))
-         (orchestrator       (task-run-tool-orchestrator run-tool))
+         (orchestrator       (tool-registry-runtime-binding registry 'task-orchestrator))
          (primary
            (task-tests--primary-agent
             configuration "lisp-execution-primary" registry))
@@ -601,7 +600,7 @@
                       (lambda () (probe-file cancel-marker)) 5))
                 "an asynchronous Lisp evaluation reaches its worker before cancellation")
                (dolist (tool (tool-registry-tools registry))
-                 (when (typep tool 'task-job-tool)
+                 (when (string= (tool-namespace tool) "job")
                    (let ((property (json-get (json-get (tool-parameters tool) "properties") "id")))
                      (when property
                        (test-assert
@@ -786,8 +785,7 @@
          (pool               (lisp-worker-pool-create configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool           (tool-registry-find registry "child" "spawn"))
-         (orchestrator       (task-run-tool-orchestrator run-tool))
+         (orchestrator       (tool-registry-runtime-binding registry 'task-orchestrator))
          (primary
            (task-tests--primary-agent
             configuration "lisp-busy-worker-primary" registry))
