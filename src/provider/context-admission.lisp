@@ -27,8 +27,8 @@ class do not establish zero usage.")
 (defparameter *provider-image-token-estimate* nil
   "Token allowance per image when provider token counts are unavailable.
 
-NIL charges each image at the local preparation cap, *IMAGE-INPUT-MAXIMUM-PATCHES*,
-since prepared images never exceed it. Bind an integer for a different policy.")
+NIL uses the local image preparation patch cap as an estimate, not a provider
+token bound. Bind an integer to override the estimate.")
 
 (-> provider-image-token-allowance () (integer 0))
 (defun provider-image-token-allowance ()
