@@ -1013,7 +1013,7 @@ pkgs.writeShellApplication {
     pkgs.gnugrep
     pkgs.perl
     runtime
-  ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.procps ];
+  ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.bubblewrap pkgs.procps ];
     text = ''
       ${packagedDefaults}
       # shellcheck source=/dev/null
