@@ -25,9 +25,6 @@
 (defparameter *run-job-maximum-string-characters* (* 512 1024)
   "The largest string accepted by the RUN-JOB reader.")
 
-(defparameter *run-job-maximum-result-bytes* (* 16 1024 1024)
-  "The largest child result artifact accepted by RUN-JOB.")
-
 (defparameter *run-job-failure-message-limit* 2000
   "The largest human-readable failure message written to a result artifact.")
 
@@ -65,7 +62,7 @@
    :allowed-atom-predicate
    (lambda (value)
      (or (null value) (eq value t) (keywordp value) (stringp value)
-         (task-output--json-number-p value)))))
+         (cl-llm-provider-api:output-json-number-p value)))))
 
 (-> run-job-read-string (string) t)
 (defun run-job-read-string (source)
@@ -127,11 +124,10 @@
   "Validate FORM, recording whether its opaque input was supplied by the caller."
   (let ((pairs (run-job--envelope-pairs form)))
     (flet ((required (key)
-             (multiple-value-bind (value present-p)
-                 (task--alist-value key pairs)
-               (unless present-p
+             (let ((pair (assoc key pairs :test #'eq)))
+               (unless pair
                  (run-job--error ':invalid-envelope "Required field ~S is missing." key))
-               value)))
+               (rest pair))))
       (let ((version    (required :version))
             (identifier (required :id))
             (prompt     (required :prompt))
@@ -193,15 +189,6 @@
     (list :input-tokens      (or (field "input_tokens") 0)
           :output-tokens     (or (field "output_tokens") 0)
           :provider-requests (or (getf result :request-count) 0))))
-
-(-> run-job--read-task-result-artifact ((or pathname string)) list)
-(defun run-job--read-task-result-artifact (pathname)
-  "Read one bounded child result, translating artifact failures for RUN-JOB."
-  (handler-case
-      (task--read-result-artifact
-       pathname :maximum-octets *run-job-maximum-result-bytes*)
-    (store-error (condition)
-      (run-job--error ':artifact-failure "~A" condition))))
 
 (-> run-job-result-envelope
     (string keyword
@@ -291,7 +278,7 @@
     (configuration run-job-request keyword &key (:status-function (option function)))
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job-execute-with-application (configuration request permission-mode &key status-function)
-  "Execute REQUEST through the child-agent runtime and pass progress messages to STATUS-FUNCTION, if supplied."
+  "Execute REQUEST in a fresh application and pass progress messages to STATUS-FUNCTION, if supplied."
   (if *run-job-telemetry-scope-p*
       (run-job--execute-with-application configuration request permission-mode
                                          :status-function status-function)
@@ -320,67 +307,56 @@
     (configuration run-job-request keyword &key (:status-function (option function)))
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job--execute-with-application (configuration request permission-mode &key status-function)
-  "Execute a child while the caller owns telemetry through result publication."
-  (let ((application nil))
+  "Run REQUEST on a fresh application while the caller owns telemetry."
+  (let ((application nil)
+        (usage       nil)
+        (requests    0))
     (unwind-protect
-        (progn
-         (setf application
-                 (application-create configuration :permission-mode  permission-mode
+         (progn
+           (setf application
+                 (application-create configuration :permission-mode permission-mode
                                      :ignore-saved-permission-mode-p t))
-         (let* ((orchestrator (application--task-orchestrator application))
-                (parent       (application-agent application))
-                (assignment   (run-job-assignment request)))
-           (unless orchestrator
-             (run-job--error ':runtime-unavailable "The task runtime is unavailable."))
-           (when status-function
-             (funcall status-function (format nil "Using model ~A" (config :model (agent-configuration parent))))
-             (funcall status-function "Working"))
-           (multiple-value-bind (jobs inline)
-               (task-orchestrator-start-jobs orchestrator parent
-                                             (list (list :item          (list :task assignment)
-                                                         :telemetry-run *telemetry-run*
-                                                         :detached      nil))
-                                             :command-authorization-function
-                                             (run-job-headless-command-authorization
-                                              application permission-mode request)
-                                             :tool-authorization-function
-                                             (run-job-headless-tool-authorization
-                                              permission-mode))
-             (dolist (job inline) (job-run-inline job))
-             (let ((job (first jobs)))
-               (multiple-value-bind (snapshot terminal-p)
-                   (task-job-await job nil)
-                 (declare (ignore terminal-p))
-                 (let* ((compact-result (getf snapshot :result))
-                        (trace-id       (task-job-execution-identifier job))
-                        (usage          (run-job--usage compact-result))
-                        (artifact-path  (getf compact-result :output-path))
-                        (result
-                         (if artifact-path
-                             (handler-case
-                              (run-job--read-task-result-artifact artifact-path)
-                              (run-job-error (condition)
-                               (return-from run-job--execute-with-application
-                                 (values ':failed nil trace-id usage
-                                         (run-job-error-category condition)
-                                         (princ-to-string condition)))))
-                             compact-result))
-                        (status         (getf result :status)))
-                   (setf usage (run-job--usage result))
-                   (cond
-                    ((eq status ':success)
-                     (values ':succeeded (getf result :output) trace-id usage nil nil))
-                    ((eq status ':aborted)
-                     (values ':cancelled nil trace-id usage ':cancelled
-                             (or (getf result :error) "The job was cancelled.")))
-                    (t
-                     (values ':failed nil trace-id usage
-                             (if (member (getf compact-result :error-type)
-                                         '(:provider :authentication :rate-limit
-                                           :transport))
-                                 ':provider-failure
-                                 ':child-failure)
-                             (or (getf result :error) "The child failed."))))))))))
+           (let* ((agent    (application-agent application))
+                  (trace-id (conversation-identifier (application-conversation application)))
+                  (observer
+                    (callback-agent-observer-create
+                     :status-callback
+                     (lambda (status details)
+                       (case status
+                         (:provider-request-started
+                          (setf requests (or (getf details :request-number) (1+ requests))))
+                         (:provider-request-completed
+                          (setf usage (cl-llm-provider-api:provider-usage-merge
+                                       usage (getf details :usage))))))
+                     :command-authorization-callback
+                     (run-job-headless-command-authorization application permission-mode request)
+                     :tool-authorization-callback
+                     (run-job-headless-tool-authorization permission-mode))))
+             (when status-function
+               (funcall status-function (format nil "Using model ~A" (config :model (agent-configuration agent))))
+               (funcall status-function "Working"))
+             (labels ((usage-summary ()
+                        "Return the provider counters observed so far."
+                        (run-job--usage (list :usage usage :request-count requests))))
+               (handler-case
+                   (let ((result (agent-run-user-turn agent (run-job-assignment request)
+                                                      :observer observer)))
+                     (if (agent-turn-complete-p agent result)
+                         (values ':succeeded
+                                 (task--bounded-output
+                                  (or (provider-result-assistant-text result) "(no output)"))
+                                 trace-id (usage-summary) nil nil)
+                         (values ':failed nil trace-id (usage-summary) ':child-failure
+                                 "The job turn did not complete.")))
+                 (application-turn-cancelled (condition)
+                   (values ':cancelled nil trace-id (usage-summary) ':cancelled
+                           (princ-to-string condition)))
+                 (provider-error (condition)
+                   (values ':failed nil trace-id (usage-summary) ':provider-failure
+                           (princ-to-string condition)))
+                 (error (condition)
+                   (values ':failed nil trace-id (usage-summary) ':child-failure
+                           (princ-to-string condition)))))))
       (run-job--close-application application))))
 
 (-> run-job--run-artifact

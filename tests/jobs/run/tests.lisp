@@ -97,76 +97,48 @@
 
 (-> test-run-job-runtime-usage () null)
 (defun test-run-job-runtime-usage ()
-  "Read usage through the real child, publication, compaction and headless boundary."
-  (dolist (case '((nil nil) (t nil) (t t)))
-    (destructuring-bind
-        (omit-usage-p failure-p)
-        case
-      (with-test-configuration (configuration)
-        (let* ((application             (mission-test--application configuration))
-               (compact-result-function (symbol-function 'task-job--compact-result))
-               (usage-omitted-p         nil)
-               (request                 (run-job-validate-envelope (run-job-tests--request-form)))
-               (provider
-                (make-instance 'run-job-test-provider :configuration configuration
-                               :fail-on-empty-p failure-p :results
-                               (list
-                                (agent-test-result "usage-response"
-                                                   (if failure-p
-                                                       (list
-                                                        (agent-test-call :call-id
-                                                                         "usage-call"
-                                                                         :namespace "job"
-                                                                         :name      "list"
-                                                                         :arguments
-                                                                         "{}"))
-                                                       (list
-                                                        (agent-test-message
-                                                         "usage-response")))
-                                                   :usage
-                                                   (json-object "input_tokens" 13
-                                                                 "output_tokens" 7))))))
-          (setf (application-provider application) provider
-                (agent-provider (application-agent application)) provider)
-          (task-augment-tool-registry (application-tool-registry application))
-          (test-call-with-function-replacements
-           (list
-            (list 'application-create
-                  (lambda (&rest arguments)
-                    (declare (ignore arguments))
-                    application))
-            (list 'skill-roots
-                  (lambda (configuration)
-                    (list
-                     (merge-pathnames "skills/"
-                                      (config :config-root configuration)))))
-            (list 'task-job--compact-result
-                  (lambda (result &key artifact-available-p)
-                    (let ((compact
-                           (funcall compact-result-function result
-                                    :artifact-available-p artifact-available-p)))
-                      (when omit-usage-p (remf compact :usage))
-                      (setf usage-omitted-p (null (getf compact :usage)))
-                      compact))))
-           (lambda ()
-             (multiple-value-bind (status result trace usage category message)
-                 (run-job-execute-with-application configuration request
-                                                   ':full-access)
-               (declare (ignore trace category message))
-               (test-assert
-                (if failure-p
-                    (eq status ':failed)
-                    (and (eq status ':succeeded) (equal result "usage-response")))
-                "Headless execution returns ordinary text or reports provider failure.")
-               (test-assert
-                (equal usage
-                       (list :input-tokens 13 :output-tokens 7 :provider-requests
-                             (if failure-p
-                                 2
-                                 1)))
-                "Final usage survives omitted compact metadata.")
-               (test-assert (eq usage-omitted-p omit-usage-p)
-                           "The fixture covers both retained summaries and missing usage."))))))))
+  "Account for every provider request in a direct headless application turn."
+  (dolist (failure-p '(nil t))
+    (with-test-configuration (configuration)
+      (let* ((application (mission-test--application configuration))
+             (request     (run-job-validate-envelope (run-job-tests--request-form)))
+             (provider
+               (make-instance 'run-job-test-provider :configuration configuration
+                              :fail-on-empty-p failure-p :results
+                              (list
+                               (agent-test-result "usage-response"
+                                                  (if failure-p
+                                                      (list (agent-test-call :call-id "usage-call"
+                                                                             :namespace "job"
+                                                                             :name "list"
+                                                                             :arguments "{}"))
+                                                      (list (agent-test-message "usage-response")))
+                                                  :usage (json-object "input_tokens" 13
+                                                                      "output_tokens" 7))))))
+        (setf (application-provider application) provider
+              (agent-provider (application-agent application)) provider)
+        (task-augment-tool-registry (application-tool-registry application))
+        (test-call-with-function-replacements
+         (list (list 'application-create
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       application))
+               (list 'skill-roots
+                     (lambda (configuration)
+                       (list (merge-pathnames "skills/" (config :config-root configuration))))))
+         (lambda ()
+           (multiple-value-bind (status result trace usage category message)
+               (run-job-execute-with-application configuration request ':full-access)
+             (declare (ignore trace message))
+             (test-assert
+              (if failure-p
+                  (and (eq status ':failed) (eq category ':provider-failure))
+                  (and (eq status ':succeeded) (equal result "usage-response")))
+              "Headless execution returns text or reports provider failure.")
+             (test-assert
+              (equal usage (list :input-tokens 13 :output-tokens 7 :provider-requests
+                                 (if failure-p 2 1)))
+              "Usage includes successful requests preceding a provider failure.")))))))
   nil)
 
 (defclass run-job-tests--failing-input (trivial-gray-streams:fundamental-character-input-stream)
@@ -364,37 +336,6 @@
                       "run-job leaves no destination-directory temporary file"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
                                       ':ignore)))
-  (with-test-configuration (configuration root)
-    (declare (ignore configuration))
-    (let* ((path (merge-pathnames "child-result.sexp" root))
-           (result
-            '(:status :success :output "child output" :request-count 1 :usage
-              (("input_tokens" 2)))))
-      (snapshot-write path result)
-      (test-assert (equal (run-job--read-task-result-artifact path) result)
-                   "headless jobs read the durable child printer's result dialect")
-      (dolist
-          (source
-           (list "(:status :unknown)" "(:status :success :status :failed)"
-                 "(:status :success :error 42)" "(:status :success :request-count -1)"
-                 "(:status :success :usage ((1 2)))"
-                 "(:status :success) (:status :failed)"))
-        (with-open-file
-            (stream path :direction ':output :if-exists ':supersede :external-format
-             ':utf-8)
-          (write-string source stream))
-        (test-assert
-         (handler-case (progn (run-job--read-task-result-artifact path) nil)
-                       (run-job-error (condition)
-                        (eq (run-job-error-category condition) ':artifact-failure)))
-         "headless jobs translate malformed child artifacts into artifact failures"))
-      (snapshot-write path result)
-      (let ((*run-job-maximum-result-bytes* 16))
-        (test-assert
-         (handler-case (progn (run-job--read-task-result-artifact path) nil)
-                       (run-job-error (condition)
-                        (eq (run-job-error-category condition) ':artifact-failure)))
-         "headless jobs enforce their artifact byte limit"))))
   (let* ((application (make-instance 'application))
          (request     (run-job-validate-envelope (run-job-tests--request-form)))
          (full-command

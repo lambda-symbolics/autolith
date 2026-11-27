@@ -771,7 +771,7 @@
 (-> test-telemetry-run-job-publication-outcomes () null)
 (defun test-telemetry-run-job-publication-outcomes ()
   "Finalize real headless traces after result publication."
-  (dolist (category '(nil :artifact-failure :result-publication-failed))
+  (dolist (category '(nil :result-publication-failed))
     (test-telemetry--call
      (lambda (configuration)
        (let ((provider (make-instance 'run-job-test-provider :configuration configuration
@@ -780,11 +780,6 @@
                                                                                    (list (agent-test-message "publication-outcome")))))))
          (test-call-with-function-replacements
           (case category
-            (:artifact-failure
-             (list (list 'run-job--read-task-result-artifact
-                         (lambda (path)
-                           (declare (ignore path))
-                           (run-job--error ':artifact-failure "Injected unreadable child artifact.")))))
             (:result-publication-failed
              (list (list 'run-job-write-result-atomically
                          (lambda (path envelope)
