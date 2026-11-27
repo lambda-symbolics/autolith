@@ -39,9 +39,9 @@
          (close-symbol  (and package (find-symbol "OS-CLOSE-WTIMER" package)))
          (missing       nil))
     (unless (and (string= (lisp-implementation-type) "SBCL")
-                 (string= version "2.6.6")
+                 (member version '("2.6.6" "2.6.10") :test #'string=)
                  (every (lambda (feature) (member feature *features*)) '(:win32 :sb-thread :x86-64)))
-      (push "Windows x86-64 threaded SBCL 2.6.6" missing))
+      (push "Windows x86-64 threaded SBCL 2.6.6 or 2.6.10" missing))
     (dolist (symbol (list deinit-symbol close-symbol))
       (unless (and symbol (fboundp symbol))
         (push (if symbol (symbol-name symbol) "timer teardown function") missing)))
@@ -54,7 +54,7 @@
     (when missing
       (error 'win32-checkpoint-runtime-unsupported
              :version version :missing-bindings missing
-             :message (format nil "Checkpoint timer teardown requires the inspected Windows SBCL 2.6.6 runtime; unavailable: ~{~A~^, ~}."
+             :message (format nil "Checkpoint timer teardown requires an inspected Windows SBCL runtime; unavailable: ~{~A~^, ~}."
                               (reverse missing))))
     (values deinit-symbol thread-symbol handle-symbol (symbol-function close-symbol))))
 

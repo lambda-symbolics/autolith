@@ -2,9 +2,7 @@
 
 set -euo pipefail
 
-runtime_release=2.6.6
-runtime_archive_sha256=674e98d3aeef5071619aa440396eb7b1ba25ab75a7c0e17c0ed58c6d98f1a60f
-runtime_archive_url=https://downloads.sourceforge.net/project/sbcl/sbcl/2.6.6/sbcl-2.6.6-x86-64-linux-binary.tar.bz2
+runtime_archive_sha256=96e26b0be3aa6ca2a3f03dfd5fc117647fffb96790a9c235e8dcf27df2eba726
 source_archive_base_url=https://downloads.sourceforge.net/project/sbcl/sbcl
 
 resolve_path()
@@ -39,6 +37,8 @@ xdg_base_directory()
 
 adapter_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$adapter_path")/.." && pwd)
+runtime_release=$(tr -d '[:space:]' < "$source_root/sbcl.version")
+runtime_archive_url=$source_archive_base_url/$runtime_release/sbcl-$runtime_release-x86-64-linux-binary.tar.bz2
 minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl-minimum.version")
 source_checksums_path=$source_root/sbcl-source-releases.sha256
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")

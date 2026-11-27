@@ -431,19 +431,18 @@ fi
                 (*error-output*    diagnostics))
             (load (merge-pathnames "script/validate-static-release.lisp" source-root)))))
        "the static release smoke program highlights Rust and searches files through the pinned native APIs")))
-  (let ((minimum-source-sha256
-          (string-trim
-           '(#\Space #\Tab #\Newline #\Return)
-           (uiop:read-file-string
-            (merge-pathnames "sbcl-source.sha256" source-root))))
+  (let ((bundled-version
+          (string-trim '(#\Space #\Tab #\Newline #\Return)
+                       (uiop:read-file-string (merge-pathnames "sbcl.version" source-root))))
+        (bundled-source-sha256
+          (string-trim '(#\Space #\Tab #\Newline #\Return)
+                       (uiop:read-file-string (merge-pathnames "sbcl-source.sha256" source-root))))
         (release-source-identities
-          (uiop:read-file-string
-           (merge-pathnames "sbcl-source-releases.sha256" source-root))))
+          (uiop:read-file-string (merge-pathnames "sbcl-source-releases.sha256" source-root))))
     (test-assert
-     (search (format nil "~A  sbcl-2.6.6-source.tar.bz2"
-                     minimum-source-sha256)
+     (search (format nil "~A  sbcl-~A-source.tar.bz2" bundled-source-sha256 bundled-version)
              release-source-identities)
-     "the source release catalog retains the minimum runtime source identity"))
+     "the source catalog agrees with the bundled runtime source pin"))
   nil)
 
 (-> release-script-tests--darwin-fff-library-path (pathname pathname) null)
@@ -2516,6 +2515,9 @@ esac
 (defun release-script-tests--runtime-adapter (source-root root)
   "Exercise minimum-version runtime selection in the pinned-runtime adapter."
   (let* ((fixture-root    (merge-pathnames "runtime-adapter/" root))
+         (bundled-version
+           (string-trim '(#\Space #\Tab #\Newline #\Return)
+                        (uiop:read-file-string (merge-pathnames "sbcl.version" source-root))))
          (bin-directory   (merge-pathnames "bin/" fixture-root))
          (tools-directory (merge-pathnames "tools/" fixture-root))
          (data-home       (merge-pathnames "data/" fixture-root))
@@ -2594,7 +2596,7 @@ printf '\"%s\"\n' \"$version\" > \"$destination/sbcl-$version/version.lisp-expr\
       (release-script-tests--chmod "755" pathname))
     (test-write-text
      (merge-pathnames "sbcl.version" fixture-root)
-     (format nil "2.6.6~%"))
+     (format nil "~A~%" bundled-version))
     (test-write-text
      (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
     (test-write-text
@@ -2656,9 +2658,10 @@ esac
           (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
                        (format nil "the adapter accepts supported runtime ~A" version))))
       (let* ((runtime-four     (fake-runtime "2.6.4"))
-             (runtime-six      (fake-runtime "2.6.6"))
+             (bundled-runtime  (fake-runtime bundled-version))
              (managed-runtime
-               (merge-pathnames "autolith/runtimes/2.6.6/installation/bin/sbcl" data-home))
+               (merge-pathnames (format nil "autolith/runtimes/~A/installation/bin/sbcl" bundled-version)
+                                data-home))
              (recorded-command (merge-pathnames "autolith/runtimes/command" data-home))
              (path-runtime     (merge-pathnames "sbcl" tools-directory)))
         (uiop:copy-file runtime-four path-runtime)
@@ -2675,7 +2678,7 @@ esac
                  (if managed
                      (progn
                        (ensure-directories-exist managed-runtime)
-                       (uiop:copy-file runtime-six managed-runtime)
+                       (uiop:copy-file bundled-runtime managed-runtime)
                        (release-script-tests--chmod
                         (if (eq managed ':nonexecutable) "644" "755") managed-runtime))
                      (when (probe-file managed-runtime)

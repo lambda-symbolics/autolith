@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $sourceRoot = Split-Path -Parent $PSScriptRoot
-$runtimeRelease = '2.6.6'
+$runtimeRelease = (Get-Content -Raw -LiteralPath (Join-Path $sourceRoot 'sbcl.version')).Trim()
 $archiveName = "sbcl-$runtimeRelease-x86-64-windows-binary.msi"
 $archiveUrl = "https://downloads.sourceforge.net/project/sbcl/sbcl/$runtimeRelease/$archiveName"
 

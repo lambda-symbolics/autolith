@@ -406,7 +406,7 @@ continues without managed implementation sources. It never replaces the
 Homebrew host SBCL.
 
 The minimum supported SBCL is 2.6.4, recorded in `sbcl-minimum.version`.
-The bundled release compiler is 2.6.6, recorded separately in `sbcl.version`.
+The bundled release compiler is 2.6.10, recorded separately in `sbcl.version`.
 Set `AUTOLITH_SBCL` to use a specific runtime. Otherwise, an installed bundled
 runtime takes precedence over a compatible recorded runtime or one on `PATH`.
 
