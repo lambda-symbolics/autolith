@@ -88,7 +88,7 @@ Step 1 & 2 above can be resolved with these commands:
 
 To install and configure Quicklisp:
 #+BEGIN_SRC sh
-curl --create-dirs -o ~/quicklisp/setup.lisp https://beta.quicklisp.org/quicklisp.lisp
+curl --create-dirs -o ~/quicklisp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
 sbcl --script script/ensure-quicklisp.lisp ~/quicklisp/quicklisp.lisp
 #+END_SRC
 
