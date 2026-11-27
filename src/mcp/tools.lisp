@@ -904,19 +904,124 @@ retained value is credential-redacted or projected."
            :requested   requested
            :limit       limit)))
 
+(-> mcp-tools--portable-pattern (string) (option string))
+(defun mcp-tools--portable-pattern (pattern)
+  "Return PATTERN with REGEX escapes that providers can compile, or NIL.
+
+Providers compile every REGEX-valued JSON Schema keyword with a Unicode-scalar
+regex engine, which refuses \\uXXXX escapes for surrogate code points and
+would reject the whole provider request over one of them. An escaped ASCII
+word character has a portable spelling (the character itself) and an escaped
+ECMA-262 syntax character keeps its backslash, so both are rewritten in place.
+Return NIL when an escape has no portable spelling, so the caller drops the
+REGEX instead of sending a schema the provider rejects."
+  (when (stringp pattern)
+    (let ((output (make-string-output-stream))
+          (index  0)
+          (size   (length pattern)))
+      (flet ((syntax-character-p (character)
+               (find character "\\^$.*+?()[]{}|" :test #'char=)))
+        (loop
+          (when (>= index size)
+            (return (get-output-stream-string output)))
+          (let ((character (char pattern index)))
+            (cond
+                ((and (char= character #\\)
+                    (<= (+ index 6) size)
+                    (member (char pattern (1+ index)) '(#\u #\U))
+                    (every (lambda (digit) (digit-char-p digit 16))
+                           (subseq pattern (+ index 2) (+ index 6))))
+               (let* ((code    (parse-integer pattern
+                                              :start (+ index 2) :end (+ index 6)
+                                              :radix 16))
+                      (decoded (code-char code)))
+                 (cond
+                   ((or (null decoded) (<= #xD800 code #xDFFF))
+                    (return nil))
+                   ((or (alphanumericp decoded) (member decoded '(#\_ #\Space)))
+                    (write-char decoded output))
+                     ((syntax-character-p decoded)
+                      (write-char #\\ output)
+                      (write-char decoded output))
+                   (t
+                    (return nil))))
+               (incf index 6))
+              (t
+               (write-char character output)
+               (incf index)))))))))
+
+(-> mcp-tools--sanitize-pattern-properties (json-object) json-object)
+(defun mcp-tools--sanitize-pattern-properties (properties)
+  "Return PATTERN PROPERTIES without the REGEX keys no provider engine compiles."
+  (let ((replacement (make-hash-table :test (hash-table-test properties))))
+    (maphash (lambda (pattern child)
+               (let ((portable (mcp-tools--portable-pattern pattern)))
+                 (when portable
+                   (setf (gethash portable replacement)
+                         (mcp-tools--sanitize-provider-schema child)))))
+             properties)
+    replacement))
+
+(-> mcp-tools--project-schema (t) t)
+(defun mcp-tools--project-schema (value)
+  "Return VALUE with every REGEX carried by an object projected onto its portable subset.
+
+VALUE is any part of a validated MCP input schema: an object, an array, or a
+scalar keyword value such as a type name, which passes through unchanged."
+  (cond
+    ((hash-table-p value)
+     (dolist (key (loop for key being the hash-keys of value collect key))
+       (let ((child (gethash key value)))
+         (cond
+           ((and (equal key "pattern") (stringp child))
+            (let ((portable (mcp-tools--portable-pattern child)))
+              (if portable
+                  (setf (gethash key value) portable)
+                  (remhash key value))))
+           ((and (equal key "patternProperties") (hash-table-p child))
+            (setf (gethash key value)
+                  (mcp-tools--sanitize-pattern-properties child)))
+           (t
+            (setf (gethash key value)
+                  (mcp-tools--project-schema child))))))
+     value)
+    ((and (vectorp value) (not (stringp value)))
+     (map 'vector #'mcp-tools--project-schema value))
+    (t
+     value)))
+
+(-> mcp-tools--sanitize-provider-schema (json-object) json-object)
+(defun mcp-tools--sanitize-provider-schema (schema)
+  "Return SCHEMA with every JSON Schema REGEX value projected onto its portable subset.
+
+SCHEMA is a validated MCP input schema object: hash tables for objects and
+vectors for arrays. Providers compile REGEX-valued keywords with a
+Unicode-scalar engine and reject the whole request over one unportable
+pattern, so such patterns are removed instead of forwarded."
+  (mcp-tools--project-schema schema))
+
 (-> mcp-tools--provider-schema
     (mcp-server-runtime t)
     (values json-object (integer 0)))
 (defun mcp-tools--provider-schema (runtime schema)
-  "Validate and detach SCHEMA within Autolith's retained metadata bounds."
+  "Validate and detach SCHEMA within Autolith's retained metadata bounds.
+
+The result is declared verbatim to the provider, which compiles every
+REGEX-valued JSON Schema keyword with a Unicode-scalar engine before it
+accepts a request. MCP servers may emit escapes such as \\uD800-\\uDFFF that
+such an engine refuses, so the validated schema is projected onto its portable
+subset first; one unportable pattern would otherwise reject every request in
+the conversation while the tool stays active."
   (handler-case
-      (mcparen:mcp-validate-input-schema
-       schema
-       :maximum-bytes             *mcp-maximum-tool-schema-bytes*
-       :maximum-depth             *mcp-maximum-tool-schema-depth*
-       :maximum-nodes             *mcp-maximum-tool-schema-nodes*
-       :maximum-string-characters *mcp-maximum-tool-schema-string-characters*
-       :maximum-key-characters    256)
+      (multiple-value-bind (validated bytes)
+          (mcparen:mcp-validate-input-schema
+           schema
+           :maximum-bytes             *mcp-maximum-tool-schema-bytes*
+           :maximum-depth             *mcp-maximum-tool-schema-depth*
+           :maximum-nodes             *mcp-maximum-tool-schema-nodes*
+           :maximum-string-characters *mcp-maximum-tool-schema-string-characters*
+           :maximum-key-characters    256)
+        (values (mcp-tools--sanitize-provider-schema validated) bytes))
     (mcparen:mcp-input-schema-error (condition)
       (mcp-tools--server-error
        (mcp-server-runtime-configuration runtime)

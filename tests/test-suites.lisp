@@ -947,7 +947,8 @@
   test-mcp-durable-labels
   test-mcp-reload-registry-rollback
   test-mcp-reload-registry-isolation
-  test-mcp-reload-transaction-boundary)
+  test-mcp-reload-transaction-boundary
+  test-mcp-provider-schema-regex-portability)
 
 (define-test-suite channel-deletion
   test-delete-channel-targets
