@@ -1398,15 +1398,8 @@ searches every task directory."
                  (progn
                    (application-set-local-activity application "removing channel")
                    (handler-case
-                       (let ((removed (channel-remove (application-configuration application)
-                                                      (list (getf pending :value))
-                                                      :tool-name "(open)")))
-                         (application-present
-                          application
-                          (application-notice-line
-                           (format nil "deleted channel ~A and ~D nested channel~:P"
-                                   (conversation-identifier-display (getf pending :value))
-                                   (1- removed)))))
+                       (application--delete-channel application (getf pending :value)
+                                                    :tool-name "(open)" :allow-unrecorded-p nil)
                      (autolith-error (condition)
                        (application-present application
                                             (application-failure-line (autolith-error-message condition))))))

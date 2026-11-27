@@ -2,21 +2,22 @@
 
 ;;;; -- Channel Deletion --
 
-(-> application--delete-channel (application string) null)
-(defun application--delete-channel (application identifier)
+(-> application--delete-channel
+    (application string &key (:tool-name string) (:allow-unrecorded-p boolean)) null)
+(defun application--delete-channel (application identifier &key (tool-name "(delete)") (allow-unrecorded-p t))
   "Remove IDENTIFIER through the durable removal boundary and present its outcome.
 
-A channel the world never recorded has nothing durable to remove: releasing
-its idle host ends it."
+When ALLOW-UNRECORDED-P is true, an idle host with no durable channel may also
+be released. Otherwise, a missing channel is reported as an error."
   (let* ((configuration (application-configuration application))
-         (removed       (if (world-channel-find (world-load configuration) identifier)
-                            (channel-remove configuration (list identifier) :tool-name "(delete)")
-                            (progn
-                              (channel--quiesce configuration (list identifier) "(delete)")
-                            ;; Its final work may have persisted it before quiescence.
-                             (if (world-channel-find (world-load configuration) identifier)
-                                 (channel-remove configuration (list identifier) :tool-name "(delete)")
-                                 1)))))
+         (removed       (if (or (not allow-unrecorded-p)
+                                (world-channel-find (world-load configuration) identifier)
+                                (progn
+                                  (channel--quiesce configuration (list identifier) tool-name)
+                                  ;; Its final work may have persisted it before quiescence.
+                                  (world-channel-find (world-load configuration) identifier)))
+                            (channel-remove configuration (list identifier) :tool-name tool-name)
+                            1)))
     (application-present
      application
      (application-notice-line

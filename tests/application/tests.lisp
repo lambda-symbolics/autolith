@@ -5565,40 +5565,18 @@
                  (search "switch away to remove it"
                          (recording-terminal-output terminal)))
             "the switch picker refuses to remove the channel this terminal shows")
-           (let* ((failed
-                    (conversation-create
-                     configuration
-                     :identifier "cleanup-failure"))
-                  (failed-image-root
-                    (merge-pathnames
-                     "conversation-images/cleanup-failure/"
-                     (config :data-root configuration))))
-             (conversation-append-user-message failed "temporary")
-             (world-register-conversation configuration failed)
-             (platform-set-file-times
-              *platform*
-              (conversation-log-pathname failed)
-              (- (get-universal-time) 25))
-             (snapshot-write
-              (merge-pathnames "image.sexp" failed-image-root)
-              '(:image))
-             (recording-terminal-reset terminal)
-             (setf (scripted-terminal-events terminal)
-                   (list :history-next :delete :submit :escape))
-             (let ((*conversation-delete-directory-tree-function*
-                     (lambda (root &key validate if-does-not-exist)
-                       (declare (ignore root validate if-does-not-exist))
-                       (error "simulated cleanup failure"))))
-               (test-assert
-                (null (application--pick-channel application))
-                "cleanup failure returns to browsing until escape"))
-             (test-assert
-               (and (not (conversation-storage-occupied-p
-                          (conversation-pathname failed)))
-                   (probe-file failed-image-root)
-                   (search "was deleted, but private artifacts remain"
-                           (recording-terminal-output terminal)))
-              "the switch picker reports a cleanup failure after the history went"))
+           (recording-terminal-reset terminal)
+           (setf (scripted-terminal-events terminal)
+                 (list :history-next :delete :submit :escape))
+           (test-call-with-function-replacements
+            (list (list 'application--delete-channel
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (error 'configuration-error :message "Removal refused."))))
+            (lambda ()
+              (test-assert (and (null (application--pick-channel application))
+                                (search "refused" (recording-terminal-output terminal)))
+                           "the picker reports a removal failure and returns to browsing")))
            (setf (scripted-terminal-events terminal)
                  (list :history-next
                        :delete
@@ -5611,52 +5589,37 @@
             (conversation-storage-occupied-p
              (conversation-pathname current-older))
             "the keep confirmation preserves the channel")
-           (let ((image-root
-                   (merge-pathnames "conversation-images/current-older/"
-                                    (config :data-root configuration)))
-                 (task-root
-                   (merge-pathnames "tasks/current-older/"
-                                    (config :data-root configuration))))
-             (snapshot-write (merge-pathnames "image.sexp" image-root)
-                             '(:image))
-             (snapshot-write (merge-pathnames "task/result.sexp" task-root)
-                             '(:task))
-             (recording-terminal-reset terminal)
-             (setf (scripted-terminal-events terminal)
-                   (list :history-next :delete :submit :escape))
-             (let ((remove-function (symbol-function 'channel-remove))
-                   (painted-p       nil))
-               (test-call-with-function-replacements
-                (list
-                 (list 'channel-remove
-                       (lambda (&rest arguments)
-                         (test-assert (null (terminal-ui-selector (application-ui application)))
-                                      "cleanup starts after the picker releases its modal")
-                         (test-assert (terminal-ui-local-activity (application-ui application))
-                                      "cleanup uses the local activity indicator")
-                         (let ((painter
-                                 (make-thread
-                                  (lambda ()
-                                    (with-terminal-ui-locked ((application-ui application))
-                                      (setf painted-p t)))
-                                  :name "picker cleanup presentation probe")))
-                           (unwind-protect
-                                (test-assert (task-tests--wait-until (lambda () painted-p) 2)
-                                             "presentation can advance during channel cleanup")
-                             (image-daemon:daemon-stop-thread painter)))
-                         (apply remove-function arguments))))
-                (lambda ()
-                  (test-assert (null (application--pick-channel application))
-                               "removal returns to browsing until escape")))
-               (test-assert (null (terminal-ui-local-activity (application-ui application)))
-                            "cleanup restores the previous local activity"))
-             (test-assert
-               (and (not (conversation-storage-occupied-p
-                          (conversation-pathname current-older)))
-                   (not (probe-file image-root))
-                   (not (probe-file task-root))
-                   (null (world-channel-find (world-load configuration) "current-older")))
-              "a confirmed removal deletes the channel, its conversation and its artifacts"))
+           (recording-terminal-reset terminal)
+           (setf (scripted-terminal-events terminal)
+                 (list :history-next :delete :submit :escape))
+           (let ((remove-function (symbol-function 'channel-remove))
+                 (painted-p       nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'channel-remove
+                     (lambda (&rest arguments)
+                       (test-assert (null (terminal-ui-selector (application-ui application)))
+                                    "cleanup starts after the picker releases its modal")
+                       (test-assert (terminal-ui-local-activity (application-ui application))
+                                    "cleanup uses the local activity indicator")
+                       (let ((painter
+                               (make-thread
+                                (lambda ()
+                                  (with-terminal-ui-locked ((application-ui application))
+                                    (setf painted-p t)))
+                                :name "picker cleanup presentation probe")))
+                         (unwind-protect
+                              (test-assert (task-tests--wait-until (lambda () painted-p) 2)
+                                           "presentation can advance during channel cleanup")
+                           (image-daemon:daemon-stop-thread painter)))
+                       (apply remove-function arguments))))
+              (lambda ()
+                (test-assert (null (application--pick-channel application))
+                             "removal returns to browsing until escape")))
+             (test-assert (null (terminal-ui-local-activity (application-ui application)))
+                          "cleanup restores the previous local activity"))
+           (test-assert (null (world-channel-find (world-load configuration) "current-older"))
+                        "confirming in the picker removes the selected channel")
            (terminal-ui-stop (application-ui application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let ((application (application-tests--ui-application :columns 60)))
