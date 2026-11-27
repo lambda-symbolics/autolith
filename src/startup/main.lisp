@@ -1033,7 +1033,7 @@ still shows the boot panel keeps it until the user starts the session."
                                    (terminal--render-spans terminal content) content-width)))
         (let* ((lines    (rows spans))
                (warning  (rows (list (terminal-span ':notice
-                                      (format nil "! ~A executes model-generated code with your user privileges. Sandboxing is no substitute for human oversight"
+                                       (format nil "! ~A executes model-generated code with your user privileges.~%  Sandboxing is no substitute for human oversight."
                                               (product-command-name))))))
                (tip-rows (when tip (rows tip))))
           (when (> (length lines) height)
