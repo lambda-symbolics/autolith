@@ -359,18 +359,21 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
                            :output      (merge-pathnames "output.log" directory)
                            :environment (check--environment-with
                                          (append
-                                          (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
-                                                (format nil "XDG_STATE_HOME=~Astate/" directory)
-                                                (format nil "XDG_CACHE_HOME=~Acache/" directory)
-                                                (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
+                                          (loop for (variable child) in '(("XDG_CONFIG_HOME" "config/")
+                                                                          ("XDG_STATE_HOME" "state/")
+                                                                          ("XDG_CACHE_HOME" "cache/"))
+                                                collect (format nil "~A=~A" variable
+                                                                (uiop:native-namestring
+                                                                 (merge-pathnames child fixture-root))))
+                                          (list (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
                                                         (uiop:native-namestring active-core)))
+                                          #+darwin (list "TMPDIR=/private/tmp/")
                                           (when colorlisp-native-library
                                             (list (format nil "COLORLISP_NATIVE_LIBRARY=~A"
                                                           colorlisp-native-library)))
                                           (when worker-core
                                             (list (format nil "AUTOLITH_TEST_WORKER_CORE=~A"
                                                           (uiop:native-namestring worker-core))))))
-                           ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
                            :command     (check--worker-command :source-root source-root
                                                               :worker-core  worker-core
                                                               :request request :result result))

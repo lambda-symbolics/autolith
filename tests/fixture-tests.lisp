@@ -25,11 +25,18 @@
                      (multiple-value-list
                       (test-call-with-temporary-root
                        (lambda (root)
-                         (setf saved-root root
-                               configuration-root
-                               (test-configuration-root (test-configuration)))
-                         (test-assert (uiop:subpathp configuration-root root)
-                                      "configuration roots belong to their run")
+                         (let ((configuration (test-configuration)))
+                           (setf saved-root root
+                                 configuration-root (test-configuration-root configuration))
+                           (test-assert (uiop:subpathp configuration-root root)
+                                        "configuration roots belong to their run")
+                           #+darwin
+                           (let ((socket (uiop:native-namestring
+                                          (config :management-repl-unix-socket-path configuration))))
+                             (test-assert (and (uiop:subpathp root (test-temporary-base))
+                                               (< (length (sb-ext:string-to-octets socket :external-format :utf-8))
+                                                  104))
+                                          "canonical Darwin fixtures fit the management socket address")))
                          (let ((thread-root
                                  (sb-thread:join-thread
                                   (sb-thread:make-thread

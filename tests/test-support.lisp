@@ -166,15 +166,22 @@ still holds one writes the stored record and reads the conversation back."
   "The process-global fixture parent owned by the current test run.
 Use SYMBOL-GLOBAL-VALUE so configuration fixtures in child threads share it.")
 
+(-> test-temporary-base () pathname)
+(defun test-temporary-base ()
+  "Return the fixture base, short enough for Darwin's Unix socket paths."
+  #+darwin #P"/private/tmp/"
+  #-darwin (uiop:temporary-directory))
+
 (-> test-make-temporary-root (&optional (or null pathname)) pathname)
 (defun test-make-temporary-root (&optional parent)
-  "Atomically create a short, private test directory below PARENT or TMPDIR."
+  "Atomically create a short, private test directory below PARENT or the fixture base."
   (uiop:ensure-directory-pathname
-   (truename
-    (platform-make-temporary-directory
-     *platform*
-     (or parent (uiop:temporary-directory))
-     "autolith-tests-"))))
+   (platform-truename *platform*
+                      (platform-make-temporary-directory
+                       *platform*
+                       (or parent (test-temporary-base))
+                       #+darwin "a-"
+                       #-darwin "autolith-tests-"))))
 
 (-> test-call-with-temporary-root (function &key (:temporary-root (or null pathname))) t)
 (defun test-call-with-temporary-root (function &key temporary-root)
@@ -196,14 +203,8 @@ process-global fixture parent on exit; parallel runs need separate processes."
 (defun test-configuration (&key site-config-root telemetry-defaults-p)
   "Return an isolated configuration, disabling telemetry unless testing its defaults."
   (let* ((parent      (sb-ext:symbol-global-value '*test-temporary-root*))
-         (root        (uiop:ensure-directory-pathname
-                       (merge-pathnames
-                        (format nil "~A~A/" (if parent "" "autolith-tests-")
-                                (make-identifier))
-                        (or parent (uiop:temporary-directory)))))
+         (root        (test-make-temporary-root parent))
          (source-root (asdf:system-source-directory :autolith)))
-    (uiop:ensure-all-directories-exist (list root))
-    (setf root (uiop:ensure-directory-pathname (truename root)))
     (apply
      #'make-configuration
      :source-root              source-root
