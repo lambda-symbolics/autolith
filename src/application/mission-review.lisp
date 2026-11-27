@@ -125,55 +125,42 @@ across changed snapshots and is not reset by retries or restarts."
 
 (-> mission-review--run-task (mission-context list &key (:run list) (:background string) (:tool-context tool-context)) list)
 (defun mission-review--run-task (context policy &key run background tool-context)
-  "Run one independent review under existing delegation and permissions."
-  (let* ((parent  (tool-context-agent tool-context))
-         (runtime (tool-context-execution-runtime tool-context))
-         (item
-          (list :name (format nil "review-~A" (getf policy :id)) :context background
-                :task
-                "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
-                 :models (getf policy :models))))
+  "Run one independent reviewer under the mission deadline and authorization."
+  (let ((parent (tool-context-agent tool-context)))
     (unless (typep parent 'agent)
-      (mission--reject ':review-authority
-                       "Mission review requires an executing agent."))
-    (unless (typep runtime 'task-orchestrator)
-      (mission--reject ':unavailable "Mission review requires a task runtime."))
-    (let* ((entries    (task--admit-items parent runtime (list item)))
-           (entry      (first entries))
-           (jobs       nil)
-           (finished-p nil))
-      (setf (first entries)
-            (list* :independent-context-p t :review-checkpoint
-                   (list :policy policy :run run) entry))
-      (unwind-protect
-          (progn
-           (multiple-value-bind (admitted inline)
-               (task-orchestrator-start-jobs runtime parent entries :parent-call-id
-                                             (tool-context-call-id tool-context)
-                                             :command-authorization-function
-                                             (tool-context-command-authorization-function
-                                              tool-context)
-                                             :tool-authorization-function
-                                             (tool-context-tool-authorization-function
-                                              tool-context))
-             (setf jobs admitted)
-             (with-recursive-lock-held ((mission-context-lock context))
-               (setf (getf run :job-id) (job-identifier (first jobs)))
-               (mission--record context))
-             (dolist (job inline) (job-run-inline job)))
-           (task-job-await (first jobs) nil)
-           (setf finished-p t)
-           ;; Use the complete durable artifact, not its bounded preview.
-           (let* ((result (getf (task-job-snapshot (first jobs)) :result))
-                  (path   (getf result :output-path)))
-             (if path
-                 (with-open-file (stream path :external-format ':utf-8)
-                   (let ((*read-eval* nil))
-                     (read stream)))
-                 result)))
-        (unless finished-p
-          (dolist (job jobs)
-            (task-job-cancel job ':parent-finished)))))))
+      (mission--reject ':review-authority "Mission review requires an executing agent."))
+    (let* ((parent-configuration (agent-configuration parent))
+           (model (or (find-if (lambda (candidate)
+                                 (member candidate *supported-models* :test #'string=))
+                               (getf policy :models))
+                      (config :model parent-configuration)))
+           (configuration (configuration-copy parent-configuration :model model))
+           (conversation (conversation-create configuration))
+           (provider (provider-with-configuration (agent-provider parent) configuration))
+           (reviewer (agent-create :configuration configuration :provider provider
+                                   :conversation conversation
+                                   :tool-registry (agent-tool-registry parent)
+                                   :worker (tool-context-worker tool-context)))
+           (output (make-string-output-stream))
+           (observer (callback-agent-observer-create
+                      :text-callback (lambda (text) (write-string text output))
+                      :command-authorization-callback
+                      (tool-context-command-authorization-function tool-context)
+                      :tool-authorization-callback
+                      (tool-context-tool-authorization-function tool-context))))
+      (mission-context-bind context conversation)
+      (mission-review-bind-checkpoint (list :policy policy :run run) conversation)
+      (with-recursive-lock-held ((mission-context-lock context))
+        (setf (getf run :job-id) (conversation-identifier conversation))
+        (mission--record context))
+      (let* ((prompt (format nil "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary.~2%~A" background))
+             (result (mission--supervise context "Mission review"
+                        (lambda ()
+                          (agent-run-user-turn reviewer prompt :observer observer :automatic-p t))))
+             (text (provider-result-assistant-text result))
+             (streamed (get-output-stream-string output)))
+        (list :status (if (agent-turn-complete-p reviewer result) ':success ':failed)
+              :output (if (non-empty-string-p text) text streamed))))))
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)
@@ -244,7 +231,7 @@ primary agent or local user."
                    (setf (getf run :status)
                          (if (or (eq (getf (mission-context-goal context) :status) ':cancelled)
                                  (and (typep condition 'mission-error)
-                                      (eq (mission-error-reason condition) ':review-cancelled)))
+                                      (member (mission-error-reason condition) '(:review-cancelled :cancelled :aborted))))
                              ':cancelled ':failed)
                          (getf run :error) (mission--bounded-text (princ-to-string condition)))
                    (mission--evidence context ':review-failed (list id condition)))))
