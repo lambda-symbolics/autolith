@@ -2742,11 +2742,13 @@ esac
                         (if (eq managed ':nonexecutable) "644" "755") managed-runtime))
                      (when (probe-file managed-runtime)
                        (delete-file managed-runtime)))
-                 (if recorded-p
-                     (test-write-text
-                      recorded-command (format nil "~A~%" (namestring runtime-four)))
-                     (when (probe-file recorded-command)
-                       (delete-file recorded-command)))
+                 ;; The adapter publishes the command read-only, so replace
+                 ;; it by removal rather than by overwriting it in place.
+                 (when (probe-file recorded-command)
+                   (delete-file recorded-command))
+                 (when recorded-p
+                   (test-write-text
+                    recorded-command (format nil "~A~%" (namestring runtime-four))))
                  (multiple-value-bind (output status)
                      (run-adapter (and explicit-p runtime-four) :install-p install-p)
                    (let ((selected (ecase expected
