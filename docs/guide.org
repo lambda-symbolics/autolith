@@ -71,14 +71,26 @@ again.
 
 ** Source checkout
 
-1. Install a compatible SBCL as specified in =sbcl-minimum.version=. Use
-   =AUTOLITH_SBCL= to select a specific runtime.
-2. Install [[https://www.quicklisp.org/beta/][Quicklisp]] under =~/quicklisp=, along with Rust, CMake, pkg-config,
-   and OpenSSL. On Linux, install Bubblewrap as well.
-3. From the checkout, run =./script/bootstrap=. Use =./script/check= to check
-   the build.
-4. Start Autolith with =./bin/autolith=. To run it from other directories, link
-   =bin/autolith= into a directory on your =PATH=.
+1. Install a compatible SBCL as specified in =sbcl-minimum.version=.
+   Use =AUTOLITH_SBCL= to select a specific runtime.
+2. Install [[https://www.quicklisp.org/beta/][Quicklisp]] under =~/quicklisp=,
+   along with Rust, CMake, pkg-config, and OpenSSL.
+   On Linux, install Bubblewrap as well.
+3. From the checkout, run =./script/bootstrap=.
+   Use =./script/check= to check the build.
+4. Start Autolith with =./bin/autolith=. To run it from other directories,
+   link =bin/autolith= into a directory on your =PATH=.
+
+Step 1 & 2 above can be resolved with these commands:
+
+- Ubuntu 26.04: =sudo apt install sbcl cmake pkg-config libssl-dev bubblewrap rustc cargo=
+- Arch: =sudo pacman -S sbcl cmake pkgconf openssl bubblewrap rust=
+
+To install and configure Quicklisp: 
+#+BEGIN_SRC sh
+curl --create-dirs -o ~/quicklisp/setup.lisp https://beta.quicklisp.org/quicklisp.lisp
+sbcl --script script/ensure-quicklisp.lisp ~/quicklisp/quicklisp.lisp
+#+END_SRC
 
 During bootstrap, follow the progress bar for the current build step. Output
 from successful steps is hidden. If a step fails, read its captured output and
