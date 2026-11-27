@@ -97,6 +97,19 @@ curl --create-dirs -o ~/quicklisp/quicklisp.lisp https://beta.quicklisp.org/quic
 sbcl --script script/ensure-quicklisp.lisp ~/quicklisp/quicklisp.lisp
 #+END_SRC
 
+On macOS with Homebrew OpenSSL 4, an older Quicklisp copy of =cl+ssl= can
+fail with =ASN1_STRING_data= when =./script/check= installs Qlot. If you see
+that error, add the [[https://github.com/lambda-symbolics/autolith/issues/294][compatible cl+ssl revision]] to your Quicklisp local projects
+before rerunning the check:
+
+#+BEGIN_SRC sh
+git clone https://github.com/cl-plus-ssl/cl-plus-ssl.git ~/quicklisp/local-projects/cl-plus-ssl
+git -C ~/quicklisp/local-projects/cl-plus-ssl checkout --detach d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
+#+END_SRC
+
+If you already have a local =cl+ssl= checkout, use a revision that supports
+OpenSSL 4 there instead.
+
 During bootstrap, follow the progress bar for the current build step. Output
 from successful steps is hidden. If a step fails, read its captured output and
 exit status below the progress bar.

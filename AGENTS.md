@@ -405,6 +405,9 @@ hash-verified source when listed in `sbcl-source-releases.sha256`; otherwise it
 continues without managed implementation sources. It never replaces the
 Homebrew host SBCL.
 
+If Qlot fails with `ASN1_STRING_data` on Homebrew OpenSSL 4, see the
+[Quicklisp workaround in the guide](docs/guide.org#source-checkout) ([#294](https://github.com/lambda-symbolics/autolith/issues/294)).
+
 The minimum supported SBCL is 2.6.4, recorded in `sbcl-minimum.version`.
 The bundled release compiler is 2.6.10, recorded separately in `sbcl.version`.
 Set `AUTOLITH_SBCL` to use a specific runtime. Otherwise, an installed bundled
