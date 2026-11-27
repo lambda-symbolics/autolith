@@ -88,6 +88,56 @@
                                       :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-rlm-child-job-handoff () null)
+(defun test-rlm-child-job-handoff ()
+  "Exercise RLM job admission and ownership from a real child agent."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((provider (make-instance 'rlm-inference-test-provider :results nil))
+           (registry (task-augment-tool-registry
+                      (rlm-register-tools (make-instance 'tool-registry) :provider provider)))
+           (orchestrator (task-run-tool-orchestrator
+                          (tool-registry-find registry "child" "spawn")))
+           (parent (task-tests--primary-agent configuration "rlm-parent" registry))
+           (job (task-tests--make-job orchestrator :identifier "rlm-child"
+                                     :item '(:task "Exercise RLM") :parent-agent parent))
+           (child-registry (task-child-tool-registry registry :orchestrator orchestrator))
+           (child (task-tests--child-viewer configuration job :registry child-registry))
+           (context (make-instance 'tool-context :configuration configuration :worker nil
+                                   :conversation (agent-conversation child)
+                                   :registry child-registry :agent child)))
+      (unwind-protect
+           (dolist (specification '(("infer" infer) ("map" rlm-map)
+                                    ("complete" rlm-complete)))
+             (destructuring-bind (name operation) specification
+               (let ((arguments (if (string= name "map")
+                                    (json-object "tasks" (json-array (json-object "task" "one"))
+                                                 "async" t)
+                                    (json-object "task" "one" "async" t
+                                                 "context" (json-object "text" "source")))))
+                 (test-call-with-function-replacements
+                  (list (list operation (lambda (&rest arguments)
+                                          (declare (ignore arguments))
+                                          (values "answer" "trace" 0))))
+                  (lambda ()
+                    (let* ((result (tool-execute (tool-registry-find child-registry "rlm" name)
+                                                 context arguments))
+                           (details (tool-result-details result))
+                           (record (and (listp details) (getf (rest details) :job)))
+                           (identifier (getf record :id))
+                           (execution (and identifier
+                                           (task-orchestrator-find-visible-job
+                                            orchestrator identifier :viewer child
+                                            :tool-name (format nil "rlm.~A" name)))))
+                      (test-assert (and (tool-result-success-p result) execution)
+                                   "a child admits and owns its RLM background job")
+                      (multiple-value-bind (snapshot terminal-p)
+                          (session-job-await execution 5)
+                        (test-assert (and terminal-p (eq (getf snapshot :state) ':completed))
+                                     "the child RLM job completes"))))))))
+        (task-orchestrator-close orchestrator))))
+  nil)
+
 (-> test-rlm-job-activity () null)
 (defun test-rlm-job-activity ()
   "Test detached RLM phases, nested-thread ownership and terminal cleanup."
@@ -232,6 +282,7 @@
       (task-orchestrator-close orchestrator)
       (platform-delete-directory-tree *platform* root
                                       :validate t :if-does-not-exist ':ignore)))
+  (test-rlm-child-job-handoff)
   nil)
 
 (-> test-rlm-frame-budget-activity () null)

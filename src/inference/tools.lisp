@@ -131,7 +131,7 @@ The root context never enters a prompt, but its environment holds it in memory."
   (list
    "async"
    (tool-boolean-property
-    "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false.")
+    "Run as a background job and return at once. When completion wakes your session, do not poll it. Defaults to false.")
    "completion-policy" (tool-completion-policy-property)))
 
 (-> rlm--shared-frame-parameters (&optional boolean) list)
@@ -546,7 +546,7 @@ filesystem paths are only a programmatic Lisp designator."
        (rlm--result-sexp (rlm-partial-result-observation condition))))
     (rlm-budget-exhausted (condition)
       (tool-failure
-       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D from the primary agent), or hand an open-ended investigation to a child.spawn child agent."
+       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D), or hand an open-ended investigation to a child.spawn child agent."
                condition
                *rlm-tool-maximum-call-budget*
                *rlm-tool-maximum-token-budget*)))
@@ -568,9 +568,9 @@ filesystem paths are only a programmatic Lisp designator."
   "Run one RLM operation directly or as an inspectable session job.
 
 Frame registries carry no session job runtime, so nested calls always
-run directly; at the primary agent a long run becomes an inspectable
-job that hands off after the blocking grace instead of pinning the
-turn, and async requests hand off at admission."
+run directly. A real agent with a session runtime hands long runs off
+as inspectable jobs after the blocking grace; async requests hand off
+at admission."
   (tool-execution-invoke
    (tool-context-execution-runtime context)
    (tool-context-agent context)
