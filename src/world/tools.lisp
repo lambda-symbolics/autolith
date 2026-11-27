@@ -162,7 +162,7 @@
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
-              "Send a message with optional images. Omit channel to address the current channel. It reaches residents, subscribers and @mentions. Set channel to @parent to reach your parent agent, or the nearest active ancestor or person."
+              "Send a message with optional images to a channel's residents and anyone you mention. Omit channel to address the current channel. Set channel to @parent to reach your parent agent, or the nearest active ancestor or person."
               :class    'channel-send-tool
               :properties
               (json-object "channel" (tool-string-property *channel-tool-channel-description*)
@@ -181,7 +181,7 @@
                                        "items" (json-object "type" "string" "minLength" 1)))
               :required '("text"))
     (register "subscribe"
-              "Receive future messages of a channel without residing in it."
+              "Receive a wakeup when the specified agent finishes working and becomes idle."
               :properties (json-object "channel" (tool-string-property *channel-tool-channel-description*))
               :required   '("channel"))
     (register "unsubscribe"

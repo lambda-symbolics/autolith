@@ -46,6 +46,11 @@
     :reader        application-input-controller-condition-variable
     :type          t
     :documentation "The main and reader thread wakeup condition.")
+   (idle-wakeup-armed-p
+    :initform      nil
+    :accessor      application-input-controller-idle-wakeup-armed-p
+    :type          boolean
+    :documentation "Whether the owner has worked since its last idle wakeup.")
    (work-items
     :initform      (make-deque)
     :reader        application-input-controller-work-items
@@ -2864,11 +2869,10 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
       (setf (slot-value controller 'main-thread) nil)))
   nil)
 
-(-> application-input-controller--next-work
-    (application-input-controller)
-    (option list))
-(defun application-input-controller--next-work (controller)
-  "Wait for and return CONTROLLER's next work item, or NIL after exit."
+(-> application-input-controller--take-work-or-idle-wakeup
+    (application-input-controller) (option list))
+(defun application-input-controller--take-work-or-idle-wakeup (controller)
+  "Take the next work item, an idle wakeup marker, or NIL after exit."
   (let ((application (application-input-controller-application controller))
         (work        nil)
         (persist-p   nil))
@@ -2926,6 +2930,11 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
            (setf work (list ':idle-compaction (application-idle-compaction-episode application))
                  (application-input-controller-active-p controller) t)
            (return))
+         (when (application-input-controller-idle-wakeup-armed-p controller)
+           (when (getf (world-terminal--activity-locked application controller) :idle-p)
+             (setf (application-input-controller-idle-wakeup-armed-p controller) nil
+                   work (list ':idle-wakeup))
+             (return)))
          (if wait-seconds
              (condition-wait
               (application-input-controller-condition-variable controller)
@@ -2934,9 +2943,9 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
              (condition-wait
               (application-input-controller-condition-variable controller)
               (application-input-controller-lock controller)))))
-      (when work
-        (setf (application-input-controller-active-work-kind controller)
-              (first work)))
+      (when (and work (not (eq (first work) ':idle-wakeup)))
+        (setf (application-input-controller-idle-wakeup-armed-p controller) t
+              (application-input-controller-active-work-kind controller) (first work)))
       (when (application-input-controller-failure controller)
         (error
          'application-input-failed
@@ -2946,6 +2955,14 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
       (application-input-controller--persist-pending controller))
     (application-input-controller--publish-counts controller)
     work))
+
+(-> application-input-controller--next-work (application-input-controller) (option list))
+(defun application-input-controller--next-work (controller)
+  "Wait for CONTROLLER's next work item. Send idle wakeups outside the controller lock."
+  (loop for work = (application-input-controller--take-work-or-idle-wakeup controller)
+        while (eq (first work) ':idle-wakeup)
+        do (application-world-notify-idle (application-input-controller-application controller))
+        finally (return work)))
 
 (-> application-input-controller--continuation-work-p ((option keyword)) boolean)
 (defun application-input-controller--continuation-work-p (kind)

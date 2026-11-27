@@ -107,8 +107,8 @@
         (loop for height from 0 to 5
               do (test-assert (= height (length (world-sidebar-tests--lines sidebar :height height)))
                               "a short sidebar still fills exactly its height")))
-      (dolist (case '((:idle t :notice "● ")
-                      (:working t :notice "● ")
+      (dolist (case '((:working t :notice "● ")
+                      (:working nil :agent-spinner "● ")
                       (:active nil :agent-spinner "● ")
                       (:idle nil :success "○ ")
                       (:absent nil :dim "· ")))

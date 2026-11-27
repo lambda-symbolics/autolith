@@ -563,17 +563,24 @@ appended notices after it returns. Publication and wake callbacks run outside it
            (task-completion-service-wakeup service))
          t)))
 
-(-> task-completion-awaited-jobs (agent) list)
-(defun task-completion-awaited-jobs (agent)
-  "Return AGENT's queued or running detached jobs that report to its conversation."
-  (let ((runtime (task-completion--runtime agent))
-        (owner   (conversation-identifier (agent-conversation agent))))
+(-> task-completion-awaited-jobs (agent &key (:include-terminal-p boolean)) list)
+(defun task-completion-awaited-jobs (agent &key include-terminal-p)
+  "Return AGENT's live detached jobs, optionally including undelivered terminal jobs.
+
+Terminal publication drops the pool's live count before its listeners enqueue
+completion notices. Include those jobs when deciding whether the owner is idle."
+  (let ((runtime      (task-completion--runtime agent))
+        (conversation (agent-conversation agent)))
     (and runtime
          (remove-if-not
           (lambda (job)
             (and (session-job-detached-p job)
-                 (equal owner (session-job-completion-owner-conversation job))
-                 (member (job-state job) '(:queued :running) :test #'eq)))
+                 (equal (conversation-identifier conversation)
+                        (session-job-completion-owner-conversation job))
+                 (or (member (job-state job) '(:queued :running) :test #'eq)
+                     (and include-terminal-p
+                          (not (task-completion--delivered-p conversation
+                                                             (session-job-execution-identifier job)))))))
           (task-orchestrator-list-jobs runtime)))))
 
 (-> task-completion-disconnect (agent) null)

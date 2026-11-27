@@ -466,7 +466,7 @@ Live executions retain their pool ownership and remain inspectable after return.
                                               (setf (participant-state-identity
                                                      (agent-participant-state child))
                                                     (world-register-conversation
-                                                     configuration conversation)))
+                                                     configuration conversation :subscribe-parent-p t)))
                                             (task-job-note-agent-status job status
                                                                         details))
                                           :steering-callback

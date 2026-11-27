@@ -191,32 +191,27 @@ conversation transaction can roll back before releasing either lease."
                        (terminal-ui-terminal (application-ui application)))))
     (and terminal (terminal-interactive-p terminal) t)))
 
-(-> world-terminal-status-snapshot (channel-endpoint) list)
-(defun world-terminal-status-snapshot (session)
-  "Return a portable, internally consistent status snapshot for SESSION."
-  (let* ((application       (channel-endpoint-application session))
-         (configuration     (application-configuration application))
-         (conversation      (application-conversation application))
-         (terminal          (terminal-ui-terminal (application-ui application)))
-         (client-pids       (multiple-value-list
-                             (if (application-presentation application)
-                                 (application-presenting-client-pids application)
-                                 (and (terminal-interactive-p terminal) (current-process-id)))))
-         (controller        (application-input-controller application))
-         (paused-p          (application-world-terminal-paused-p application))
-         (active-p          nil)
-         (queued-count      0)
-         (steering-count    0)
-         (recalled-p        nil)
-         (stopping-p        t)
-         (cancelling-p      nil)
-         (reader-paused-p   nil)
-         (failed-p          nil)
-         (task-live-count   0)
-         (task-active-count 0)
-         (job-live-count    0))
+(-> world-terminal-working-state-p (keyword) boolean)
+(defun world-terminal-working-state-p (state)
+  "Return whether STATE shows a working orb in the sidebar."
+  (not (null (member state '(:active :working :cancelling)))))
+
+(-> world-terminal--activity-locked (application (option application-input-controller)) list)
+(defun world-terminal--activity-locked (application controller)
+  "Return APPLICATION's activity fields. The caller holds CONTROLLER's lock when present."
+  (let ((paused-p          (application-world-terminal-paused-p application))
+        (active-p          nil)
+        (queued-count      0)
+        (steering-count    0)
+        (recalled-p        nil)
+        (stopping-p        t)
+        (cancelling-p      nil)
+        (reader-paused-p   nil)
+        (failed-p          nil)
+        (task-live-count   0)
+        (task-active-count 0)
+        (job-live-count    0))
     (when controller
-      (with-lock-held ((application-input-controller-lock controller))
         (setf active-p (application-input-controller-active-p controller)
               queued-count
                 (deque-count (application-input-controller-work-items controller))
@@ -228,14 +223,19 @@ conversation transaction can roll back before releasing either lease."
               stopping-p (application-input-controller-stopping-p controller)
               cancelling-p (application-input-controller-turn-cancellation-p controller)
               reader-paused-p (application-input-controller-reader-paused-p controller)
-              failed-p (not (null (application-input-controller-failure controller))))))
+              failed-p (not (null (application-input-controller-failure controller)))))
     (multiple-value-setq (task-live-count task-active-count job-live-count)
       (world-terminal--task-counts application))
     (let* ((waiting-for-input-p
              (and controller (not active-p) (zerop queued-count) (zerop steering-count)
                   (not recalled-p) (not stopping-p) (not cancelling-p)
                   (not reader-paused-p) (not failed-p)))
-           (idle-p (and waiting-for-input-p (not paused-p) (zerop job-live-count)))
+           (waiting-for-jobs-p
+             (or (plusp job-live-count)
+                 (and waiting-for-input-p (not paused-p)
+                      (application-job-completions--controller-admissible-p controller)
+                      (application-job-completions-awaited-p application :include-terminal-p t))))
+           (idle-p (and waiting-for-input-p (not paused-p) (not waiting-for-jobs-p)))
            (state
             (cond (stopping-p
                    ':stopping)
@@ -247,19 +247,42 @@ conversation transaction can roll back before releasing either lease."
                    ':cancelling)
                   (active-p
                    ':active)
-                  ((or (plusp queued-count) (plusp steering-count) recalled-p
-                        (plusp job-live-count))
-                   ':working)
-                  (idle-p
-                   ':idle)
-                  (t
-                   ':starting))))
-      (list :world-terminal-status :version *daemon-protocol-version* :session-id
-            (conversation-identifier conversation) :pid (current-process-id)
-            :terminal-client-pid (first client-pids) :observer-client-pids (second client-pids)
-            :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
-            :waiting-for-input-p (not (null waiting-for-input-p)) :paused-p
-              (not (null paused-p)) :cwd
+                 ((or (plusp queued-count) (plusp steering-count) recalled-p waiting-for-jobs-p)
+                  ':working)
+                 (idle-p
+                  ':idle)
+                 (t
+                  ':starting))))
+      (list :state state :idle-p (not (null idle-p))
+            :waiting-for-input-p (not (null waiting-for-input-p))
+            :waiting-for-jobs-p  (not (null waiting-for-jobs-p))
+            :paused-p            (not (null paused-p))
+            :active-turn-p       (not (null active-p))
+            :queued-input-count queued-count :steering-input-count steering-count
+            :recalled-input-p (not (null recalled-p)) :turn-cancelling-p (not (null cancelling-p))
+            :reader-paused-p (not (null reader-paused-p)) :task-live-count task-live-count
+            :task-active-count task-active-count :job-live-count job-live-count))))
+
+(-> world-terminal-status-snapshot (channel-endpoint) list)
+(defun world-terminal-status-snapshot (session)
+  "Return a portable, internally consistent status snapshot for SESSION."
+  (let* ((application   (channel-endpoint-application session))
+         (configuration (application-configuration application))
+         (conversation  (application-conversation application))
+         (terminal      (terminal-ui-terminal (application-ui application)))
+         (client-pids   (multiple-value-list
+                         (if (application-presentation application)
+                             (application-presenting-client-pids application)
+                             (and (terminal-interactive-p terminal) (current-process-id)))))
+         (controller    (application-input-controller application))
+         (activity      (if controller
+                            (with-lock-held ((application-input-controller-lock controller))
+                              (world-terminal--activity-locked application controller))
+                            (world-terminal--activity-locked application nil))))
+    (list* :world-terminal-status :version *daemon-protocol-version* :session-id
+           (conversation-identifier conversation) :pid (current-process-id)
+           :terminal-client-pid (first client-pids) :observer-client-pids (second client-pids)
+           :autolith-version *autolith-version* :cwd
             (namestring (config :working-directory configuration)) :conversation-id
             (conversation-identifier conversation) :conversation-display-id
             (conversation-identifier-display (conversation-identifier conversation))
@@ -268,12 +291,7 @@ conversation transaction can roll back before releasing either lease."
             (not (null (conversation-persisted-p conversation))) :model
             (config :model configuration) :reasoning-effort
             (config :reasoning-effort configuration) :permission-mode
-            (application-permission-mode application) :active-turn-p
-            (not (null active-p)) :queued-input-count queued-count :steering-input-count
-            steering-count :recalled-input-p (not (null recalled-p)) :turn-cancelling-p
-            (not (null cancelling-p)) :reader-paused-p (not (null reader-paused-p))
-            :task-live-count task-live-count :task-active-count task-active-count
-           :job-live-count      job-live-count
+            (application-permission-mode application)
             :message-count      (conversation-message-count conversation)
             :mention-count
             (if-let ((person (application-world-human-identifier application)))
@@ -290,7 +308,7 @@ conversation transaction can roll back before releasing either lease."
               (t
                ':foreground))
             :observer-count     (length (second client-pids))
-            :created-at         (image-daemon:daemon-runtime-created-at session)))))
+            :created-at         (image-daemon:daemon-runtime-created-at session) activity)))
 
 ;;;; -- World-Terminal Terminal Ownership --
 

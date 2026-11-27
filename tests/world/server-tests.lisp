@@ -578,6 +578,102 @@
                            "The row clears when the child finishes its turn."))))))))
   nil)
 
+(-> test-world-server-idle-wakeup () null)
+(defun test-world-server-idle-wakeup ()
+  "Wake a subscriber only after detached execution and its completion turn finish."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (world-tests--persisted-conversation configuration "bwatched" 1000)
+     (world-tests--persisted-conversation configuration "bwatcher" 2000)
+     (world-participant-subscribe configuration "bwatcher" "bwatched")
+     (world-server-open server (list :channel "bwatched"))
+     (let* ((application     (world-host-application (world-server--find-host server "bwatched")))
+            (endpoint        (application-channel-endpoint application))
+            (agent           (application-agent application))
+            (release-job     (sb-thread:make-semaphore))
+            (publishing      (sb-thread:make-semaphore))
+            (release-publish (sb-thread:make-semaphore))
+            (snapshot        (symbol-function 'task-completion--snapshot))
+            (resumed         (sb-thread:make-semaphore))
+            (release-turn    (sb-thread:make-semaphore))
+            (human           (world-human-participant (world-load configuration)))
+            (run             (symbol-function 'application--run-turn)))
+       (flet ((status ()
+                "Read the same activity snapshot as the sidebar."
+                (rest (world-terminal-status-snapshot endpoint)))
+              (deliveries ()
+                "Read the subscriber's durable inbox without opening its channel."
+                (world-inbox-deliveries configuration "bwatcher")))
+         (test-assert (and (getf (status) :idle-p) (null (deliveries)))
+                      "starting an idle channel does not wake its subscriber")
+         (test-call-with-function-replacements
+          (list (list 'task-completion--snapshot
+                      (lambda (job state &rest arguments)
+                        (when (equal (session-job-completion-owner-conversation job) "bwatched")
+                          (sb-thread:signal-semaphore publishing)
+                          (sb-thread:wait-on-semaphore release-publish :timeout 20))
+                        (apply snapshot job state arguments)))
+                (list 'application--run-turn
+                      (lambda (owner text &rest arguments)
+                        (cond
+                          ((not (eq owner application))
+                           (apply run owner text arguments))
+                          ((getf arguments :continuation-p)
+                           (sb-thread:signal-semaphore resumed)
+                           (sb-thread:wait-on-semaphore release-turn :timeout 20)
+                           ':continue)
+                          (t
+                           (let ((job (task-orchestrator-start-execution-job
+                                       (application--task-orchestrator owner) agent :tool-name "shell.run"
+                                       :summary "idle wakeup test" :detached-p t
+                                       :operation-function
+                                       (lambda ()
+                                         (sb-thread:wait-on-semaphore release-job :timeout 20)
+                                         (make-instance 'tool-result :content "done")))))
+                             (task-completion-watch job agent))
+                           ':continue)))))
+          (lambda ()
+            (unwind-protect
+                 (progn
+                   (world-message-send configuration :sender (participant-identifier human)
+                                       :channel "bwatched" :text "Start a detached job.")
+                   (test-assert
+                    (task-tests--wait-until
+                     (lambda ()
+                       (let ((activity (status)))
+                         (and (getf activity :waiting-for-input-p)
+                              (getf activity :waiting-for-jobs-p)
+                              (world-terminal-working-state-p (getf activity :state))
+                              (application-job-completions-awaited-p application))))
+                     10)
+                    "a detached job with continuation authority keeps the sidebar working")
+                   (test-assert (null (deliveries)) "waiting for the job is not an idle transition")
+                   (sb-thread:signal-semaphore release-job)
+                   (test-assert (sb-thread:wait-on-semaphore publishing :timeout 15)
+                                "the detached job settles before its completion is queued")
+                   (let ((activity (status)))
+                     (test-assert (and (zerop (getf activity :job-live-count))
+                                       (getf activity :waiting-for-jobs-p)
+                                       (eq (getf activity :state) ':working)
+                                       (null (deliveries)))
+                                  "publication does not expose an idle gap before completion delivery"))
+                   (sb-thread:signal-semaphore release-publish)
+                   (test-assert (sb-thread:wait-on-semaphore resumed :timeout 15)
+                                "settling the job wakes the watched channel")
+                   (test-assert (null (deliveries)) "the completion turn still has work to do")
+                   (sb-thread:signal-semaphore release-turn)
+                   (test-assert (task-tests--wait-until (lambda () (and (getf (status) :idle-p) (deliveries))) 10)
+                                "the subscriber is woken once the channel is genuinely idle")
+                   (dotimes (index 3)
+                     (application--wake-input-controller application)
+                     (test-assert (and (getf (status) :idle-p) (= (length (deliveries)) 1))
+                                  "rechecking an idle channel does not send another wakeup")))
+              (sb-thread:signal-semaphore release-job)
+              (sb-thread:signal-semaphore release-publish)
+              (sb-thread:signal-semaphore release-turn))))))))
+  nil)
+
 (-> test-world-server-wake-channel () null)
 (defun test-world-server-wake-channel ()
   "Test a message serves the unserved channel its agent resides in, and nothing else."
@@ -3475,6 +3571,33 @@ terminal publication and join the serving owner before restoring the provider."
                     (test-assert (not (thread-alive-p owner))
                                  "the serving owner ends before the provider fixture is restored")))))
             (when parent-client (world-terminal-client-close parent-client))))))))
+  nil)
+
+(-> test-world-server-child-idle-wakeup () null)
+(defun test-world-server-child-idle-wakeup ()
+  "Automatically subscribe the parent of a real assignment and wake it when the child settles."
+  (world-server-tests--call-running-child
+   (lambda (context)
+     (let* ((parent        (getf context :parent))
+            (child         (getf context :application))
+            (configuration (getf context :configuration))
+            (parent-id     (application-world--served-channel parent))
+            (child-id      (application-world--served-channel child)))
+       (flet ((wakeups ()
+                "Return the child's idle notices recorded in the parent's transcript."
+                (loop for record in (conversation-records-newest (application-conversation parent) 20)
+                      for request = (getf (rest record) :operation-request)
+                      when (and (equal (getf (getf request :message) :source) child-id)
+                                (search "Your child @" (getf request :summary)))
+                      collect record)))
+         (test-assert (member child-id
+                              (participant-subscriptions (world-participant-find (world-load configuration) parent-id))
+                              :test #'string=)
+                      "the first durable assignment subscribes its parent")
+         (test-assert (null (wakeups)) "the parent is not woken while its child is working")
+         (funcall (getf context :release))
+         (test-assert (task-tests--wait-until (lambda () (= (length (wakeups)) 1)) 15)
+                      "settlement wakes the parent with a child-specific notification")))))
   nil)
 
 (-> test-world-server-open-running-child () null)

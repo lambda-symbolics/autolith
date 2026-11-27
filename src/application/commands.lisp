@@ -2764,7 +2764,7 @@ show."
      :help-order        3
      :argument          "[CHANNEL MESSAGE]"
      :description       "send a message to a channel as yourself"
-     :tip               "reaches the channel's residents and subscribers and wakes their agents. Without a message it picks the channel and lets you write one."
+     :tip               "reaches the channel's residents and anyone you mention. Without a message it picks the channel and lets you write one."
      :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)

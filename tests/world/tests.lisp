@@ -558,7 +558,7 @@
 
 (-> test-world-message-send () null)
 (defun test-world-message-send ()
-  "Test messages reach a channel, its subscribers and mentioned participants, and settle by receipt."
+  "Test posts, mentions, and settlement by receipt without forwarding to subscribers."
   (with-test-configuration (configuration)
     (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
       (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -569,22 +569,14 @@
                                           :channel  "bfirst1"
                                           :text     "hello"
                                           :notify-p nil)))
-          (test-assert (equal (getf result :channels) '("bfirst1" "bsecnd2"))
-                       "a post reaches the channel and each subscriber's residence")
-          (let ((post (first (world-inbox-deliveries configuration "bfirst1")))
-                (copy (first (world-inbox-deliveries configuration "bsecnd2"))))
+          (test-assert (and (equal (getf result :channels) '("bfirst1"))
+                            (null (world-inbox-deliveries configuration "bsecnd2")))
+                       "a post does not forward to a subscriber")
+          (let ((post (first (world-inbox-deliveries configuration "bfirst1"))))
             (test-assert (and (eq (world-delivery-kind post) ':post)
-                              (eq (world-delivery-kind copy) ':subscription))
-                         "copies record the delivery route to each channel")
-            (test-assert (and (string= (world-delivery-identifier post)
-                                       (world-delivery-identifier copy))
-                              (string= (world-delivery-identifier post) (getf result :id)))
-                         "the original and subscription copy share the sent identifier")
-            (test-assert (null (world-delivery-mentions post))
-                         "an unmentioned post carries no mention recipients")
-            (test-assert (and (search "where you reside" (world-delivery-label post))
-                              (search "which you subscribe to" (world-delivery-label copy)))
-                         "copies are labeled by why they arrived")
+                              (string= (world-delivery-identifier post) (getf result :id))
+                              (null (world-delivery-mentions post)))
+                         "the recipient gets the unmentioned post under the send's identifier")
             (test-assert (uiop:string-prefix-p "[Message from the person to channel" (world-delivery-label post))
                          "the label says the person sent it")))
         (let ((result (world-message-send configuration
@@ -644,6 +636,43 @@
                             (= 1 (count-if (lambda (line) (uiop:string-prefix-p "[Message from" line)) lines))
                             (every (lambda (line) (uiop:string-prefix-p "> " line)) (rest lines)))
                        "a header written inside a message is quoted with the rest, and only the real header names the sender")))))
+  nil)
+
+(-> test-world-idle-wakeup-recipients () null)
+(defun test-world-idle-wakeup-recipients ()
+  "Check child subscription, reciprocal refusal, and delivery to the current subscribers."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human parent watcher) (world-tests--agents configuration)
+      (declare (ignore human))
+      (let* ((identifier "bchild3")
+             (owner      (participant-identifier parent))
+             (workspace  (namestring (config :working-directory configuration)))
+             (child      (nth-value 1 (world-channel-register configuration identifier
+                                                              :workspace workspace :parent "bfirst1"
+                                                              :name "child" :subscribe-parent-p t))))
+        (test-assert
+         (handler-case
+             (progn (world-participant-subscribe configuration (participant-identifier child) "bfirst1") nil)
+           (world-error (condition) (eq (world-error-operation condition) ':subscribe)))
+         "a new child cannot subscribe back to its auto-subscribed parent")
+        (world-participant-subscribe configuration (participant-identifier watcher) identifier)
+        (world-message-idle-wakeups configuration identifier)
+        (let ((parent-inbox (world-inbox-deliveries configuration "bfirst1"))
+              (other-inbox  (world-inbox-deliveries configuration "bsecnd2")))
+          (test-assert (and (= (length parent-inbox) 1)
+                            (search "Your child @" (world-delivery-text (first parent-inbox)))
+                            (= (length other-inbox) 1)
+                            (search "Agent @" (world-delivery-text (first other-inbox))))
+                       "only the parent is told that its child finished"))
+        (world-participant-unsubscribe configuration owner identifier)
+        (world-channel-register configuration identifier :workspace workspace :parent "bfirst1"
+                                :subscribe-parent-p t)
+        (world-message-idle-wakeups configuration identifier)
+        (test-assert (and (= (length (world-inbox-deliveries configuration "bfirst1")) 1)
+                          (= (length (world-inbox-deliveries configuration "bsecnd2")) 2))
+                     "registering an existing child does not undo the parent's unsubscribe"))))
   nil)
 
 (-> test-world-delivery-codec () null)
@@ -711,7 +740,6 @@
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (declare (ignore first-agent))
-      (world-participant-subscribe configuration (participant-identifier second-agent) "bfirst1")
       (flet ((delivery (identifier target)
                "Return a post IDENTIFIER from the person to TARGET."
                (make-instance 'world-delivery
@@ -729,13 +757,14 @@
           (let* ((result (world-message-send configuration
                                              :sender   (participant-identifier human)
                                              :channel  "bfirst1"
+                                             :mentions (list (participant-identifier second-agent))
                                              :text     "hello"
                                              :notify-p nil))
                  (id     (getf result :id)))
             (test-assert (and id
                               (equal (getf result :channels) '("bfirst1"))
                               (equal (getf result :pending) '("bsecnd2")))
-                         "the target receives the post while a full subscriber inbox leaves its copy pending")
+                         "the target receives the post while the mention waits for inbox space")
             (test-assert (equal (mapcar #'first (world-outbox-pending configuration id))
                                 '("bsecnd2"))
                          "the pending copy waits in the outbox under the send's identifier")
@@ -749,7 +778,7 @@
             (let ((copy (first (world-inbox-deliveries configuration "bsecnd2"))))
               (test-assert (and copy
                                 (string= (world-delivery-identifier copy) id)
-                                (eq (world-delivery-kind copy) ':subscription))
+                                (eq (world-delivery-kind copy) ':mention))
                            "the copy keeps the send's identifier and its reason"))
             (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
                               (not (probe-file (world-outbox-pathname configuration id)))
@@ -762,6 +791,7 @@
           (let* ((result (world-message-send configuration
                                              :sender   (participant-identifier human)
                                              :channel  "bfirst1"
+                                             :mentions (list (participant-identifier second-agent))
                                              :text     "again"
                                              :notify-p nil))
                  (id     (getf result :id))
@@ -1064,43 +1094,19 @@
                          "the copy arrives as a mention from the person in their channel"))
           (test-assert (null (world-inbox-deliveries configuration "bfirst1"))
                        "nothing is posted back to the person's own channel")
-          (test-assert (null (application-world-share application "a plain remark"))
-                       "a plain message with no subscriber elsewhere tells nobody")
           (world-participant-subscribe configuration (participant-identifier second-agent) "bfirst1")
-          (test-assert (equal (application-world-share application "a plain remark") '("bsecnd2"))
-                       "a plain message reaches a subscriber residing elsewhere")
-          (let ((copy (first (last (world-inbox-deliveries configuration "bsecnd2")))))
-            (test-assert (and copy
-                              (eq (world-delivery-kind copy) ':subscription)
-                              (string= (world-delivery-text copy) "a plain remark")
-                              (null (world-inbox-deliveries configuration "bfirst1")))
-                         "the subscriber's copy is labeled a subscription and nothing is posted back"))
-          (test-assert (equal (application-world-share-reply application "the agent answers") '("bsecnd2"))
-                       "the agent's reply reaches the subscriber elsewhere too")
-          (let ((copy (first (last (world-inbox-deliveries configuration "bsecnd2")))))
-            (test-assert (and copy
-                              (eq (world-delivery-kind copy) ':subscription)
-                              (string= (world-delivery-sender copy)
-                                       (participant-identifier first-agent))
-                              (string= (world-delivery-text copy) "the agent answers"))
-                         "the reply's copy comes from this channel's agent"))
-          (test-assert (null (application-world-share-reply application nil))
-                       "a reply without verbal text shares nothing")
           (let ((before (length (world-inbox-deliveries configuration "bsecnd2"))))
-            (flet ((reply (observer text)
-                     "Report TEXT as a persisted reply to OBSERVER and return the copies bsecnd2 got."
-                     (agent-observer-status observer ':assistant-response-persisted (list :text text))
-                     (- (length (world-inbox-deliveries configuration "bsecnd2")) before)))
-              (test-assert (zerop (reply (application-agent-observer
-                                          application
-                                          :operation-request (list :operation "channel" :summary "hi"))
-                                         "an answer to a channel message"))
-                           "a reply to a channel message reaches no subscriber, so subscribed agents cannot answer each other forever")
-              (test-assert (zerop (reply (application-agent-observer application :continuation-p t)
-                                         "an answer to a job completion"))
-                           "a reply in an automatic continuation reaches no subscriber")
-              (test-assert (= (reply (application-agent-observer application) "an answer to the person") 1)
-                           "the reply to the person's typed message reaches the subscriber")))
+            (application-world-share application "a plain remark")
+            (agent-observer-status (application-agent-observer application)
+                                   ':assistant-response-persisted (list :text "the agent answers"))
+            (test-assert (= before (length (world-inbox-deliveries configuration "bsecnd2")))
+                         "neither typed messages nor replies forward to a subscriber"))
+          (agent-observer-status (application-agent-observer application) ':assistant-response-persisted
+                                 (list :text (format nil "the agent answers @~A" other)))
+          (let ((reply (first (last (world-inbox-deliveries configuration "bsecnd2")))))
+            (test-assert (and (eq (world-delivery-kind reply) ':mention)
+                              (equal (participant-identifier first-agent) (world-delivery-sender reply)))
+                         "an explicit mention in a reply reaches the other channel"))
           (let* ((fresh  (conversation-create configuration :identifier "bfresh4" :created-at 4000))
                  (new    (make-instance 'application
                                         :configuration configuration
@@ -1401,8 +1407,7 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (declare (ignore second-agent))
+    (let ((human (world-human-participant (world-load configuration))))
       (let* ((inbox (world-tests--inbox configuration))
              (world (world-load configuration)))
         (test-assert (and (null (channel-parent (world-inbox-channel world)))
@@ -1431,13 +1436,11 @@
             (test-assert (and (= 1 (count inbox items :key (lambda (item) (getf item :value)) :test #'equal))
                               (equal (getf (first items) :name) *world-inbox-designator*))
                          "the switch picker offers the inbox once, first and by name"))
-          (world-participant-subscribe configuration (participant-identifier first-agent) "bsecnd2")
           (test-assert (and (application-world-send application :channel "bsecnd2" :text "status?")
-                            (let ((copy (find "bsecnd2" (world-inbox-deliveries configuration "bfirst1")
-                                              :key #'world-delivery-target :test #'string=)))
-                              (and copy
-                                   (string= (world-delivery-sender copy) (participant-identifier human))
-                                   (string= (world-delivery-source copy) "bfirst1"))))
+                            (let ((post (first (world-inbox-deliveries configuration "bsecnd2"))))
+                              (and post
+                                   (string= (world-delivery-sender post) (participant-identifier human))
+                                   (string= (world-delivery-source post) "bfirst1"))))
                        "the person's message names the channel it was sent from, not the inbox")))))
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)

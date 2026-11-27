@@ -121,20 +121,18 @@ a refresh is due."
 
 (-> world-sidebar--state-span (keyword boolean) cons)
 (defun world-sidebar--state-span (state waiting-for-jobs-p)
-  "Return STATE's glyph, yellow while an idle agent has unfinished jobs."
-  (if (and waiting-for-jobs-p (member state '(:idle :working)))
-      (terminal-span ':notice "● ")
-      (case state
-        ((:active :working :cancelling)
-         (terminal-span ':agent-spinner "● "))
-        (:idle
-         (terminal-span ':success "○ "))
-        (:unknown
-         (terminal-span ':notice "? "))
-        ((:paused :detaching :stopping :failed :starting)
-         (terminal-span ':notice "○ "))
-        (otherwise
-         (terminal-span ':dim "· ")))))
+  "Return STATE's glyph, with a yellow orb when working while waiting for jobs."
+  (cond
+    ((world-terminal-working-state-p state)
+     (terminal-span (if (and waiting-for-jobs-p (eq state ':working)) ':notice ':agent-spinner) "● "))
+    ((eq state ':idle)
+     (terminal-span ':success "○ "))
+    ((eq state ':unknown)
+     (terminal-span ':notice "? "))
+    ((member state '(:paused :detaching :stopping :failed :starting))
+     (terminal-span ':notice "○ "))
+    (t
+     (terminal-span ':dim "· "))))
 
 (-> world-sidebar--badges (&rest (option cons)) list)
 (defun world-sidebar--badges (&rest spans)

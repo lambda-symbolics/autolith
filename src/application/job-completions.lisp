@@ -34,13 +34,12 @@ A completion for a different owner is recorded without starting a turn."
              (t
               t)))))))
 
-(-> application-job-completions-awaited-p (application) boolean)
-(defun application-job-completions-awaited-p (application)
-  "Return true while a pending result or unfinished job will wake APPLICATION.
+(-> application-job-completions-awaited-p (application &key (:include-terminal-p boolean)) boolean)
+(defun application-job-completions-awaited-p (application &key include-terminal-p)
+  "Return true while a pending result or detached job will wake APPLICATION.
 
-Goal continuations defer while a pending result or unfinished job is expected to
-trigger a completion turn. That turn resumes the goal. Without a connected
-wakeup, no completion turn is expected."
+INCLUDE-TERMINAL-P covers the interval before a finished job's notice is queued.
+Without a connected wakeup, no completion turn is expected."
   (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
     (flet ((admissible-p (notice)
              (application-job-completions--notice-admissible-p application notice)))
@@ -53,7 +52,7 @@ wakeup, no completion turn is expected."
                               :owner-participant  (session-job-completion-owner-participant job)
                               :completion-policy  (session-job-completion-policy job)
                               :mission-id         (session-job-completion-mission-id job))))
-                     (task-completion-awaited-jobs agent)))
+                     (task-completion-awaited-jobs agent :include-terminal-p include-terminal-p)))
            t))))
 
 (-> application-job-completions--presentation-admissible-p

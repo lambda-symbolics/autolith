@@ -1364,15 +1364,17 @@ channel ID and records the legacy ID as its alias."
 
 (-> world-channel-register
     (configuration string &key (:workspace string) (:parent (option string)) (:title (option string))
-                   (:name (option string)) (:settings list) (:now timestamp))
+                   (:name (option string)) (:settings list) (:subscribe-parent-p boolean)
+                   (:now timestamp))
     (values channel participant))
 (defun world-channel-register (configuration identifier &key workspace parent title name settings
-                                                            (now (get-universal-time)))
+                                                          subscribe-parent-p (now (get-universal-time)))
   "Register IDENTIFIER as a durable channel and agent, returning those two records.
 
 IDENTIFIER is the already selected conversation ID. Existing channel and
 agent metadata wins over startup defaults. Registration never reads or changes
-the channel's history."
+the channel's history. With SUBSCRIBE-PARENT-P, add the owner's subscription
+in the same transaction that registers a new agent."
   (conversation-identifier-validate-path-component identifier)
   (let* ((world    (world-load configuration))
          (channel  (world-channel-find world identifier))
@@ -1425,12 +1427,20 @@ the channel's history."
                             :parent keeper :residence identifier :settings settings
                             :created-at (channel-created-at channel) :updated-at now)))
                 (values (append (unless existing (list (world--channel-record channel)))
-                                (list (world--participant-record agent)))
+                                (list (world--participant-record agent))
+                                (when subscribe-parent-p
+                                  (let ((keeper (world--require-participant world keeper ':register-channel)))
+                                    (unless (member identifier (participant-subscriptions keeper) :test #'string=)
+                                      (list (world--participant-record
+                                             (world--copy-participant
+                                              keeper :subscriptions (append (participant-subscriptions keeper)
+                                                                            (list identifier))
+                                                     :updated-at    (max now (participant-updated-at keeper)))))))))
                         (list channel agent))))))))))
 
-(-> world-register-conversation (configuration conversation) (option participant))
-(defun world-register-conversation (configuration conversation)
-  "Register a durable CONVERSATION using its in-memory metadata, without replaying history."
+(-> world-register-conversation (configuration conversation &key (:subscribe-parent-p boolean)) (option participant))
+(defun world-register-conversation (configuration conversation &key subscribe-parent-p)
+  "Register durable CONVERSATION without replaying history. Subscribe its owner only on child creation."
   (when (and (conversation-persisted-p conversation) (not (conversation-inbox-p conversation)))
     (let* ((identifier (conversation-identifier conversation))
            (title      (conversation-title conversation))
@@ -1440,18 +1450,19 @@ the channel's history."
       (multiple-value-bind (channel participant)
           (world-channel-register
            configuration identifier
-           :workspace (or (conversation-origin-directory conversation)
-                          (config :working-directory configuration))
-           :title     (and (world--name-p title) title)
-           :name      (and (non-empty-string-p name) name)
-           :parent    (and parent (world-channel-find world parent) parent)
-           :now       (conversation-created-at conversation)
-           :settings  (loop for (key value) on (list :model            (conversation-model conversation)
-                                                     :model-provider   (conversation-model-provider conversation)
-                                                     :reasoning-effort (conversation-reasoning-effort conversation))
-                           by (partial #'nthcdr 2)
-                            when (and value (world--portable-value-p value))
-                              append (list key value)))
+           :workspace          (or (conversation-origin-directory conversation)
+                                   (config :working-directory configuration))
+           :title              (and (world--name-p title) title)
+           :name               (and (non-empty-string-p name) name)
+           :parent             (and parent (world-channel-find world parent) parent)
+           :subscribe-parent-p subscribe-parent-p
+           :now                (conversation-created-at conversation)
+           :settings           (loop for (key value) on (list :model            (conversation-model conversation)
+                                                              :model-provider   (conversation-model-provider conversation)
+                                                              :reasoning-effort (conversation-reasoning-effort conversation))
+                                    by (partial #'nthcdr 2)
+                                     when (and value (world--portable-value-p value))
+                                       append (list key value)))
         (when (and (world--name-p title) (not (equal title (channel-title channel))))
           (world-channel-update configuration identifier :title title))
         participant))))
@@ -1638,11 +1649,17 @@ participant has is given a numbered suffix in the same transaction."
 
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-subscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
-  "Subscribe participant IDENTIFIER to channel CHANNEL-IDENTIFIER and return it."
+  "Subscribe IDENTIFIER to idle wakeups from CHANNEL-IDENTIFIER unless the channel watches IDENTIFIER."
   (world--update-participant
    configuration identifier :operation ':subscribe :now now
    :change (lambda (world participant)
              (world--require-channel world channel-identifier ':subscribe)
+             (when (some (lambda (resident)
+                           (member (participant-residence participant)
+                                   (participant-subscriptions resident) :test #'equal))
+                         (world-channel-residents world channel-identifier))
+               (error 'world-error :operation ':subscribe :identifier channel-identifier
+                      :message "The target already subscribes to your channel."))
              (unless (member channel-identifier (participant-subscriptions participant) :test #'string=)
                (list :subscriptions (append (participant-subscriptions participant)
                                             (list channel-identifier)))))))

@@ -4284,10 +4284,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                                (getf details :maximum-attempts)))))))
              (:assistant-response-persisted
               (setf request-empty-p nil)
-              ;; Only the reply to the person's typed message reaches the
-              ;; channel's subscribers. A reply to a channel message, a job
-              ;; completion or any other automatic turn stays here, so two
-              ;; agents subscribed to each other never answer each other forever.
+               ;; Share mentions in replies to the conventional person's turn.
               (when (and (null operation-request) (not continuation-p))
                 (application-world-share-reply application (getf details :text))))
              (:provider-request-completed

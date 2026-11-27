@@ -4,9 +4,9 @@
 
 ;;; A message to a channel goes into that channel's inbox, a small snapshot
 ;;; beside the world log. The process serving the channel drains the inbox
-;;; into the channel's history and wakes its residents. Subscribers and
-;;; mentioned participants residing elsewhere get a copy in the inbox of
-;;; their own residence channel. A delivery is settled once the serving
+;;; into the channel's history and wakes its residents. Mentioned participants
+;;; elsewhere get the message in their own inbox. Subscribers receive a separate
+;;; notice when the channel becomes idle. A delivery is settled once the serving
 ;;; conversation records its receipt, so a crash between the two never
 ;;; repeats or loses a message.
 
@@ -28,7 +28,7 @@
 The world server sets it while it runs, so a message wakes the agent it is for.")
 
 (deftype world-delivery-kind ()
-  "Why a delivery reached a channel: addressed to it, subscribed, mentioned, or a notice for the person residing there."
+  "The reason for delivery. The reader accepts :SUBSCRIPTION from older inboxes."
   '(member :post :subscription :mention :notice))
 
 (defclass world-delivery ()
@@ -609,23 +609,18 @@ to report to @parent, so it must not reach SENDER's parent or the person."
 (-> world-message-plan
     (world &key (:sender participant) (:channel channel) (:text string) (:mentions list)
                 (:identifier string) (:now timestamp) (:post-p boolean)
-                (:subscribers-p boolean) (:source (option string)) (:images list))
+                (:source (option string)) (:images list))
     list)
 (defun world-message-plan (world &key sender channel text mentions identifier
-                                      (now (get-universal-time)) (post-p t)
-                                      (subscribers-p post-p) source images)
+                                       (now (get-universal-time)) (post-p t) source images)
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
 The channel itself gets a post for its residents. Except for the sender, each
-subscriber and each mentioned participant residing elsewhere gets a copy in its
-residence channel, one per channel, subscriptions before mentions, except that a
-notice for the person replaces a subscription copy, so the person always sees the
-message in full. Without POST-P the
-channel gets nothing: the message was said there already. SUBSCRIBERS-P, which
-follows POST-P unless given, says whether its subscribers still hear of it, as they
-do of every ordinary message said in the channel. SOURCE is the channel the message
-was said from, the sender's residence unless given: the person resides in the inbox
-but speaks in the channel on screen."
+mentioned participant residing elsewhere gets a copy in its residence channel,
+one per channel. Without POST-P the channel gets nothing because the message
+was said there already. SOURCE is the channel the message was said from, the
+sender's residence unless given: the person resides in the inbox but speaks
+in the channel on screen."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
         (covered (if post-p nil (list (channel-identifier channel)))))
@@ -646,26 +641,13 @@ but speaks in the channel on screen."
 
              (deliver (channel-identifier kind)
                "Plan one copy of KIND for CHANNEL-IDENTIFIER unless it has one already."
-               (let ((planned (assoc channel-identifier pairs :test #'string=)))
-                 (cond
-                   ((not (member channel-identifier covered :test #'string=))
-                    (push channel-identifier covered)
-                    (push (cons channel-identifier (delivery kind)) pairs))
-                   ((and planned
-                         (eq kind ':notice)
-                         (eq (world-delivery-kind (rest planned)) ':subscription))
-                    (setf (rest planned) (delivery kind)))
-                   (t
-                    nil)))))
+               (unless (member channel-identifier covered :test #'string=)
+                 (push channel-identifier covered)
+                 (push (cons channel-identifier (delivery kind)) pairs))))
       ;; A participant speaking in its own residence is the one saying it
       ;; there, so that channel gets no copy to read back.
       (when (and post-p (not (equal target (participant-residence sender))))
         (deliver target ':post))
-      (when subscribers-p
-        (dolist (subscriber (world-channel-subscribers world target))
-          (unless (or (string= (participant-identifier subscriber) (participant-identifier sender))
-                      (null (participant-residence subscriber)))
-            (deliver (participant-residence subscriber) ':subscription))))
       (dolist (mention mentions)
         (let ((mentioned (world-participant-find world mention)))
           (when (and mentioned
@@ -727,18 +709,17 @@ count."
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)
                         (:notify-p boolean) (:now timestamp) (:post-p boolean)
-                        (:subscribers-p boolean) (:source (option string)) (:images list))
+                        (:source (option string)) (:images list))
     list)
 (defun world-message-send (configuration &key sender channel text mentions (notify-p t)
-                                              (now (get-universal-time)) (post-p t)
-                                              (subscribers-p post-p) source images)
+                                              (now (get-universal-time)) (post-p t) source images)
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
-TEXT. Without POST-P the channel itself gets no copy; SUBSCRIBERS-P, which defaults
-to POST-P, controls subscriber copies. SOURCE names the channel it was said from, as
-in `world-message-plan'. The send is recorded before any inbox is written, so a copy
-an inbox refuses, or one a crash skips, is delivered later under the same identifier.
+TEXT. Without POST-P the channel itself gets no copy. SOURCE names the channel
+it was said from, as in `world-message-plan'. The send is recorded before any
+inbox is written, so a copy an inbox refuses, or one a crash skips, is delivered
+later under the same identifier.
 The result is a plist of :id, :channels (channels whose delivery attempt completed),
   :pending (channels whose attempt raised WORLD-ERROR) and :notified (the channels
   whose serving process was reached)."
@@ -776,18 +757,17 @@ The result is a plist of :id, :channels (channels whose delivery attempt complet
                    attachments))
            (when-let ((pairs (world-message-plan
                               world
-                              :sender        participant
-                              :channel       target
-                              :text          text
-                              :images        (mapcar (lambda (attachment)
-                                                       (namestring (image-attachment-pathname attachment)))
-                                                     (reverse attachments))
-                              :mentions      (remove-duplicates mentioned :test #'string= :from-end t)
-                              :identifier    identifier
-                              :now           now
-                              :post-p        post-p
-                              :subscribers-p subscribers-p
-                              :source        source)))
+                              :sender     participant
+                              :channel    target
+                              :text       text
+                              :images     (mapcar (lambda (attachment)
+                                                    (namestring (image-attachment-pathname attachment)))
+                                                  (reverse attachments))
+                              :mentions   (remove-duplicates mentioned :test #'string= :from-end t)
+                              :identifier identifier
+                              :now        now
+                              :post-p     post-p
+                              :source     source)))
              (world-outbox-write configuration identifier pairs)
              (setf published-p t))
            (multiple-value-bind (delivered refused)
@@ -798,6 +778,40 @@ The result is a plist of :id, :channels (channels whose delivery attempt complet
                    :notified (and notify-p (world-message-notify configuration delivered)))))
       (unless published-p
         (conversation--delete-image-attachments attachments)))))
+
+(-> world-message-idle-wakeups (configuration string) null)
+(defun world-message-idle-wakeups (configuration channel)
+  "Record and deliver one idle wakeup per subscribing residence outside CHANNEL."
+  (let* ((world (world-load configuration))
+         (agent (find ':agent (world-channel-residents world channel) :key #'participant-kind)))
+    (when agent
+      (let* ((identifier (make-identifier))
+             (now        (get-universal-time))
+             (pairs      nil))
+        (dolist (subscriber (world-channel-subscribers world channel))
+          (let ((target (participant-residence subscriber)))
+            (unless (or (equal target channel) (assoc target pairs :test #'string=))
+              (push (cons target
+                          (make-instance 'world-delivery
+                                         :identifier  identifier
+                                         :time        now
+                                         :sender      (participant-identifier agent)
+                                         :sender-name (participant-name agent)
+                                         :sender-kind ':agent
+                                         :source      channel
+                                         :target      target
+                                         :kind        (if (eq (participant-kind subscriber) ':human) ':notice ':post)
+                                         :text        (format nil "~A @~A finished working. Check on it if you like. Unsubscribe if you do not want these notifications."
+                                                              (if (equal (participant-parent agent)
+                                                                         (participant-identifier subscriber))
+                                                                  "Your child"
+                                                                  "Agent")
+                                                              (participant-name agent))))
+                    pairs))))
+        (when pairs
+          (world-outbox-write configuration identifier pairs)
+          (world-message-notify configuration (world-message--deliver configuration identifier))))))
+  nil)
 
 
 ;;;; -- Steering Delivery --

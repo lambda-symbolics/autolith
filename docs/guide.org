@@ -797,10 +797,13 @@ are matched without regard to case.
 Use a mention such as =@researcher please check this= to send a copy to a
 participant from your current conversation. A mention starts a word, so the
 =@= inside a mail address does not count. To send directly, use =(tell "ID"
-"text")=. Agents use =channel.send= and can follow other channels through
-=channel.subscribe= and =channel.unsubscribe=. Subscribers receive copies of messages and replies.
-An agent can use =@parent= to
-reach its nearest active ancestor or, if there is none, you.
+"text")=. Agents use =channel.send=. Use =@parent= to reach the nearest active
+ancestor or, if there is none, the person.
+
+Use =channel.subscribe= to receive one wakeup each time an agent finishes
+working and becomes idle. An agent with unfinished jobs is still working.
+When you create a child, you subscribe to it automatically. Use
+=channel.unsubscribe= to stop the wakeups.
 
 An idle agent starts work when it receives a message. A working agent receives
 it as steering. Messages for you go to the inbox. Open it with =(open "inbox")=

@@ -59,6 +59,17 @@
          (conversation-persisted-p conversation)
          (conversation-identifier conversation))))
 
+(-> application-world-notify-idle (application) null)
+(defun application-world-notify-idle (application)
+  "Send the channel's idle wakeups without interrupting its input loop on delivery failure."
+  (when-let ((channel (application-world--served-channel application)))
+    (let ((configuration (application-configuration application)))
+      (handler-case
+          (world-message-idle-wakeups configuration channel)
+        (error (cause)
+          (warn 'world-session-warning :pathname (configuration-world-path configuration) :cause cause)))))
+  nil)
+
 (-> application-world-inbox-p (application) boolean)
 (defun application-world-inbox-p (application)
   "Return true when APPLICATION's conversation is the person's inbox."
@@ -352,27 +363,23 @@ read only warns."
                               (:source (option string)))
     list)
 (defun application-world--share-elsewhere (configuration world &key sender channel text source)
-  "Send TEXT to CHANNEL's subscribers and mentioned participants elsewhere, returning the channels told.
+  "Send TEXT to the participants it mentions outside CHANNEL, and return the channels told.
 
 SOURCE, when supplied, identifies where the sender spoke; otherwise delivery
 uses the sender's residence. The local turn already records the message."
-  (let ((mentions     (and (find #\@ text)
-                           (remove-if (lambda (identifier)
-                                        (let ((participant (world-participant-find world identifier)))
-                                          (or (null participant)
-                                              (equal (participant-residence participant) channel))))
-                                      (world-message-mentions world text))))
-        (subscribed-p (some (lambda (subscriber)
-                              (not (equal (participant-residence subscriber) channel)))
-                            (world-channel-subscribers world channel))))
-    (when (or mentions subscribed-p)
+  (let ((mentions (and (find #\@ text)
+                       (remove-if (lambda (identifier)
+                                    (let ((participant (world-participant-find world identifier)))
+                                      (or (null participant)
+                                          (equal (participant-residence participant) channel))))
+                                  (world-message-mentions world text)))))
+    (when mentions
       (getf (apply #'world-message-send configuration
-                   :sender        (participant-identifier sender)
-                   :channel       channel
-                   :text          text
-                   :mentions      mentions
-                   :post-p        nil
-                   :subscribers-p t
+                   :sender   (participant-identifier sender)
+                   :channel  channel
+                   :text     text
+                   :mentions mentions
+                   :post-p   nil
                    (when source (list :source source)))
             :channels))))
 
@@ -381,11 +388,9 @@ uses the sender's residence. The local turn already records the message."
   "Share INPUT, the person's message to this channel, with the participants elsewhere it reaches, and return the channels told.
 
 The message itself goes to this channel's agent as the person's turn. A
-copy goes to every subscriber of this channel residing elsewhere, and to a
-participant residing elsewhere that it names as @name or @id. The share runs
-once, when the person submits, so a replay of the turn after a restart
-never sends a second copy. A delivery that fails is reported and never
-stops the turn."
+participant residing elsewhere gets a copy if the person names it as @name or
+@id. The share runs once, when the person submits, so a replay of the turn after
+a restart never sends a second copy. A delivery failure does not stop the turn."
   (let ((text (cond
                 ((stringp input)
                  input)
@@ -438,12 +443,11 @@ message is taken once, so a replay of a turn shares nothing again."
 
 (-> application-world-share-reply (application t) list)
 (defun application-world-share-reply (application text)
-  "Share TEXT, this channel's agent's reply, with the channel's subscribers elsewhere, and return the channels told.
+  "Share the agent's reply with the participants it mentions elsewhere, and return the channels told.
 
-The reply was said in this channel already; a subscriber residing elsewhere
-gets a copy, and so does a participant elsewhere the reply mentions. A
-reply that is not verbal text, or a channel without an agent of its own,
-shares nothing. A delivery that fails is reported and never stops the turn."
+The reply was said in this channel already. A reply that is not verbal text,
+or a channel without an agent of its own, shares nothing. A delivery failure
+does not stop the turn."
   (when (and (non-empty-string-p text)
              (slot-boundp application 'configuration))
     (handler-case

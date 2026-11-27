@@ -727,7 +727,7 @@ workspace, in open and closed groups alike."
      :depth              depth
      :state              (if status (getf status :state) ':absent)
      :waiting-for-jobs-p (and (getf status :waiting-for-input-p)
-                              (plusp (or (getf status :job-live-count) 0))
+                              (getf status :waiting-for-jobs-p)
                               t)
      :attached-p         (and status (getf status :terminal-attached-p) t)
      :current-p          current-p

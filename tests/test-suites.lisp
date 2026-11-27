@@ -697,6 +697,7 @@
   test-world-agent-name-header
   test-world-channel-resolve
   test-world-message-send
+  test-world-idle-wakeup-recipients
   test-world-delivery-codec
   test-world-message-outbox
   test-world-channel-tools
@@ -734,6 +735,7 @@
  test-world-server-endpoint-precedence test-world-server-endpoint-escalation
  test-world-server-cold-channels test-world-server-child-maintenance
   test-world-server-child-message-activity
+  test-world-server-idle-wakeup
   test-world-server-channel-permission-modes
  test-world-server-wake-channel test-world-server-stop-reason
  test-world-server-client-exit test-world-server-status-line
@@ -757,6 +759,7 @@
  test-world-server-launch-options test-world-server-close-unattached
  test-world-server-attachment-moves-nobody
  test-world-server-open-running-child
+  test-world-server-child-idle-wakeup
  test-world-server-running-child-close
  test-world-server-running-child-idle-grace
  test-world-server-person-unread test-world-server-open-before-checkpoint
