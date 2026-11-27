@@ -7,13 +7,12 @@
 
 (-> mission-review--application (tool-context) application)
 (defun mission-review--application (context)
-  "Return the owning application only for the primary agent; reject delegated agents."
+  "Return the owning application only for its agent."
   (let* ((mission     (mission-context-find (tool-context-conversation context)))
          (application (and mission (mission-context-application mission))))
     (unless application
       (mission--reject ':missing "Mission review requires a mission."))
-    (unless (and (eq (tool-context-agent context) (application-agent application))
-                 (not (typep (tool-context-agent context) 'task-child-agent)))
+    (unless (eq (tool-context-agent context) (application-agent application))
       (mission--reject ':review-authority "Mission review is owned by the primary agent."))
     application))
 

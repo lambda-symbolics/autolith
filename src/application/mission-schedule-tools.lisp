@@ -7,13 +7,12 @@
 
 (-> mission-schedule--application (tool-context) application)
 (defun mission-schedule--application (context)
-  "Return the owning application only for the primary agent; reject delegated agents."
+  "Return the owning application only for its agent."
   (let* ((mission     (mission-context-find (tool-context-conversation context)))
          (application (and mission (mission-context-application mission))))
     (unless application
       (mission--reject ':missing "Mission schedules require a mission."))
-    (unless (and (eq (tool-context-agent context) (application-agent application))
-                 (not (typep (tool-context-agent context) 'task-child-agent)))
+    (unless (eq (tool-context-agent context) (application-agent application))
       (mission--reject ':schedule-authority "Mission schedules are owned by the primary agent."))
     application))
 

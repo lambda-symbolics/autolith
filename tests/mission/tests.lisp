@@ -462,7 +462,7 @@
       (application-mission-start application (mission-test--specification :turns 4))
       (provider-stream-turn provider conversation :tool-namespaces #() :event-callback #'identity)
       (let ((child (conversation-create configuration)))
-        (mission-context-inherit conversation child)
+        (mission-context-bind-child conversation child)
         (provider-stream-turn provider child :tool-namespaces #() :event-callback #'identity))
       (test-assert (string= "done" (infer "one bounded inference" :provider provider :configuration configuration))
                    "direct recursive inference returns its value")

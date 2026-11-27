@@ -103,6 +103,11 @@
       (mission-context-bind context child)))
   nil)
 
+(-> mission-context-bind-child (conversation conversation) null)
+(defun mission-context-bind-child (parent child)
+  "Associate CHILD with the mission captured by PARENT before delivery."
+  (mission-context-inherit parent child))
+
 (-> mission--ensure-reservations (list) null)
 (defun mission--ensure-reservations (allowance)
   "Append absent reservation counters without replacing ALLOWANCE's identity."
