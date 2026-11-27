@@ -443,7 +443,6 @@
   test-fullscreen-boot-sequence
   test-fullscreen-boot-presented
   test-fullscreen-client-startup
-  test-fullscreen-boot-disabled
   test-fullscreen-boot-cursor-lifecycle
   test-fullscreen-boot-linger
   test-fullscreen-boot-reader-diversion

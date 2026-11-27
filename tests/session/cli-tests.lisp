@@ -423,7 +423,7 @@
 (defun test-client-welcome-boot ()
   "Hold the initial welcome frame for input, then hand over to the sidebar and composer."
   (with-test-configuration (configuration)
-    (dolist (mode '(:space :enter :detach :disabled :no-boot))
+    (dolist (mode '(:space :enter :detach :disabled))
       (let* ((terminal                    (make-instance 'queued-recording-terminal :columns 120 :rows 30))
              (panel                       (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
              (screen                      (world-terminal-screen-create :terminal terminal :panel panel))
@@ -443,8 +443,7 @@
              (*terminal-resize-pending-p* nil))
         (unwind-protect
              (progn
-               (world-terminal-screen-show-loading screen "Loading home" :start-p t
-                                                   :boot-p                        (not (eq mode ':no-boot)))
+               (world-terminal-screen-show-loading screen "Loading home" :start-p t :boot-p t)
                (test-call-with-function-replacements
                 (list (list 'platform-watch-terminal-resize (constantly nil))
                       (list 'terminal-input-ready-p (constantly t))
@@ -471,7 +470,7 @@
                                "Space or Enter is consumed by boot, while Ctrl-C detaches")
                   (unless waiting-p
                     (test-assert (not (search *terminal-ui-boot-linger-prompt* (recording-terminal-output terminal)))
-                                 "disabled boot or linger does not prompt")))))
+                                 "disabling the ready wait does not prompt")))))
           (world-terminal-screen-close screen)))))
   nil)
 

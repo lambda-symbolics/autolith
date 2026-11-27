@@ -120,10 +120,15 @@ are centered as one block, so rows of unequal width stay aligned."
                       (terminal-span style (termdown:fit-text text width))))
 
               (boxed (style text)
-                (let* ((safe    (termdown:fit-text (sanitize-text text :single-line-p t) inside))
-                       (padding (make-string (max 0 (- inside (text-cell-width safe)))
-                                             :initial-element #\Space)))
-                  (row style (format nil "│ ~A~A │" safe padding))))
+                 (if (< width 4)
+                     (row ':brand "│  │")
+                     (let* ((safe    (termdown:fit-text (sanitize-text text :single-line-p t) inside))
+                            (padding (make-string (max 0 (- inside (text-cell-width safe)))
+                                                  :initial-element #\Space)))
+                       (list (terminal-span ':plain left)
+                             (terminal-span ':brand "│ ")
+                             (terminal-span style (concatenate 'string safe padding))
+                             (terminal-span ':brand " │")))))
 
               (mascot-row (index text)
                 (boxed (terminal-ui--boot-mascot-row-style index mascot-count)
@@ -349,19 +354,18 @@ DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
            (terminal-ui-boot-screen ui ':listener-ready)))))))
 
 (-> terminal-ui-boot-sequence
-    (terminal-ui &key (:wait-function function) (:screen-p boolean)
-                      (:linger-p boolean) (:tip-seconds real)
+    (terminal-ui &key (:wait-function function) (:linger-p boolean) (:tip-seconds real)
                       (:halted-function function) (:direct-input-p-function function)
                       (:resize-callback (option function)))
     keyword)
 (defun terminal-ui-boot-sequence
-    (ui &key (wait-function #'sleep) (screen-p t) linger-p
+    (ui &key (wait-function #'sleep) linger-p
              (tip-seconds *terminal-ui-boot-tip-default-seconds*)
              (halted-function (constantly nil))
              (direct-input-p-function (constantly t)) resize-callback)
   "Acquire the fullscreen terminal and optionally wait for Space when ready.
 
-The ready screen appears immediately when SCREEN-P and LINGER-P are true.
+With LINGER-P the ready screen appears immediately and waits for input.
 Keep ordinary output deferred during the wait. The responsive reader
 routes keys through TERMINAL-UI-BOOT-DIVERT-EVENT; read directly only when
 DIRECT-INPUT-P-FUNCTION allows it. HALTED-FUNCTION checks for exit requests.
@@ -374,7 +378,7 @@ or :INTERRUPT when the wait is interrupted."
     ;; TERMINAL-UI-START may have run before the detached client attached.
     (unless (fullscreen-terminal-ui-active-p ui)
       (terminal-ui-fullscreen-enter ui))
-    (when (and screen-p linger-p)
+    (when linger-p
       (let ((suspended-p nil))
         (with-terminal-ui-locked (ui)
           (setf suspended-p (terminal-ui-live-output-suspended-p ui)

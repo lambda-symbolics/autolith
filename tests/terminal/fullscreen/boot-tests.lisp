@@ -207,25 +207,6 @@
                     "client-owned rendering follows terminal color policy"))))
   nil)
 
-(-> test-fullscreen-boot-disabled () null)
-(defun test-fullscreen-boot-disabled ()
-  "Open the listener at once when the boot screen is turned off."
-  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
-        (waits    0))
-    (with-terminal-ui (ui (fullscreen-test--ui terminal))
-      (test-assert (eq ':start
-                       (terminal-ui-boot-sequence
-                        ui :screen-p nil :linger-p t
-                           :wait-function (lambda (seconds)
-                                            (declare (ignore seconds))
-                                            (incf waits))))
-                   "a disabled boot screen starts the listener")
-      (test-assert (zerop waits) "a disabled boot screen does not wait for Space")
-      (test-assert (fullscreen-terminal-ui-active-p ui) "the fullscreen terminal is still acquired")
-      (test-assert (not (search "PRESS SPACE TO START" (recording-terminal-output terminal)))
-                   "no Space prompt is painted")))
-  nil)
-
 (-> test-fullscreen-boot-linger () null)
 (defun test-fullscreen-boot-linger ()
   "Hold the boot screen for Space, rotate tips on schedule, and report interrupts."

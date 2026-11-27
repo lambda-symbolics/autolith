@@ -508,18 +508,10 @@ exist yet, and is only put in directory form."
   :options                      '(:autolith :almighty)
   :default                      ':autolith)
 
-(define-setting :boot-screen-p (boolean-setting)
-  :label                       "Boot screen"
-  :group                       :terminal
-  :documentation               "Whether fullscreen startup shows the boot screen before opening the listener."
-  :scope                       :durable
-  :environment                 "AUTOLITH_BOOT_SCREEN"
-  :default                     t)
-
 (define-setting :boot-screen-linger-p (boolean-setting)
   :label                              "Boot screen waits for Space"
   :group                              :terminal
-  :documentation                      "Whether the fullscreen boot screen waits for Space before opening the listener."
+  :documentation                      "Whether startup waits for Space or Enter once ready."
   :scope                              :durable
   :environment                        "AUTOLITH_BOOT_LINGER"
   :default                            t)

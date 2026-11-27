@@ -1130,7 +1130,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :launch          launch)))
                  :start-p (not (null (terminal--terminal-mode-or-nil
                                       (world-terminal-screen-terminal screen))))
-                 :boot-p  (config :boot-screen-p configuration))
+                 :boot-p  t)
            (when welcome-p
              (world-sidebar-start panel))
            (loop with origin = nil

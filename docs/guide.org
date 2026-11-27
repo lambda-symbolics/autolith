@@ -202,10 +202,9 @@ replay the full tour. To disable the automatic tour, enter
 
 The boot screen shows the Autolith version and reports progress while your
 channel opens. Press Space or Enter when the channel is ready.
-- To skip /the wait/, use =(setf (config :boot-screen-linger-p) nil)= or set
-  =AUTOLITH_BOOT_LINGER= to =off= for one launch.
-- To skip /the boot screen/, use =(setf (config :boot-screen-p) nil)= or set
-  =AUTOLITH_BOOT_SCREEN= to =off=. See =(settings)= for these options.
+
+To continue as soon as startup is ready, use =(settings :boot-screen-linger-p nil)=
+or set =AUTOLITH_BOOT_LINGER= to =off= for one launch.
 
 * Talk to Autolith
 
