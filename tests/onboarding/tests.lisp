@@ -7,8 +7,7 @@
   "Call FUNCTION with an isolated application, controller, configuration, and terminal."
   (with-test-configuration (configuration root)
     (setf configuration
-          (configuration-copy configuration :working-directory root :onboarding-p t
-                              :boot-screen-seconds 0))
+          (configuration-copy configuration :working-directory root :onboarding-p t))
     (let* ((*terminal-theme*       *terminal-theme*)
            (*terminal-style-table* *terminal-style-table*)
            (terminal               (make-instance 'queued-recording-terminal :columns 100 :rows 32))

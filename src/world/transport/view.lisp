@@ -99,9 +99,10 @@ modal reader so the view can act on it."
          (event  (world-terminal-screen-filter-event
                   screen (terminal-read-event (world-terminal-screen-terminal screen)))))
     (cond
-      ((or (eq event ':detach) (and (consp event) (eq (first event) ':switch)))
-       (when-let ((function (pane-terminal-request-function terminal)))
-         (funcall function (if (eq event ':detach) (list ':detached) event)))
+      ((and (pane-terminal-request-function terminal)
+            (or (eq event ':detach) (and (consp event) (eq (first event) ':switch))))
+       (funcall (pane-terminal-request-function terminal)
+                (if (eq event ':detach) (list ':detached) event))
        ':escape)
       (t
        event))))
@@ -725,9 +726,7 @@ The transcript the channel replays meanwhile waits behind it."
     (terminal-ui-start ui)
     (unwind-protect
          (when (eq (terminal-ui-boot-sequence
-                    ui
-                    :presented-p t
-                    :linger-p    (config :boot-screen-linger-p configuration))
+                      ui :linger-p (config :boot-screen-linger-p configuration))
                    ':interrupt)
            (channel-view--finish view (list ':detached)))
       (with-terminal-ui-locked (ui)

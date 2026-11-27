@@ -419,6 +419,57 @@
                           "the welcome composer includes the configured modeline")))))))
   nil)
 
+(-> test-client-welcome-boot () null)
+(defun test-client-welcome-boot ()
+  "Hold the initial welcome frame for input, then hand over to the sidebar and composer."
+  (with-test-configuration (configuration)
+    (dolist (mode '(:space :enter :detach :disabled :no-boot))
+      (let* ((terminal (make-instance 'queued-recording-terminal :columns 120 :rows 30))
+             (panel    (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
+             (screen   (world-terminal-screen-create :terminal terminal :panel panel))
+             (config   (configuration-copy configuration :boot-screen-linger-p
+                                          (not (eq mode ':disabled))))
+             (waiting-p (member mode '(:space :enter :detach)))
+             (keys      (if waiting-p
+                            (list (ecase mode (:space '(:insert " ")) (:enter ':submit) (:detach ':interrupt))
+                                  '(:switch :session-id "from-sidebar"))
+                            (list '(:switch :session-id "from-sidebar"))))
+             (read-event (symbol-function 'terminal-read-event))
+             (*terminal-resize-pending-p* nil))
+        (unwind-protect
+             (progn
+               (world-terminal-screen-show-loading screen "Loading home" :start-p t
+                                                   :boot-p (not (eq mode ':no-boot)))
+               (test-call-with-function-replacements
+                (list (list 'platform-watch-terminal-resize (constantly nil))
+                      (list 'terminal-input-ready-p (constantly t))
+                      (list 'terminal-read-event
+                            (lambda (candidate)
+                              (if (not (eq candidate terminal))
+                                  (funcall read-event candidate)
+                                  (let ((event (pop keys)))
+                                    (unless event (error "The welcome reader exhausted its input."))
+                                    (if (and waiting-p keys)
+                                        (test-assert
+                                         (and (eq ':session (world-terminal-screen-painted-layout screen))
+                                              (search *terminal-ui-boot-linger-prompt*
+                                                      (recording-terminal-output terminal)))
+                                         "the ready screen owns the full terminal before the first key")
+                                        (test-assert (eq ':beside (world-terminal-screen-painted-layout screen))
+                                                     "the composer and sidebar own the screen after handoff"))
+                                    event)))))
+                (lambda ()
+                  (test-assert (equal (welcome-view-run
+                                       screen config (lambda (height)
+                                                       (main--welcome-frame screen "/launch/" :height-limit height)))
+                                      (unless (eq mode ':detach) '(:switch :session-id "from-sidebar")))
+                               "Space or Enter is consumed by boot, while Ctrl-C detaches")
+                  (unless waiting-p
+                    (test-assert (not (search *terminal-ui-boot-linger-prompt* (recording-terminal-output terminal)))
+                                 "disabled boot or linger does not prompt")))))
+          (world-terminal-screen-close screen)))))
+  nil)
+
 (-> test-cli-product-identity () null)
 (defun test-cli-product-identity ()
   "Test that CLI text uses the configured product and launcher names."

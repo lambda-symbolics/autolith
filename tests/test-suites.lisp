@@ -1637,7 +1637,8 @@
   test-cli-product-identity
   test-cli-world-client-start
   test-client-welcome-layout
-  test-client-welcome-input)
+  test-client-welcome-input
+  test-client-welcome-boot)
 
 (when (test-fixture-available-p *platform* ':posix-shell)
   (define-test-suite release-script

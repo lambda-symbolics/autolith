@@ -511,20 +511,10 @@ exist yet, and is only put in directory form."
 (define-setting :boot-screen-p (boolean-setting)
   :label                       "Boot screen"
   :group                       :terminal
-  :documentation               "Whether a fullscreen start plays the boot screen before opening the listener."
+  :documentation               "Whether fullscreen startup shows the boot screen before opening the listener."
   :scope                       :durable
   :environment                 "AUTOLITH_BOOT_SCREEN"
   :default                     t)
-
-(define-setting :boot-screen-seconds (real-setting)
-  :label                             "Boot screen duration"
-  :group                             :terminal
-  :documentation                     "Total seconds of the boot animation, shared evenly by its phases."
-  :scope                             :durable
-  :minimum                           0
-  :maximum                           60
-  :environment                       "AUTOLITH_BOOT_DURATION"
-  :default                           3.5)
 
 (define-setting :boot-screen-linger-p (boolean-setting)
   :label                              "Boot screen waits for Space"

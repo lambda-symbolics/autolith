@@ -196,16 +196,14 @@ For example, you can inspect the workspace directly:
 
 On later launches, you see only new or revised lessons. Enter =(onboard)= to
 replay the full tour. To disable the automatic tour, enter
-=(settings :onboarding-p nil)= or set =AUTOLITH_ONBOARDING= to =off=. If you
-disable the boot screen, you skip the opening animation.
+=(settings :onboarding-p nil)= or set =AUTOLITH_ONBOARDING= to =off=.
 
 ** Boot screen
 
+The boot screen shows the Autolith version and reports progress while your
+channel opens. Press Space or Enter when the channel is ready.
 - To skip /the wait/, use =(setf (config :boot-screen-linger-p) nil)= or set
   =AUTOLITH_BOOT_LINGER= to =off= for one launch.
-- To change the direct-session animation from 3.5 seconds, set
-  =:boot-screen-seconds= or =AUTOLITH_BOOT_DURATION=. A hosted channel shows
-  actual progress and does not replay the animation.
 - To skip /the boot screen/, use =(setf (config :boot-screen-p) nil)= or set
   =AUTOLITH_BOOT_SCREEN= to =off=. See =(settings)= for these options.
 
@@ -280,7 +278,7 @@ Pass Lisp values directly to commands:
   strings.
 
 #+BEGIN_SRC lisp
-(settings :boot-screen-seconds 2)
+(settings :channel-idle-minutes 2)
 (settings :reasoning-traces-p t)
 (settings :reasoning-traces-p nil)
 #+END_SRC
@@ -924,8 +922,8 @@ current value, where it came from, and the available choices. In a script,
 
 You can use the same command without the picker:
 
-- =(settings :boot-screen-seconds)= describes the setting.
-- =(settings :boot-screen-seconds 2)= sets the value.
+- =(settings :channel-idle-minutes)= describes the setting.
+- =(settings :channel-idle-minutes 2)= sets the value.
 - Use =t= or =nil= for switches. Omit the value if you only want to inspect
   the setting. An explicit =nil= counts as a value.
 

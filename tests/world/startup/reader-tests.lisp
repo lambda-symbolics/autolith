@@ -28,7 +28,7 @@
              (let ((waits 0))
                (test-assert
                 (eq (terminal-ui-boot-sequence
-                     ui :duration 0 :linger-p t
+                     ui :linger-p t
                         :direct-input-p-function
                         (lambda ()
                           (not (application-input-controller-reader-live-p controller)))

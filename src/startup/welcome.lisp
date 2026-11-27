@@ -47,6 +47,7 @@
          (space (if ui (fullscreen-terminal-ui-transcript-space ui) 0))
          (rows  (coerce rows 'list)))
     (when (and (plusp space)
+               (not whole-screen-p)
                (every (lambda (row)
                         (zerop (length (string-trim '(#\Space #\Tab) (clinedi:ansi-strip row)))))
                       (subseq rows 0 (min space (length rows)))))
@@ -81,48 +82,64 @@ Return the navigation request with its first input, or NIL when the user leaves.
                                      :compaction-limit (configuration-compaction-token-limit configuration))
     (when input
       (terminal-ui-set-input ui input))
-    (unwind-protect
-         (progn
-           (terminal-start terminal)
-           (with-lock-held ((world-terminal-screen-lock screen))
-             (world-terminal-screen--take-whole-screen screen nil))
-           (setf watch (platform-watch-terminal-resize
-                        *platform* (lambda () (setf *terminal-resize-pending-p* t))))
-           (terminal-ui-start ui)
-           (loop until (welcome-input-port-finished-p port)
-                 do (when (shiftf *terminal-resize-pending-p* nil)
-                      (multiple-value-bind (height width) (terminal-current-size)
-                        (terminal-set-dimensions terminal width :rows height))
-                      (world-terminal-screen-resized screen))
-                    (world-terminal-screen-take-resize screen)
-                    (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
-                      (unless (and (= height (terminal-rows pane)) (= width (terminal-columns pane)))
-                        (terminal-ui-resize ui width :rows height)))
-                    (world-terminal-screen-tick screen)
-                    (terminal-ui-refresh-status ui)
-                    (cond
-                      ((terminal-input-ready-p terminal)
-                       (let ((event (world-terminal-screen-filter-event screen (terminal-read-event terminal))))
-                         (cond
-                           ((and (consp event) (eq (first event) ':switch))
-                            (setf (welcome-input-port-request port) event
-                                  (welcome-input-port-finished-p port) t))
-                           ((eq event ':resize)
-                            (setf *terminal-resize-pending-p* t))
-                           ((eq event ':ignore)
-                            nil)
-                           ((or (equal event '(:channel-command :new))
-                                (and (member event '(:submit :enter :return))
-                                     (zerop (length (line-editor-text (terminal-ui-editor ui))))
-                                     (null (user-message-input-image-pathnames
-                                            (terminal-ui--submission-input ui "")))))
-                            (setf (welcome-input-port-request port) (list :switch :new-p t)
-                                  (welcome-input-port-finished-p port) t))
-                           (t
-                            (terminal-ui-dispatch-event ui port event)))))
-                      (t
-                       (sleep *channel-view-poll-seconds*))))
-           (welcome-input-port-request port))
-      (when watch
-        (platform-unwatch-terminal-resize *platform* watch))
-      (terminal-ui-stop ui))))
+    (flet ((pending-size (target)
+             (declare (ignore target))
+             (when (shiftf *terminal-resize-pending-p* nil)
+               (multiple-value-bind (height width) (terminal-current-size)
+                 (terminal-set-dimensions terminal width :rows height))
+               (world-terminal-screen-resized screen))
+             (world-terminal-screen-take-resize screen)
+             (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
+               (unless (and (= height (terminal-rows pane)) (= width (terminal-columns pane)))
+                 (cons height width)))))
+      (unwind-protect
+           (progn
+             (terminal-start terminal)
+             (setf watch (platform-watch-terminal-resize
+                          *platform* (lambda () (setf *terminal-resize-pending-p* t))))
+             (when (and (world-terminal-screen-boot-ui screen)
+                        (config :boot-screen-linger-p configuration))
+               ;; Keep the loading frame until the ready prompt and the ready frame
+               ;; until the composer has the sidebar's pane size.
+               (setf (terminal-ui-live-output-suspended-p ui) t)
+               (terminal-ui-start ui)
+               (when (eq (terminal-ui-boot-sequence ui :linger-p t :resize-callback #'pending-size)
+                         ':interrupt)
+                 (return-from welcome-view-run nil)))
+             (with-lock-held ((world-terminal-screen-lock screen))
+               (world-terminal-screen--take-whole-screen screen nil))
+             (terminal-ui-refresh-size ui #'pending-size)
+             (with-terminal-ui-locked (ui)
+               (setf (terminal-ui-live-output-suspended-p ui) nil)
+               (terminal-ui-start ui)
+               (terminal-ui--paint-live ui))
+             (loop until (welcome-input-port-finished-p port)
+                   do (terminal-ui-refresh-size ui #'pending-size)
+                      (world-terminal-screen-tick screen)
+                      (terminal-ui-refresh-status ui)
+                      (cond
+                        ((terminal-input-ready-p terminal)
+                         (let ((event (world-terminal-screen-filter-event screen (terminal-read-event terminal))))
+                           (cond
+                             ((and (consp event) (eq (first event) ':switch))
+                              (setf (welcome-input-port-request port) event
+                                    (welcome-input-port-finished-p port) t))
+                             ((eq event ':resize)
+                              (setf *terminal-resize-pending-p* t))
+                             ((eq event ':ignore)
+                              nil)
+                             ((or (equal event '(:channel-command :new))
+                                  (and (member event '(:submit :enter :return))
+                                       (zerop (length (line-editor-text (terminal-ui-editor ui))))
+                                       (null (user-message-input-image-pathnames
+                                              (terminal-ui--submission-input ui "")))))
+                              (setf (welcome-input-port-request port) (list :switch :new-p t)
+                                    (welcome-input-port-finished-p port) t))
+                             (t
+                              (terminal-ui-dispatch-event ui port event)))))
+                        (t
+                         (sleep *channel-view-poll-seconds*))))
+             (welcome-input-port-request port))
+        (when watch
+          (platform-unwatch-terminal-resize *platform* watch))
+        (terminal-ui-stop ui)))))

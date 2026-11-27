@@ -1361,12 +1361,12 @@
        (application-operation-call application 'settings ':onboarding-p t)
        (let ((evaluation
               (application-lisp-evaluate
-               "(progn (settings :onboarding-p nil) (settings :boot-screen-seconds 2))"
+               "(progn (settings :onboarding-p nil) (settings :channel-idle-minutes 2))"
                :application application)))
          (test-assert
           (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                (null (config :onboarding-p configuration))
-               (= (config :boot-screen-seconds configuration) 2))
+                (= (config :channel-idle-minutes configuration) 2))
           "local Lisp settings accepts explicit NIL and numbers"))
        (application-operation-call application 'settings 'terminal-theme ':almighty)
        (test-assert (eq (config :terminal-theme configuration) ':almighty)
@@ -1374,19 +1374,19 @@
        (test-assert
         (eq (application-lisp-evaluation-status
              (application-lisp-evaluate
-              "(progn (settings :boot-screen-seconds 3.5) (settings :onboarding-p nil))"
+              "(progn (settings :channel-idle-minutes 3.5) (settings :onboarding-p nil))"
               :application application))
             ':ok)
         "native settings accept numeric and boolean literals")
        (test-assert
-        (and (= (config :boot-screen-seconds configuration) 3.5)
+         (and (= (config :channel-idle-minutes configuration) 3.5)
              (null (config :onboarding-p configuration)))
         "native literal setting values follow the active schema")
        (let ((saved
               (uiop/stream:read-file-string (configuration-preferences-path configuration))))
          (dolist
              (arguments
-              '((:boot-screen-seconds "2") (:onboarding-p "off") (:onboarding-p 2)
+              '((:channel-idle-minutes "2") (:onboarding-p "off") (:onboarding-p 2)
                 (:terminal-theme :unknown)))
            (test-assert
             (handler-case
@@ -1394,7 +1394,7 @@
              (setting-invalid nil t))
             "invalid native settings signal the setting condition"))
          (test-assert
-          (and (= (config :boot-screen-seconds configuration) 3.5)
+           (and (= (config :channel-idle-minutes configuration) 3.5)
                (eq (config :terminal-theme configuration) ':almighty)
                (string= saved
                         (uiop/stream:read-file-string
@@ -1473,7 +1473,7 @@
              "a named setting changes through the command")
             (test-application--setting-value-entry
              configuration (first presented) ':cache-miss-notices-p)
-            (dolist (name '(:hurry-up-p :model :boot-screen-seconds :terminal-theme))
+            (dolist (name '(:hurry-up-p :model :channel-idle-minutes :terminal-theme))
               (test-application--setting-value-entry
                configuration (application--setting-value-entry application name) name))
             (test-assert

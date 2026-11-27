@@ -77,21 +77,18 @@
                  (and shown (or (null hidden) (> shown hidden)) t))))
         (let ((visibility nil))
           (terminal-ui-boot-sequence
-           ui :duration 0 :linger-p t
+           ui :linger-p t
               :wait-function
               (lambda (seconds)
                 (declare (ignore seconds))
                 (push (cursor-visible-p) visibility)
-                (when (> (length visibility) (length *terminal-ui-boot-sequence-phases*))
-                  (queued-recording-terminal-enqueue terminal '(:insert " ")))))
-          (test-assert (and (= (length visibility)
-                              (1+ (length *terminal-ui-boot-sequence-phases*)))
-                            (notany #'identity visibility))
-                       "boot animation and the Space wait hide the input cursor")
+                (queued-recording-terminal-enqueue terminal '(:insert " "))))
+          (test-assert (equal visibility '(nil))
+                       "the Space wait hides the input cursor without an animation")
           (test-assert (cursor-visible-p) "the composer handoff restores the input cursor"))
         (handler-case
             (terminal-ui-boot-sequence
-             ui :duration      0
+             ui :linger-p       t
                 :wait-function (lambda (seconds)
                                  (declare (ignore seconds))
                                  (error "Expected boot interruption.")))
@@ -102,53 +99,55 @@
 (-> test-fullscreen-boot-sequence () null)
 (defun test-fullscreen-boot-sequence ()
   "Keep boot frames visible through refresh, then restore deferred transcript output."
-  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
+  (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24)))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
       (setf (fullscreen-terminal-ui-welcome-tip ui)
             (list (terminal-span ':hint "operator advice")))
-      (let ((frames  nil)
-            (seconds 0))
+      (let ((polls 0))
         (terminal-ui-boot-sequence
-         ui :wait-function
-         (lambda (duration)
-           (incf seconds duration)
-           (push (fullscreen-test--frame ui) frames)
-           (let* ((frame   (first frames))
-                  (tip-row (find-if (lambda (row) (search "operator advice" row)) frame)))
-             (test-assert tip-row "each boot stage displays the tip")
-             (test-assert (= 32 (search "operator advice" (clinedi:ansi-strip tip-row)))
-                          "short tips are centered within the terminal")
-             (terminal-ui-append-finalized ui (length frames) "deferred output")
-             (terminal-ui--paint-live ui)
-             (test-assert (equalp frame (fullscreen-test--frame ui))
-                          "ordinary redraw cannot erase a boot stage"))))
-        (test-assert (= (length *terminal-ui-boot-sequence-phases*) (length frames))
-                     "boot displays each configured phase")
-        (test-assert (> seconds 1) "fast startup still leaves time to see the boot screen")
-        (test-assert (not (equalp (first frames) (second frames))) "boot stages visibly advance")
+         ui :linger-p t
+            :wait-function
+            (lambda (seconds)
+              (test-assert (= seconds *terminal-ui-boot-linger-poll-seconds*)
+                           "wait only for input, not simulated milestones")
+              (incf polls)
+              (let* ((frame   (fullscreen-test--frame ui))
+                     (tip-row (find-if (lambda (row) (search "operator advice" row)) frame)))
+                (test-assert tip-row "the ready screen displays the tip on the first input poll")
+                (test-assert (= 32 (search "operator advice" (clinedi:ansi-strip tip-row)))
+                             "short tips are centered within the terminal")
+                (test-assert (some (lambda (row) (search (format nil "Autolith v~A" *autolith-version*)
+                                                        (clinedi:ansi-strip row))) frame)
+                             "the ready screen identifies the running Autolith version")
+                (terminal-ui-append-finalized ui ':boot "deferred output")
+                (terminal-ui--paint-live ui)
+                (test-assert (equalp frame (fullscreen-test--frame ui))
+                             "ordinary redraw cannot erase the ready screen"))
+              (queued-recording-terminal-enqueue terminal '(:insert " "))))
+        (test-assert (= polls 1) "the first Space hands over directly to the listener")
         (test-assert (not (terminal-ui-live-output-suspended-p ui)) "ordinary output resumes")
         (test-assert (search "deferred output" (clinedi:transcript-viewport-chunk-text (fullscreen-terminal-ui-viewport ui) 0))
                      "output accepted during boot is published afterward"))
       (test-assert
        (handler-case
-           (terminal-ui-boot-sequence ui :wait-function (lambda (seconds)
-                                                         (declare (ignore seconds))
-                                                         (error "Interrupted boot.")))
+           (terminal-ui-boot-sequence ui :linger-p t
+                                         :wait-function (lambda (seconds)
+                                                          (declare (ignore seconds))
+                                                          (error "Interrupted boot.")))
          (simple-error () t)) "boot interruption propagates")
       (test-assert (not (terminal-ui-live-output-suspended-p ui)) "interrupted boot restores output ownership")))
   nil)
 
 (-> test-fullscreen-boot-presented () null)
 (defun test-fullscreen-boot-presented ()
-  "Finish client-owned startup without replaying animation, preserving the Space wait."
+  "Open the restored listener immediately when the Space wait is disabled."
   (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24))
         (waits    0))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
       (terminal-ui-append-finalized ui ':restored "restored transcript")
       (test-assert (eq ':start
                        (terminal-ui-boot-sequence
-                        ui :presented-p   t
-                           :wait-function (lambda (seconds)
+                         ui :wait-function (lambda (seconds)
                                             (declare (ignore seconds))
                                             (incf waits))))
                    "client-owned boot opens the restored listener")
@@ -156,17 +155,8 @@
       (test-assert (some (lambda (row) (search "restored transcript" row))
                          (fullscreen-test--frame ui))
                    "the restored transcript is visible after boot")
-      (terminal-ui-boot-sequence
-       ui :presented-p t :linger-p t
-          :wait-function (lambda (seconds)
-                           (declare (ignore seconds))
-                           (incf waits)
-                           (test-assert (terminal-ui-boot-waiting-p ui)
-                                        "the configured Space wait owns input")
-                           (queued-recording-terminal-enqueue terminal '(:insert " "))))
-      (test-assert (= waits 1) "client-owned boot retains only the configured Space wait")
       (test-assert (not (terminal-ui-live-output-suspended-p ui))
-                   "the listener owns output after the Space wait")))
+                   "the listener owns output immediately")))
   nil)
 
 (-> test-fullscreen-client-startup () null)
@@ -230,11 +220,10 @@
                                             (declare (ignore seconds))
                                             (incf waits))))
                    "a disabled boot screen starts the listener")
-      (test-assert (zerop waits) "a disabled boot screen neither animates nor waits for Space")
+      (test-assert (zerop waits) "a disabled boot screen does not wait for Space")
       (test-assert (fullscreen-terminal-ui-active-p ui) "the fullscreen terminal is still acquired")
-      (test-assert (not (search (second (first *terminal-ui-boot-sequence-phases*))
-                                (recording-terminal-output terminal)))
-                   "no boot phase is painted")))
+      (test-assert (not (search "PRESS SPACE TO START" (recording-terminal-output terminal)))
+                   "no Space prompt is painted")))
   nil)
 
 (-> test-fullscreen-boot-linger () null)
@@ -252,7 +241,7 @@
                 (waiting-frame nil)
                 (result
                   (terminal-ui-boot-sequence
-                   ui :duration 0 :linger-p t :tip-seconds 1
+                    ui :linger-p t :tip-seconds 1
                    :wait-function
                    (lambda (duration)
                      (incf seconds duration)
@@ -278,29 +267,14 @@
            (test-assert (not (terminal-ui-live-output-suspended-p ui))
                         "ordinary output resumes after the wait"))
          (flet ((boot ()
-                  (terminal-ui-boot-sequence ui :duration 0 :linger-p t
+                   (terminal-ui-boot-sequence ui :linger-p t
                                                 :wait-function (lambda (seconds)
                                                                  (declare (ignore seconds))))))
            (queued-recording-terminal-enqueue terminal ':interrupt)
            (test-assert (eq (boot) ':interrupt) "Ctrl-C while waiting reports an interrupt")
            (queued-recording-terminal-enqueue terminal '(:resize 80 24))
            (queued-recording-terminal-enqueue terminal ':submit)
-           (test-assert (eq (boot) ':start) "resize does not start the listener and Enter starts"))
-         (test-assert (eq (terminal-ui-boot-sequence
-                           ui :duration 0 :linger-p nil
-                              :wait-function (lambda (seconds) (declare (ignore seconds))))
-                          ':start)
-                      "without lingering the boot screen opens the listener at once")
-         (let ((frames nil))
-           (terminal-ui-boot-sequence
-            ui :duration 0 :linger-p nil
-               :wait-function (lambda (seconds)
-                                (declare (ignore seconds))
-                                (push (fullscreen-test--frame ui) frames)))
-           (test-assert (notany (lambda (frame)
-                                  (find-if (lambda (row) (search "PRESS SPACE" row)) frame))
-                                frames)
-                        "a boot without waiting never advertises Space"))))))
+            (test-assert (eq (boot) ':start) "resize does not start the listener and Enter starts"))))))
   nil)
 
 (-> test-fullscreen-boot-reader-diversion () null)
@@ -339,7 +313,7 @@
         (queued-recording-terminal-enqueue terminal '(:insert " "))
         (test-assert
          (eq (terminal-ui-boot-sequence
-              ui :duration 0 :linger-p t
+               ui :linger-p t
                  :direct-input-p-function (constantly nil)
                  :wait-function           (lambda (seconds)
                                             (declare (ignore seconds))
@@ -354,7 +328,7 @@
       (let ((polls 0))
         (test-assert
          (eq (terminal-ui-boot-sequence
-              ui :duration 0 :linger-p t
+               ui :linger-p t
                  :direct-input-p-function (constantly nil)
                  :halted-function         (lambda () (> polls 3))
                  :wait-function           (lambda (seconds)
@@ -364,7 +338,7 @@
          "an exit requested through the reader ends the wait as an interrupt"))
       (test-assert
        (eq (terminal-ui-boot-sequence
-            ui :duration 0 :linger-p t
+             ui :linger-p t
                :wait-function (lambda (seconds) (declare (ignore seconds))))
            ':start)
        "the queued direct key still starts once direct input is allowed")))
@@ -381,7 +355,7 @@
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t))
       (test-call-with-function-replacements
        (list (list 'terminal-ui-boot-screen
-                   (lambda (target phase detail)
+                    (lambda (target phase &optional detail)
                      (when (and (eq phase ':listener-ready)
                                 (= 28 (terminal-columns terminal))
                                 (= 9 (terminal-rows terminal)))
@@ -391,23 +365,21 @@
          (test-assert
           (eq ':start
               (terminal-ui-boot-sequence
-               ui :duration 0 :linger-p t
+                ui :linger-p t
                :resize-callback (lambda (target)
                                   (declare (ignore target))
                                   (shiftf pending nil))
                :wait-function
                (lambda (seconds)
                  (declare (ignore seconds))
-                 (incf waits)
-                 (let ((phase-count (length *terminal-ui-boot-sequence-phases*)))
-                   (cond
-                     ((= waits (1+ phase-count))
-                      (setf pending (cons 9 28)))
-                     ((= waits (+ 2 phase-count))
-                      (test-assert repainted-p "resize redraws before a start key is available")
-                      (queued-recording-terminal-enqueue terminal '(:insert " ")))
-                     ((> waits (+ 2 phase-count))
-                      (error "Boot resize test exceeded its deterministic wait budget.")))))))
+                  (case (incf waits)
+                    (1
+                     (setf pending (cons 9 28)))
+                    (2
+                     (test-assert repainted-p "resize redraws before a start key is available")
+                     (queued-recording-terminal-enqueue terminal '(:insert " ")))
+                    (otherwise
+                     (error "Boot resize test exceeded its deterministic wait budget."))))))
           "Space starts the resized boot screen")))
       (test-assert repainted-p "the boot screen followed the pending resize")))
   nil)

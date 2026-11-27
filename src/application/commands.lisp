@@ -2362,7 +2362,7 @@ The current value and its source sit in aligned columns of their own."
      :help-order        2
      :argument          "[NAME [VALUE]]"
      :description       "browse and change settings"
-     :tip               "Change native values with `(settings :onboarding-p nil)` or `(settings :boot-screen-seconds 2)`; inspect one setting with `(settings :terminal-theme)`."
+     :tip               "Set a value with `(settings :onboarding-p nil)` or inspect one with `(settings :terminal-theme)`."
      :busy-behavior     :apply
      :terminal-behavior :exclusive-without-arguments)
     (application &optional name (value nil value-supplied-p))

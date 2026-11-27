@@ -139,9 +139,7 @@ are centered as one block, so rows of unequal width stay aligned."
               (boxed ':brand title)
               (boxed ':hint tagline)
               (boxed ':plain "")
-              (boxed ':plain (format nil "(boot :image ~S)"
-                                     (format nil "~A ~A" (lisp-implementation-type)
-                                             (lisp-implementation-version))))
+               (boxed ':dim (format nil "Autolith v~A" *autolith-version*))
               (boxed ':brand (format nil ";; ~A" (string-upcase (string phase))))
               (boxed ':plain (or detail "Awaiting operator input."))
               (boxed ':plain "")
@@ -243,18 +241,6 @@ for that handshake before concluding the terminal is non-interactive."
               do (funcall (or wait-function #'sleep) 0.02))
         (terminal-interactive-p terminal))))
 
-(defparameter *terminal-ui-boot-sequence-default-duration* 3.5
-  "The default total seconds TERMINAL-UI-BOOT-SEQUENCE spends animating.")
-
-(defparameter *terminal-ui-boot-sequence-phases*
-  '((:cold-boot "[#.....]  Waking the saved Lisp world.")
-    (:image-load "[##....]  Reading the boulder back off stable storage.")
-    (:gc-prime "[###...]  Priming the generational garbage collector.")
-    (:cons-check "[####..]  Verifying cons cells are still pointy.")
-    (:reader-sync "[#####.]  Synchronizing reader macros.")
-    (:listener-ready "[######]  Autolith Lisp Listener 1 is ready."))
-  "The ordered (PHASE DETAIL) pairs painted across the boot sequence.")
-
 (defparameter *terminal-ui-boot-linger-poll-seconds* 0.05
   "Seconds between input polls while the boot screen waits for Space.")
 
@@ -327,12 +313,11 @@ Keys arrive through the responsive reader, or directly while
 DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
   (let* ((terminal                    (terminal-ui-terminal ui))
          (*terminal-ui-boot-linger-p* t)
-         (detail                      (second (lastcar *terminal-ui-boot-sequence-phases*)))
          (elapsed                     0))
-    (terminal-ui-boot-screen ui ':listener-ready detail)
+    (terminal-ui-boot-screen ui ':listener-ready)
     (loop
       (when (terminal-ui-refresh-size ui resize-callback)
-        (terminal-ui-boot-screen ui ':listener-ready detail))
+        (terminal-ui-boot-screen ui ':listener-ready))
       (cond
         ((terminal-ui-boot-request ui)
          (return (terminal-ui-boot-request ui)))
@@ -361,73 +346,53 @@ DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
          (when (>= elapsed tip-seconds)
            (setf elapsed 0)
            (terminal-ui--boot-rotate-tip ui)
-           (terminal-ui-boot-screen ui ':listener-ready detail)))))))
+           (terminal-ui-boot-screen ui ':listener-ready)))))))
 
 (-> terminal-ui-boot-sequence
-    (terminal-ui &key (:wait-function function) (:screen-p boolean) (:duration real)
-                      (:linger-p boolean) (:tip-seconds real) (:presented-p boolean)
+    (terminal-ui &key (:wait-function function) (:screen-p boolean)
+                      (:linger-p boolean) (:tip-seconds real)
                       (:halted-function function) (:direct-input-p-function function)
                       (:resize-callback (option function)))
     keyword)
 (defun terminal-ui-boot-sequence
-    (ui &key (wait-function #'sleep)
-             (screen-p t)
-             (duration *terminal-ui-boot-sequence-default-duration*)
-             linger-p presented-p
+    (ui &key (wait-function #'sleep) (screen-p t) linger-p
              (tip-seconds *terminal-ui-boot-tip-default-seconds*)
              (halted-function (constantly nil))
              (direct-input-p-function (constantly t)) resize-callback)
-  "Present a brief Lisp-machine boot sequence before opening the listener.
+  "Acquire the fullscreen terminal and optionally wait for Space when ready.
 
-Keep ordinary output deferred throughout the presentation. WAIT-FUNCTION accepts
-seconds; DURATION is the total seconds spent across all boot phases, split
-evenly. With LINGER-P the screen then waits for Space, rotating the tip every
-TIP-SECONDS. Without SCREEN-P only the fullscreen terminal is acquired, and the
-listener opens at once. PRESENTED-P skips the animation when a client has
-already shown boot progress, while retaining the configured linger. Throughout,
-the boot screen owns keystrokes: the responsive reader diverts them through
-TERMINAL-UI-BOOT-DIVERT-EVENT, and the wait reads the terminal itself only
-while DIRECT-INPUT-P-FUNCTION allows. HALTED-FUNCTION reports an exit request
-made elsewhere. Poll RESIZE-CALLBACK while waiting and repaint resized boot frames.
-Returns :START, :LISTENER when Escape or typing bypassed the presentation,
-or :INTERRUPT when Ctrl-C ended the wait."
-  (let ((result ':start))
-    (when (and (terminal-ui-fullscreen-p ui)
-               (terminal-ui--await-interactive
-                (terminal-ui-terminal ui) wait-function 1.0))
-      ;; TERMINAL-UI-START ran before the detached terminal's client attached,
-      ;; so its own fullscreen-enter attempt was skipped; retry now that the
-      ;; terminal reports interactive.
-      (unless (fullscreen-terminal-ui-active-p ui)
-        (terminal-ui-fullscreen-enter ui))
-      (when screen-p
-        (let ((suspended-p nil)
-              (phase-duration
-                (/ (max 0 duration) (length *terminal-ui-boot-sequence-phases*))))
-          (with-terminal-ui-locked (ui)
-            (setf suspended-p (terminal-ui-live-output-suspended-p ui)
-                  (terminal-ui-live-output-suspended-p ui) t))
-          (setf (terminal-ui-boot-request ui) nil
-                (terminal-ui-boot-waiting-p ui) t)
+The ready screen appears immediately when SCREEN-P and LINGER-P are true.
+Keep ordinary output deferred during the wait. The responsive reader
+routes keys through TERMINAL-UI-BOOT-DIVERT-EVENT; read directly only when
+DIRECT-INPUT-P-FUNCTION allows it. HALTED-FUNCTION checks for exit requests.
+Poll RESIZE-CALLBACK while waiting and repaint resized frames.
+Return :START, :LISTENER when Escape or typing bypasses the presentation,
+or :INTERRUPT when the wait is interrupted."
+  (when (and (terminal-ui-fullscreen-p ui)
+             (terminal-ui--await-interactive
+              (terminal-ui-terminal ui) wait-function 1.0))
+    ;; TERMINAL-UI-START may have run before the detached client attached.
+    (unless (fullscreen-terminal-ui-active-p ui)
+      (terminal-ui-fullscreen-enter ui))
+    (when (and screen-p linger-p)
+      (let ((suspended-p nil))
+        (with-terminal-ui-locked (ui)
+          (setf suspended-p (terminal-ui-live-output-suspended-p ui)
+                (terminal-ui-live-output-suspended-p ui) t))
+        (setf (terminal-ui-boot-request ui) nil
+              (terminal-ui-boot-waiting-p ui) t)
+        (return-from terminal-ui-boot-sequence
           (unwind-protect
-               (progn
-                 (unless presented-p
-                   (dolist (phase *terminal-ui-boot-sequence-phases*)
-                     (terminal-ui-boot-screen ui (first phase) (second phase))
-                     (funcall wait-function phase-duration)
-                     (terminal-ui-refresh-size ui resize-callback)))
-                 (when linger-p
-                   (setf result
-                         (terminal-ui--boot-linger
-                          ui
-                          :wait-function           wait-function
-                          :resize-callback         resize-callback
-                          :tip-seconds             tip-seconds
-                          :halted-function         halted-function
-                          :direct-input-p-function direct-input-p-function))))
+               (terminal-ui--boot-linger
+                ui
+                :wait-function           wait-function
+                :resize-callback         resize-callback
+                :tip-seconds             tip-seconds
+                :halted-function         halted-function
+                :direct-input-p-function direct-input-p-function)
             (setf (terminal-ui-boot-waiting-p ui) nil)
             (with-terminal-ui-locked (ui)
               (setf (terminal-ui-live-output-suspended-p ui) suspended-p)
               (unless suspended-p
-                (terminal-ui--paint-live ui)))))))
-    result))
+                (terminal-ui--paint-live ui))))))))
+  ':start)
