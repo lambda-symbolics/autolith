@@ -416,8 +416,7 @@ matches of an ambiguous prefix."
      :description       "show how facts changed since you last asked"
      :tip               "reports facts that changed, appeared, or stopped holding, and why."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-knowledge-changes-entry application))
   ':continue)
@@ -428,8 +427,7 @@ matches of an ambiguous prefix."
      :description       "list the rules that derive facts"
      :tip               "show the latest and active versions of all rules."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-knowledge-rules-entry application))
   ':continue)
@@ -440,8 +438,7 @@ matches of an ambiguous prefix."
      :description       "stop a rule deriving facts"
      :tip               "retires a rule; facts derived through the rule stop holding unless something else supports them."
      :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier)
   (application-present
    application

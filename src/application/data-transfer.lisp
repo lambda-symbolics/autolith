@@ -61,8 +61,7 @@
      :description       "export all portable user data or one workspace"
      :tip               "Use `(data.export pathname :workspace directory)` to export one workspace."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application pathname &key workspace all)
   (let* ((configuration (application-configuration application))
          (workspace     (data-transfer--command-workspace configuration :workspace workspace :all all))
@@ -77,8 +76,7 @@
      :description       "import portable user data, optionally relocating a workspace"
      :tip               "Use `(data.import pathname :workspace directory)` to relocate an imported workspace."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application pathname &key workspace)
   (let* ((configuration (application-configuration application))
          (workspace     (data-transfer--command-workspace configuration :workspace workspace))

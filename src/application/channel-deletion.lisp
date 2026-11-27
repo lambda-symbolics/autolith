@@ -159,8 +159,7 @@ turn, external work on another thread, pending input, and live asynchronous jobs
      :description       "delete a channel and its nested channels after confirmation"
      :tip               "deletes this channel by default, stopping its turn once confirmed; a channel ID or an agent's name selects another."
      :busy-behavior     :execute
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application &optional identifier)
   (let* ((world   (application-world application))
          (current (conversation-identifier (application-conversation application)))

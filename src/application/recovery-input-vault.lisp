@@ -934,8 +934,7 @@ The caller must hold CONTROLLER's lock."
      :description       "inspect recovered queued input"
      :tip               "shows input preserved after an active-image crash."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-recovery-input-vault-present application)
   ':continue)
@@ -950,8 +949,7 @@ The caller must hold CONTROLLER's lock."
      ;; Restoring only reorders the follow-up queue, so it must act while
      ;; the agent works instead of waiting behind the queue it manages.
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)
@@ -975,8 +973,7 @@ The caller must hold CONTROLLER's lock."
      :description       "discard recovered queued input"
      :tip               "deletes only this conversation's recovery vault and blocked pending state."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)

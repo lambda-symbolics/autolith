@@ -298,11 +298,10 @@
               :busy-behavior     ':inspect
               :terminal-behavior ':shared
               :lambda-list       nil
-              :callable-p        nil
               :static-options    nil
               :handler
-              (lambda (application invocation)
-                (declare (ignore application invocation))
+              (lambda (application)
+                (declare (ignore application))
                 ':continue)))
            (operation (application-operation--from-command command))
            (symbol    (application-operation--function-symbol name))
@@ -333,8 +332,8 @@
                      :description     "An alias conflicting with a Common Lisp function."
                      :tip             "Exercise native alias binding conflicts."
                      :busy-behavior ':inspect :terminal-behavior ':shared
-                     :handler         (lambda (application invocation)
-                                        (declare (ignore application invocation))
+                     :handler         (lambda (application)
+                                        (declare (ignore application))
                                         ':continue))))
       (test-assert (handler-case (progn (register-application-command command :source ':test) nil)
                      (configuration-error () t))

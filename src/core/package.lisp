@@ -1365,7 +1365,6 @@
            #:application-command-argument
            #:application-command-busy-action
            #:application-command-busy-behavior
-           #:application-command-callable-p
            #:application-command-create
            #:application-command-definition-name
            #:application-command-description

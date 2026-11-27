@@ -473,8 +473,7 @@ neither is awaited."
      :description       "consume an admitted durable mission wakeup"
      :tip               "rechecks the current mission version and records uncertain execution before effects."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional ticket &rest extra)
   (apply #'application-mission-wakeup-command application ticket extra)
   ':continue)

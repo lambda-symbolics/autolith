@@ -31,13 +31,13 @@
 (defun help-tests--command
     (&key (definition-name 'help-tests--dynamic-command) (name "commands")
           aliases help-topic help-order)
-  "Create a callable fixture command with explicit help metadata."
+  "Create a fixture command with explicit help metadata."
   (application-command-create
    :definition-name definition-name :name name :aliases aliases :argument nil
    :description "A dynamically registered help test command."
    :tip         "Exercise dynamic help discovery."
    :busy-behavior ':inspect :terminal-behavior ':shared
-   :help-topic help-topic :help-order help-order :callable-p t
+   :help-topic help-topic :help-order help-order
    :handler     (lambda (application)
                   (declare (ignore application))
                   ':continue)))
@@ -101,7 +101,7 @@
                   :description "Invalid help metadata fixture."
                   :tip         "Exercise definition refusal."
                   :busy-behavior :inspect :terminal-behavior :shared
-                  :callable    t ,@metadata)
+                  ,@metadata)
                  (application)
                (declare (ignore application))
                ':continue))

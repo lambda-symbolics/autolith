@@ -294,8 +294,8 @@
                       :tip \"exists only in the user-init test.\"
                       :busy-behavior :inspect
                       :terminal-behavior :shared)
-                     (application invocation)
-                   (declare (ignore application invocation))
+                     (application)
+                   (declare (ignore application))
                    :continue))"
               stream))
            (setf *user-init-test-value* nil)

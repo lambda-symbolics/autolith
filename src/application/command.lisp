@@ -20,7 +20,7 @@
 
   (defparameter *application-command-metadata-keys*
     '(:name :aliases :argument :description :tip
-      :busy-behavior :terminal-behavior :callable :static-options
+      :busy-behavior :terminal-behavior :static-options
       :help-topic :help-order)
     "The literal metadata keys accepted by DEFINE-APPLICATION-COMMAND.")
 
@@ -113,7 +113,7 @@ The maximum is NIL for &REST or &KEY."
                (setf state ':aux))
               ((&whole &environment)
                (application-command--definition-error
-                nil "Callable application commands require ordinary lambda lists."))
+                nil "Application commands require ordinary lambda lists."))
               (otherwise
                (application-command--definition-error
                 nil "Unsupported application command lambda-list keyword ~S." entry)))
@@ -255,20 +255,8 @@ The maximum is NIL for &REST or &KEY."
          "Application command ~S requires literal metadata key ~S."
          definition-name
          key)))
-    (let* ((callable-p     (eq (getf metadata :callable) t))
-           (static-options (getf metadata :static-options))
-           (argument-count
-             (application-command--metadata-key-count metadata :argument)))
-      (when (and (plusp (application-command--metadata-key-count
-                         metadata :callable))
-                 (not callable-p))
-        (application-command--definition-error
-         definition-name "Application command ~S :CALLABLE must be literal T." definition-name))
-      (when (and static-options (not callable-p))
-        (application-command--definition-error
-         definition-name
-         "Application command ~S :STATIC-OPTIONS require :CALLABLE T."
-         definition-name))
+    (let ((static-options (getf metadata :static-options))
+          (argument-count (application-command--metadata-key-count metadata :argument)))
       (unless (or (= argument-count 1) static-options)
         (application-command--definition-error
          definition-name
@@ -288,48 +276,35 @@ The maximum is NIL for &REST or &KEY."
          definition-name
          "Application command ~S needs a required APPLICATION parameter."
          definition-name))
-      (if callable-p
-          (multiple-value-bind (minimum maximum)
-              (application-command--lambda-list-arity (rest lambda-list))
-            (when static-options
-              (unless (application-command--static-options-p static-options)
-                (application-command--definition-error
-                 definition-name
-                 "Application command ~S has invalid static options."
-                 definition-name))
-              (unless (and (<= minimum 1)
-                           maximum
-                           (= maximum 1))
-                (application-command--definition-error
-                 definition-name
-                 "Application command ~S static options require exactly one positional parameter."
-                 definition-name))))
-          (unless (and (= (length lambda-list) 2)
-                       (symbolp (second lambda-list))
-                       (second lambda-list)
-                       (not (keywordp (second lambda-list)))
-                       (not (eq (first lambda-list) (second lambda-list))))
+      (multiple-value-bind (minimum maximum)
+          (application-command--lambda-list-arity (rest lambda-list))
+        (when static-options
+          (unless (application-command--static-options-p static-options)
             (application-command--definition-error
              definition-name
-             "Legacy application command ~S needs two distinct required handler parameters."
+             "Application command ~S has invalid static options."
+             definition-name))
+          (unless (and (<= minimum 1)
+                       maximum
+                       (= maximum 1))
+            (application-command--definition-error
+             definition-name
+             "Application command ~S static options require exactly one positional parameter."
              definition-name)))
-      (application-command--validate-metadata
-       (getf metadata :name)
-       :aliases           (getf metadata :aliases)
-       :argument          (if static-options
-                              (multiple-value-bind (minimum maximum)
-                                  (application-command--lambda-list-arity (rest lambda-list))
-                                (declare (ignore maximum))
+        (application-command--validate-metadata
+         (getf metadata :name)
+         :aliases           (getf metadata :aliases)
+         :argument          (if static-options
                                 (application-command--static-option-hint static-options
-                                                                         (zerop minimum)))
-                              (getf metadata :argument))
-       :description       (getf metadata :description)
-       :tip               (getf metadata :tip)
-       :busy-behavior     (getf metadata :busy-behavior)
-       :terminal-behavior (getf metadata :terminal-behavior)
-       :static-options    static-options
-       :help-topic        (getf metadata :help-topic)
-       :help-order        (getf metadata :help-order)))))
+                                                                         (zerop minimum))
+                                (getf metadata :argument))
+         :description       (getf metadata :description)
+         :tip               (getf metadata :tip)
+         :busy-behavior     (getf metadata :busy-behavior)
+         :terminal-behavior (getf metadata :terminal-behavior)
+         :static-options    static-options
+         :help-topic        (getf metadata :help-topic)
+         :help-order        (getf metadata :help-order))))))
 
 (defclass application-command ()
   ((definition-name
@@ -390,13 +365,7 @@ The maximum is NIL for &REST or &KEY."
     :initform      nil
     :reader        application-command-lambda-list
     :type          list
-    :documentation "The callable parameter list derived from the handler lambda list.")
-   (callable-p
-    :initarg       :callable-p
-    :initform      nil
-    :reader        application-command-callable-p
-    :type          boolean
-    :documentation "Whether the handler receives canonical Lisp arguments.")
+    :documentation "The handler's parameter list after the application parameter.")
    (static-options
     :initarg       :static-options
     :initform      nil
@@ -518,40 +487,31 @@ The maximum is NIL for &REST or &KEY."
     (error 'configuration-error
            :message (format nil "Application command ~A has no callable handler."
                             (application-command-name command))))
-  (if (application-command-callable-p command)
-      (handler-case
-          (multiple-value-bind (minimum maximum)
-              (application-command--lambda-list-arity
-               (application-command-lambda-list command))
-            (when (application-command-static-options command)
-              (unless (and (<= minimum 1)
-                           maximum
-                           (= maximum 1))
-                (application-command--definition-error
-                 (application-command-name command)
-                 "Static command options require exactly one positional parameter."))))
-        (error (condition)
-          (error 'configuration-error :message (princ-to-string condition))))
-      (when (or (application-command-lambda-list command)
-                (application-command-static-options command))
-        (error 'configuration-error
-               :message
-               (format nil
-                       "Legacy application command ~A has callable metadata."
-                       (application-command-name command)))))
+  (handler-case
+      (multiple-value-bind (minimum maximum)
+          (application-command--lambda-list-arity (application-command-lambda-list command))
+        (when (application-command-static-options command)
+          (unless (and (<= minimum 1)
+                       maximum
+                       (= maximum 1))
+            (application-command--definition-error
+             (application-command-name command)
+             "Static command options require exactly one positional parameter."))))
+    (error (condition)
+      (error 'configuration-error :message (princ-to-string condition))))
   command)
 
 (-> application-command-create
     (&key (:definition-name symbol) (:name string) (:aliases list)
           (:argument (option string)) (:description string) (:tip string)
           (:busy-behavior keyword) (:terminal-behavior keyword)
-          (:lambda-list list) (:callable-p boolean) (:static-options list)
+          (:lambda-list list) (:static-options list)
           (:handler function)
           (:help-topic t) (:help-order t))
     application-command)
 (defun application-command-create
     (&key definition-name name aliases argument description tip busy-behavior
-            terminal-behavior lambda-list callable-p static-options handler
+            terminal-behavior lambda-list static-options handler
             help-topic help-order)
   "Create and validate one immutable interactive command."
   (unless (and (symbolp definition-name)
@@ -601,7 +561,6 @@ The maximum is NIL for &REST or &KEY."
     :help-topic        help-topic
     :help-order        help-order
     :lambda-list       (copy-tree lambda-list)
-    :callable-p        callable-p
     :static-options    (mapcar (lambda (option)
                                  (if (stringp option) (copy-seq option) option))
                                static-options)
@@ -921,8 +880,8 @@ without changing the registry."
      application
      (invocation application-command-invocation))
   "Invoke COMMAND's captured handler and validate its completion status."
-  (labels ((invoke-callable-handler (arguments)
-             "Invoke COMMAND's callable handler with replaceable ARGUMENTS."
+  (labels ((invoke-handler (arguments)
+             "Invoke COMMAND's handler with replaceable ARGUMENTS."
              (if *application-command-interactive-p*
                  (restart-case
                      (apply (application-command-handler command)
@@ -932,30 +891,23 @@ without changing the registry."
                      (lambda (stream)
                        (format stream "Supply replacement arguments for ~A."
                                (application-command--display-name command)))
-                     (invoke-callable-handler replacement-arguments)))
+                     (invoke-handler replacement-arguments)))
                  (apply (application-command-handler command)
                         application arguments)))
 
            (invoke ()
              "Invoke COMMAND's handler and validate its result."
-              (when (application-command-callable-p command)
-                (application-command--validate-invocation-arity
-                 command
-                 (application-command-invocation-arguments invocation)))
-             (multiple-value-bind (action value)
-                 (if (application-command-callable-p command)
-                     (invoke-callable-handler
-                      (application-command-invocation-arguments invocation))
-                     (funcall (application-command-handler command)
-                              application invocation))
-               (unless (eq action ':continue)
-                 (error 'configuration-error
-                        :message
-                        (format nil
-                                "Application command ~A returned invalid action ~S."
-                                (application-command--display-name command)
-                                action)))
-               (values action value))))
+             (let ((arguments (application-command-invocation-arguments invocation)))
+               (application-command--validate-invocation-arity command arguments)
+               (multiple-value-bind (action value) (invoke-handler arguments)
+                 (unless (eq action ':continue)
+                   (error 'configuration-error
+                          :message
+                          (format nil
+                                  "Application command ~A returned invalid action ~S."
+                                  (application-command--display-name command)
+                                  action)))
+                 (values action value)))))
     (if (eq *application-command-presentation-invocation* invocation)
         (invoke)
         (application-command--call-with-presentation invocation #'invoke))))
@@ -1049,18 +1001,16 @@ update bounded in-memory state, atomically against cancellation."))
 
 METADATA must contain literal :NAME, :DESCRIPTION, :TIP, :BUSY-BEHAVIOR, and
 :TERMINAL-BEHAVIOR values. :ALIASES defaults to NIL. Commands state either an
-:ARGUMENT hint or finite :STATIC-OPTIONS. Legacy handlers receive APPLICATION
-and an APPLICATION-COMMAND-INVOCATION. A :CALLABLE T handler's parameters after
-APPLICATION are its authoritative Lisp argument contract. The handler is captured
-at registration. :HELP-TOPIC selects a supported section, defaulting to Other
-commands. :HELP-ORDER is an optional integer rank, with
-ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
-and may return a second value, which a Lisp call of the command yields."
+:ARGUMENT hint or finite :STATIC-OPTIONS. The handler's parameters after
+APPLICATION are its Lisp argument contract. The handler is captured at
+registration. :HELP-TOPIC selects a supported section, defaulting to Other
+commands. :HELP-ORDER is an optional integer rank, with ties. Replacements
+supply their own help metadata. Every handler returns :CONTINUE and may return
+a second value, which a Lisp call of the command yields."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
-  (let* ((callable-p       (eq (getf metadata :callable) t))
-         (static-options   (getf metadata :static-options))
-         (call-lambda-list (and callable-p (rest lambda-list))))
+  (let ((static-options   (getf metadata :static-options))
+        (call-lambda-list (rest lambda-list)))
     `(progn
        (defun ,definition-name ,lambda-list
          ,@body)
@@ -1078,7 +1028,6 @@ and may return a second value, which a Lisp call of the command yields."
            :help-topic        ',(getf metadata :help-topic)
            :help-order        ,(getf metadata :help-order)
            :lambda-list       ',call-lambda-list
-           :callable-p        ,callable-p
            :static-options    ',static-options
            :handler           #',definition-name)))
        ',definition-name)))

@@ -229,8 +229,7 @@ The live queue, active work and already consumed steering are not edited."
      :description       "move queued work and unconsumed steering into the vault immediately"
      :tip               "parks queued input immediately, even during an active turn; edit it with `(setf (vault-contents 0) '(:message \"new task\"))`."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)

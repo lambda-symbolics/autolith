@@ -549,8 +549,8 @@
    :busy-behavior     ':inspect
    :terminal-behavior ':shared
    :handler
-   (lambda (application invocation)
-     (declare (ignore application invocation))
+   (lambda (application)
+     (declare (ignore application))
      ':continue)))
 
 

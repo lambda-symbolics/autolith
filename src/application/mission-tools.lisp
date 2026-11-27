@@ -160,8 +160,7 @@
      :description       "configure, run and verify an explicitly budgeted session mission"
      :tip               "start with an objective, criteria and budgets for turns, tokens and wall-clock time; use status to see saved gate evidence."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional (action ':status) &rest arguments)
   (apply #'application-mission-command application action arguments)
   ':continue)

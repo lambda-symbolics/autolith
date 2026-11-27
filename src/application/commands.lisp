@@ -2424,8 +2424,7 @@ The current value and its source sit in aligned columns of their own."
      :description       "browse and change settings"
      :tip               "Change native values with `(settings :onboarding-p nil)` or `(settings :boot-screen-seconds 2)`; inspect one setting with `(settings :terminal-theme)`."
      :busy-behavior     :apply
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional name (value nil value-supplied-p))
   (if value-supplied-p
       (application-settings-command application name value)
@@ -2463,7 +2462,6 @@ The current value and its source sit in aligned columns of their own."
      :tip               "Use `(slynk)` to start Slynk and show its port for M-x sly-connect, or `(slynk :stop)` to close it."
      :busy-behavior     :apply
      :terminal-behavior :shared
-     :callable          t
      :static-options    (:start :stop :status))
     (application &optional (action ':start))
   (application-slynk-command application action)
@@ -2525,8 +2523,7 @@ The current value and its source sit in aligned columns of their own."
      :description       "browse help or look up a command"
      :tip               "Use `(help :workspace)` for a section or `(help 'open)` for a command."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional topic)
   (application-present
    application
@@ -2541,8 +2538,7 @@ The current value and its source sit in aligned columns of their own."
      :description       "open a new channel in this workspace"
      :tip               "opens a new channel and moves this terminal there; the channel you leave keeps running."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let* ((configuration (application-configuration application))
          (ui            (application-ui application))
@@ -2663,8 +2659,7 @@ show."
      :description       "move this terminal to another channel"
      :tip               "takes an agent name, @name, exact channel path or unique ID fragment; picks a channel without arguments. The channel you leave keeps running."
      :busy-behavior     :execute
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional (designator nil designator-p))
   (let* ((designator (if designator-p
                          designator
@@ -2708,8 +2703,7 @@ show."
      :description       "rename an agent"
      :tip               "renames this channel's agent, or the participant WHO names, or picks one without arguments; names are letters, digits, hyphens and underscores."
      :busy-behavior     :inspect
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional (first nil first-p) (second nil second-p))
   (unless first-p
     (when-let ((agent (application--pick-agent application
@@ -2748,8 +2742,7 @@ show."
      :description       "show this channel's ID"
      :tip               "shows the ID of the channel this terminal is in; as a Lisp call it returns the ID."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((identifier (conversation-identifier (application-conversation application))))
     (application-present
@@ -2766,8 +2759,7 @@ show."
      :description       "send a message to a channel as yourself"
      :tip               "reaches the channel's residents and anyone you mention. Without a message it picks the channel and lets you write one."
      :busy-behavior     :execute
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional channel &rest words)
   (unless words
     (let ((target (or channel
@@ -2803,8 +2795,7 @@ show."
      :description       "load earlier transcript history"
      :tip               "loads one configured page of earlier transcript entries."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-render-history application)
   ':continue)
@@ -2817,8 +2808,7 @@ show."
      :description       "show or change the active workspace"
      :tip               "Use `(cwd pathname)` to change the active workspace, or `(cwd)` to inspect it."
      :busy-behavior     :steer
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional pathname)
   (application-working-directory-command application pathname)
   ':continue)
@@ -2831,8 +2821,7 @@ show."
      :description       "pick and authenticate a registered provider"
      :tip               "Use `(auth \"chatgpt\" :device-code)` for device authentication, or `:browser`."
      :busy-behavior     :hold
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application &optional (provider-name nil provider-name-supplied-p) method)
   (when-let ((provider-name
                (if provider-name-supplied-p
@@ -2850,8 +2839,7 @@ show."
      :description       "pick a registered provider model and reasoning effort"
      :tip               "Select a provider/model ID, or use (model \"ID\" :provider \"NAME\"). The choice is saved for future sessions."
      :busy-behavior     :apply-interactive
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application &rest arguments)
   (let* ((model-supplied-p (oddp (length arguments)))
          (model            (and model-supplied-p (first arguments))))
@@ -2885,8 +2873,7 @@ show."
      :description       "list registered providers and models"
      :tip               "Use (models :provider \"NAME\") to list one provider's models."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &key provider)
   (application-models-command application :provider provider)
   ':continue)
@@ -2899,8 +2886,7 @@ show."
      :description       "pick the reasoning effort"
      :tip               "sets the model's reasoning budget without changing models. Higher levels allow more reasoning and can take longer; available levels depend on the model."
      :busy-behavior     :apply-interactive
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional (effort nil effort-supplied-p))
   (when-let ((effort
                (if effort-supplied-p
@@ -2922,7 +2908,6 @@ show."
      :tip               "Use `(ste t)` to request short, direct Simple Technical English, or `(ste nil)` to remove that style instruction."
      :busy-behavior     :apply
      :terminal-behavior :shared
-     :callable          t
      :static-options    (t nil))
     (application &optional (mode ':status))
   (application-simple-technical-english-command application mode)
@@ -2936,7 +2921,6 @@ show."
      :tip               "Use `(hurry-up t)` to favor direct work with at most two child agents, or `(hurry-up nil)` for normal delegation limits."
      :busy-behavior     :apply
      :terminal-behavior :shared
-     :callable          t
      :static-options    (t nil))
     (application &optional (mode ':status))
   (application-hurry-up-command application mode)
@@ -2950,7 +2934,6 @@ show."
      :tip               "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for host access in this channel across restarts."
      :busy-behavior     :apply-interactive
      :terminal-behavior :exclusive-without-arguments
-     :callable          t
      :static-options    (:ask :auto :sandbox :full :list :clear))
     (application &optional (choice nil choice-supplied-p))
   (when choice-supplied-p
@@ -2981,8 +2964,7 @@ show."
      :description       "start or inspect a mission without mission-specific budgets"
      :tip               "Set a string objective; use `(goal :pause)`, `(goal :resume)`, or `(goal :clear)` for control."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional request &rest arguments)
   (application-goal-request application request arguments)
   ':continue)
@@ -2995,8 +2977,7 @@ show."
      :description       "show workspace agenda entries"
      :tip               "shows durable commitments and notes for the current workspace."
      :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-agenda-entry application))
   ':continue)
@@ -3009,8 +2990,7 @@ show."
      :description       "show workspace papercut reports"
      :tip               "shows problems Autolith recorded when something was not working."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-papercuts-entry application))
   ':continue)
@@ -3023,8 +3003,7 @@ show."
      :description       "show one complete papercut report"
      :tip               "opens the full report named by `(papercuts)`."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier)
   (if identifier
       (application-present
@@ -3043,8 +3022,7 @@ show."
      :description       "close one resolved papercut report"
      :tip               "removes a fixed or obsolete report from `(papercuts)`."
      :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier)
   (if identifier
       (application-present
@@ -3063,8 +3041,7 @@ show."
      :description       "show available skills"
      :tip               "shows request-local skills and any discovery problems."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present
    application
@@ -3156,7 +3133,6 @@ show."
      :tip               "Inspect connections with `(mcp)`, rediscover tools with `(mcp :refresh)`, or reread configuration with `(mcp :reload)`."
      :busy-behavior     :apply
      :terminal-behavior :shared
-     :callable          t
      :static-options    (:refresh :reload))
     (application &optional (mode ':status))
   (let ((mode          (application--control-choice mode '(:status :refresh :reload)))
@@ -3194,8 +3170,7 @@ show."
      :description       "save a retained live generation"
      :tip               "saves the current live state as a retained generation; (checkpoint :allow-dirty t) accepts uncommitted source changes and marks the generation dirty."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &key allow-dirty)
   (application-checkpoint application :allow-dirty-p (not (null allow-dirty)))
   ':continue)
@@ -3208,8 +3183,7 @@ show."
      :description       "cancel a checkpoint that waits for running work"
      :tip               "a checkpoint holds every channel's new turns until running work finishes; this lets them go on without it."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((server (application-world-server application)))
     (application-present
@@ -3228,8 +3202,7 @@ show."
      :description       "list retained generations"
      :tip               "shows live generations available for recovery."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present
    application
@@ -3244,8 +3217,7 @@ show."
      :description       "pick a generation for recovery"
      :tip               "selects a retained generation for the next recovery start."
      :busy-behavior     :hold
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
+     :terminal-behavior :exclusive-without-arguments)
     (application &optional (identifier nil identifier-supplied-p))
   (when-let ((identifier
                (if identifier-supplied-p
@@ -3269,8 +3241,7 @@ show."
      :description       "show current model and runtime settings"
      :tip               "prints the current settings without changing them."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-info-entry application))
   ':continue)
@@ -3284,8 +3255,7 @@ show."
      :description       "show usage and rate limits"
      :tip               "shows the model, context usage, and subscription rate limits."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-status-entry application))
   ':continue)
@@ -3298,8 +3268,7 @@ show."
      :description       "check and install a newer packaged release"
      :tip               "updates curl-installed Autolith and explains source or Nix updates."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-update application)
   ':continue)
@@ -3312,8 +3281,7 @@ show."
      :description       "inspect request-local context"
      :tip               "reveals the ephemeral context prepared for provider requests."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-context-entry application))
   ':continue)
@@ -3326,8 +3294,7 @@ show."
      :description       "compact conversation context now"
      :tip               "compacts the conversation context immediately, replacing older turns with a summary."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-compact application)
   ':continue)
@@ -3340,8 +3307,7 @@ show."
      :description       "ask the model to rebuild or drop skipped private definitions"
      :tip               "Use `(fix-skipped-definitions \"Drop temporary development overrides.\")` to direct which skipped definitions to rebuild or drop before committing."
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional (comment ""))
   (application-fix-skipped-definitions application comment)
   ':continue)
@@ -3354,8 +3320,7 @@ show."
      :description       "leave the channel running and return to the shell"
      :tip               "disconnects this client; return with `autolith open ID`."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((session (application-channel-endpoint application)))
     (unless session
@@ -3371,8 +3336,7 @@ show."
      :description       "stop the current world server and its channels"
      :tip               "stops work in every channel and closes the world's clients."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (let ((server (application-world-server application)))
     (unless server

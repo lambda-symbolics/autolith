@@ -269,7 +269,6 @@
              :busy-behavior     ':execute
              :terminal-behavior ':shared
              :lambda-list       '(value)
-             :callable-p        t
              :handler           (lambda (application value)
                                   (declare (ignore application))
                                   (setf observed-value value)

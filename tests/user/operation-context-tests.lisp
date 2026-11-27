@@ -568,8 +568,7 @@
                   :tip               "tests aborted command capture."
                   :busy-behavior     ':execute
                   :terminal-behavior ':shared
-                   :lambda-list      '(value)
-                   :callable-p       t
+                  :lambda-list       '(value)
                   :handler
                   (lambda (application value)
                     (declare (ignore application value))
@@ -585,8 +584,6 @@
                   :tip               "tests failed command capture."
                   :busy-behavior     ':execute
                   :terminal-behavior ':shared
-                   :lambda-list      '()
-                   :callable-p       t
                   :handler
                   (lambda (application)
                     (declare (ignore application))

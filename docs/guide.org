@@ -1702,16 +1702,16 @@ register the command and set its help, completion and dispatch policies.
      :description       "show a labeled local integration version"
      :tip               "shows the version supplied by init.lisp."
      :busy-behavior     :execute
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional (label "integration"))
   (application-present application (format nil "~A 3" label))
   :continue)
 #+END_SRC
 
-- *Arguments:* Callable handlers take ordinary Lisp lambda lists, including
-  =&key= and supplied-p parameters. Missing interactive arguments open the
-  restart debugger. Use =supply-arguments= to pass replacement Lisp values.
+- *Arguments:* The first parameter is the application. The remaining
+  parameters follow ordinary Lisp lambda-list rules, including =&key= and
+  supplied-p parameters. Missing interactive arguments open the restart
+  debugger. Use =supply-arguments= to pass replacement Lisp values.
   Autolith rejects excess arguments before dispatch.
 - *Busy behavior:* Choose =:inspect=, =:execute=, =:apply=, =:hold= or =:cancel=.
   Use =:execute= to run immediately, =:apply= to change state at the next safe

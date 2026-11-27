@@ -229,8 +229,7 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
      :description       "replay the fullscreen onboarding tour"
      :tip               "Use `(onboard)` to replay the internal onboarding guide."
      :busy-behavior     :hold
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application)
   (application-onboard application)
   ':continue)

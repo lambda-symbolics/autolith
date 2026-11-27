@@ -1454,8 +1454,8 @@
                   :busy-behavior     ':hold
                   :terminal-behavior ':shared
                   :handler
-                  (lambda (ignored-application ignored-invocation)
-                    (declare (ignore ignored-application ignored-invocation))
+                  (lambda (application)
+                    (declare (ignore application))
                     (with-lock-held (command-lock)
                       (setf command-entered-p t)
                       (condition-notify command-gate)

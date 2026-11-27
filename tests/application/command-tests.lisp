@@ -10,8 +10,8 @@
 (defun application-command-tests--command
     (&key definition-name name aliases (busy-behavior ':inspect)
           (terminal-behavior ':shared)
-          (handler (lambda (application invocation)
-                     (declare (ignore application invocation))
+          (handler (lambda (application)
+                     (declare (ignore application))
                      ':continue)))
   "Return one complete command fixture with the supplied policy."
   (application-command-create
@@ -60,8 +60,8 @@
                 :description       "missing tip"
                 :busy-behavior     :inspect
                 :terminal-behavior :shared)
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
            (define-application-command application-command-tests--blank-tip
                (:name              "blank-tip"
@@ -70,8 +70,8 @@
                 :tip               "   "
                 :busy-behavior     :inspect
                 :terminal-behavior :shared)
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
            (define-application-command application-command-tests--bad-busy
                (:name              "bad-busy"
@@ -80,8 +80,8 @@
                 :tip               "has invalid policy."
                 :busy-behavior     :immediate
                 :terminal-behavior :shared)
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
            (define-application-command application-command-tests--bad-terminal
                (:name              "bad-terminal"
@@ -90,8 +90,8 @@
                 :tip               "has invalid policy."
                 :busy-behavior     :inspect
                 :terminal-behavior :sometimes)
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
            (define-application-command :keyword-definition
                (:name              "keyword"
@@ -100,29 +100,18 @@
                 :tip               "has invalid identity."
                 :busy-behavior     :inspect
                 :terminal-behavior :shared)
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
-           (define-application-command application-command-tests--bad-callable
-               (:name              "bad-callable"
-                :argument          "VALUE"
-                :description       "invalid callable marker"
-                :tip               "has invalid callable metadata."
-                :busy-behavior     :inspect
-                :terminal-behavior :shared
-                :callable          :yes)
-               (application value)
-             (declare (ignore application value))
-             :continue)
-           (define-application-command application-command-tests--legacy-options
-               (:name              "legacy-options"
-                :description       "invalid legacy static options"
-                :tip               "has incompatible static option metadata."
+           (define-application-command application-command-tests--zero-argument-options
+               (:name              "zero-argument-options"
+                :description       "static options without a value parameter"
+                :tip               "tests the positional parameter requirement."
                 :busy-behavior     :inspect
                 :terminal-behavior :shared
                 :static-options    ("on" "off"))
-               (application invocation)
-             (declare (ignore application invocation))
+               (application)
+             (declare (ignore application))
              :continue)
            (define-application-command application-command-tests--duplicate-options
                (:name              "duplicate-options"
@@ -131,7 +120,6 @@
                 :tip               "has duplicated option metadata."
                 :busy-behavior     :inspect
                 :terminal-behavior :shared
-                :callable          t
                 :static-options    ("on" "off"))
                (application &optional value)
              (declare (ignore application value))
@@ -143,10 +131,10 @@
       (test-assert
        (application-command-tests--macroexpand-error-p
         `(define-application-command application-command-tests--invalid-options
-             (:name "invalid-options"
+             (:name           "invalid-options"
               :description "invalid finite choices" :tip "tests finite option validation."
               :busy-behavior :inspect :terminal-behavior :shared
-              :callable t :static-options ,options)
+              :static-options ,options)
              (application value)
            (declare (ignore application value))
            :continue))
@@ -166,7 +154,6 @@
           :busy-behavior     ':inspect
           :terminal-behavior ':shared
           :lambda-list       '()
-          :callable-p        t
           :static-options    '("on" "off")
           :handler           (lambda (application)
                                (declare (ignore application))
@@ -179,7 +166,7 @@
 
 (-> test-application-command-semantic-calls () null)
 (defun test-application-command-semantic-calls ()
-  "Test callable commands retain ordinary lambda-list and native Lisp semantics."
+  "Test ordinary lambda-list and native Lisp semantics for commands."
   (application-command-tests--native-arguments)
   (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
@@ -191,8 +178,7 @@
                     :description       "exercise semantic command arguments"
                     :tip               "exists for semantic argument tests."
                     :busy-behavior     :inspect
-                    :terminal-behavior :exclusive-without-arguments
-                    :callable          t)
+                    :terminal-behavior :exclusive-without-arguments)
                    (application required &optional (optional "default"))
                 (declare (ignore application))
                 (setf *application-command-tests-semantic-call*
@@ -203,10 +189,9 @@
            (let ((command (application-command-find "semantic")))
              (test-assert
               (and command
-                   (application-command-callable-p command)
                    (equal (application-command-lambda-list command)
                           '(required &optional (optional "default"))))
-              "callable command derives its contract from the handler lambda list")
+              "command derives its contract from the handler lambda list")
              (let ((invocation
                      (application-operation--command-invocation command nil)))
                (test-assert
@@ -503,10 +488,6 @@
 (-> test-built-in-application-command-calls () null)
 (defun test-built-in-application-command-calls ()
   "Test built-ins expose ordinary lambda lists without implicit picker calls."
-  (test-assert
-   (every #'application-command-callable-p
-          (application-command-list))
-   "every built-in command supplies a native argument contract")
   (let ((command (application-command-find "ste")))
     (test-assert
      (equal (application-command-static-options command) '(t nil))
@@ -1629,8 +1610,7 @@
                  (:name "native-values" :argument "[VALUES...]"
                   :description "test native command values"
                   :tip         "tests native command values."
-                  :busy-behavior :inspect :terminal-behavior :shared
-                  :callable    t)
+                  :busy-behavior :inspect :terminal-behavior :shared)
                  (application &rest values)
                (declare (ignore application))
                (setf *application-command-tests-semantic-call* values)
@@ -1658,8 +1638,7 @@
                      (:name "native-values" :argument "[VALUES...]"
                       :description "replacement native command"
                       :tip         "tests command replacement."
-                      :busy-behavior :inspect :terminal-behavior :shared
-                      :callable    t)
+                      :busy-behavior :inspect :terminal-behavior :shared)
                      (application &rest values)
                    (declare (ignore application))
                    (setf *application-command-tests-semantic-call*
@@ -1691,8 +1670,7 @@
             '(define-application-command application-command-tests--options
                  (:name "native-options" :static-options (:on "MiXeD")
                   :description "native finite choices" :tip "tests typed option completion."
-                  :busy-behavior :inspect :terminal-behavior :shared
-                  :callable t)
+                  :busy-behavior :inspect :terminal-behavior :shared)
                  (application mode)
                (declare (ignore application))
                (setf *application-command-tests-semantic-call* (list mode))
@@ -1716,7 +1694,7 @@
                  (:name "native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
                   :description "test keyword command values"
                   :tip         "tests keyword command values."
-                  :busy-behavior :inspect :terminal-behavior :shared :callable t)
+                  :busy-behavior :inspect :terminal-behavior :shared)
                  (application &optional (value :default value-p)
                               &rest arguments &key (payload nil payload-p))
                (declare (ignore application))

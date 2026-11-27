@@ -9,9 +9,10 @@
    :definition-name 'input-work-tests--command :name "input-work-command"
    :aliases '("input-work-alias") :argument "VALUE" :description "codec fixture"
    :tip "exercise durable command input." :busy-behavior ':hold :terminal-behavior ':shared
-   :handler (lambda (application invocation)
-              (declare (ignore application invocation))
-              ':continue)))
+   :lambda-list '(value)
+   :handler     (lambda (application value)
+                  (declare (ignore application value))
+                  ':continue)))
 
 (-> input-work-tests--committed-owners (conversation command-message-input) null)
 (defun input-work-tests--committed-owners (conversation input)

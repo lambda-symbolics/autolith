@@ -78,8 +78,7 @@ Include the parameters and documentation of the procedures."
      :description       "list the procedures of this workspace."
      :tip               "shows the procedures and their parameters"
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-procedures-entry application))
   ':continue)
@@ -90,8 +89,7 @@ Include the parameters and documentation of the procedures."
      :description       "run a procedure without the model."
      :tip               "runs a procedure with keyword arguments"
      :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier &rest arguments)
   (application-present
    application
@@ -106,8 +104,7 @@ Include the parameters and documentation of the procedures."
      :description       "retire a procedure until it is defined again."
      :tip               "retires a procedure"
      :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier)
   (application-present
    application

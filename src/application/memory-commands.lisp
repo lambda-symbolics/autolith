@@ -467,8 +467,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
      :description       "browse and manage saved memories and facts"
      :tip               "Browse notes, facts, and their evidence in fullscreen; filter with a query."
      :busy-behavior     :hold
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application &optional query)
   (let ((ui (application-ui application)))
     (if (and ui (terminal-ui-pages-p ui)
@@ -484,8 +483,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
      :description       "inspect one memory or fact and its evidence"
      :tip               "Inspect a memory or fact, its sources and premises, and what relies on it."
      :busy-behavior     :hold
-     :terminal-behavior :exclusive
-     :callable          t)
+     :terminal-behavior :exclusive)
     (application &optional identifier)
   (let ((ui (application-ui application)))
     (if (and ui (terminal-ui-pages-p ui)
@@ -504,8 +502,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
      :description       "forget one memory or fact"
      :tip               "removes a memory or fact and names what relied on it."
      :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application &optional identifier)
   (application-present
    application

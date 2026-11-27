@@ -92,8 +92,7 @@
      :description       "list diagnoses and what decided their cases"
      :tip               "shows saved diagnoses and recent cases: what cause was discovered, how it was repaired, and the facts that were involved."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
+     :terminal-behavior :shared)
     (application)
   (application-present application (application-diagnoses-entry application))
   ':continue)

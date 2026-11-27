@@ -59,9 +59,9 @@
              ~3T:tip ~S~%~
              ~3T:busy-behavior :hold~%~
              ~3T:terminal-behavior :shared)~%~
-             ~2T(application invocation)~%~
+             ~2T(application)~%~
              ~2T~S~%~
-             ~2T(declare (ignore application invocation))~%~
+             ~2T(declare (ignore application))~%~
              ~2T(values ~S ~S))"
           definition-name
           name
@@ -811,7 +811,6 @@
              (test-assert
               (eq (nth-value 1 (funcall
                                 (fdefinition 'test-self-command-existing)
-                                nil
                                 nil))
                   ':replacement)
               "self.define installs replacement command behavior")
@@ -922,7 +921,6 @@
               (funcall
                (application-command-handler
                 (application-command-find "self-command-replay"))
-               nil
                nil)
               ':continue))
             "private replay reconstructs command metadata and behavior"))
