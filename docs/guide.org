@@ -86,7 +86,7 @@ Step 1 & 2 above can be resolved with these commands:
 - Ubuntu 26.04: =sudo apt install sbcl cmake pkg-config libssl-dev bubblewrap rustc cargo=
 - Arch: =sudo pacman -S sbcl cmake pkgconf openssl bubblewrap rust=
 
-To install and configure Quicklisp: 
+To install and configure Quicklisp:
 #+BEGIN_SRC sh
 curl --create-dirs -o ~/quicklisp/setup.lisp https://beta.quicklisp.org/quicklisp.lisp
 sbcl --script script/ensure-quicklisp.lisp ~/quicklisp/quicklisp.lisp
