@@ -4,33 +4,70 @@
 
 (-> test-run-job-relative-paths () null)
 (defun test-run-job-relative-paths ()
-  "Resolve both artifact paths against the caller's cwd, including event URIs."
+  "Resolve both artifact paths against the caller's cwd."
   (with-test-configuration (configuration root)
     (test-write-text (merge-pathnames "input.sexp" root)
                      (run-job--write-data-sexp (run-job-tests--request-form) :pretty-p t))
     (uiop:with-current-directory (root)
-      (dolist (events '(nil :sexp))
-        (let ((stream (make-string-output-stream)))
-          (test-assert
-           (zerop (run-job-run "input.sexp" "nested/output.sexp" ':full-access
-                              :configuration configuration :events events :event-output stream
-                              :executor (lambda (configuration request permissions)
-                                          (declare (ignore configuration request permissions))
-                                          (values ':succeeded "yes" "relative-job" nil nil nil))))
-           "Relative input and output publish successfully.")
-          (test-assert (eq (getf (rest (run-job-read-file (merge-pathnames "nested/output.sexp" root))) :status)
-                           ':succeeded)
-                       "The output is published beneath cwd.")
-          (when events
-            (let* ((records  (run-job-event-tests--records (get-output-stream-string stream)))
-                   (terminal (find ':run-finished records :key (lambda (record) (getf (rest record) :kind))))
-                   (data     (getf (rest terminal) :data))
-                   (job      (find ':job-finished records :key (lambda (record) (getf (rest record) :kind))))
-                   (uri      (getf (getf (rest job) :data) :result-uri)))
-              (test-assert (getf data :published-p) "The event confirms result publication.")
-              (test-assert (equal (workspace-file--decode-identifier "workspace" (subseq uri 10))
-                                  (uiop:native-namestring (merge-pathnames "nested/output.sexp" root)))
-                           "The result URI contains the resolved absolute path.")))))))
+      (test-assert
+       (zerop (run-job-run "input.sexp" "nested/output.sexp" ':full-access
+                           :configuration configuration
+                           :executor      (lambda (configuration request permissions)
+                                            (declare (ignore configuration request permissions))
+                                            (values ':succeeded "yes" "relative-job" nil nil nil))))
+       "Relative input and output publish successfully.")
+      (test-assert (eq (getf (rest (run-job-read-file (merge-pathnames "nested/output.sexp" root))) :status)
+                       ':succeeded)
+                   "The output is published beneath cwd.")))
+  nil)
+
+(-> test-run-job-inline-prompt-launchers () null)
+(defun test-run-job-inline-prompt-launchers ()
+  "Exercise stdin validation and failure exit statuses through both launchers."
+  (with-test-fixture (':posix-shell "headless prompt launcher roundtrips")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((source-root (asdf:system-source-directory :autolith))
+             (commands    (list (list (namestring (merge-pathnames "bin/autolith" source-root)))
+                                (list (sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
+                                      "--script" (namestring (merge-pathnames "script/launcher.lisp" source-root)))))
+             (environment (append
+                           (list "env"
+                                 (format nil "XDG_CONFIG_HOME=~A" (merge-pathnames "config/" root))
+                                 (format nil "XDG_STATE_HOME=~A" (merge-pathnames "state/" root))
+                                 (format nil "XDG_CACHE_HOME=~A" (merge-pathnames "cache/" root)))
+                           (test-active-core-environment))))
+        (loop for command in commands
+              for index from 0
+              do (let* ((output  (merge-pathnames (format nil "prompt-~D.sexp" index) root))
+                        (errors  (merge-pathnames (format nil "errors-~D.log" index) root))
+                        (process (uiop:launch-program
+                                  (append environment command
+                                          (list "--permissions" "auto" "run-job" "--prompt" "-"
+                                                "--id" "launcher-stdin" "--output" (namestring output)))
+                                  :directory root :input ':stream
+                                  :output       (merge-pathnames (format nil "stdout-~D.log" index) root)
+                                  :error-output errors)))
+                   (unwind-protect
+                        (progn
+                          (close (uiop:process-info-input process))
+                          (test-assert (task-tests--wait-until
+                                        (lambda () (not (uiop:process-alive-p process))) 15)
+                                       "the launcher exits after the empty prompt reaches EOF")
+                          (unless (uiop:process-alive-p process)
+                            (test-assert (= 64 (uiop:wait-process process))
+                                         "the launcher returns the published validation failure status"))
+                          (test-assert (probe-file output) "the validation failure artifact is published")
+                          (when (probe-file output)
+                            (let ((result (rest (run-job-read-file output))))
+                              (test-assert (and (equal (getf result :id) "launcher-stdin")
+                                                (eq (getf result :status) ':failed)
+                                                (eq (getf (getf result :failure) :category) ':invalid-envelope))
+                                           "an empty stdin prompt produces a validation failure artifact"))))
+                     (ignore-errors (close (uiop:process-info-input process)))
+                     (when (uiop:process-alive-p process)
+                       (uiop:terminate-process process :urgent t))
+                     (uiop:wait-process process)))))))
   nil)
 
 (define-condition run-job-test-interruption (serious-condition)
@@ -66,10 +103,10 @@
         (omit-usage-p failure-p)
         case
       (with-test-configuration (configuration)
-        (let* ((application               (mission-test--application configuration))
-               (compact-result-function   (symbol-function 'task-job--compact-result))
-               (usage-omitted-p           nil)
-               (request                   (run-job-validate-envelope (run-job-tests--request-form)))
+        (let* ((application             (mission-test--application configuration))
+               (compact-result-function (symbol-function 'task-job--compact-result))
+               (usage-omitted-p         nil)
+               (request                 (run-job-validate-envelope (run-job-tests--request-form)))
                (provider
                 (make-instance 'run-job-test-provider :configuration configuration
                                :fail-on-empty-p failure-p :results
@@ -88,67 +125,48 @@
                                                          "usage-response")))
                                                    :usage
                                                    (json-object "input_tokens" 13
-                                                                "output_tokens" 7)))))
-               (stream                    (make-string-output-stream))
-               (*run-job-event-emitter*
-                (run-job-event-emitter-create "run-usage" stream))
-               (*run-job-event-root-name* "usage-root"))
+                                                                 "output_tokens" 7))))))
           (setf (application-provider application) provider
                 (agent-provider (application-agent application)) provider)
           (task-augment-tool-registry (application-tool-registry application))
-          (run-job-event-emit *run-job-event-emitter* ':run-started nil)
-          (unwind-protect
-              (test-call-with-function-replacements
-               (list
-                (list 'application-create
-                      (lambda (&rest arguments)
-                        (declare (ignore arguments))
-                        application))
-                (list 'skill-roots
-                      (lambda (configuration)
-                        (list
-                         (merge-pathnames "skills/"
-                                          (config :config-root configuration)))))
-                (list 'task-job--compact-result
-                      (lambda (result &key artifact-available-p)
-                        (let ((compact
-                               (funcall compact-result-function result
-                                        :artifact-available-p artifact-available-p)))
-                          (when omit-usage-p (remf compact :usage))
-                          (setf usage-omitted-p (null (getf compact :usage)))
-                          compact))))
-               (lambda ()
-                 (multiple-value-bind (status result trace usage category message)
-                     (run-job-execute-with-application configuration request
-                                                       ':full-access)
-                   (declare (ignore trace category message))
-                   (test-assert
-                    (if failure-p
-                        (eq status ':failed)
-                        (and (eq status ':succeeded) (equal result "usage-response")))
-                    "Headless execution returns ordinary text or reports provider failure.")
-                   (test-assert
-                    (equal usage
-                           (list :input-tokens 13 :output-tokens 7 :provider-requests
-                                 (if failure-p
-                                     2
-                                     1)))
-                    "Final usage survives omitted compact metadata.")
-                   (test-assert (eq usage-omitted-p omit-usage-p)
-                                "The fixture covers both retained summaries and missing usage."))))
-            (run-job-event-emitter-finish *run-job-event-emitter*
-                                          (run-job-event-tests--terminal)))
-          (when failure-p
-            (let* ((records
-                    (run-job-event-tests--records (get-output-stream-string stream)))
-                   (finished
-                    (find ':tool-finished records :key
-                          (lambda (record) (getf (rest record) :kind))))
-                   (data (getf (rest finished) :data)))
-              (test-assert
-               (and (equal (getf data :tool-name) "job.list")
-                    (eq (getf data :status) ':succeeded))
-               "A real tool completion is streamed before the provider fails.")))))))
+          (test-call-with-function-replacements
+           (list
+            (list 'application-create
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    application))
+            (list 'skill-roots
+                  (lambda (configuration)
+                    (list
+                     (merge-pathnames "skills/"
+                                      (config :config-root configuration)))))
+            (list 'task-job--compact-result
+                  (lambda (result &key artifact-available-p)
+                    (let ((compact
+                           (funcall compact-result-function result
+                                    :artifact-available-p artifact-available-p)))
+                      (when omit-usage-p (remf compact :usage))
+                      (setf usage-omitted-p (null (getf compact :usage)))
+                      compact))))
+           (lambda ()
+             (multiple-value-bind (status result trace usage category message)
+                 (run-job-execute-with-application configuration request
+                                                   ':full-access)
+               (declare (ignore trace category message))
+               (test-assert
+                (if failure-p
+                    (eq status ':failed)
+                    (and (eq status ':succeeded) (equal result "usage-response")))
+                "Headless execution returns ordinary text or reports provider failure.")
+               (test-assert
+                (equal usage
+                       (list :input-tokens 13 :output-tokens 7 :provider-requests
+                             (if failure-p
+                                 2
+                                 1)))
+                "Final usage survives omitted compact metadata.")
+               (test-assert (eq usage-omitted-p omit-usage-p)
+                           "The fixture covers both retained summaries and missing usage."))))))))
   nil)
 
 (defclass run-job-tests--failing-input (trivial-gray-streams:fundamental-character-input-stream)
@@ -230,30 +248,21 @@
 
 (-> test-run-job-inline-prompt-read-failure () null)
 (defun test-run-job-inline-prompt-read-failure ()
-  "Publish an input failure artifact and terminal event without invoking the executor."
+  "Publish an input failure artifact without invoking the executor."
   (with-test-configuration (configuration root)
-    (let* ((output   (merge-pathnames "prompt-read-failure.sexp" root))
-           (events   (make-string-output-stream))
+    (let* ((output (merge-pathnames "prompt-read-failure.sexp" root))
            (exit-code
              (run-job-run-prompt
               (make-instance 'run-job-tests--failing-input) output ':auto
               :configuration configuration :identifier "failed-prompt"
-              :events ':sexp :event-output events
               :executor (lambda (&rest arguments)
                           (declare (ignore arguments))
                           (error "A failed prompt reached the executor."))))
-           (result   (run-job-tests--read-result output))
-           (records  (run-job-event-tests--records (get-output-stream-string events)))
-           (terminal (find ':run-finished records
-                           :key (lambda (record) (getf (rest record) :kind)))))
+           (result (run-job-tests--read-result output)))
       (test-assert (and (= 1 exit-code)
                         (eq ':failed (getf (rest result) :status))
                         (getf (rest result) :failure))
-                   "Prompt ingestion failures are published as failed results.")
-      (test-assert (and terminal
-                        (eq ':failed (getf (getf (rest terminal) :data) :status))
-                        (getf (getf (rest terminal) :data) :published-p))
-                   "The terminal event confirms the published input failure.")))
+                   "Prompt ingestion failures are published as failed results.")))
   nil)
 
 (-> test-run-job-inline-prompt-cli () null)

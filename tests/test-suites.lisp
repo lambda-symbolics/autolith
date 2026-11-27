@@ -1497,25 +1497,8 @@
   test-run-job-inline-prompt-publication
   test-run-job-inline-prompt-read-failure
   test-run-job-inline-prompt-cli
+  test-run-job-inline-prompt-launchers
   run-run-job-tests)
-
-(define-test-suite run-job-events
-  test-run-job-event-wire-roundtrip
-  test-run-job-event-reader-safety
-  test-run-job-event-owned-payload
-  test-run-job-event-concurrent-writers
-  test-run-job-event-progress-backpressure
-  test-run-job-event-critical-backpressure
-  test-run-job-event-slow-consumer
-  test-run-job-event-output-failures
-  test-run-job-event-real-pipes
-  test-run-job-streaming-terminal-publication
-  test-run-job-streaming-input-and-publication-failures
-  test-run-job-streaming-broken-consumer
-  test-run-job-streaming-owned-observation
-  test-run-job-streaming-cli
-  test-run-job-streaming-cli-blocked-exit
-  test-run-job-inline-prompt-launchers)
 
 (define-test-suite task-scheduler
   test-task-child-identity

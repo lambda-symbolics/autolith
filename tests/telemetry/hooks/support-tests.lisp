@@ -89,17 +89,14 @@
                             (merge-pathnames "job-input.sexp"
                                              (config :cache-root configuration)))
                            (output
-                            (merge-pathnames "job-output.sexp"
-                                             (config :cache-root configuration)))
-                           (events (make-string-output-stream)))
+                             (merge-pathnames "job-output.sexp"
+                                              (config :cache-root configuration))))
                       (test-write-text input
                                        (run-job--write-data-sexp
                                         (run-job-tests--request-form)))
                       (values
-                       (run-job-run input output ':full-access :configuration
-                                    configuration :events ':sexp :event-output events)
-                       (when (probe-file output) (run-job-read-file output))
-                       (run-job-event-tests--records (get-output-stream-string events))))
+                        (run-job-run input output ':full-access :configuration configuration)
+                        (when (probe-file output) (run-job-read-file output))))
                     (run-job-execute-with-application configuration request
                                                       ':full-access))))))
     (values

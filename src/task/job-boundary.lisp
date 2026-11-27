@@ -288,12 +288,13 @@
   nil)
 
 (-> run-job-execute-with-application
-    (configuration run-job-request keyword)
+    (configuration run-job-request keyword &key (:status-function (option function)))
     (values keyword t (option string) list (option keyword) (option string)))
-(defun run-job-execute-with-application (configuration request permission-mode)
-  "Execute REQUEST through the existing application child-agent runtime."
+(defun run-job-execute-with-application (configuration request permission-mode &key status-function)
+  "Execute REQUEST through the child-agent runtime and pass progress messages to STATUS-FUNCTION, if supplied."
   (if *run-job-telemetry-scope-p*
-      (run-job--execute-with-application configuration request permission-mode)
+      (run-job--execute-with-application configuration request permission-mode
+                                         :status-function status-function)
       (progn
         (telemetry--call-safely (lambda () (telemetry-attach configuration)))
         (multiple-value-bind (run token)
@@ -305,7 +306,8 @@
                  (values-list
                   (setf results
                         (multiple-value-list
-                         (run-job--execute-with-application configuration request permission-mode))))
+                         (run-job--execute-with-application configuration request permission-mode
+                                                            :status-function status-function))))
               (telemetry--call-safely
                (lambda ()
                  (telemetry-finish-run
@@ -315,53 +317,29 @@
               (telemetry--call-safely #'telemetry-shutdown)))))))
 
 (-> run-job--execute-with-application
-    (configuration run-job-request keyword)
+    (configuration run-job-request keyword &key (:status-function (option function)))
     (values keyword t (option string) list (option keyword) (option string)))
-(defun run-job--execute-with-application (configuration request permission-mode)
-  "Execute a child while its caller owns telemetry through result publication."
-  (let ((application nil) (event-orchestrator nil) (event-listener nil))
+(defun run-job--execute-with-application (configuration request permission-mode &key status-function)
+  "Execute a child while the caller owns telemetry through result publication."
+  (let ((application nil))
     (unwind-protect
         (progn
          (setf application
                  (application-create configuration :permission-mode  permission-mode
                                      :ignore-saved-permission-mode-p t))
          (let* ((orchestrator (application--task-orchestrator application))
+                (parent       (application-agent application))
                 (assignment   (run-job-assignment request)))
            (unless orchestrator
              (run-job--error ':runtime-unavailable "The task runtime is unavailable."))
-           (when *run-job-event-emitter*
-             (handler-case
-              (setf event-orchestrator orchestrator
-                    event-listener
-                      (task-orchestrator-add-listener orchestrator
-                                                      (run-job-event-observer-create
-                                                       orchestrator
-                                                       *run-job-event-emitter*
-                                                       :configuration
-                                                       (application-configuration
-                                                        application)
-                                                       :registry
-                                                       (application-tool-registry
-                                                        application)
-                                                       :root-conversation
-                                                       (task-parent-root-conversation-identifier
-                                                        (application-agent application))
-                                                       :root-name
-                                                       *run-job-event-root-name*)))
-              (serious-condition nil
-               (run-job-event-emit *run-job-event-emitter* ':warning
-                                   (list :code ':invalid-event)))))
+           (when status-function
+             (funcall status-function (format nil "Using model ~A" (config :model (agent-configuration parent))))
+             (funcall status-function "Working"))
            (multiple-value-bind (jobs inline)
-               (task-orchestrator-start-jobs orchestrator (application-agent application)
-                                             (list
-                                              (list :item
-                                                    (append (list :task assignment)
-                                                            (when
-                                                                *run-job-event-root-name*
-                                                              (list :name
-                                                                    *run-job-event-root-name*)))
-                                                    :telemetry-run *telemetry-run*
-                                                    :detached      nil))
+               (task-orchestrator-start-jobs orchestrator parent
+                                             (list (list :item          (list :task assignment)
+                                                         :telemetry-run *telemetry-run*
+                                                         :detached      nil))
                                              :command-authorization-function
                                              (run-job-headless-command-authorization
                                               application permission-mode request)
@@ -403,8 +381,6 @@
                                  ':provider-failure
                                  ':child-failure)
                              (or (getf result :error) "The child failed."))))))))))
-      (when (and event-orchestrator event-listener)
-        (task-orchestrator-remove-listener event-orchestrator event-listener))
       (run-job--close-application application))))
 
 (-> run-job--run-artifact
@@ -426,35 +402,27 @@ JOB-IDENTIFIER names failure results when reading or building the form fails."
         (form                        nil)
         (terminal-status             ':failed)
         (terminal-category           ':process-failure)
-        (terminal-trace              nil)
         (terminal-recorded-p         nil)
-        (publication-attempted-p     nil)
         (published-p                 nil)
         (telemetry-owner             nil)
         (*run-job-telemetry-scope-p* t)
         (*telemetry-run*             nil))
     (labels ((publish (envelope)
-               (setf publication-attempted-p t published-p nil)
+               (setf published-p nil)
                (run-job-write-result-atomically output-path envelope)
                (setf published-p t))
 
              (write-failure (category condition)
-               (let ((publication-failed-p
-                       (and *run-job-event-emitter* publication-attempted-p)))
-                 (setf terminal-recorded-p t
-                       terminal-status (if (eq category ':timeout) ':timed-out ':failed)
-                       terminal-category
-                       (if publication-failed-p
-                           ':result-publication-failed
-                           (run-job-event--category category)))
-                 (unless publication-failed-p
-                   ; mallet:suppress no-ignore-errors -- best-effort failure envelope; the terminal state is already recorded
-                   (ignore-errors
-                     (publish
-                      (run-job-result-envelope
-                       identifier terminal-status
-                       :started-at started-at :finished-at (get-universal-time)
-                       :category category :message (princ-to-string condition))))))))
+               (setf terminal-recorded-p t
+                     terminal-status (if (eq category ':timeout) ':timed-out ':failed)
+                     terminal-category category)
+               ; mallet:suppress no-ignore-errors -- best-effort failure envelope; the terminal state is already recorded
+               (ignore-errors
+                 (publish
+                  (run-job-result-envelope
+                   identifier terminal-status
+                   :started-at started-at :finished-at (get-universal-time)
+                   :category category :message (princ-to-string condition))))))
       (unwind-protect
            (handler-case
                (progn
@@ -476,8 +444,7 @@ JOB-IDENTIFIER names failure results when reading or building the form fails."
                       request permission-mode)
                    (setf terminal-recorded-p t
                          terminal-status status
-                         terminal-category (and category (run-job-event--category category))
-                         terminal-trace trace-id)
+                          terminal-category category)
                    (publish
                     (run-job-result-envelope
                      identifier status
@@ -501,138 +468,36 @@ JOB-IDENTIFIER names failure results when reading or building the form fails."
             (if terminal-recorded-p
                 (list :state terminal-status :category terminal-category :published-p published-p)
                 (list :state ':unfinished)))))
-        (telemetry--call-safely #'telemetry-shutdown)
-        (when *run-job-event-emitter*
-          (handler-case
-              (let* ((status   (if published-p terminal-status ':failed))
-                     (category (if published-p terminal-category ':result-publication-failed))
-                     (base     (append
-                                (list :status status :published-p published-p)
-                                (when (and (stringp terminal-trace)
-                                           (<= 1 (length terminal-trace) 256))
-                                  (list :job-id terminal-trace))
-                                (when category (list :category category)))))
-                (when (getf base :job-id)
-                  (run-job-event-emit
-                   *run-job-event-emitter* ':job-finished
-                   (append base (list :execution-id terminal-trace)
-                           (when published-p
-                             (list :result-uri
-                                   (run-job-event--artifact-uri output-path))))))
-                (run-job-event-emitter-finish
-                 *run-job-event-emitter*
-                 (append base
-                         (when published-p
-                           (list :output-path (namestring (pathname output-path)))))))
-            (serious-condition ()
-              nil)))))))
-
-(-> run-job--thread-output-bindings (stream list) list)
-(defun run-job--thread-output-bindings (diagnostics inherited)
-  "Return recursively inherited worker stream bindings for one headless run.
-
-Bordeaux Threads does not inherit dynamic bindings implicitly. Bind its default
-alist too, so workers that create further workers cannot fall back to stdout."
-  (let ((inherited
-          (remove-if (lambda (entry)
-                       (member (first entry)
-                               '(*standard-input* *standard-output* *trace-output* *error-output*
-                                 *query-io* *terminal-io* *debug-io*
-                                 bordeaux-threads:*default-special-bindings*)))
-                     inherited)))
-    (append
-     (list (cons '*standard-input* '(make-string-input-stream ""))
-           (cons '*standard-output* (list 'quote diagnostics))
-           (cons '*trace-output* (list 'quote diagnostics))
-           (cons '*error-output* (list 'quote diagnostics))
-           (cons '*query-io*
-                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
-           (cons '*terminal-io*
-                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
-           (cons '*debug-io*
-                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
-           (cons 'bordeaux-threads:*default-special-bindings*
-                 (list 'run-job--thread-output-bindings
-                       (list 'quote diagnostics) (list 'quote inherited))))
-     inherited)))
-
-(-> run-job--run-observed
-    (function &key (:events (member nil :sexp)) (:event-output stream))
-    integer)
-(defun run-job--run-observed
-    (function &key events (event-output *standard-output*))
-  "Call FUNCTION with optional version-one observation bound around it."
-  (check-type events (member nil :sexp))
-  (if (null events)
-      (funcall function)
-      (let* ((run-id                    (make-user-identifier))
-             (diagnostics               *error-output*)
-             (*standard-input*          (make-string-input-stream ""))
-             (*standard-output*         diagnostics)
-             (*trace-output*            diagnostics)
-             (*debug-io*                (make-two-way-stream *standard-input* diagnostics))
-             (*query-io*                (make-two-way-stream *standard-input* diagnostics))
-             (*terminal-io*             (make-two-way-stream *standard-input* diagnostics))
-             (bordeaux-threads:*default-special-bindings*
-              (run-job--thread-output-bindings
-               diagnostics bordeaux-threads:*default-special-bindings*))
-             (*run-job-event-root-name* run-id)
-             (*run-job-event-emitter*
-               (handler-case
-                   (run-job-event-emitter-create run-id event-output)
-                 (serious-condition ()
-                   nil))))
-        (when *run-job-event-emitter*
-          (run-job-event-emit *run-job-event-emitter* ':run-started nil))
-        (funcall function))))
+        (telemetry--call-safely #'telemetry-shutdown)))))
 
 (-> run-job-run
     ((or pathname string) (or pathname string) keyword
-     &key (:executor function) (:configuration (option configuration))
-          (:events (member nil :sexp)) (:event-output stream))
+     &key (:executor function) (:configuration (option configuration)))
     integer)
-(defun run-job-run
-    (input-path output-path permission-mode
-     &key (executor #'run-job-execute-with-application) configuration
-          events (event-output *standard-output*))
-  "Run one contracted job; optionally observe it through version-one S-expression events.
-
-The output artifact is authoritative. With EVENTS :SEXP, EVENT-OUTPUT receives
-only data forms and producer diagnostics go to stderr, including new workers.
-Observation failure never changes execution or result publication."
+(defun run-job-run (input-path output-path permission-mode
+                    &key (executor #'run-job-execute-with-application) configuration)
+  "Run one contracted job and publish the result at OUTPUT-PATH."
   (setf input-path (uiop:ensure-absolute-pathname input-path (uiop:getcwd))
         output-path (uiop:ensure-absolute-pathname output-path (uiop:getcwd)))
-  (run-job--run-observed
-   (lambda ()
-     (run-job--run-artifact input-path output-path permission-mode
-                            :executor executor :configuration configuration))
-   :events events :event-output event-output))
+  (run-job--run-artifact input-path output-path permission-mode
+                         :executor executor :configuration configuration))
 
 (-> run-job-run-prompt
     ((or string stream) (or pathname string) keyword &key (:identifier string)
-     (:executor function) (:configuration (option configuration))
-     (:events (member nil :sexp)) (:event-output stream))
+     (:executor function) (:configuration (option configuration)))
     integer)
-(defun run-job-run-prompt
-             (prompt-source output-path permission-mode
-              &key (identifier (make-user-identifier))
-              (executor #'run-job-execute-with-application) configuration events
-              (event-output *standard-output*))
-             "Run one inline prompt job, reading PROMPT-SOURCE inside the job boundary.
-
-PROMPT-SOURCE is a prompt string or a stream read to end. The output artifact
-is authoritative and observes the same events and errors as RUN-JOB-RUN."
-             (setf output-path
-                     (uiop/pathname:ensure-absolute-pathname output-path (uiop/os:getcwd)))
-             (run-job--run-observed
-              (lambda ()
-                (run-job--run-artifact nil output-path permission-mode :job-identifier identifier
-                                       :input-present-p nil :form-function
-                                       (lambda ()
-                                         (run-job-prompt-form
-                                          (if (streamp prompt-source)
-                                              (run-job-read-prompt-stream prompt-source)
-                                              prompt-source)
-                                          :identifier identifier))
-                                       :executor executor :configuration configuration))
-              :events events :event-output event-output))
+(defun run-job-run-prompt (prompt-source output-path permission-mode
+                           &key (identifier (make-user-identifier))
+                             (executor #'run-job-execute-with-application) configuration)
+  "Run an inline job from a prompt string or stream and publish the result."
+  (setf output-path (uiop:ensure-absolute-pathname output-path (uiop:getcwd)))
+  (run-job--run-artifact nil output-path permission-mode
+                         :job-identifier  identifier
+                         :input-present-p nil
+                         :form-function   (lambda ()
+                                            (run-job-prompt-form
+                                             (if (streamp prompt-source)
+                                                 (run-job-read-prompt-stream prompt-source)
+                                                 prompt-source)
+                                             :identifier identifier))
+                         :executor executor :configuration configuration))

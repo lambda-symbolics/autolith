@@ -140,8 +140,8 @@
                         (lambda (configuration)
                           (declare (ignore configuration))))
                   (list 'run-job-run
-                        (lambda (input output permission-mode &key configuration)
-                          (declare (ignore input output permission-mode))
+                        (lambda (input output permission-mode &key configuration executor)
+                          (declare (ignore input output permission-mode executor))
                           (setf observed configuration)
                           0)))
                  (lambda ()
@@ -889,8 +889,8 @@
                              (declare (ignore arguments))
                              (prepare configuration)))
                      (list 'run-job-run
-                           (lambda (input output mode &key configuration)
-                             (declare (ignore input output mode))
+                           (lambda (input output mode &key configuration executor)
+                             (declare (ignore input output mode executor))
                              (prepare configuration)
                              0)))
                     (lambda ()

@@ -1444,10 +1444,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                  (make-option ':string :long-name "id" :key ':job-id :parameter "ID"
                               :description "inline prompt job identifier")
                  (make-option ':string :long-name "output" :key ':output :parameter
-                              "FILE" :description "atomically installed terminal result")
-                 (make-option ':string :long-name "events" :key ':events :parameter
-                              "sexp" :description
-                              "observe bounded S-expression events on stdout"))
+                               "FILE" :description "atomically installed terminal result"))
                 :handler
                 (lambda (command)
                   (when (command-arguments command)
@@ -1457,11 +1454,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                          (prompt-option (getopt* command ':prompt))
                          (prompt-p      (not (null prompt-option)))
                          (id-option     (getopt* command ':job-id))
-                         (output        (getopt* command ':output))
-                         (events        (getopt* command ':events)))
-                    (unless (or (null events) (equal events "sexp"))
-                      (error 'configuration-error :message
-                             "run-job --events requires sexp."))
+                         (output        (getopt* command ':output)))
                     (when (and input prompt-p)
                       (error 'configuration-error :message
                              "run-job accepts --input or --prompt, not both."))
@@ -1474,36 +1467,41 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                     (unless (non-empty-string-p output)
                       (error 'configuration-error :message
                              "run-job requires --output FILE."))
-                    (let* ((configuration
-                            (apply #'configuration-create :immutable-p
-                                   (not (null (getopt* command ':immutable)))
-                                   :defer-provider-validation-p t
-                                   (append (main--site-root-arguments command)
-                                           (main--model-arguments command))))
-                           (permission-mode
-                            (or (getopt* command ':permissions)
-                                (config :permission-mode configuration) ':auto))
-                           (observation
-                            (when events
-                              (list :events ':sexp :event-output *standard-output*)))
-                           (status
-                            (if prompt-p
-                                (apply #'run-job-run-prompt
-                                       (if (equal prompt-option "-")
-                                           *standard-input*
-                                           prompt-option)
-                                       output permission-mode :configuration
-                                       configuration
-                                       (append
-                                        (when id-option (list :identifier id-option))
-                                        observation))
-                                (apply #'run-job-run input output permission-mode
-                                       :configuration configuration observation))))
-                      ;; The boundary has cleaned up the application and attempted publication.
-                      ;; Normal Lisp exit can interrupt or flush a retained blocked writer.
-                      (if events
-                          (sb-ext:exit :code status :abort t)
-                          (unless (zerop status) (uiop/image:quit status))))))))
+                    (flet ((status-line (message)
+                             (handler-case
+                                 (progn
+                                   (world-terminal--write-styled-line
+                                    *error-output* (list (terminal-span ':dim message))
+                                    (world-terminal--status-output-styled-p *error-output*))
+                                   (force-output *error-output*))
+                               (stream-error ()
+                                 nil))))
+                      (status-line "Started")
+                      (let* ((configuration
+                               (apply #'configuration-create :immutable-p
+                                      (not (null (getopt* command ':immutable)))
+                                      :defer-provider-validation-p t
+                                      (append (main--site-root-arguments command)
+                                              (main--model-arguments command))))
+                             (permission-mode
+                               (or (getopt* command ':permissions)
+                                   (config :permission-mode configuration) ':auto))
+                             (executor
+                               (lambda (configuration request mode)
+                                 (run-job-execute-with-application
+                                  configuration request mode :status-function #'status-line)))
+                             (status
+                               (if prompt-p
+                                   (apply #'run-job-run-prompt
+                                          (if (equal prompt-option "-")
+                                              *standard-input*
+                                              prompt-option)
+                                          output permission-mode :configuration configuration
+                                          :executor                             executor
+                                          (when id-option (list :identifier id-option)))
+                                   (run-job-run input output permission-mode
+                                                :configuration configuration :executor executor))))
+                        (unless (zerop status) (uiop/image:quit status))))))))
 
 (-> main--known-model-identifiers () list)
 (defun main--known-model-identifiers ()

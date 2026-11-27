@@ -2514,44 +2514,8 @@ errors and oversized prompts produce a failure artifact too.
 a prompt. =sandbox= permits only sandboxed shell commands. =full= permits
 full command execution and external tools that otherwise require a prompt.
 
-** Live S-expression events
-
-Add =--events sexp= to observe progress on stdout. Send diagnostics to a
-separate stream, and use the artifact for the authoritative result:
-
-#+BEGIN_SRC sh
-autolith --permissions auto run-job \
-  --input /path/to/job.sexp --output /path/to/result.sexp \
-  --events sexp >events.sexp 2>diagnostics.log
-#+END_SRC
-
-Read consecutive top-level forms. /Strings can contain newlines./
-
-#+BEGIN_SRC lisp
-(:autolith-event :version 1
- :run-id "a-generated-run-uuid" :seq 1 :time "2026-10-08T09:00:00Z"
- :kind :run-started :data nil)
-#+END_SRC
-
-- Sequence numbers increase within one run. A new run starts at one with a
-  new run ID. There is no replay or reconnect cursor.
-- Event kinds are =:run-started=, =:job-started=, =:tool-started=, =:progress=,
-  =:tool-finished=, =:job-finished=, =:usage=, =:warning=, =:progress-omitted=
-  and =:run-finished=. Ignore unknown kinds. Events report registered tool
-  names and bounded metadata, without prompts, tool payloads or output.
-- Root =:job-finished= and final =:run-finished= follow result publication.
-  Published job events carry =:result-uri=. The final event reports
-  =:status= and =:published-p=. It includes =:output-path= on publication.
-  A write failure reports =:category :result-publication-failed= and exits
-  nonzero.
-- A slow reader can miss events. =:progress-omitted= counts omitted progress,
-  and a =:warning= with =:code :queue-full= reports lifecycle overflow.
-  Execution and result publication continue even if the stream disconnects.
-
-From Lisp, pass =:events :sexp= and =:event-output STREAM= to =run-job-run=.
-Read records with =run-job-event-read-stream=, which returns =nil= at EOF.
-The reader accepts bounded data forms of up to 16 KiB of UTF-8 per record.
-Use UTF-8 for character streams. Binary streams receive UTF-8 octets.
+Startup progress, including the selected model, is printed to stderr. For
+scripts, use the exit status and the result file.
 
 * Generations and recovery
 

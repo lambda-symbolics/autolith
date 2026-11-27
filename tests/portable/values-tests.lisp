@@ -68,8 +68,7 @@
 (-> test-portable-shared-subtrees () null)
 (defun test-portable-shared-subtrees ()
   "Accept repeated completed subtrees without preserving output aliases."
-      (dolist (convert (list #'application-client-value #'application-operation--json-value #'task--character-strings
-                              #'run-job-event--snapshot))
+    (dolist (convert (list #'application-client-value #'application-operation--json-value #'task--character-strings))
        (let* ((shared (list (copy-seq "leaf")))
               (input  (list shared shared))
               (result (funcall convert input))
@@ -78,16 +77,16 @@
          (test-assert (and (not (eq input result)) (not (eq shared left))
                            (not (eq left right)) (not (eq (elt left 0) (elt right 0))))
                       "each completed shared cons subtree and its strings are copied independently")))
-      (dolist (shared (list (vector (copy-seq "leaf")) (json-object "member" "leaf")))
-        (let ((client-result (application-client-value (vector shared shared))))
-          (test-assert (and (vectorp client-result)
-                            (not (eq (aref client-result 0) (aref client-result 1))))
-                       "client shared containers are independent"))
-        (let ((operation-result (application-operation--json-value (vector shared shared))))
-          (test-assert (and (vectorp operation-result)
-                            (not (eq (aref operation-result 0) (aref operation-result 1))))
-                       "operation shared containers are independent")))
-      nil)
+    (dolist (shared (list (vector (copy-seq "leaf")) (json-object "member" "leaf")))
+      (let ((client-result (application-client-value (vector shared shared))))
+        (test-assert (and (vectorp client-result)
+                          (not (eq (aref client-result 0) (aref client-result 1))))
+                     "client shared containers are independent"))
+      (let ((operation-result (application-operation--json-value (vector shared shared))))
+        (test-assert (and (vectorp operation-result)
+                          (not (eq (aref operation-result 0) (aref operation-result 1))))
+                     "operation shared containers are independent")))
+    nil)
 
 (-> test-portable-cycles () null)
 (defun test-portable-cycles ()
@@ -105,8 +104,7 @@
           (gethash "mixed" hash) mixed
           (gethash "self" self-hash) self-hash
           (gethash key-cycle key-cycle) nil)
-    (dolist (convert (list #'application-client-value #'application-operation--json-value #'task--character-strings
-                            #'run-job-event--snapshot))
+    (dolist (convert (list #'application-client-value #'application-operation--json-value #'task--character-strings))
      (dolist (value (list car-cycle cdr-cycle))
        (test-assert (portable-tests--failure convert value) "cons CAR and CDR cycles are rejected")))
     (dolist (value (list vector hash self-hash mixed))
@@ -164,8 +162,7 @@
           (test-assert (and (typep failure 'portable-value-error)
                             (eq ':nodes (portable-value-error-reason failure)))
                        "list policies refuse one charge beyond their budgets")))))
-  (dolist (case (list (list #'application-client-value 'application-client-unavailable 32 16383 16384)
-                      (list #'run-job-event--snapshot 'run-job-event-error 8 127 128)))
+  (dolist (case (list (list #'application-client-value 'application-client-unavailable 32 16383 16384)))
     (destructuring-bind (convert failure-type depth accepted-cells rejected-cells) case
       (test-assert (funcall convert (portable-tests--nested depth))
                    "the boundary's exact depth is accepted")
@@ -176,8 +173,7 @@
                    "the boundary accepts its own cons accounting limit")
       (test-assert (typep (portable-tests--failure convert (make-list rejected-cells)) failure-type)
                    "the boundary refuses its next cons accounting size")))
-  (dolist (case (list (list #'application-client-value 'application-client-unavailable 262144)
-                      (list #'run-job-event--snapshot 'run-job-event-error 4096)))
+  (dolist (case (list (list #'application-client-value 'application-client-unavailable 262144)))
     (destructuring-bind (convert failure-type size) case
       (test-assert (= size (length (funcall convert (make-string size :initial-element #\a))))
                    "local string policies accept their character limit")
