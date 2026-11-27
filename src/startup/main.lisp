@@ -455,10 +455,18 @@ controller's exit reason."
                                input-controller)
                             while work
                             do (handler-case
-                                     (progn
+                                   (let ((*application-turn-cancellation-deliverable-p* t))
                                        (unwind-protect
                                             (progn
                                                (application-world-note-child-turn application (first work))
+                                              ;; A cancellation requested before WORK reached
+                                              ;; this handler stayed pending; deliver it here.
+                                              (when
+                                                  (application-input-controller--consume-turn-cancellation-delivery-p
+                                                   input-controller)
+                                                (error
+                                                 (make-condition
+                                                  'application-turn-cancelled)))
                                               (application-input-controller--run-work
                                                input-controller work)
                                               (when
