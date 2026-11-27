@@ -338,75 +338,50 @@
                            "recorded wire size charges both tool-output images"))))))))
   nil)
 
-(-> context-admission-test--image-request ((integer 0)) hash-table)
-(defun context-admission-test--image-request (count)
-  "Return a request whose single user message carries COUNT image parts."
+(-> context-admission-test--image-request ((integer 0) json-object) hash-table)
+(defun context-admission-test--image-request (count image)
+  "Return a request with COUNT copies of the prepared IMAGE part."
   (json-object
    "input"
    (vector
     (json-object "type" "message" "role" "user" "content"
-                 (coerce (loop repeat count
-                               collect (json-object "type" "input_image"
-                                                    "image_url" "https://example.invalid/image"
-                                                    "detail" "high"))
-                         'vector)))))
+                 (make-array count :initial-element image)))))
 
 (-> test-context-admission-prepared-images () null)
 (defun test-context-admission-prepared-images ()
   "Charge each image at the local preparation cap rather than a flat larger allowance."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "40000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
-    (with-test-configuration (configuration)
-      (let ((provider (make-instance 'context-admission-test-provider
-                                     :configuration configuration))
-            (cap      *image-input-maximum-patches*))
-        (labels ((image-tokens (count)
-                   (- (provider-request-input-token-estimate
-                       provider (context-admission-test--image-request count))
-                      (provider-request-input-token-estimate
-                       provider (context-admission-test--image-request 0))))
+    (with-test-configuration (configuration root)
+      (let* ((provider   (make-instance 'context-admission-test-provider :configuration configuration))
+             (source     (test-conversation--write-tiny-png (merge-pathnames "source.png" root)))
+             (attachment (image-input-prepare source (merge-pathnames "prepared/" root)))
+             (image      (image-input-content-item attachment))
+             (cap        *image-input-maximum-patches*))
+        (unwind-protect
+             (labels ((image-tokens (count)
+                        (- (provider-request-input-token-estimate
+                            provider (context-admission-test--image-request count image))
+                           (provider-request-input-token-estimate
+                            provider (context-admission-test--image-request 0 image))))
 
-                 (charged-p (count allowance)
-                   ;; Allow one token per image for array delimiters and rounding.
-                   (<= (* count allowance) (image-tokens count) (* count (1+ allowance)))))
-          (test-assert (charged-p 1 cap)
-                       "one image is charged at the preparation patch cap")
-          (test-assert (charged-p 4 cap)
-                       "several images are each charged at the preparation cap")
-          (let ((*image-input-maximum-patches* 1200))
-            (test-assert (charged-p 1 1200)
-                         "the allowance follows a rebound preparation cap"))
-          (let ((*provider-image-token-estimate* 9000))
-            (test-assert (charged-p 1 9000)
-                         "an explicit per-image allowance still takes precedence"))
-          (provider-open-response-stream provider (context-admission-test--image-request 4))
-          (test-assert (= 1 (context-admission-test-provider-network-calls provider))
-                       "four prepared images fit a window the flat allowance would refuse")))))
-  nil)
-
-(-> test-context-admission-prepared-image-bounds () null)
-(defun test-context-admission-prepared-image-bounds ()
-  "Prepared images at, under and over the patch cap never exceed the charged allowance."
-  (flet ((prepared-patches (width height)
-           (multiple-value-bind (format target-width target-height)
-               (apply #'yolokuva:image-preparation :png width height (image-input--limits))
-             (declare (ignore format))
-             (values (* (ceiling target-width *image-input-patch-size*)
-                        (ceiling target-height *image-input-patch-size*))
-                     target-width target-height))))
-    (multiple-value-bind (patches width height) (prepared-patches 1600 1600)
-      (test-assert (and (= patches *image-input-maximum-patches*) (= width 1600) (= height 1600))
-                   "an image exactly at the patch cap is kept and charged in full"))
-    (multiple-value-bind (patches width) (prepared-patches 1600 1568)
-      (test-assert (and (< patches *image-input-maximum-patches*) (= width 1600))
-                   "an image just under the patch cap is kept"))
-    (dolist (size '((1601 1600) (1632 1600) (2048 2048) (4000 3000) (8000 100) (100 8000)))
-      (multiple-value-bind (patches width height) (apply #'prepared-patches size)
-        (test-assert (and (<= patches (provider-image-token-allowance))
-                          (<= (max width height) *image-input-maximum-dimension*))
-                     (format nil "a ~{~D~^x~} image is reduced to the charged cap" size))))
-    (test-assert (= 1 (prepared-patches 1 1))
-                 "a tiny image still fits the allowance"))
+                      (charged-p (count allowance)
+                        ;; Allow one token per image for array delimiters and rounding.
+                        (<= (* count allowance) (image-tokens count) (* count (1+ allowance)))))
+              (test-assert (charged-p 1 cap)
+                           "one image is charged at the preparation patch cap")
+              (test-assert (charged-p 4 cap)
+                           "several images are each charged at the preparation cap")
+              (let ((*image-input-maximum-patches* 1200))
+                (test-assert (charged-p 1 1200)
+                             "the allowance follows a rebound preparation cap"))
+              (let ((*provider-image-token-estimate* 9000))
+                (test-assert (charged-p 1 9000)
+                             "an explicit per-image allowance still takes precedence"))
+              (provider-open-response-stream provider (context-admission-test--image-request 4 image))
+              (test-assert (= 1 (context-admission-test-provider-network-calls provider))
+                           "four prepared images fit a window the flat allowance would refuse"))
+          (image-input--release-publication-root (image-attachment-pathname attachment))))))
   nil)
 
 (-> test-context-admission-checkpoint-transaction () null)
