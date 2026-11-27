@@ -29,7 +29,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-   '(:hold :inspect :execute :apply :apply-interactive :steer)
+    '(:hold :inspect :execute :apply :apply-interactive)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -353,7 +353,7 @@ The maximum is NIL for &REST or &KEY."
    (busy-behavior
     :initarg       :busy-behavior
     :reader        application-command-busy-behavior
-     :type         (member :hold :inspect :execute :apply :apply-interactive :steer)
+     :type         (member :hold :inspect :execute :apply :apply-interactive)
     :documentation "The command policy while application work is active.")
    (terminal-behavior
     :initarg       :terminal-behavior
@@ -820,9 +820,6 @@ without changing the registry."
 
 ;;;; -- Invocation and Dispatch --
 
-(defvar *application-command-source-input* nil
-  "The original user input supplying an evaluated local command's provenance.")
-
 (defvar *application-command-presentation-invocation* nil
   "The command invocation whose next presentation receives a visible heading.")
 
@@ -922,19 +919,19 @@ without changing the registry."
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
-   "Return :HOLD, :EXECUTE, :APPLY, :APPLY-INTERACTIVE, or :STEER.
+   "Return :HOLD, :EXECUTE, :APPLY, or :APPLY-INTERACTIVE.
 
 :EXECUTE runs immediately. :APPLY and :APPLY-INTERACTIVE run at the next safe
 provider boundary before steering, with the latter allowing a terminal picker.
-:STEER shares the ordered steering lane, and :HOLD waits for idle."))
+:HOLD waits for idle."))
 
 (defmethod application-command-busy-action
     ((command application-command)
      (invocation application-command-invocation))
   "Resolve COMMAND's declared busy policy for INVOCATION.
 
-Argument-free :INSPECT queries execute immediately. Argument-free :APPLY and
-:STEER queries do likewise unless they require exclusive terminal ownership.
+Argument-free :INSPECT queries execute immediately. Argument-free :APPLY
+queries do likewise unless they require exclusive terminal ownership.
 :APPLY-INTERACTIVE settings may use a picker at the boundary when called with
 no arguments; explicit values still use the noninteractive :APPLY lane."
   (ecase (application-command-busy-behavior command)
@@ -949,30 +946,16 @@ no arguments; explicit values still use the noninteractive :APPLY lane."
               (application-command-terminal-owner-p command invocation))
          ':apply-interactive
          ':apply))
-    ((:apply :steer)
+    (:apply
      (cond
        ((not (application-command-invocation-argument-free-p command invocation))
-        (application-command-busy-behavior command))
+        ':apply)
        ((application-command-terminal-owner-p command invocation)
         ':hold)
        (t
         ':execute)))
     (:execute
      ':execute)))
-
-(defgeneric application-command-prepare-steering (definition application input)
-  (:documentation
-   "Return prepared native arguments and model notification for command INPUT.
-
-DEFINITION is its registered defining symbol. Preparation must not change the
-runtime; the controller persists both returned values before applying the entry."))
-
-(defgeneric application-command-apply-steering (definition application input)
-  (:documentation
-   "Apply prepared command INPUT and mark its phase :COMMITTED at the commit point.
-
-DEFINITION is its registered defining symbol. The commit observation must only
-update bounded in-memory state, atomically against cancellation."))
 
 (defgeneric application-command-terminal-owner-p (command invocation)
   (:documentation

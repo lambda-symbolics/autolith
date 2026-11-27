@@ -128,11 +128,6 @@
     :accessor      application-input-controller-active-promoted-steering-p
     :type          boolean
     :documentation "Whether the active queued message came from the steering prefix.")
-   (active-command-input
-    :initform      nil
-    :accessor      application-input-controller-active-command-input
-    :type          (option command-message-input)
-    :documentation "The current command whose retained receipt precedes the promoted suffix.")
    (active-work-interactive-p
     :initform      nil
     :accessor      application-input-controller-active-work-interactive-p
@@ -1066,9 +1061,7 @@ not steer the active primary message."
     (when (application-input-controller-stopping-p controller)
       (return-from application-input-controller--admit-primary-prompt-locked nil))
   (let* ((copied-input (user-message-input-copy input))
-         (queued-work  (if (typep copied-input 'command-message-input)
-                           (input-work-from-input copied-input)
-                           (list ':message copied-input)))
+         (queued-work  (list ':message copied-input))
          (work         (application-input-controller-work-items controller)))
     (cond
       ((and prefer-steering-p
@@ -1274,26 +1267,8 @@ work receive steering as soon as possible instead of as follow-ups."
     (application-input-controller non-empty-string)
     boolean)
 (defun application-input-controller--acknowledge-steering (controller identifier)
-  "Retire durable steering IDENTIFIER after retaining its command completion event."
-  (let* ((entry
-           (with-lock-held ((application-input-controller-lock controller))
-             (find identifier
-                   (deque->list (application-input-controller-steering-in-flight-items controller))
-                   :key #'agent-steering-input-identifier :test #'string=)))
-         (input          (and entry (agent-steering-input-content entry)))
-         (acknowledged-p nil))
-    ;; Retain the owner until client completion publication succeeds. An interrupted
-    ;; acknowledgment may repeat the event with the same submission identity.
-    (when (typep input 'command-message-input)
-      (application-clients-publish
-       (application-input-controller-application controller)
-       (list :work-finished
-             :kind (with-lock-held ((application-input-controller-lock controller))
-                     (if (eq input (application-input-controller-active-command-input controller))
-                         ':command
-                         ':steering))
-             :submission (user-message-input-submission input)
-             :outcome    (if (eq (command-message-input-phase input) ':failed) ':failed ':done))))
+  "Retire steering IDENTIFIER after its message is persisted."
+  (let ((acknowledged-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (setf acknowledged-p
             (nth-value 1
@@ -1419,145 +1394,11 @@ resumes them. Unconsumed steering is promoted in FIFO order after the turn."
     (application-input-controller--present-scheduled-lisp controller (user-message-input-text source))
     t))
 
-(-> application-input-controller--command-request (command-message-input) list)
-(defun application-input-controller--command-request (input)
-  "Return provenance for INPUT's notification, never executable command data."
-  (let ((invocation (command-message-input-invocation input)))
-    (list :operation (application-command-invocation-name invocation)
-          :summary   (user-message-input-text input))))
-
 (-> application-input-controller--steering-entry
     ((or string user-message-input)) agent-steering-input)
 (defun application-input-controller--steering-entry (input)
-  "Identify steering INPUT once, retaining a command's identity across promotion."
-  (let ((command-p (typep input 'command-message-input)))
-    (agent-steering-input-create
-     :identifier        (if command-p
-                            (or (command-message-input-identifier input)
-                                (setf (command-message-input-identifier input) (make-identifier)))
-                            (make-identifier))
-     :content           input
-     :operation-request (and command-p
-                             (application-input-controller--command-request input)))))
-
-(-> application-input-controller--steering-invocation
-    (application (or string user-message-input)) application-command-invocation)
-(defun application-input-controller--steering-invocation (application input)
-  "Decode literal local INPUT without reconstructing native arguments."
-  (let* ((*package* (find-package '#:autolith))
-         (form      (self-read-form (user-message-input-text input) :read-eval nil))
-         (operation (and (proper-list-p form) (symbolp (first form))
-                         (application-operation-find application (first form)))))
-    (unless (and (typep operation 'application-command-operation)
-                 (application-operation-immediate-arguments-p operation (rest form)))
-      (error 'configuration-error :message "Only literal command arguments may enter steering."))
-    (application-operation--command-invocation
-     (application-operation-backend operation) (mapcar #'eval (rest form)))))
-
-(-> application-input-controller--schedule-steering-command
-    (application-input-controller (or string user-message-input)
-     &optional (option application-command-invocation)) boolean)
-(defun application-input-controller--schedule-steering-command (controller input &optional invocation)
-  "Accept INPUT in steering order, or as typed command work after a completion race."
-  (unless (application-input-controller--submission-storage-ready-p controller input)
-    (return-from application-input-controller--schedule-steering-command nil))
-  (let* ((application (application-input-controller-application controller))
-         (command-input
-           (command-message-input-create
-            input (or invocation
-                      (application-input-controller--steering-invocation application input))))
-         (delivery    nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (setf delivery
-            (application-input-controller--admit-primary-prompt-locked controller command-input))
-      (when delivery
-        (setf (application-input-controller-queued-work-paused-p controller) nil
-              (application-input-controller-live-vault-sync-p controller) t)
-        (sb-thread:condition-broadcast (application-input-controller-condition-variable controller))))
-    (when delivery
-      (application-input-controller--publish-counts controller)
-      (application-present application (application-hint-line "command scheduled in steering order"))
-      t)))
-
-(-> application-input-controller--require-pending-persistence
-    (application-input-controller) null)
-(defun application-input-controller--require-pending-persistence (controller)
-  "Require a successful durable snapshot before changing a staged command's runtime."
-  (unless (application-input-controller--persist-pending controller :error-p t)
-    (error 'configuration-error :message "Pending command state could not be persisted."))
-  nil)
-
-(-> application-input-controller--apply-command-steering
-    (application-input-controller (option agent) t) boolean)
-(defun application-input-controller--apply-command-steering (controller agent entry)
-  "Commit one typed ENTRY, then reconcile its durable notification before acknowledgment."
-  (unless (and (typep entry 'agent-steering-input)
-               (typep (agent-steering-input-content entry) 'command-message-input))
-    (return-from application-input-controller--apply-command-steering nil))
-  (let* ((application (application-input-controller-application controller))
-         (input       (agent-steering-input-content entry))
-         (invocation  (command-message-input-invocation input))
-         (definition  (application-command-definition-name
-                       (application-command-invocation-command invocation))))
-    (when (eq (command-message-input-phase input) ':pending)
-      (handler-case
-          (multiple-value-bind (arguments notification)
-              (application-command-prepare-steering definition application input)
-            (with-lock-held ((application-input-controller-lock controller))
-              (sb-sys:without-interrupts
-                (setf (command-message-input-prepared-arguments input) arguments
-                      (command-message-input-notification input) notification
-                      (command-message-input-phase input) ':prepared))))
-        ((or configuration-error type-error) (condition)
-          (let ((notification (format nil "Working directory change failed: ~A" condition)))
-            (with-lock-held ((application-input-controller-lock controller))
-              (sb-sys:without-interrupts
-                (setf (command-message-input-notification input) notification
-                      (command-message-input-phase input) ':failed)))))))
-    ;; Re-publish a prepared phase when an earlier snapshot attempt failed.
-    (application-input-controller--require-pending-persistence controller)
-    (flet ((ensure-notification ()
-             (conversation-ensure-automatic-user-message
-              (application-conversation application)
-              (command-message-input-notification input)
-              :pending-input-identifier (agent-steering-input-identifier entry)
-              :operation-request        (application-input-controller--command-request input))))
-      (if (member (command-message-input-phase input) '(:prepared :committed))
-          (unwind-protect
-               ;; Committed recovery restores only a different process/runtime target.
-               (application-command-apply-steering definition application input)
-            (when (eq (command-message-input-phase input) ':committed)
-              (when agent
-                (application--agent-adopt-runtime application agent))
-              (application-input-controller--require-pending-persistence controller)
-              ;; Postcommit presentation errors must not conceal the committed change.
-              (ensure-notification)))
-          (ensure-notification)))
-    t))
-
-(-> application-input-controller--run-steering-command
-    (application-input-controller command-message-input) keyword)
-(defun application-input-controller--run-steering-command (controller input)
-  "Run INPUT with durable ownership shared by idle commands and active steering."
-  (let ((entry (application-input-controller--steering-entry input)))
-    (with-lock-held ((application-input-controller-lock controller))
-      (sb-sys:without-interrupts
-        (let* ((in-flight (application-input-controller-steering-in-flight-items controller))
-               (existing  (find (agent-steering-input-identifier entry) (deque->list in-flight)
-                                :key #'agent-steering-input-identifier :test #'string=)))
-          (if existing
-              (setf entry existing input (agent-steering-input-content existing))
-              (deque-push-back in-flight entry)))
-        (setf (application-input-controller-active-command-input controller) input
-              (application-input-controller-active-work controller) nil
-              (application-input-controller-active-work-identifier controller) nil)))
-    (application-input-controller--apply-command-steering
-     controller (application-agent (application-input-controller-application controller)) entry)
-    (application-input-controller--acknowledge-steering
-     controller (agent-steering-input-identifier entry))
-    (with-lock-held ((application-input-controller-lock controller))
-      (setf (application-input-controller-active-command-input controller) nil))
-    (if (eq (command-message-input-phase input) ':failed) ':failed ':continue)))
+  "Assign an identifier to steering INPUT before delivery."
+  (agent-steering-input-create :identifier (make-identifier) :content input))
 
 (-> application-input-controller--enqueue-apply
     (application-input-controller list) boolean)
@@ -1587,9 +1428,7 @@ resumes them. Unconsumed steering is promoted in FIFO order after the turn."
 (defun application-input-controller--schedule-apply (controller input &optional invocation)
   "Schedule a noninteractive command with its optional decoded INVOCATION."
   (application-input-controller--enqueue-apply
-   controller (if invocation
-                  (list ':command (command-message-input-create input invocation))
-                  (list ':native-lisp (user-message-input-copy input)))))
+   controller (list* ':native-lisp (user-message-input-copy input) (when invocation (list invocation)))))
 
 (-> application-input-controller--schedule-interactive-apply
     (application-input-controller (or string user-message-input)) boolean)
@@ -1623,25 +1462,22 @@ next provider request."
         (application (application-input-controller-application controller)))
     (when items
       (dolist (work items)
-        (destructuring-bind (kind input) work
+        (destructuring-bind (kind input &optional invocation) work
           (application-input-controller--call-submitted-input
            controller input
            (lambda ()
-             (ecase kind
-               (:command
-                (let* ((invocation (command-message-input-invocation input))
-                       (command    (application-command-invocation-command invocation)))
-                  (application-command-execute command application invocation)))
-               ((:lisp :native-lisp)
-                (application-run-lisp-input application (user-message-input-text input)
-                                            :interactive-p (eq kind ':lisp))))))))
+             (if invocation
+                 (application-command-execute
+                  (application-command-invocation-command invocation) application invocation)
+                 (application-run-lisp-input application (user-message-input-text input)
+                                             :interactive-p (eq kind ':lisp)))))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
 
 (-> application-input-controller--lisp-active-turn-action
     (application-input-controller string)
-    (member :apply :apply-interactive :steer :execute :hold))
+    (member :apply :apply-interactive :execute :hold))
 (defun application-input-controller--lisp-active-turn-action (controller source)
   "Return SOURCE's admission action when CONTROLLER has an active turn."
   (if (application-input-controller-turn-active-p controller)
@@ -1800,8 +1636,6 @@ may execute immediately; other Lisp waits for the idle boundary."
        (if async-p
            (application-run-async-lisp-input application text)
            (application-input-controller--run-responsive-lisp controller text)))
-      (:steer
-       (application-input-controller--schedule-steering-command controller input))
       (:apply-interactive
        (application-input-controller--schedule-interactive-apply controller input))
       (:apply
@@ -1848,9 +1682,8 @@ may execute immediately; other Lisp waits for the idle boundary."
     (application-input-controller (or string user-message-input) function) t)
 (defun application-input-controller--call-submitted-input (controller input function)
   "Run FUNCTION and publish the terminal outcome of INPUT unless its work was deferred."
-  (let ((submission                         (user-message-input-submission input))
-        (*application-command-source-input* input)
-        (outcome                            ':failed))
+  (let ((submission (user-message-input-submission input))
+        (outcome    ':failed))
     (unwind-protect
          (handler-bind ((application-turn-cancelled
                           (lambda (condition)
@@ -1915,8 +1748,6 @@ may execute immediately; other Lisp waits for the idle boundary."
               (:execute
                (application-input-controller--run-responsive-lisp
                 controller text :interactive-p interactive-p))
-              (:steer
-               (deferred (application-input-controller--schedule-steering-command controller input)))
               (:apply
                (deferred (application-input-controller--schedule-apply controller input)))
               (:apply-interactive
@@ -2739,17 +2570,10 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                 (application-input-controller-active-promoted-steering-p controller)
                 (and (eq (first work) ':message)
                      (plusp (application-input-controller-steering-promotion-prefix-count controller)))
-                (application-input-controller-active-command-input controller)
-                (and (typep (second work) 'command-message-input) (second work))
                 (application-input-controller-active-work-interactive-p controller) t)
-          (if (or (eq (first work) ':message)
-                  (typep (second work) 'command-message-input))
+          (if (eq (first work) ':message)
               (setf (application-input-controller-active-work controller) work
-                    (application-input-controller-active-work-identifier controller)
-                    (if (typep (second work) 'command-message-input)
-                        (or (command-message-input-identifier (second work))
-                            (setf (command-message-input-identifier (second work)) (make-identifier)))
-                        (make-identifier)))
+                    (application-input-controller-active-work-identifier controller) (make-identifier))
               (setf (application-input-controller-active-work controller) nil
                     (application-input-controller-active-work-identifier controller) nil))
           (when (application-input-controller-follow-up-edit-index controller)
@@ -2984,25 +2808,6 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
     (with-lock-held ((application-input-controller-lock controller))
       (sb-sys:without-interrupts
         (unless (application-input-controller-stopping-p controller)
-            (let* ((active    (application-input-controller-active-work controller))
-                   (input     (or (application-input-controller-active-command-input controller)
-                                  (and active (typep (second active) 'command-message-input)
-                                       (second active))))
-                   (in-flight (application-input-controller-steering-in-flight-items controller))
-                   (entry     (and input
-                                   (find (command-message-input-identifier input) (deque->list in-flight)
-                                         :key #'agent-steering-input-identifier :test #'string=))))
-             (when (and input (or entry active))
-               (when entry
-                 (deque-delete (agent-steering-input-identifier entry) in-flight
-                               :key #'agent-steering-input-identifier :test #'string=))
-               (deque-push-front (application-input-controller-work-items controller)
-                                 (input-work-from-input input))
-               (incf (application-input-controller-steering-promotion-prefix-count controller))
-               (when (application-input-controller-follow-up-edit-index controller)
-                 (incf (application-input-controller-follow-up-edit-index controller))))))
-        (setf (application-input-controller-active-command-input controller) nil)
-        (unless (application-input-controller-stopping-p controller)
           (let* ((work-items
                    (application-input-controller-work-items controller))
                  (in-flight
@@ -3019,17 +2824,8 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                    (deque-split-at work-items steering-promotion-prefix-count)))
             (deque-move-all
              in-flight work-items
-             :key (lambda (entry)
-                    (let ((input (agent-steering-input-content entry)))
-                      (if (typep input 'command-message-input)
-                          (input-work-from-input input)
-                          (list ':message input)))))
-            (deque-move-all
-             steering work-items
-             :key (lambda (input)
-                    (if (typep input 'command-message-input)
-                        (input-work-from-input input)
-                        (list ':message input))))
+             :key (lambda (entry) (list ':message (agent-steering-input-content entry))))
+            (deque-move-all steering work-items :key (lambda (input) (list ':message input)))
             (deque-move-all suffix work-items)
             (when (application-input-controller-follow-up-edit-index controller)
               (incf (application-input-controller-follow-up-edit-index controller) promoted-count))
@@ -3273,7 +3069,7 @@ submission-time sharing request."
 (-> application-input-controller--interactive-prompt-work-p (list) boolean)
 (defun application-input-controller--interactive-prompt-work-p (work)
   "Return true when WORK represents one foreground user interaction."
-  (not (null (member (first work) '(:command :lisp :message) :test #'eq))))
+  (not (null (member (first work) '(:lisp :message) :test #'eq))))
 
 (-> application-input-controller--begin-prompt-work
     (application-input-controller list)
@@ -3327,16 +3123,12 @@ submission-time sharing request."
   (case (first work)
     (:message
      (user-message-input-submission (second work)))
-    ((:command :lisp)
+    (:lisp
      (getf (rest (rest work)) :submission))))
 
 (-> application-input-controller--publish-work-finished (application-input-controller list) null)
 (defun application-input-controller--publish-work-finished (controller work)
   "Publish WORK's exact submission outcome, retaining it for disconnected clients."
-  ;; A retained staged command has no final outcome until its receipt is reconciled.
-  ;; Its steering acknowledgment owns the completion event for both execution lanes.
-  (when (typep (second work) 'command-message-input)
-    (return-from application-input-controller--publish-work-finished nil))
   (let ((application (application-input-controller-application controller)))
     (application-clients-publish
      application
@@ -3367,12 +3159,7 @@ however it ended."
   (let ((application (application-input-controller-application controller))
         (pending-input-identifier
           (with-lock-held ((application-input-controller-lock controller))
-            (application-input-controller-active-work-identifier controller)))
-        (*application-command-source-input*
-          (and (member (first work) '(:command :lisp :native-lisp))
-               (user-message-input-create
-                :text       (user-message-input-text (second work))
-                :submission (application-input-controller--work-submission work)))))
+            (application-input-controller-active-work-identifier controller))))
     (unwind-protect
      (handler-case
          (progn
@@ -3442,9 +3229,6 @@ however it ended."
                            application (second work) :interactive-p (eq (first work) ':lisp)))))
                 (application-input-controller--record-prompt-result
                  controller result)))
-             (:command
-              (application-input-controller--record-prompt-result
-               controller (application-input-controller--run-steering-command controller (second work))))
              (:operation-request
               (let* ((request    (second work))
                      (identifier (getf request :pending-input-identifier)))
@@ -3474,7 +3258,7 @@ however it ended."
              (:project-adaptation-offer
               (application-maybe-offer-project-adaptation application)))
            ;; Non-message input does not reset the per-message continuation budget.
-           (when (and (member (first work) '(:command :lisp :native-lisp))
+           (when (and (member (first work) '(:lisp :native-lisp))
                       (application--take-deferred-goal-continuation-p application work))
              (application--call-with-model-error-handling
               application

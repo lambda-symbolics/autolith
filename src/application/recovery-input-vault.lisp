@@ -669,11 +669,7 @@ The caller must hold CONTROLLER's lock."
            (min (or (getf capture :steering-promotion-prefix-count) 0)
                 (length work-items))))
     (labels ((labeled-work (items)
-               (mapcar (lambda (work)
-                         (cons (if (eq (first work) ':command)
-                                   "command"
-                                   "follow-up")
-                               (second work)))
+               (mapcar (lambda (work) (cons "follow-up" (second work)))
                        items)))
       (append
        (when (getf capture :active-work)

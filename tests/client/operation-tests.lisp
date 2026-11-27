@@ -2,154 +2,34 @@
 
 ;;;; -- Headless Operation Admission Tests --
 
-(-> client-operation-tests--steering-cwd (application world-terminal-client-connection) null)
-(defun client-operation-tests--steering-cwd (application connection)
-  "Exercise decoded cwd admission, durable receipt failure and client completion."
-  (let* ((configuration     (application-configuration application))
-         (conversation      (application-conversation application))
-         (controller        (application-input-controller application))
-         (base              (config :working-directory configuration))
-         (text-target       (merge-pathnames "client-text-cwd/" base))
-         (native-target     (merge-pathnames "client native cwd/" base))
-         (operation         (application-client-operation-find application "cwd"))
-         (command           (application-operation-backend operation))
-         (setter            (symbol-function 'application-set-working-directory))
-         (project           (symbol-function 'conversation--project-automatic-message))
-         (publish           (symbol-function 'application-clients-publish))
-         (entered           (sb-thread:make-semaphore))
-         (release           (sb-thread:make-semaphore))
-         (take              nil)
-         (acknowledge       nil)
-         (waiter            nil)
-         (current-id        nil)
-         (setter-calls      0)
-         (completions       nil)
-         (process-directory (uiop:getcwd))
-         (pathname-defaults *default-pathname-defaults*)
-         (fail-project-p    nil))
-    (labels ((receipts ()
-               (remove-if-not
-                (lambda (record)
-                  (and (eq (first record) ':message)
-                       (equal (getf (rest record) :pending-input-identifier) current-id)))
-                (application-tests--conversation-records conversation)))
-
-             (projected-p ()
-               (let ((record (first (receipts))))
-                 (and record
-                      (not (null (find (getf (rest record) :wire-json)
-                                       (clinker-transcript:projection-items
-                                        (conversation-projection conversation))
-                                       :test #'equal :key #'json-encode)))))))
-      (ensure-directories-exist text-target)
-      (ensure-directories-exist native-target)
-      (unwind-protect
-           (test-call-with-function-replacements
-            (list
-             (list 'application-set-working-directory
-                   (lambda (&rest arguments)
-                     (when (eq (first arguments) application) (incf setter-calls))
-                     (apply setter arguments)))
-             (list 'conversation--project-automatic-message
-                   (lambda (&rest arguments)
-                     (when (and fail-project-p (eq (first arguments) conversation))
-                       (error 'configuration-error :message "Injected client receipt projection failure."))
-                     (apply project arguments)))
-             (list 'application-clients-publish
-                   (lambda (owner event)
-                     (when (and (eq owner application) (eq (first event) ':work-finished)
-                                (member (getf (rest event) :kind) '(:command :steering)))
-                       (push (list :event event :durable-p (= 1 (length (receipts)))
-                                   :projected-p (projected-p)) completions))
-                     (funcall publish owner event))))
-            (lambda ()
-              (setf waiter
-                    (make-thread
-                     (lambda ()
-                       (application-clients-call-as-work
-                        application
-                        (lambda ()
-                          (application-input-controller-call-with-primary-steering
-                           controller
-                           (lambda (take-function acknowledge-function)
-                             (setf take take-function acknowledge acknowledge-function)
-                             (sb-thread:signal-semaphore entered)
-                             (sb-thread:wait-on-semaphore release))))))
-                     :name "Client cwd active primary work"))
-              (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
-                           "the primary channel work reaches its steering boundary")
-              (let* ((result
-                         (application-client-invoke application :cwd
-                                                     (list (namestring text-target))))
-                     (entry (first (funcall take)))
-                     (input (agent-steering-input-content entry)))
-                (setf current-id (agent-steering-input-identifier entry))
-                (test-assert
-                   (and (equal "scheduled" (getf result :delivery)) (= setter-calls 0)
-                      (eq (command-message-input-phase input) ':pending)
-                      (equal base (config :working-directory configuration))
-                      (equal (application-command-invocation-arguments
-                              (command-message-input-invocation input)) (list (namestring text-target)))
-                      (null completions))
-                 "client decoding preserves arguments and scheduled admission precedes commit")
-                (application-input-controller--apply-command-steering controller nil entry)
-                (funcall acknowledge current-id)
-                (test-assert (and (= setter-calls 1) (= 1 (length completions)))
-                             "one admitted text command commits and completes once"))
-              (let* ((invocation
-                       (make-instance 'application-command-invocation
-                                      :input "(cwd)" :syntax ':lisp :name (application-command-name command)
-                                      :remainder "" :argument nil :arguments (list native-target)
-                                      :supplied-argument-count 1 :command command))
-                     (delivery (nth-value 1 (application-client-operation-invoke application operation invocation)))
-                     (entry    (first (funcall take)))
-                     (input    (agent-steering-input-content entry))
-                     (before   (length (clinker-transcript:projection-items (conversation-projection conversation)))))
-                (setf current-id (agent-steering-input-identifier entry) fail-project-p t)
-                (test-assert
-                 (and (equal "scheduled" delivery) (= setter-calls 1)
-                      (eq (command-message-input-phase input) ':pending)
-                      (equal (application-command-invocation-arguments
-                              (command-message-input-invocation input)) (list native-target)))
-                 "native pathname arguments survive an argument-free invocation display label")
-                (test-assert
-                 (handler-case
-                     (progn (application-input-controller--apply-command-steering controller nil entry) nil)
-                   (configuration-error () t))
-                 "receipt projection failure escapes command application")
-                (test-assert
-                 (and (= setter-calls 2) (eq (command-message-input-phase input) ':committed)
-                      (= 1 (length (receipts))) (not (projected-p))
-                      (= before (length (clinker-transcript:projection-items (conversation-projection conversation))))
-                      (= 1 (length completions)))
-                 "a durable unprojected receipt cannot announce final client completion")
-                (setf fail-project-p nil)
-                (application-input-controller--apply-command-steering controller nil entry)
-                (funcall acknowledge current-id)
-                (test-assert
-                 (and (= setter-calls 2) (= 1 (length (receipts))) (projected-p)
-                      (= (1+ before) (length (clinker-transcript:projection-items
-                                              (conversation-projection conversation))))
-                      (= 2 (length completions))
-                      (every (lambda (completion)
-                               (and (getf completion :durable-p) (getf completion :projected-p)
-                                    (eq (getf (rest (getf completion :event)) :kind) ':steering)))
-                             completions))
-                 "retry projects one receipt and completes without repeating the runtime setter")
-                (let* ((reply (world-terminal-client-call connection ':client-state))
-                       (state (getf reply :result)))
-                  (test-assert
-                   (and (eq (getf state :outcome) ':ok)
-                        (equal (getf (getf state :value) :workspace)
-                               (namestring native-target)))
-                   "the shared client state reports the postcommit working directory")))))
-        (unwind-protect
-             (progn
-               (sb-thread:signal-semaphore release)
-               (when waiter (join-thread waiter))
-               (funcall setter application base))
-          (uiop:chdir process-directory)
-          (setf *default-pathname-defaults* pathname-defaults)))))
+(-> client-operation-tests--apply-cwd (application) null)
+(defun client-operation-tests--apply-cwd (application)
+  "Run a decoded cwd invocation at the boundary, without evaluating its display label."
+  (let* ((operation  (application-client-operation-find application "cwd"))
+         (command    (application-operation-backend operation))
+         (target     (merge-pathnames "client native cwd/" (uiop:temporary-directory)))
+         (invocation (make-instance 'application-command-invocation
+                                    :input "(cwd)" :syntax ':lisp :name "cwd" :remainder ""
+                                    :argument nil :arguments (list target)
+                                    :supplied-argument-count 1 :command command))
+         (received   nil))
+    (test-call-with-function-replacements
+     (list (list 'application-set-working-directory
+                 (lambda (owner location)
+                   (setf received (list owner location))
+                   location)))
+     (lambda ()
+       (test-assert
+        (application-clients-call-as-work
+         application
+         (lambda ()
+           (and (equal "scheduled" (nth-value 1 (application-client-operation-invoke application operation invocation)))
+                (null received))))
+        "a busy decoded cwd is accepted before it executes")
+       (test-assert (task-tests--wait-until (lambda () received) 10)
+                    "the channel executes the scheduled command at its next boundary")
+       (test-assert (equal (list application target) received)
+                    "the boundary passes the native pathname, not the display label"))))
   nil)
 
 (-> test-client-operation-admission () null)
@@ -287,7 +167,7 @@
                                       (null (getf result :delivery))
                                       (eq ':auto (application-permission-mode application)))
                                  "idle native invocation returns the command's NIL result"))
-                 (client-operation-tests--steering-cwd application connection)))
+                 (client-operation-tests--apply-cwd application)))
            (sb-thread:signal-semaphore release)
            (when waiter (join-thread waiter))
            (world-terminal-client-close connection))))))

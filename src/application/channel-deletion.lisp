@@ -112,7 +112,7 @@ turn, external work on another thread, pending input, and live asynchronous jobs
                     (or (not (application-input-controller-active-p controller))
                         (and (eq (current-thread) (application-input-controller-main-thread controller))
                              (member (application-input-controller-active-work-kind controller)
-                                     '(:command :lisp :native-lisp :client-work))
+                                     '(:lisp :native-lisp :client-work))
                              t))))))))
 
 (-> application--resume-deletion-inbox (application string) application)

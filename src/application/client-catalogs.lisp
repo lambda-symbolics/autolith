@@ -18,7 +18,7 @@
                         (application-operation-backend operation)))
          (active-p (and own-turn-p command
                         (member (application-command-busy-behavior command)
-                                '(:inspect :execute :apply :steer)))))
+                                '(:inspect :execute :apply)))))
     (list :name              (application-operation-name operation)
           :kind              (application-operation-kind operation)
           :description       (application-operation-description operation)

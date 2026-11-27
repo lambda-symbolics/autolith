@@ -454,7 +454,7 @@
   (dolist
       (case
        '(((help) :execute)
-         ((cwd "/tmp") :steer)
+         ((cwd "/tmp") :apply)
          ((cwd) :execute)
          ((model "gpt-5.6-sol") :apply)
          ((exit) :execute)
@@ -1876,7 +1876,7 @@
                              ("(permissions)" :apply-interactive)
                              ("(effort (read-line))" :hold)
                              ("(compact)" :hold)
-                             ("(cwd \"elsewhere\")" :steer)
+                             ("(cwd \"elsewhere\")" :apply)
                              ("(cwd)" :execute)
                              ("(cwd (read-line))" :hold)
                              ("(tell (read-line) \"message\")" :hold)))

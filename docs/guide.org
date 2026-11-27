@@ -247,8 +247,8 @@ During a model turn, Escape cancels that turn and lets queued steering proceed.
 Press Ctrl-C or Ctrl-Z to detach the terminal without stopping the channel.
 To cancel the current turn before detaching, press Escape first. Use =(cwd)=
 to see the current workspace. If you submit =(cwd "../other-project")= during a
-turn, the relative path is resolved when that input reaches its place in the
-steering queue.
+turn, the change applies at the next safe provider boundary, using the workspace
+active at that point to resolve the relative path.
 
 ** Command arguments
 

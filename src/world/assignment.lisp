@@ -157,8 +157,6 @@ The assignment's steering and acknowledgements have one original consumer."
      :steering-callback (lambda () (agent-observer-take-steering assignment))
      :steering-persisted-callback
      (lambda (identifier) (agent-observer-steering-persisted assignment identifier))
-     :steering-entry-callback
-     (lambda (agent entry) (agent-observer-apply-steering-entry assignment agent entry))
      :pending-operations-callback
      (lambda (agent) (agent-observer-apply-pending-operations assignment agent))
      :command-authorization-callback

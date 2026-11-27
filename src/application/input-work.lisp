@@ -6,38 +6,6 @@
 ;; their portable payload has no snapshot or conversation identity. Controllers
 ;; own locks and publication, while this model owns classification and codecs.
 
-(defclass command-message-input (user-message-input)
-  ((identifier
-    :initarg       :identifier
-    :initform      nil
-    :accessor      command-message-input-identifier
-    :type          (option string)
-    :documentation "The pending-input identity retained through promotion and retry.")
-   (invocation
-    :initarg       :invocation
-    :reader        command-message-input-invocation
-    :type          application-command-invocation
-    :documentation "The resolved invocation with its original native arguments.")
-   (prepared-arguments
-    :initarg       :prepared-arguments
-    :initform      nil
-    :accessor      command-message-input-prepared-arguments
-    :type          list
-    :documentation "The arguments prepared for execution at the steering boundary.")
-   (phase
-    :initarg       :phase
-    :initform      ':pending
-    :accessor      command-message-input-phase
-    :type          (member :pending :prepared :committed :failed)
-    :documentation "The durable preparation and commit phase of this command.")
-   (notification
-    :initarg       :notification
-    :initform      nil
-    :accessor      command-message-input-notification
-    :type          (option string)
-    :documentation "The notification prepared for publication after commit."))
-  (:documentation "A command-bearing user submission in the durable steering lane."))
-
 (-> input-work--copy-native-value (t) t)
 (defun input-work--copy-native-value (value)
   "Copy bounded native literal trees, retaining pathname and string types."
@@ -53,159 +21,68 @@
        (symbol
         (if (symbol-package item)
             item
-            (error 'configuration-error :message "A command value requires an interned symbol.")))
+            (error 'configuration-error :message "An input value requires an interned symbol.")))
        (t
-        (error 'configuration-error :message "A command value must be readable native data."))))))
+        (error 'configuration-error :message "An input value must be readable native data."))))))
 
-(-> command-message-input--copy-invocation
-    (application-command-invocation) application-command-invocation)
-(defun command-message-input--copy-invocation (invocation)
-  "Detach INVOCATION's values while retaining its immutable command definition."
-  (make-instance
-   'application-command-invocation
-   :input                   (copy-seq (application-command-invocation-input invocation))
-   :syntax                  (application-command-invocation-syntax invocation)
-   :name                    (copy-seq (application-command-invocation-name invocation))
-   :remainder               (copy-seq (application-command-invocation-remainder invocation))
-   :argument                (when-let ((argument (application-command-invocation-argument invocation))) (copy-seq argument))
-   :arguments               (input-work--copy-native-value
-                             (application-command-invocation-arguments invocation))
-   :supplied-argument-count (application-command-invocation-supplied-argument-count invocation)
-   :command                 (application-command-invocation-command invocation)))
+;; Upgrade retired command steering only when reading pending-input v1/v2 or
+;; recovery-vault v1 data. Remove this reader when those formats are retired.
+(-> input-work--retired-command-p (t) boolean)
+(defun input-work--retired-command-p (form)
+  "Recognize a retired command input tag at the durable read boundary."
+  (and (consp form) (eq (first form) ':command-message-input)))
 
-(-> command-message-input-create
-    ((or string user-message-input) application-command-invocation) command-message-input)
-(defun command-message-input-create (input invocation)
-  "Capture INPUT and the actual INVOCATION without reparsing its display text."
-  (make-instance 'command-message-input
-                 :text            (copy-seq (user-message-input-text input))
-                 :image-pathnames (copy-list (user-message-input-image-pathnames input))
-                 :submission      (input-work--copy-native-value (user-message-input-submission input))
-                 :invocation      (command-message-input--copy-invocation invocation)))
-
-(defmethod user-message-input-copy ((input command-message-input))
-  "Detach INPUT's invocation, prepared arguments and mutable publication state."
-  (let ((copy (command-message-input-create input (command-message-input-invocation input))))
-    (setf (command-message-input-identifier copy)
-          (when (command-message-input-identifier input)
-            (copy-seq (command-message-input-identifier input))))
-    (setf (command-message-input-prepared-arguments copy)
-          (input-work--copy-native-value (command-message-input-prepared-arguments input))
-          (command-message-input-phase copy) (command-message-input-phase input)
-          (command-message-input-notification copy)
-          (when (command-message-input-notification input)
-            (copy-seq (command-message-input-notification input))))
-    copy))
-
-(-> input-work--invocation->form (application-command-invocation) list)
-(defun input-work--invocation->form (invocation)
-  "Encode every invocation field and its canonical registered command name."
-  (let ((command (application-command-invocation-command invocation)))
-    (unless command
-      (error 'configuration-error :message "A durable command requires a resolved command definition."))
-    (list :application-command-invocation :version 1
-          :input                          (copy-seq (application-command-invocation-input invocation))
-          :syntax                         (application-command-invocation-syntax invocation)
-          :name                           (copy-seq (application-command-invocation-name invocation))
-          :remainder                      (copy-seq (application-command-invocation-remainder invocation))
-          :argument                       (when-let ((argument (application-command-invocation-argument invocation))) (copy-seq argument))
-          :arguments                      (input-work--copy-native-value
-                                           (application-command-invocation-arguments invocation))
-          :supplied-argument-count        (application-command-invocation-supplied-argument-count invocation)
-          :command                        (copy-seq (application-command-name command)))))
-
-(-> input-work--invocation-from-form (t) (option application-command-invocation))
-(defun input-work--invocation-from-form (form)
-  "Restore native invocation fields against the current canonical command registry."
-  (when (and (record-check
-              form :tag ':application-command-invocation :allow-other-keys nil
-              :fields '((:indicator :version :required t) (:indicator :input :required t)
-                        (:indicator :syntax :required t) (:indicator :name :required t)
-                        (:indicator :remainder :required t) (:indicator :argument :required t)
-                        (:indicator :arguments :required t)
-                        (:indicator :supplied-argument-count :required t)
-                        (:indicator :command :required t)))
-             (eql (record-version form) 1))
+(-> input-work--upgrade-command (t &optional list) (option list))
+(defun input-work--upgrade-command (form &optional work-submission)
+  "Convert a legacy cwd record to ordinary Lisp work without evaluating saved source."
+  (when (and (record-check form :tag ':command-message-input :versions '(1))
+             (stringp (getf (rest form) :text)))
     (let* ((properties (rest form))
-           (name       (getf properties :command))
-           (arguments  (getf properties :arguments))
-           (count      (getf properties :supplied-argument-count))
-           (command    (and (non-empty-string-p name) (application-command-find name))))
-      (when (and command (string= name (application-command-name command))
-                 (stringp (getf properties :input))
-                 (eq (getf properties :syntax) ':lisp)
-                 (non-empty-string-p (getf properties :name))
-                 (stringp (getf properties :remainder))
-                 (typep (getf properties :argument) '(or null string))
-                 (proper-list-p arguments) (typep count '(integer 0))
-                 (= count (length arguments)))
-        (make-instance
-         'application-command-invocation
-         :input                   (copy-seq (getf properties :input))
-         :syntax                  (getf properties :syntax)
-         :name                    (copy-seq (getf properties :name))
-         :remainder               (copy-seq (getf properties :remainder))
-         :argument                (when-let ((argument (getf properties :argument))) (copy-seq argument))
-         :arguments               (input-work--copy-native-value arguments)
-         :supplied-argument-count count
-         :command                 command)))))
+           (invocation (getf properties :invocation))
+           (phase      (getf properties :phase))
+           (notice     (getf properties :notification))
+           (submission (getf properties :submission)))
+      (when (and (record-check invocation :tag ':application-command-invocation :versions '(1))
+                 (stringp (getf (rest invocation) :command))
+                 (member phase '(:pending :prepared :committed :failed))
+                 (typep notice '(or null string))
+                 (or (null submission) (user-message-submission-p submission)))
+        (let* ((cwd-p     (string= (getf (rest invocation) :command) "cwd"))
+               (arguments (case phase
+                            (:pending
+                             (getf (rest invocation) :arguments))
+                            (:prepared
+                             (getf properties :prepared-arguments))))
+               (location  (and (consp arguments) (first arguments)))
+               (source
+                 (with-standard-io-syntax
+                   (cond
+                     ((member phase '(:committed :failed))
+                      (format nil "(quote ~S)" (or notice (getf properties :text))))
+                     ((and cwd-p (consp arguments) (null (rest arguments))
+                           (if (eq phase ':prepared)
+                               (and (pathnamep location) (uiop:absolute-pathname-p location))
+                               (typep location '(or pathname string null))))
+                      (format nil "(cwd ~S)" location))
+                     ((and cwd-p (null arguments))
+                      "(cwd)")
+                     (t
+                      ;; A command from a removed extension is useful as data, not code.
+                      (format nil "(quote ~S)" (getf properties :text)))))))
+          (append (list ':lisp source)
+                  (when-let ((provenance (or work-submission submission)))
+                    (list :submission (copy-tree provenance)))))))))
 
-(-> input-work--command->form (command-message-input) list)
-(defun input-work--command->form (input)
-  "Encode a command-bearing submission and its durable execution phase."
-  (list :command-message-input :version 1
-        :identifier            (when (command-message-input-identifier input)
-                                 (copy-seq (command-message-input-identifier input)))
-        :text                  (copy-seq (user-message-input-text input))
-        :image-pathnames       (mapcar #'namestring (user-message-input-image-pathnames input))
-        :submission            (input-work--copy-native-value (user-message-input-submission input))
-        :invocation            (input-work--invocation->form (command-message-input-invocation input))
-        :prepared-arguments    (input-work--copy-native-value
-                                (command-message-input-prepared-arguments input))
-        :phase                 (command-message-input-phase input)
-        :notification          (when (command-message-input-notification input)
-                                 (copy-seq (command-message-input-notification input)))))
-
-(-> input-work--command-from-form (t) (option command-message-input))
-(defun input-work--command-from-form (form)
-  "Restore a validated command submission, rejecting malformed native values."
-  (handler-case
-      (when (and (record-check
-                  form :tag ':command-message-input :allow-other-keys nil
-                  :fields '((:indicator :version :required t) (:indicator :text :required t)
-                            (:indicator :identifier :required t)
-                            (:indicator :image-pathnames :required t)
-                            (:indicator :submission :required t)
-                            (:indicator :invocation :required t)
-                            (:indicator :prepared-arguments :required t)
-                            (:indicator :phase :required t) (:indicator :notification :required t)))
-                 (eql (record-version form) 1))
-        (let* ((properties (rest form))
-               (invocation (input-work--invocation-from-form (getf properties :invocation)))
-               (identifier (getf properties :identifier))
-               (text       (getf properties :text))
-               (images     (getf properties :image-pathnames))
-               (prepared   (getf properties :prepared-arguments))
-               (phase      (getf properties :phase))
-               (notice     (getf properties :notification)))
-          (when (and invocation (stringp text) (proper-list-p images) (every #'stringp images)
-                     (or (null identifier) (non-empty-string-p identifier))
-                     (proper-list-p prepared) (member phase '(:pending :prepared :committed :failed))
-                     (typep notice '(or null string)))
-            (let ((input (command-message-input-create
-                          (user-message-input-create
-                           :text text :image-pathnames (mapcar #'pathname images)
-                           :submission (getf properties :submission))
-                          invocation)))
-              (setf (command-message-input-identifier input)
-                    (when identifier (copy-seq identifier)))
-              (setf (command-message-input-prepared-arguments input)
-                    (input-work--copy-native-value prepared)
-                    (command-message-input-phase input) phase
-                    (command-message-input-notification input) (when notice (copy-seq notice)))
-              input))))
-    (error ()
-      nil)))
+(-> input-state--work-from-form (t) (option list))
+(defun input-state--work-from-form (form)
+  "Decode normal work or upgrade a historical command work row."
+  (if (and (consp form) (eq (first form) ':command))
+      (when (and (proper-list-p form)
+                 (or (= (length form) 2)
+                     (and (= (length form) 4) (eq (third form) ':submission)
+                          (user-message-submission-p (fourth form)))))
+        (input-work--upgrade-command (second form) (fourth form)))
+      (input-work-from-form form)))
 
 (-> input-lisp-p (string) boolean)
 (defun input-lisp-p (text)
@@ -234,11 +111,9 @@
     ((or string user-message-input))
     (option (or string user-message-input)))
 (defun input-message (input)
-  "Return INPUT's model message, or NIL for native commands, empty input, or Lisp."
+  "Return INPUT's model message, or NIL for empty input or Lisp."
   (let ((text (user-message-input-text input)))
     (cond
-      ((typep input 'command-message-input)
-       nil)
       ((and (not (non-empty-string-p text))
             (null (user-message-input-image-pathnames input)))
        nil)
@@ -250,13 +125,11 @@
 
 (-> input-work-editable-p (t) boolean)
 (defun input-work-editable-p (work)
-  "Return true for editable queued messages, commands, or interactive or scheduled Lisp."
+  "Return true for editable queued messages or Lisp input."
   (and (consp work)
-       (member (first work) '(:message :command :lisp :native-lisp) :test #'eq)
+       (member (first work) '(:message :lisp :native-lisp) :test #'eq)
        (consp (rest work))
-       (typep (second work) '(or string user-message-input))
-       (or (not (eq (first work) ':command))
-           (typep (second work) 'command-message-input))))
+       (typep (second work) '(or string user-message-input))))
 
 (-> input-work-from-input
     ((or string user-message-input))
@@ -266,8 +139,6 @@
   (let* ((message (input-message input))
          (text    (user-message-input-text input))
          (work    (cond
-                    ((typep input 'command-message-input)
-                     (list ':command (user-message-input-copy input)))
                     ((or (input-lisp-p text)
                          (input-async-lisp-p text))
                      (list ':lisp (copy-seq text)))
@@ -285,8 +156,6 @@
   (etypecase input
     (string
      (copy-seq input))
-    (command-message-input
-     (input-work--command->form input))
     (user-message-input
      (list :user-message-input
            :version 1
@@ -304,8 +173,6 @@
   (cond
     ((stringp form)
      (copy-seq form))
-    ((and (consp form) (eq (first form) ':command-message-input))
-     (input-work--command-from-form form))
     ((and (listp form)
           (eq (first form) ':user-message-input)
           (= (or (getf (rest form) :version) 0) 1))
@@ -331,7 +198,7 @@
   "Return true for a work form with optional validated submission provenance."
   (and (proper-list-p form)
        (member (length form) '(2 4))
-       (not (null (member (first form) '(:message :command :lisp :native-lisp))))
+       (not (null (member (first form) '(:message :lisp :native-lisp))))
        (or (= (length form) 2)
            (and (eq (third form) ':submission)
                 (user-message-submission-p (fourth form))))))
@@ -357,12 +224,8 @@
 (defun input-work-from-form (form)
   "Return one validated in-memory work item restored from durable FORM."
   (when (input-work--form-shape-p form)
-    (let ((input (input-value-from-form (second form))))
-      (when (and input
-                 (if (eq (first form) ':command)
-                     (typep input 'command-message-input)
-                     (not (typep input 'command-message-input))))
-        (append (list (first form) input) (copy-tree (nthcdr 2 form)))))))
+    (when-let ((input (input-value-from-form (second form))))
+      (append (list (first form) input) (copy-tree (nthcdr 2 form))))))
 
 (-> input-steering->form
     (agent-steering-input)
@@ -375,20 +238,27 @@
             (list :operation-request
                   (input-work--copy-native-value (agent-steering-input-operation-request entry))))))
 
+(-> input-steering--form-shape-p (t) boolean)
+(defun input-steering--form-shape-p (form)
+  "Return true for a durable steering envelope with an identifier."
+  (and (record-check form :properties-p t :allow-other-keys nil
+                     :fields '((:indicator :identifier :required t)
+                               (:indicator :input :required t)
+                               (:indicator :operation-request)))
+       (non-empty-string-p (getf form :identifier))
+       (proper-list-p (getf form :operation-request))))
+
 (-> input-steering-from-form
     (t)
     (option agent-steering-input))
 (defun input-steering-from-form (form)
   "Return one validated identified steering entry restored from FORM."
   (handler-case
-      (when (record-check form :properties-p t :allow-other-keys nil
-                         :fields '((:indicator :identifier :required t)
-                                   (:indicator :input :required t)
-                                   (:indicator :operation-request)))
+      (when (input-steering--form-shape-p form)
         (let ((identifier (getf form :identifier))
               (input      (input-value-from-form (getf form :input)))
               (request    (getf form :operation-request)))
-          (when (and (non-empty-string-p identifier) input (proper-list-p request))
+          (when input
             (agent-steering-input-create
              :identifier        (copy-seq identifier)
              :content           input
@@ -423,8 +293,9 @@
            (proper-list-p work)
            (every
             (lambda (entry)
-              (and (input-work--form-shape-p entry)
-                   (member (first entry) '(:message :command :lisp))))
+              (or (and (input-work--form-shape-p entry)
+                       (member (first entry) '(:message :lisp)))
+                  (and (consp entry) (eq (first entry) ':command))))
             work)
            (or (null active)
                (and
@@ -432,8 +303,10 @@
                               :maximum-length 4 :fields
                               '((:indicator :identifier :required t)
                                 (:indicator :work :required t)))
-                (input-work--form-shape-p (getf active :work))
-                (member (first (getf active :work)) '(:message :command :lisp)))))
+                (let ((entry (getf active :work)))
+                  (or (and (input-work--form-shape-p entry)
+                           (member (first entry) '(:message :lisp)))
+                      (and (consp entry) (eq (first entry) ':command)))))))
         (return-from restore nil))
       (let* ((native-active (getf native :active-work))
              (items         (getf native :items))
@@ -499,20 +372,9 @@
     (let ((version (or (getf (rest form) :version) 0)))
       (case version
         (1
-         (let* ((steering-forms (getf (rest form) :steering))
-                (work-forms     (getf (rest form) :work))
-                (steering
-                 (and (listp steering-forms)
-                      (mapcar #'input-value-from-form steering-forms)))
-                (work
-                 (and (listp work-forms) (mapcar #'input-work-from-form work-forms))))
-           (when
-               (and (listp steering-forms) (listp work-forms) (every #'identity steering)
-                    (every #'identity work))
-             (list :snapshot-identifier (make-identifier) :active-work nil
-                   :active-work-identifier nil :steering-in-flight-items nil
-                   :steering-items steering :work-items work :vault-capture-identifiers
-                   nil :steering-promotion-prefix-count 0 :legacy-p t))))
+         (when-let ((state (input-state-from-payload (rest form))))
+           (setf (getf state :legacy-p) t)
+           (list* :snapshot-identifier (make-identifier) state)))
         (2
          (let ((snapshot-identifier (getf (rest form) :snapshot-identifier)))
            (when (non-empty-string-p snapshot-identifier)
@@ -541,14 +403,11 @@
          (active-work-identifier (getf state :active-work-identifier))
          (active-survives-p
            (and active-work
-                (or (typep (second active-work) 'command-message-input)
-                    (not (member active-work-identifier persisted-identifiers :test #'string=)))))
+                 (not (member active-work-identifier persisted-identifiers :test #'string=))))
          (in-flight
            (remove-if
             (lambda (entry)
-              (and (not (typep (agent-steering-input-content entry) 'command-message-input))
-                   (member (agent-steering-input-identifier entry)
-                           persisted-identifiers :test #'string=)))
+               (member (agent-steering-input-identifier entry) persisted-identifiers :test #'string=))
             (getf state :steering-in-flight-items)))
          (steering               (getf state :steering-items))
          (work                   (getf state :work-items))
@@ -556,10 +415,7 @@
            (min (getf state :steering-promotion-prefix-count)
                 (length work)))
          (promoted-work
-           (mapcar (lambda (input)
-                     (if (typep input 'command-message-input)
-                         (input-work-from-input input)
-                         (list ':message input)))
+           (mapcar (lambda (input) (list ':message input))
                    (append (mapcar #'agent-steering-input-content in-flight) steering))))
     (list :snapshot-identifier      (getf state :snapshot-identifier)
           :active-work              (and active-survives-p active-work)
@@ -635,38 +491,41 @@
   (when (record-property-present-p (cons :payload payload) ':native-work)
     (return-from input-state-from-payload (input-state--restore-native payload)))
   (let* ((active-form               (getf payload :active-work))
-         (active-work               (and active-form (input-work-from-form (getf active-form :work))))
+         (active-work               (and active-form (input-state--work-from-form (getf active-form :work))))
          (active-work-identifier    (and active-form (getf active-form :identifier)))
          (in-flight-forms           (getf payload :steering-in-flight))
-         (in-flight
-          (and (listp in-flight-forms)
-               (mapcar #'input-steering-from-form in-flight-forms)))
          (steering-forms            (getf payload :steering))
-         (steering
-          (and (listp steering-forms) (mapcar #'input-value-from-form steering-forms)))
          (work-forms                (getf payload :work))
-         (work                      (and (listp work-forms) (mapcar #'input-work-from-form work-forms)))
-         (vault-capture-identifiers (or (getf payload :vault-capture-identifiers) nil))
-         (steering-promotion-prefix-count
-          (or (getf payload :steering-promotion-prefix-count) 0)))
-    (when
-        (and
-         (or (null active-form)
-             (and (non-empty-string-p active-work-identifier) active-work))
-         (listp in-flight-forms) (every #'identity in-flight) (listp steering-forms)
-         (every #'identity steering) (listp work-forms) (every #'identity work)
-         (listp vault-capture-identifiers)
-         (every #'non-empty-string-p vault-capture-identifiers)
-         (= (length vault-capture-identifiers)
-            (length (remove-duplicates vault-capture-identifiers :test #'string=)))
-         (typep steering-promotion-prefix-count '(integer 0))
-         (<= steering-promotion-prefix-count (length work)))
-      (list :active-work active-work :active-work-identifier
-            (and active-work-identifier (copy-seq active-work-identifier))
-            :steering-in-flight-items in-flight :steering-items steering :work-items work
-            :vault-capture-identifiers (mapcar #'copy-seq vault-capture-identifiers)
-            :steering-promotion-prefix-count steering-promotion-prefix-count :legacy-p
-            nil))))
+         (vault-capture-identifiers (getf payload :vault-capture-identifiers))
+         (prefix-count              (or (getf payload :steering-promotion-prefix-count) 0))
+         (upgraded-work             nil))
+    (when (and (proper-list-p in-flight-forms) (proper-list-p steering-forms)
+               (proper-list-p work-forms) (proper-list-p vault-capture-identifiers)
+               (typep prefix-count '(integer 0)) (<= prefix-count (length work-forms)))
+      (flet ((upgrade (form)
+               (push (input-work--upgrade-command form) upgraded-work)))
+        (let ((in-flight (loop for entry in in-flight-forms
+                              for form = (and (input-steering--form-shape-p entry) (getf entry :input))
+                              if (input-work--retired-command-p form) do (upgrade form)
+                               else collect (input-steering-from-form entry)))
+              (steering  (loop for form in steering-forms
+                               if (input-work--retired-command-p form) do (upgrade form)
+                               else collect (input-value-from-form form)))
+              (work      (mapcar #'input-state--work-from-form work-forms)))
+          (when (and (or (null active-form) (and (non-empty-string-p active-work-identifier) active-work))
+                     (every #'identity in-flight) (every #'identity steering)
+                     (every #'identity work) (every #'identity upgraded-work)
+                     (every #'non-empty-string-p vault-capture-identifiers)
+                     (= (length vault-capture-identifiers)
+                        (length (remove-duplicates vault-capture-identifiers :test #'string=))))
+            ;; Retired steering commands recover as queued Lisp, ahead of prose
+            ;; that has not yet been promoted. Do not change the prose lanes.
+            (list :active-work active-work :active-work-identifier
+                  (and active-work-identifier (copy-seq active-work-identifier))
+                  :steering-in-flight-items in-flight :steering-items steering :work-items
+                  (append (subseq work 0 prefix-count) (reverse upgraded-work) (nthcdr prefix-count work))
+                  :vault-capture-identifiers (mapcar #'copy-seq vault-capture-identifiers)
+                  :steering-promotion-prefix-count (+ prefix-count (length upgraded-work)) :legacy-p nil)))))))
 
 (-> input-state-form-shape-p (t) boolean)
 (defun input-state-form-shape-p (form)

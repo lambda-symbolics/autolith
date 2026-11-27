@@ -154,14 +154,13 @@ multiple values become restart arguments. Returning NIL aborts only this local
 evaluation. APPLICATION enables its registered command and tool function
 bindings. Output and every returned value are captured without mutation
 journaling or provider conversation projection."
-  (let ((output-stream                      (make-string-output-stream))
-        (*application-command-source-input* (or *application-command-source-input* source))
-        (raw-values                         nil)
-        (status                             ':ok)
-        (condition-text                     nil)
-        (restart-names                      nil)
-        (selected-restart-name              nil)
-        (*application-lisp-tool-results*    (make-hash-table :test #'eq)))
+  (let ((output-stream                   (make-string-output-stream))
+        (raw-values                      nil)
+        (status                          ':ok)
+        (condition-text                  nil)
+        (restart-names                   nil)
+        (selected-restart-name           nil)
+        (*application-lisp-tool-results* (make-hash-table :test #'eq)))
     (handler-case
         (let ((*standard-output*                   output-stream)
               (*error-output*                      output-stream)
