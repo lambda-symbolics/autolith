@@ -757,10 +757,6 @@
  test-world-server-close-without-search-rebuild
  test-world-server-launch-options test-world-server-close-unattached
  test-world-server-attachment-moves-nobody
- test-world-server-open-running-child
-  test-world-server-child-idle-wakeup
- test-world-server-running-child-close
- test-world-server-running-child-idle-grace
  test-world-server-person-unread test-world-server-open-before-checkpoint
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures

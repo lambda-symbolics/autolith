@@ -106,11 +106,6 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-agent
     :type          (option agent)
     :documentation "The reconnectable provider and tool coordinator.")
-   (assignment-job
-    :initform      nil
-    :accessor      application-assignment-job
-    :type          (option job)
-    :documentation "The pooled assignment that retains provider execution until terminal settlement.")
    (ui
     :initarg       :ui
     :accessor      application-ui
@@ -697,34 +692,26 @@ An explicit model selection for this launch overrides the recorded selection."
   "Atomically replace APPLICATION's task listener and active UI projection."
   (with-lock-held ((application-task-presentation-lock application))
     (application--disconnect-task-presentation-locked application)
-    ;; A pooled assignment observes a borrowed scheduler without changing its policy.
-    (unless (application-assignment-job application)
-      (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
-        (when (typep agent 'agent)
-          (setf (agent-hurry-up-p agent) (application-hurry-up-p application)))))
+    (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
+      (when (typep agent 'agent)
+        (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
     (let ((orchestrator (application--task-orchestrator application)))
       (when orchestrator
-        (unless (application-assignment-job application)
-          (task-orchestrator-set-hurry-up orchestrator (application-hurry-up-p application)))
-        (let ((listener     nil)
-              (assignment-p (not (null (application-assignment-job application)))))
+        (task-orchestrator-set-hurry-up orchestrator (application-hurry-up-p application))
+        (let ((listener nil))
           (setf listener
                 (lambda (channel payload)
                   (case channel
                     (:task-subagent-lifecycle
-                     (unless assignment-p (application-world-sync-child application payload))
-                     (application--refresh-task-presentation
-                      application orchestrator))
+                     (application-world-sync-child application payload)
+                     (application--refresh-task-presentation application orchestrator))
                     ((:task-subagent-progress
                       :tool-execution-lifecycle :tool-execution-progress)
-                     (application--refresh-task-presentation
-                      application orchestrator))
+                     (application--refresh-task-presentation application orchestrator))
                     (:task-subagent-verbal-response
-                     ;; The borrowed observer must not replay the primary's transcript events.
-                     (unless assignment-p
-                       (application--present-task-response
-                        application orchestrator :listener listener
-                                                 :payload  payload))))))
+                     (application--present-task-response
+                      application orchestrator :listener listener
+                                               :payload  payload)))))
           (setf (application-task-presentation-orchestrator application)
                 orchestrator
                 (application-task-presentation-listener application)

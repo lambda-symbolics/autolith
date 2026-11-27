@@ -107,9 +107,6 @@ Without an input controller, as in a headless job, or without a resident
 agent to read them, messages wait in the inbox. Settling received messages
 makes room in the inbox, so a send that found it full is resumed right
 after, rather than waiting for the next send to come by."
-  ;; The pooled observer alone consumes assignment inbox steering and receipts.
-  (when (application-assignment-job application)
-    (return-from application-world-deliver 0))
   (let ((channel       (application-world--served-channel application))
         (controller    (application-input-controller application))
         (configuration (application-configuration application))

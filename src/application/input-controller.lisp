@@ -845,12 +845,10 @@ never waits for work that holds it."
     null)
 (defun application-input-controller--interrupt-main (controller condition)
   "Signal CONDITION on CONTROLLER's main thread unless already running there."
-  (unless (application-assignment-cancel
-           (application-input-controller-application controller) :reason ':shutdown)
-    (let ((thread (application-input-controller-main-thread controller)))
-      (unless (eq thread (current-thread))
-        (when (thread-alive-p thread)
-          (interrupt-thread thread (lambda () (error condition)))))))
+  (let ((thread (application-input-controller-main-thread controller)))
+    (unless (eq thread (current-thread))
+      (when (thread-alive-p thread)
+        (interrupt-thread thread (lambda () (error condition))))))
   nil)
 
 (-> application-input-controller--consume-turn-cancellation-delivery-p
@@ -871,19 +869,15 @@ never waits for work that holds it."
 (defun application-input-controller--interrupt-main-for-turn-cancellation
     (controller)
   "Promptly deliver CONTROLLER's pending turn cancellation to its main thread."
-  (if (application-assignment-cancel
-       (application-input-controller-application controller) :reason ':cancelled)
-      (application-input-controller--consume-turn-cancellation-delivery-p controller)
-      (let ((thread (application-input-controller-main-thread controller)))
-        (unless (eq thread (current-thread))
-          (when (thread-alive-p thread)
-            (interrupt-thread
-             thread
-             (lambda ()
-               (when
-                   (application-input-controller--consume-turn-cancellation-delivery-p
-                    controller)
-                 (error (make-condition 'application-turn-cancelled)))))))))
+  (let ((thread (application-input-controller-main-thread controller)))
+    (unless (eq thread (current-thread))
+      (when (thread-alive-p thread)
+        (interrupt-thread
+         thread
+         (lambda ()
+           (when (application-input-controller--consume-turn-cancellation-delivery-p
+                  controller)
+             (error (make-condition 'application-turn-cancelled))))))))
   nil)
 
 (-> application-input-controller--record-failure
@@ -2132,30 +2126,14 @@ as the terminal UI's exclusive-input function."
 
 (-> application--current-user-instructions (application) (option string))
 (defun application--current-user-instructions (application)
-  "Return latest instructions with a short, complete admitted assignment when available."
+  "Return the most recent user instructions in APPLICATION's conversation."
   (when (slot-boundp application 'conversation)
-    (let* ((item         (find-if (lambda (item)
-                                   (and (json-object-p item)
-                                        (eq (item-role item) ':user)))
-                                 (conversation-input-items (application-conversation application))
-                                 :from-end t))
-           (instructions (and item (context--message-text item)))
-           (context      *tool-authorization-context*)
-           (agent        (and context (tool-context-agent context)))
-           (job          (and (non-empty-string-p instructions)
-                              (typep agent 'task-child-agent)
-                              (eq (tool-context-conversation context) (agent-conversation agent))
-                              (eq (tool-context-configuration context) (agent-configuration agent))
-                              (slot-boundp agent 'job)
-                              (task-child-agent-job agent)))
-           (assignment   (and job
-                              (eq (task-job-participant-state job) (agent-participant-state agent))
-                              (slot-boundp job 'item)
-                              (getf (task-job-item job) :task))))
-      (if (and (non-empty-string-p assignment) (<= (length assignment) 2048))
-          (format nil "~A~%~%Current admitted assignment (context only; current user limits take precedence):~%~A"
-                  instructions assignment)
-          instructions))))
+    (let ((item (find-if (lambda (item)
+                           (and (json-object-p item)
+                                (eq (item-role item) ':user)))
+                         (conversation-input-items (application-conversation application))
+                         :from-end t)))
+      (and item (context--message-text item)))))
 
 (defparameter *application-command-classification-limit* 256
   "Maximum cached permission decisions under one set of user instructions.")

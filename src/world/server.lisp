@@ -66,10 +66,7 @@
             "The tool runtimes a checkpoint closed in this channel, restarted when it is served again.")
            (idle-since :initform nil :accessor world-host-idle-since :type
             (option real) :documentation
-            "The internal real time the server first found the channel idle, or NIL while it is in use.")
-           (idle-grace-seconds :initform nil :accessor world-host-idle-grace-seconds
-                               :type          (option (real 0 *))
-                               :documentation "A shorter idle delay for an unviewed completed assignment, cleared by use."))
+            "The internal real time the server first found the channel idle, or NIL while it is in use."))
           (:documentation "One channel's application and the thread serving it.
 
 A host paused for a checkpoint keeps its application; its thread ended so
@@ -691,14 +688,9 @@ its agent, serves it again. Nothing is unloaded while a checkpoint runs."
               (cond
                 ((null since)
                  (setf (world-host-idle-since host) now))
-                ((>= (- now since)
-                     (if (world-host-idle-grace-seconds host)
-                         (min limit (* (world-host-idle-grace-seconds host)
-                                       internal-time-units-per-second))
-                         limit))
+                ((>= (- now since) limit)
                  (world-server--close-host host))))
-            (setf (world-host-idle-since host) nil
-                  (world-host-idle-grace-seconds host) nil)))))
+            (setf (world-host-idle-since host) nil)))))
   nil)
 
 (-> world-server-stop (world-server &key (:reason (option string))) null)
@@ -1919,7 +1911,6 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
       (setf (world-host-state host) ':closing)
       (let ((application (world-host-application host))
             (failures    nil))
-        (application-assignment-finish application :stop-p t)
         (flet ((attempt (function)
                  (handler-case (funcall function)
                    (serious-condition (condition) (push condition failures)))))

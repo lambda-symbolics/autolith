@@ -424,7 +424,6 @@
                                           (:file "startup/welcome")
                                           (:file "startup/main")
                                           (:file "world/server")
-                                          (:file "world/assignment")
                                           (:file "world/restart")
                                           (:file "world/client")
                                           (:file "world/sidebar")

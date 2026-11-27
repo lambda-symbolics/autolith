@@ -158,20 +158,19 @@ conversation transaction can roll back before releasing either lease."
              (application-input-controller-condition-variable controller))))))
     (not (null resumed-p))))
 
-(-> application-world-terminal-pause (application &key (:reason keyword)) boolean)
-(defun application-world-terminal-pause (application &key (reason ':cancelled))
-  "Hold queued work before requesting active-turn cancellation with REASON."
-    (let ((session    (application-channel-endpoint application))
-          (controller (application-input-controller application)))
-      (unless (and session controller) (return-from application-world-terminal-pause nil))
-      (with-lock-held ((image-daemon:daemon-runtime-lock session))
-        (setf (channel-endpoint-paused-p session) t))
-      (unless (application-assignment-cancel application :reason reason)
-        (application-input-controller--request-active-turn-cancellation controller))
-      (with-lock-held ((application-input-controller-lock controller))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller)))
-      t))
+(-> application-world-terminal-pause (application) boolean)
+(defun application-world-terminal-pause (application)
+  "Hold queued work before requesting active-turn cancellation."
+  (let ((session    (application-channel-endpoint application))
+        (controller (application-input-controller application)))
+    (unless (and session controller) (return-from application-world-terminal-pause nil))
+    (with-lock-held ((image-daemon:daemon-runtime-lock session))
+      (setf (channel-endpoint-paused-p session) t))
+    (application-input-controller--request-active-turn-cancellation controller)
+    (with-lock-held ((application-input-controller-lock controller))
+      (sb-thread:condition-broadcast
+       (application-input-controller-condition-variable controller)))
+    t))
 
 (-> world-terminal--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
 (defun world-terminal--task-counts (application)

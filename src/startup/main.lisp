@@ -353,7 +353,6 @@ controller's exit reason."
                "Pause for a checkpoint or leave final cleanup to the owning world server."
                (when (eq exit-reason ':checkpoint)
                  (return-from close-runtime-resources (pause-resources)))
-               (application-assignment-finish application :stop-p t)
                ; mallet:suppress no-ignore-errors -- the owner retries mandatory cleanup
                (ignore-errors (world-terminal-stop application))
                nil)
@@ -406,7 +405,6 @@ controller's exit reason."
                             (application--initial-work-items initial-command)
                            :project-adaptation-offer-p adaptation-offer-p
                            :start-reader-p             nil))
-                    (application-assignment-begin input-controller)
                     (unless resume-p
                       (application-mission-schedules-recover application :startup-p t)
                       (application-recovery-input-vault-present-startup-warning
@@ -433,7 +431,6 @@ controller's exit reason."
                      input-controller)
                     (application-input-controller--start-reader
                      input-controller)
-                    (application-assignment-finish application)
                     (application-conversation-maintenance-start application :resume-p resume-p)
                     ;; A channel served for a message, or opened while
                     ;; messages waited, reads them now.
