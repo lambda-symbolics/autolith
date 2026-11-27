@@ -162,6 +162,7 @@
                   (handler-case
                       (progn (tool-path-blacklist-check (merge-pathnames "visible.txt" allowed)) nil)
                     (tool-error () t)
+                    (file-operation-failed () t)
                     (platform-error () t))
                   "an unresolvable configured root fails closed")))
           (test-fixture-remove-link *platform* (namestring alias))
