@@ -88,7 +88,7 @@
           (test-assert (cursor-visible-p) "the composer handoff restores the input cursor"))
         (handler-case
             (terminal-ui-boot-sequence
-             ui :linger-p       t
+             ui :linger-p      t
                 :wait-function (lambda (seconds)
                                  (declare (ignore seconds))
                                  (error "Expected boot interruption.")))
@@ -130,7 +130,7 @@
                      "output accepted during boot is published afterward"))
       (test-assert
        (handler-case
-           (terminal-ui-boot-sequence ui :linger-p t
+           (terminal-ui-boot-sequence ui :linger-p      t
                                          :wait-function (lambda (seconds)
                                                           (declare (ignore seconds))
                                                           (error "Interrupted boot.")))
@@ -267,14 +267,14 @@
            (test-assert (not (terminal-ui-live-output-suspended-p ui))
                         "ordinary output resumes after the wait"))
          (flet ((boot ()
-                   (terminal-ui-boot-sequence ui :linger-p t
+                   (terminal-ui-boot-sequence ui :linger-p     t
                                                 :wait-function (lambda (seconds)
                                                                  (declare (ignore seconds))))))
            (queued-recording-terminal-enqueue terminal ':interrupt)
            (test-assert (eq (boot) ':interrupt) "Ctrl-C while waiting reports an interrupt")
            (queued-recording-terminal-enqueue terminal '(:resize 80 24))
            (queued-recording-terminal-enqueue terminal ':submit)
-            (test-assert (eq (boot) ':start) "resize does not start the listener and Enter starts"))))))
+           (test-assert (eq (boot) ':start) "resize does not start the listener and Enter starts"))))))
   nil)
 
 (-> test-fullscreen-boot-reader-diversion () null)
@@ -313,7 +313,7 @@
         (queued-recording-terminal-enqueue terminal '(:insert " "))
         (test-assert
          (eq (terminal-ui-boot-sequence
-               ui :linger-p t
+               ui :linger-p               t
                  :direct-input-p-function (constantly nil)
                  :wait-function           (lambda (seconds)
                                             (declare (ignore seconds))
@@ -328,7 +328,7 @@
       (let ((polls 0))
         (test-assert
          (eq (terminal-ui-boot-sequence
-               ui :linger-p t
+               ui :linger-p               t
                  :direct-input-p-function (constantly nil)
                  :halted-function         (lambda () (> polls 3))
                  :wait-function           (lambda (seconds)
@@ -338,7 +338,7 @@
          "an exit requested through the reader ends the wait as an interrupt"))
       (test-assert
        (eq (terminal-ui-boot-sequence
-             ui :linger-p t
+             ui :linger-p     t
                :wait-function (lambda (seconds) (declare (ignore seconds))))
            ':start)
        "the queued direct key still starts once direct input is allowed")))
@@ -365,21 +365,21 @@
          (test-assert
           (eq ':start
               (terminal-ui-boot-sequence
-                ui :linger-p t
+                ui :linger-p    t
                :resize-callback (lambda (target)
                                   (declare (ignore target))
                                   (shiftf pending nil))
                :wait-function
                (lambda (seconds)
                  (declare (ignore seconds))
-                  (case (incf waits)
-                    (1
-                     (setf pending (cons 9 28)))
-                    (2
-                     (test-assert repainted-p "resize redraws before a start key is available")
-                     (queued-recording-terminal-enqueue terminal '(:insert " ")))
-                    (otherwise
-                     (error "Boot resize test exceeded its deterministic wait budget."))))))
+                 (case (incf waits)
+                   (1
+                    (setf pending (cons 9 28)))
+                   (2
+                    (test-assert repainted-p "resize redraws before a start key is available")
+                    (queued-recording-terminal-enqueue terminal '(:insert " ")))
+                   (otherwise
+                    (error "Boot resize test exceeded its deterministic wait budget."))))))
           "Space starts the resized boot screen")))
       (test-assert repainted-p "the boot screen followed the pending resize")))
   nil)

@@ -133,9 +133,9 @@ remaining selected revisions; interruption leaves them pending."
                  (*terminal-ui-boot-start-label*   (onboarding-source-text "boot-start")))
              (case (terminal-ui-boot-sequence
                     ;; A hosted channel's client already showed the boot screen.
-                    ui :screen-p     (and (config :boot-screen-p configuration)
-                                          (null (application-presentation application)))
-                    :linger-p        t
+                    ui :screen-p      (and (config :boot-screen-p configuration)
+                                           (null (application-presentation application)))
+                    :linger-p         t
                      :resize-callback #'application-pending-terminal-size)
                (:interrupt
                 ':interrupted)

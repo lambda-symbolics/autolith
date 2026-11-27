@@ -1366,7 +1366,7 @@
          (test-assert
           (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                (null (config :onboarding-p configuration))
-                (= (config :channel-idle-minutes configuration) 2))
+               (= (config :channel-idle-minutes configuration) 2))
           "local Lisp settings accepts explicit NIL and numbers"))
        (application-operation-call application 'settings 'terminal-theme ':almighty)
        (test-assert (eq (config :terminal-theme configuration) ':almighty)

@@ -424,22 +424,27 @@
   "Hold the initial welcome frame for input, then hand over to the sidebar and composer."
   (with-test-configuration (configuration)
     (dolist (mode '(:space :enter :detach :disabled :no-boot))
-      (let* ((terminal (make-instance 'queued-recording-terminal :columns 120 :rows 30))
-             (panel    (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
-             (screen   (world-terminal-screen-create :terminal terminal :panel panel))
-             (config   (configuration-copy configuration :boot-screen-linger-p
-                                          (not (eq mode ':disabled))))
-             (waiting-p (member mode '(:space :enter :detach)))
-             (keys      (if waiting-p
-                            (list (ecase mode (:space '(:insert " ")) (:enter ':submit) (:detach ':interrupt))
-                                  '(:switch :session-id "from-sidebar"))
-                            (list '(:switch :session-id "from-sidebar"))))
-             (read-event (symbol-function 'terminal-read-event))
+      (let* ((terminal                    (make-instance 'queued-recording-terminal :columns 120 :rows 30))
+             (panel                       (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
+             (screen                      (world-terminal-screen-create :terminal terminal :panel panel))
+             (config                      (configuration-copy configuration :boot-screen-linger-p
+                                                             (not (eq mode ':disabled))))
+             (waiting-p                   (member mode '(:space :enter :detach)))
+             (keys                        (if waiting-p
+                                              (list (ecase mode (:space
+                                                                 '(:insert " "))
+                                                                (:enter
+                                                                 ':submit)
+                                                                (:detach
+                                                                 ':interrupt))
+                                                    '(:switch :session-id "from-sidebar"))
+                                              (list '(:switch :session-id "from-sidebar"))))
+             (read-event                  (symbol-function 'terminal-read-event))
              (*terminal-resize-pending-p* nil))
         (unwind-protect
              (progn
                (world-terminal-screen-show-loading screen "Loading home" :start-p t
-                                                   :boot-p (not (eq mode ':no-boot)))
+                                                   :boot-p                        (not (eq mode ':no-boot)))
                (test-call-with-function-replacements
                 (list (list 'platform-watch-terminal-resize (constantly nil))
                       (list 'terminal-input-ready-p (constantly t))

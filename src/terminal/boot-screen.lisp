@@ -139,7 +139,7 @@ are centered as one block, so rows of unequal width stay aligned."
               (boxed ':brand title)
               (boxed ':hint tagline)
               (boxed ':plain "")
-               (boxed ':dim (format nil "Autolith v~A" *autolith-version*))
+              (boxed ':dim (format nil "Autolith v~A" *autolith-version*))
               (boxed ':brand (format nil ";; ~A" (string-upcase (string phase))))
               (boxed ':plain (or detail "Awaiting operator input."))
               (boxed ':plain "")
