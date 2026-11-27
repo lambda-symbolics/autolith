@@ -90,13 +90,14 @@
                       (floor (* row (length styles)) (max 1 total))))))
 
 (-> terminal-ui--boot-screen-panel
-    ((or string symbol) (option string) integer &key (:mark-rows list))
+    ((or string symbol) (option string) integer &key (:mark-rows list) (:runtime-label-p boolean))
     list)
-(defun terminal-ui--boot-screen-panel (phase detail columns &key mark-rows)
+(defun terminal-ui--boot-screen-panel (phase detail columns &key mark-rows runtime-label-p)
   "Return horizontally centered styled rows for the actual PHASE and DETAIL.
 
 MARK-ROWS are the already height-limited rows of the theme's boot mark. They
-are centered as one block, so rows of unequal width stay aligned."
+are centered as one block, so rows of unequal width stay aligned. Show the
+runtime label above the box when RUNTIME-LABEL-P is true."
   (let* ((width        (terminal-ui--boot-panel-width columns))
          (inside       (max 0 (- width 4)))
          (mark-width   (loop for text in mark-rows maximize (text-cell-width text)))
@@ -136,6 +137,8 @@ are centered as one block, so rows of unequal width stay aligned."
                                (make-string mark-indent :initial-element #\Space)
                                text))))
        (append
+         (when runtime-label-p
+           (list (row ':code (format nil "SBCL ~A" (lisp-implementation-version)))))
         (list (row ':brand top-border))
         (loop for index from 0
               for mascot-line in mark-rows
@@ -178,34 +181,35 @@ are centered as one block, so rows of unequal width stay aligned."
 
 While the boot screen waits for the operator, a bold call to action follows
 the tip."
-  (let* ((terminal     (terminal-ui-terminal ui))
-         (columns      (max 1 (terminal-columns terminal)))
-         (tip          (terminal-ui--boot-tip-rows ui columns))
-         (prompt       (when *terminal-ui-boot-linger-p*
-                         (cons ""
-                               (mapcar
-                                (lambda (row)
-                                  (concatenate
-                                   'string
-                                   (make-string (max 0 (floor (- columns (clinedi:ansi-display-width row)) 2))
-                                                :initial-element #\Space)
-                                   row))
-                                (terminal-ui-fullscreen--display-rows
-                                 ui (list (list (terminal-span ':strong *terminal-ui-boot-linger-prompt*)))
-                                 (terminal-ui--boot-panel-width columns))))))
-         (available    (max 0 (1- height)))
+  (let* ((terminal        (terminal-ui-terminal ui))
+         (columns         (max 1 (terminal-columns terminal)))
+         (tip             (terminal-ui--boot-tip-rows ui columns))
+         (prompt          (when *terminal-ui-boot-linger-p*
+                            (cons ""
+                                  (mapcar
+                                   (lambda (row)
+                                     (concatenate
+                                      'string
+                                      (make-string (max 0 (floor (- columns (clinedi:ansi-display-width row)) 2))
+                                                   :initial-element #\Space)
+                                      row))
+                                   (terminal-ui-fullscreen--display-rows
+                                    ui (list (list (terminal-span ':strong *terminal-ui-boot-linger-prompt*)))
+                                    (terminal-ui--boot-panel-width columns))))))
+         (available       (max 0 (1- height)))
          ;; Keep status and advice visible before allocating rows to the mascot.
-         (mascot-limit (max 0 (- available 11
-                                 (if tip (1+ (length tip)) 0)
-                                 (length prompt))))
-         (art          (terminal-ui--boot-art))
-         (mark-rows    (subseq art 0 (min mascot-limit (length art))))
-         (panel        (mapcar (lambda (row) (terminal--render-spans terminal row))
-                               (terminal-ui--boot-screen-panel phase detail columns
-                                                               :mark-rows mark-rows)))
-         (rows         (append panel (when tip (cons "" tip)) prompt))
-         (visible      (subseq rows 0 (min (length rows) available)))
-         (top          (max 0 (floor (- height (length visible)) 2))))
+         (panel-budget    (- available (if tip (1+ (length tip)) 0) (length prompt)))
+         (runtime-label-p (>= panel-budget 12))
+         (mascot-limit    (max 0 (- panel-budget (if runtime-label-p 12 11))))
+         (art             (terminal-ui--boot-art))
+         (mark-rows       (subseq art 0 (min mascot-limit (length art))))
+         (panel           (mapcar (lambda (row) (terminal--render-spans terminal row))
+                                  (terminal-ui--boot-screen-panel phase detail columns
+                                                                   :mark-rows       mark-rows
+                                                                   :runtime-label-p runtime-label-p)))
+         (rows            (append panel (when tip (cons "" tip)) prompt))
+         (visible         (subseq rows 0 (min (length rows) available)))
+         (top             (max 0 (floor (- height (length visible)) 2))))
     (values (append (make-list top :initial-element "") visible)
             (min (max 0 (1- height)) (+ top (length visible))))))
 
