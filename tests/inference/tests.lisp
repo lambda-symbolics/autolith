@@ -98,14 +98,12 @@
                       (rlm-register-tools (make-instance 'tool-registry) :provider provider)))
            (orchestrator (task-run-tool-orchestrator
                           (tool-registry-find registry "child" "spawn")))
-           (parent (task-tests--primary-agent configuration "rlm-parent" registry))
-           (job (task-tests--make-job orchestrator :identifier "rlm-child"
-                                     :item '(:task "Exercise RLM") :parent-agent parent))
-           (child-registry (task-child-tool-registry registry :orchestrator orchestrator))
-           (child (task-tests--child-viewer configuration job :registry child-registry))
+           (conversation (conversation-create configuration :identifier "rlm-child"
+                                              :parent-identifier "rlm-parent"))
+           (child (agent-create :configuration configuration :provider provider
+                                :conversation conversation :tool-registry registry :worker nil))
            (context (make-instance 'tool-context :configuration configuration :worker nil
-                                   :conversation (agent-conversation child)
-                                   :registry child-registry :agent child)))
+                                   :conversation conversation :registry registry :agent child)))
       (unwind-protect
            (dolist (specification '(("infer" infer) ("map" rlm-map)
                                     ("complete" rlm-complete)))
@@ -120,7 +118,7 @@
                                           (declare (ignore arguments))
                                           (values "answer" "trace" 0))))
                   (lambda ()
-                    (let* ((result (tool-execute (tool-registry-find child-registry "rlm" name)
+                    (let* ((result (tool-execute (tool-registry-find registry "rlm" name)
                                                  context arguments))
                            (details (tool-result-details result))
                            (record (and (listp details) (getf (rest details) :job)))
