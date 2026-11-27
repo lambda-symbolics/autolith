@@ -18,6 +18,9 @@ install_root=${AUTOLITH_INSTALL_ROOT:-$data_home/autolith/installation}
 bin_directory=${AUTOLITH_BIN_DIR:-$home/.local/bin}
 requested_tag=
 temporary_root=
+publication_lock=
+current_temporary=
+command_temporary=
 publish_command_p=true
 musl_requested_p=false
 
@@ -121,14 +124,15 @@ download()
 
 cleanup()
 {
-  if [ -n "$temporary_root" ] && [ -d "$temporary_root" ]; then
-    chmod -R u+w "$temporary_root" 2>/dev/null || true
-    rm -rf -- "$temporary_root"
-  fi
+  [ -z "$publication_lock" ] || rmdir -- "$publication_lock"
+  [ -z "$current_temporary" ] || rm -f -- "$current_temporary"
+  [ -z "$command_temporary" ] || rm -f -- "$command_temporary"
+  [ -z "$temporary_root" ] || remove_release_tree "$temporary_root"
 }
 
 release_tag_valid_p()
 {
+  case $1 in *[!v0123456789.]*) return 1 ;; esac
   printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
 }
 
@@ -161,10 +165,14 @@ release_installed_p()
   release_installed_expected_platform=$3
   release_installed_record=$release_installed_target/RELEASE
 
+  [ -d "$release_installed_target" ] && [ ! -L "$release_installed_target" ] || return 1
+  [ -d "$release_installed_target/bin" ] && [ ! -L "$release_installed_target/bin" ] || return 1
+  [ -f "$release_installed_target/bin/autolith" ] &&
+    [ ! -L "$release_installed_target/bin/autolith" ] || return 1
+  [ -f "$release_installed_record" ] && [ ! -L "$release_installed_record" ] || return 1
   [ -x "$release_installed_target/bin/autolith" ] || return 1
   [ -r "$release_installed_record" ] || return 1
-  grep -Fx "tag=$release_installed_expected_tag" \
-    "$release_installed_record" >/dev/null 2>&1 || return 1
+  [ "$(sed -n 's/^tag=//p' "$release_installed_record")" = "$release_installed_expected_tag" ] || return 1
   if grep -q '^platform=' "$release_installed_record"; then
     release_installed_platform=$(sed -n 's/^platform=//p' \
       "$release_installed_record")
@@ -174,6 +182,74 @@ release_installed_p()
   fi
 }
 
+# Only immediate children whose names and RELEASE records agree are owned.
+installed_release_name_p()
+{
+  retention_name=$1
+  retention_tag=${retention_name%%-*}
+  release_tag_valid_p "$retention_tag" || return 1
+  retention_candidate=$releases_root/$retention_name
+  [ -d "$retention_candidate" ] && [ ! -L "$retention_candidate" ] || return 1
+  case $retention_name in
+    "$retention_tag")
+      [ -f "$retention_candidate/RELEASE" ] && [ ! -L "$retention_candidate/RELEASE" ] || return 1
+      retention_platform=$(sed -n 's/^platform=//p' "$retention_candidate/RELEASE") || return 1
+      retention_platform=${retention_platform:-$platform}
+      ;;
+    *) retention_platform=${retention_name#*-} ;;
+  esac
+  case $retention_platform in
+    x86_64-linux|x86_64-linux-musl|aarch64-linux|aarch64-linux-musl|\
+    x86_64-darwin|arm64-darwin|x86_64-freebsd|x86_64-netbsd|x86_64-openbsd) ;;
+    *) return 1 ;;
+  esac
+  release_installed_p "$retention_candidate" "$retention_tag" "$retention_platform"
+}
+
+remove_release_tree()
+{
+  # Directories may be read-only. Never chmod links or hard-linked files.
+  find "$1" -type d -exec chmod u+w -- {} + 2>/dev/null || true
+  rm -rf -- "$1"
+}
+
+prune_releases()
+{
+  # The Unix active and recovery cores outside the release tree are shared
+  # with source installs, not one cache per release.
+  retention_current=${target##*/}
+  [ "$(readlink "$install_root/current")" = "releases/$retention_current" ] || return 1
+  retention_previous=${previous_link#releases/}
+  retention_slots=2
+  if [ "$retention_previous" != "$retention_current" ] &&
+     installed_release_name_p "$retention_previous"; then
+    retention_slots=1
+  fi
+  # Retain the previous selection even on a downgrade. For other slots, use
+  # version order because existing installs do not record selection history.
+  retention_order=$(
+    for retention_path in "$releases_root"/v*; do
+      retention_entry=${retention_path##*/}
+      if [ "$retention_entry" != "$retention_current" ] &&
+         [ "$retention_entry" != "$retention_previous" ] &&
+         installed_release_name_p "$retention_entry"; then
+        printf '%s %s\n' "${retention_tag#v}" "$retention_entry"
+      fi
+    done | LC_ALL=C sort -t . -k1,1nr -k2,2nr -k3,3nr
+  ) || return 1
+  printf '%s\n' "$retention_order" | while read -r retention_version retention_entry; do
+    [ -n "$retention_version" ] || continue
+    if [ "$retention_slots" -gt 0 ]; then
+      retention_slots=$((retention_slots - 1))
+    else
+      # Recheck ownership and the selection immediately before deleting.
+      [ "$(readlink "$install_root/current")" = "releases/$retention_current" ] || return 1
+      installed_release_name_p "$retention_entry" || continue
+      remove_release_tree "$releases_root/$retention_entry" ||
+        printf 'Autolith could not remove old release %s.\n' "$retention_entry" >&2
+    fi
+  done
+}
 check_sha256()
 {
   check_checksum=$1
@@ -211,15 +287,25 @@ publish_links()
     fail "$install_root/current is a directory, not an installation link."
   fi
   ln -s "releases/$publish_directory" "$current_temporary"
-  if ! mv -Tf -- "$current_temporary" "$install_root/current" 2>/dev/null; then
-    rm -f -- "$install_root/current"
-    mv -f -- "$current_temporary" "$install_root/current"
-  fi
   if [ "$publish_command_p" = true ]; then
     mkdir -p -- "$bin_directory"
+    [ ! -d "$bin_directory/autolith" ] ||
+      fail "$bin_directory/autolith is a directory, not a command link."
     ln -s "$install_root/current/bin/autolith" "$command_temporary"
     mv -f -- "$command_temporary" "$bin_directory/autolith"
+    command_temporary=
   fi
+  if ! mv -Tf -- "$current_temporary" "$install_root/current" 2>/dev/null &&
+     ! mv -fh -- "$current_temporary" "$install_root/current" 2>/dev/null; then
+    rm -f -- "$install_root/current"
+    if ! mv -f -- "$current_temporary" "$install_root/current"; then
+      if [ -n "$previous_link" ]; then
+        ln -s "$previous_link" "$install_root/current"
+      fi
+      fail "the current release link could not be published."
+    fi
+  fi
+  current_temporary=
 }
 
 while [ "$#" -gt 0 ]; do
@@ -367,6 +453,17 @@ target=$qualified_target
   mkdir -p -- "$install_root" "$releases_root"
 )
 
+[ ! -L "$releases_root" ] || fail "$releases_root is not a real directory."
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+lock_directory=$install_root/.publish-lock
+mkdir -- "$lock_directory" || fail "another installation may be in progress ($lock_directory)."
+publication_lock=$lock_directory
+previous_link=$(readlink "$install_root/current" 2>/dev/null || true)
+
+[ ! -L "$qualified_target" ] || fail "$qualified_target is not a real release directory."
 if release_installed_p "$qualified_target" "$requested_tag" "$platform"; then
   target=$qualified_target
   publish_links "$target"
@@ -414,12 +511,14 @@ else
     fail "the published release permissions could not be restored."
   publish_links "$target"
   if [ -n "$stale_target" ] && [ -e "$stale_target" ]; then
-    chmod -R u+w "$stale_target" 2>/dev/null || true
-    rm -rf -- "$stale_target"
+    remove_release_tree "$stale_target" ||
+      printf 'Autolith could not remove replaced release %s.\n' "$stale_target" >&2
   fi
   say_note "installed in $target"
   say_done "Installed Autolith ${requested_tag#v}."
 fi
+
+prune_releases || printf 'Autolith could not prune old releases.\n' >&2
 
 if [ "$publish_command_p" = true ]; then
   case :${PATH:-}: in

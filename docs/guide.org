@@ -65,6 +65,11 @@ restart from a running session, enter =(update)=. Your original launch
 arguments are used for the restart. Automatic update checks run at most once
 every 20 hours.
 
+On Unix, a successful installation keeps the selected release and up to two
+older installations. Older release directories and their contents are
+removed. Close sessions from older releases before updating; those sessions
+may still use files from their original installation.
+
 For Nix, update the flake input or upgrade the package in your Nix profile.
 For a source installation, update the checkout and run the bootstrap command
 again.

@@ -1699,11 +1699,70 @@ esac
                  (subseq next-tag 1)
                  next-tag
                  *release-script-tests-commit*))
-        (release-script-tests--run
-         (list (namestring installer)
-               "--without-command-link" "--version" next-tag)
-         :environment base-environment
-         :output      nil))
+        (let* ((oldest      (merge-pathnames "releases/v0.9.0/" install-root))
+               (older       (merge-pathnames "releases/v0.9.1-x86_64-linux/" install-root))
+               (newer       (merge-pathnames "releases/v0.10.0/" install-root))
+               (unknown     (merge-pathnames "releases/v0.1.0/" install-root))
+               (outside     (merge-pathnames "outside/" root))
+               (shared-core (merge-pathnames "data/autolith/recovery/autolith-recovery.core" root))
+               (obsolete    (merge-pathnames "recovery/autolith-recovery.core" oldest))
+               (selected    (merge-pathnames "current/bin/autolith" install-root))
+               (environment
+                 (list* "AUTOLITH_RELEASE_LATEST_URL=https://example.invalid/latest"
+                        (format nil "XDG_DATA_HOME=~A" (merge-pathnames "data/" root))
+                        base-environment)))
+          (dolist (entry (list (list oldest "v0.9.0" nil)
+                               (list older "v0.9.1" "x86_64-linux")
+                               (list newer "v0.10.0" nil)
+                               (list unknown "v0.1.1" nil)
+                               (list outside "v0.0.1" nil)))
+            (destructuring-bind (directory release-tag platform) entry
+              (let ((launcher (merge-pathnames "bin/autolith" directory)))
+                (test-write-text launcher "#!/bin/sh
+exit 0
+")
+                (release-script-tests--chmod "755" launcher)
+                (release-script-tests--record (merge-pathnames "RELEASE" directory)
+                                              release-tag :platform platform))))
+          (test-write-text shared-core "shared recovery")
+          (test-write-text obsolete "obsolete recovery")
+          (release-script-tests--run
+           (list "ln" "-s" (namestring outside)
+                 (namestring (merge-pathnames "releases/v0.0.1" install-root)))
+           :output nil)
+          (release-script-tests--run
+           (list "ln" "-s" (namestring outside)
+                 (namestring (merge-pathnames "recovery/outside" oldest)))
+           :output nil)
+          (release-script-tests--chmod "555" (merge-pathnames "recovery/" oldest))
+          (multiple-value-bind (output error-output status)
+              (release-script-tests--run
+               (list (namestring selected) "update")
+               :environment         (cons "AUTOLITH_TEST_LATEST_TAG=v0.99.0" environment)
+               :ignore-error-status t)
+            (declare (ignore output error-output))
+            (test-assert (and (not (eql status 0))
+                              (probe-file obsolete)
+                              (string= (release-script-tests--readlink
+                                        (merge-pathnames "current" install-root))
+                                       (format nil "releases/~A-x86_64-linux" tag)))
+                         "a failed update leaves the current and older releases intact"))
+          (release-script-tests--run
+           (list (namestring selected) "update")
+           :environment (cons (format nil "AUTOLITH_TEST_LATEST_TAG=~A" next-tag) environment)
+           :output      nil)
+          (test-assert (not (or (probe-file obsolete) (probe-file (merge-pathnames "RELEASE" older))))
+                       "retention removes older releases and their own recovery cores")
+          (test-assert (probe-file (merge-pathnames "RELEASE" newer))
+                       "retention keeps the second rollback slot in numeric version order")
+          (test-assert (probe-file (merge-pathnames (format nil "releases/~A-x86_64-linux/RELEASE" tag)
+                                                   install-root))
+                       "retention keeps the previously selected installation")
+          (test-assert (and (probe-file shared-core)
+                            (probe-file (merge-pathnames "RELEASE" unknown))
+                            (probe-file (merge-pathnames "releases/v0.0.1/RELEASE" install-root))
+                            (probe-file (merge-pathnames "RELEASE" outside)))
+                       "retention leaves shared recovery, unknown directories and link targets alone")))
       (test-assert
        (string= (release-script-tests--readlink
                  (merge-pathnames "current" install-root))
