@@ -536,9 +536,8 @@ Each transcript event takes a line of its own."
       (test-assert (and (eq (world-terminal-screen-filter-event screen ':focus-next) ':ignore)
                         (world-terminal-screen-panel-focused-p screen)
                         (not (world-terminal-screen-take-resize screen))
-                        (eq (world-terminal-screen-filter-event screen ':page-up) ':ignore)
-                        (eq (world-terminal-screen-filter-event screen ':interrupt) ':interrupt))
-                   "the focus key moves the keyboard to the panel, which keeps every key but an interrupt")
+                        (eq (world-terminal-screen-filter-event screen ':page-up) ':ignore))
+                   "the focus key moves ordinary keyboard input to the panel")
       (test-assert (and (eq (world-terminal-screen-filter-event screen ':focus-next) ':ignore)
                         (not (world-terminal-screen-panel-focused-p screen))
                         (eq (world-terminal-screen-filter-event screen ':page-up) ':page-up))
@@ -1797,18 +1796,13 @@ Each transcript event takes a line of its own."
                   (declare (ignore type view))
                   (test-assert (null (application--present-open-instruction application))
                                "The server leaves attached-channel reopen advice to the client")
-                  (test-assert
-                   (not (search (application--open-command application)
-                                (application-input-controller--forced-exit-message
-                                 controller ':turn-cancellation)))
-                   "The server's forced-exit notice leaves reopen advice to the client")
                   (world-terminal-finish-attachments application :status 0 :message "Channel closed.")
                   (multiple-value-bind (exit ended-p) (funcall await-exit)
-                    (let* ((command  (application--open-command application))
-                           (output   (with-output-to-string (*error-output*)
-                                       (world-terminal-relay-exit exit ':read-only
-                                                              :session-id identifier)))
-                           (position (search command output)))
+                     (let* ((command  (channel-open-command identifier))
+                            (output   (with-output-to-string (*error-output*)
+                                        (world-terminal-relay-exit exit ':read-only
+                                                               :session-id identifier)))
+                            (position (search command output)))
                       (test-assert (and ended-p
                                         (eql (getf exit :status) 0)
                                         (equal (getf exit :message) "Channel closed."))

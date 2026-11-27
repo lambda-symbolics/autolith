@@ -296,6 +296,8 @@ pane's edge, so selecting never takes the panel's text. A focused panel gets
 every key and the wheel; the session gets none until the focus returns. A
 panel's (:SWITCH :SESSION-ID ID) request moves the terminal to another channel
 and its channel command goes to the session."
+  (when (member event '(:interrupt :detach))
+    (return-from world-terminal-screen-filter-event ':detach))
   (unless (world-terminal-screen-active-p screen)
     (return-from world-terminal-screen-filter-event event))
   (let* ((pointer-p (typep event '(cons (member :click :drag :release) (cons integer (cons integer null)))))
@@ -321,7 +323,7 @@ and its channel command goes to the session."
          (world-terminal-screen-focus-panel
           screen (not (and beside-p (world-terminal-screen-panel-focus-p screen)))))
        ':ignore)
-      ((member event '(:interrupt :end-of-input :stream-end))
+      ((member event '(:end-of-input :stream-end))
        event)
       ((and click-p (or (eq layout ':alone)
                         (and (eq layout ':beside) (<= (second event) (1+ (second geometry))))))

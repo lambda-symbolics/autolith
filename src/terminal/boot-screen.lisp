@@ -351,7 +351,7 @@ DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
                         (list ':insert (second event))
                         event)))
               (return ':listener))
-             ((eq event ':interrupt)
+             ((member event '(:interrupt :detach))
               (return ':interrupt))
              ((member event '(:end-of-input :stream-end))
               (return ':start)))))

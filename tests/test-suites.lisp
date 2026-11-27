@@ -457,8 +457,7 @@
   test-terminal-fullscreen-submit-click
   test-world-terminal-click-events
   test-terminal-fullscreen-message-jumps
-  test-terminal-fullscreen-exit-epilogue
-  test-terminal-fullscreen-forced-exit-resume)
+  test-terminal-fullscreen-exit-epilogue)
 
 (define-test-suite onboarding-state
   test-onboarding-state-selection
@@ -1671,25 +1670,14 @@
   test-hurry-up-mode
   test-command-permission-modes
   test-automatic-permission-presentation
-  test-interrupt-open-instruction
-  test-repeated-interrupt-forces-exit
-  test-forced-exit-without-durable-conversation
-  test-graceful-shutdown-retains-interrupt-escape
+  test-end-of-input-open-instruction
   test-active-turn-interrupt-events
   test-detach-control-event-dispatch
   test-active-turn-cancellation-side-effects
-  test-idle-interrupt-exits-without-force-hint
-  test-recalled-follow-up-interrupt
   test-active-turn-stop-keys
   test-escape-submits-steering-together
   test-active-command-stop-key
   test-active-tool-stop-repairs-unknown-outcome
-  test-interrupt-force-window
-  test-visible-interrupt-hint-does-not-extend-window
-  test-dropped-interrupt-hint-reappears
-  test-failed-interrupt-hint-stays-due
-  test-active-cancellation-interrupt-window-expiry
-  test-cancellation-completion-clears-interrupt-state
   test-failed-turn-publishes-durable-wreckage
   test-transcript-entries
   test-transcript-schema-coalescing

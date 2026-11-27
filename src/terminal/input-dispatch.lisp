@@ -20,10 +20,10 @@
 ACTION is one of
   :SUBMIT and :QUEUE, with the draft as PAYLOAD,
   :COMMAND, with command text as PAYLOAD, and :DETACH,
-  :INTERRUPT and :ESCAPE, which cancel a running turn and are refused when none runs,
-  :EDIT-QUEUE, :CYCLE-QUEUE with the current draft, :CLEARED and
-  :RESTORE-FOLLOW-UP, which move a queued follow-up between the queue and the composer,
-  :END-OF-INPUT and :EXIT, which end the session."))
+  :ESCAPE, which cancels a running turn and is refused when none runs,
+  :EDIT-QUEUE, :CYCLE-QUEUE with the current draft, and :CLEARED,
+  which move a queued follow-up between the queue and the composer,
+  and :END-OF-INPUT, which ends the session."))
 
 (-> terminal-ui-defer-lisp-submission-p (terminal-ui (or string user-message-input)) boolean)
 (defun terminal-ui-defer-lisp-submission-p (ui input)
@@ -53,42 +53,31 @@ ACTION is one of
 (defun terminal-ui-dispatch-event (ui port event)
   "Apply terminal EVENT to UI's composer and hand what it asks of the session to PORT.
 
-An interrupt first puts a recalled follow-up back, then cancels a running
-turn; only when nothing runs does it reach the composer, where it clears the
-draft or, on an empty one, ends the session. Escape closes the completion
-menu before it cancels."
-  (unless (terminal-ui-boot-divert-event ui event)
-    (let ((editing-p (input-port-follow-up-editing-p port)))
-      (when (and (eq event ':interrupt) editing-p)
-        (terminal-ui-process-event ui event :queue-editing-p t)
-        (input-port-apply port ':restore-follow-up)
-        (setf editing-p nil))
-      (cond
-        ((eq event ':detach)
-         (input-port-apply port ':detach))
-        ((channel-command-text event)
-         (input-port-apply port ':command (channel-command-text event)))
-        ((eq event ':stream-end)
-         (input-port-apply port ':end-of-input))
-        ((and (eq event ':interrupt) (input-port-apply port ':interrupt))
-         nil)
-        ((and (eq event ':escape) (terminal-ui-completion-menu-present-p ui))
-         (terminal-ui-process-event ui event :queue-editing-p editing-p))
-        ((and (eq event ':escape) (input-port-apply port ':escape))
-         nil)
-        (t
-         (multiple-value-bind (action payload)
-             (terminal-ui-process-event ui event
-                                        :queue-completion-p (input-port-turn-active-p port)
-                                        :queue-editing-p    editing-p)
-           (case action
-             ((:cleared :edit-queue :end-of-input)
-              (input-port-apply port action))
-             ((:submit :queue)
-              (unless (terminal-ui-defer-lisp-submission-p ui payload)
-                (input-port-apply port action payload)))
-             (:cycle-queue
-              (input-port-apply port action payload))
-             (:interrupt
-              (input-port-apply port ':exit))))))))
+Ctrl-C and Ctrl-Z detach. Escape closes the completion menu before it cancels."
+  (cond
+    ((member event '(:detach :interrupt))
+     (input-port-apply port ':detach))
+    ((terminal-ui-boot-divert-event ui event)
+     nil)
+    ((channel-command-text event)
+     (input-port-apply port ':command (channel-command-text event)))
+    ((eq event ':stream-end)
+     (input-port-apply port ':end-of-input))
+    ((and (eq event ':escape) (terminal-ui-completion-menu-present-p ui))
+     (terminal-ui-process-event ui event :queue-editing-p (input-port-follow-up-editing-p port)))
+    ((and (eq event ':escape) (input-port-apply port ':escape))
+     nil)
+    (t
+     (multiple-value-bind (action payload)
+         (terminal-ui-process-event ui event
+                                    :queue-completion-p (input-port-turn-active-p port)
+                                    :queue-editing-p    (input-port-follow-up-editing-p port))
+       (case action
+         ((:cleared :edit-queue :end-of-input)
+          (input-port-apply port action))
+         ((:submit :queue)
+          (unless (terminal-ui-defer-lisp-submission-p ui payload)
+            (input-port-apply port action payload)))
+         (:cycle-queue
+          (input-port-apply port action payload))))))
   nil)

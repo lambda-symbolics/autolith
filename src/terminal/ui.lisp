@@ -3732,11 +3732,6 @@ reader still shows why it waits. Without an installed owner the thunk simply run
   "Apply EVENT through Clinedi while preserving Autolith interaction policy."
   (let ((editor (terminal-ui-editor ui)))
     (cond
-      ((and (eq event :interrupt)
-            (plusp (length (line-editor-text editor))))
-       (line-editor-clear editor)
-       (setf (terminal-ui-image-attachments ui) nil)
-       (values :cleared nil))
       ((and (consp event)
             (eq (first event) :paste)
             (stringp (second event))

@@ -519,38 +519,14 @@ Autolith diagnosis may propose validated executable recoveries."
                               (getf (application-debugger-poll session)
                                     :proposals))))))
 
-               (interrupt-event ()
-                 "Handle an interrupt without losing a live debugger modal."
-                 (let* ((controller (application-input-controller application))
-                        (active-p   (and controller
-                                         (application-input-controller-turn-active-p
-                                          controller))))
-                   (if (not active-p)
-                       '(:cancel)
-                       (case (application-input-controller--active-turn-interrupt-action
-                              controller)
-                         (:force
-                          (application-input-controller--force-interrupt-exit controller)
-                          '(:cancel))
-                         (:hint
-                          nil)
-                         (otherwise
-                          (application-input-controller--request-active-turn-cancellation
-                           controller
-                           :force-exit-window-p t
-                           :pause-queued-work-p t)
-                          nil)))))
-
                (normal-event (event selector)
                  "Handle ordinary debugger picker events."
                  (declare (ignore selector))
                  (case event
-                   (:interrupt
-                    (interrupt-event))
-                   ((:escape :stream-end)
-                    '(:cancel))
-                   (otherwise
-                    nil)))
+                  ((:escape :stream-end :detach :interrupt)
+                   '(:cancel))
+                  (otherwise
+                   nil)))
 
                (diagnose ()
                  "Run the independent diagnosis modal and return its selection."
@@ -572,20 +548,16 @@ Autolith diagnosis may propose validated executable recoveries."
                                 (lambda (event selector)
                                   (declare (ignore selector))
                                   (cond
-                                    ((eq event ':escape)
-                                     '(:cancel))
-                                    ((eq event ':interrupt)
-                                     (interrupt-event))
-                                    ((eq event ':stream-end)
-                                     '(:cancel))
-                                    ((eq event ':poll)
-                                     (let* ((snapshot
-                                              (application-debugger-poll session))
-                                            (state (getf snapshot :state)))
-                                       (list ':replace "restart debugger"
-                                             (diagnosis-items
-                                              snapshot
-                                              (eq state ':running))))))))))
+                                   ((member event '(:escape :stream-end :detach :interrupt))
+                                    '(:cancel))
+                                   ((eq event ':poll)
+                                    (let* ((snapshot
+                                             (application-debugger-poll session))
+                                           (state (getf snapshot :state)))
+                                      (list ':replace "restart debugger"
+                                            (diagnosis-items
+                                             snapshot
+                                             (eq state ':running))))))))))
                         (or (recovery-choice choice) choice))
                    (when (eq (getf (application-debugger-poll session) :state)
                              ':running)

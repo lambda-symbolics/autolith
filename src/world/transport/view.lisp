@@ -99,9 +99,9 @@ modal reader so the view can act on it."
          (event  (world-terminal-screen-filter-event
                   screen (terminal-read-event (world-terminal-screen-terminal screen)))))
     (cond
-      ((and (consp event) (eq (first event) ':switch))
+      ((or (eq event ':detach) (and (consp event) (eq (first event) ':switch)))
        (when-let ((function (pane-terminal-request-function terminal)))
-         (funcall function event))
+         (funcall function (if (eq event ':detach) (list ':detached) event)))
        ':escape)
       (t
        event))))
@@ -562,26 +562,25 @@ A command the channel refused is shown as a failure line."
 (defmethod input-port-apply ((view channel-view) action &optional payload)
   "Send input ACTION to the channel, or act on it here when it concerns only this terminal.
 
-Detaching leaves the channel alone. An interrupt or Escape is the channel's
-only while it works; the reply says whether it took it. Every other action
-is sent without waiting, since the channel may answer it by asking this
+Detaching leaves the channel alone. Escape asks the channel to cancel its
+current turn. Every other action is sent without waiting, since the channel may answer it by asking this
 terminal a question. A view that only watches sends none and says so when
 its user submits."
   (case action
     (:detach
      (channel-view--finish view (list ':detached))
      t)
-    ((:end-of-input :exit)
+    (:end-of-input
      (if (channel-view-read-only-p view)
          (channel-view--finish view (list ':detached))
          (channel-view--send-input view action payload))
      t)
-    ((:interrupt :escape)
+    (:escape
      (and (not (channel-view-read-only-p view))
           (with-lock-held ((channel-view-state-lock view))
             (or (channel-view-turn-active-p view) (channel-view-cancelling-p view)))
           (handler-case
-              (not (null (getf (channel-subscription-call view ':input :action action)
+               (not (null (getf (channel-subscription-call view ':input :action ':escape)
                                :handled-p)))
             (autolith-error ()
               nil))))
@@ -718,8 +717,7 @@ and is named at once."
 (defun channel-view--boot (view)
   "Hold the boot screen the client already shows until the user starts the session.
 
-The transcript the channel replays meanwhile waits behind it. Ctrl-C there
-leaves the channel running and gives the terminal back."
+The transcript the channel replays meanwhile waits behind it."
   (let* ((ui            (channel-view-ui view))
          (configuration (channel-subscription-configuration view)))
     (with-terminal-ui-locked (ui)
@@ -842,7 +840,8 @@ starts the session."
                (terminal-ui-start ui))
            (channel-view--restore-draft view)
            (setf draft-ready-p t)
-           (channel-view--submit-initial-input view initial-input)
+           (unless (with-lock-held ((channel-view-state-lock view)) (channel-view-exit view))
+             (channel-view--submit-initial-input view initial-input))
            (loop until (with-lock-held ((channel-view-state-lock view))
                          (channel-view-exit view))
                  do (channel-view--step view))

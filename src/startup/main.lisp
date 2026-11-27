@@ -359,11 +359,12 @@ controller's exit reason."
                nil)
 
              (finish-shutdown ()
-               "Close runtimes while preserving CONTROLLER's Ctrl-C escape."
+               "Preserve accepted input and retire the controller while closing runtimes."
                (if input-controller
                    (progn
-                     (application-input-controller-call-with-shutdown-escape
-                      input-controller #'close-runtime-resources)
+                     (application-input-controller--prepare-shutdown input-controller ':shutdown)
+                     (unwind-protect (close-runtime-resources)
+                       (application-input-controller-stop input-controller))
                      (setf input-controller nil))
                    (close-runtime-resources))))
       (unwind-protect
@@ -1021,7 +1022,7 @@ still shows the boot panel keeps it until the user starts the session."
                 (application--banner-stacked-spans metadata content-width))))
            (spans
              (append header
-              (list (terminal-span ':dim "Sidebar: select channel. Enter: new. Ctrl-C: quit.")
+               (list (terminal-span ':dim "Sidebar: select channel. Enter: new. Ctrl-C/Z: quit.")
                     (terminal-span ':plain (format nil "~%")))
               (when notice
                 (list (terminal-span ':notice

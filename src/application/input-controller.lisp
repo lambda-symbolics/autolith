@@ -2,38 +2,8 @@
 
 ;;;; -- Responsive Terminal Input --
 
-(defparameter *application-forced-interrupt-status* 130
-  "The process status used when repeated Ctrl-C forces exit.")
-
-(defparameter *application-interrupt-exit-window-seconds* 5/2
-  "Seconds in which a second Ctrl-C may force the process to exit.")
-
-(defparameter *application-interrupt-hint-delay-seconds* 1/4
-  "Seconds a cancellation may run before its force-exit hint becomes worth showing.")
-
 (defparameter *application-interrupted-queue-notice-seconds* 8
-  "Seconds an active Ctrl-C explains that queued work remains paused.")
-
-(-> application-input-controller--interrupt-window-text () string)
-(defun application-input-controller--interrupt-window-text ()
-  "Return the force-exit window as concise user-facing seconds."
-  (format nil "~,1F" *application-interrupt-exit-window-seconds*))
-
-(-> application-input-controller--forced-exit-text () string)
-(defun application-input-controller--forced-exit-text ()
-  "Return the repeated-Ctrl-C forced-exit explanation."
-  (format nil
-          "Ctrl-C pressed twice within ~A seconds; forcing Autolith to exit."
-          (application-input-controller--interrupt-window-text)))
-
-(defparameter *application-interrupt-clock-function*
-  #'internal-real-time-seconds
-  "The monotonic clock captured by newly created input controllers.")
-
-(defparameter *application-forced-exit-function*
-  (lambda (status)
-    (sb-ext:exit :code status :abort t))
-  "The process termination boundary captured by each input controller.")
+  "Seconds to show a turn cancellation or queued-work pause notice.")
 
 (defclass application-input-controller ()
   ((application
@@ -258,34 +228,6 @@
     :reader        application-input-controller-main-thread
     :type          t
     :documentation "The model and command thread interrupted for immediate exit.")
-   (forced-exit-function
-    :initarg       :forced-exit-function
-    :initform      *application-forced-exit-function*
-    :reader        application-input-controller-forced-exit-function
-    :type          function
-    :documentation "The process termination boundary captured before the reader starts.")
-   (interrupt-clock-function
-    :initarg       :interrupt-clock-function
-    :initform      *application-interrupt-clock-function*
-    :reader        application-input-controller-interrupt-clock-function
-    :type          function
-    :documentation "The monotonic clock used to recognize repeated Ctrl-C input.")
-   (interrupt-deadline
-    :initform      nil
-    :accessor      application-input-controller-interrupt-deadline
-    :type          (option real)
-    :documentation "The inclusive monotonic deadline for a force-exit Ctrl-C.")
-   (interrupt-hint-time
-    :initform      nil
-    :accessor      application-input-controller-interrupt-hint-time
-    :type          (option real)
-    :documentation "The monotonic time at which an unshown force-exit hint is due.")
-   (forced-exit-message
-    :initform      (format nil "~%~A~%"
-                           (application-input-controller--forced-exit-text))
-    :accessor      application-input-controller-forced-exit-message
-    :type          string
-    :documentation "The complete plain-text notice emitted by forced shutdown.")
    (failure
     :initform      nil
     :accessor      application-input-controller-failure
@@ -309,9 +251,6 @@
                                  (application-input-controller--input-ready-p controller))
          :step-function        (lambda ()
                                  (application-input-controller--reader-step controller))
-         :tick-function        (lambda ()
-                                 (application-input-controller--refresh-interrupt-hint
-                                  controller))
          :startable-p-function (lambda ()
                                  (not (application-input-controller-exit-requested-p
                                        controller)))
@@ -341,127 +280,6 @@
   (list (terminal-span ':dim "· to open this channel again, run:")
         (terminal-span ':plain (string #\Newline))
         (terminal-span ':code (format nil "  ~A" (channel-open-command identifier)))))
-
-(-> application--open-command (application) string)
-(defun application--open-command (application)
-  "Return the shell command that opens APPLICATION's channel again."
-  (channel-open-command
-   (conversation-identifier (application-conversation application))))
-
-(-> application-input-controller--force-interrupt-exit
-    (application-input-controller)
-    null)
-(defun application-input-controller--force-interrupt-exit (controller)
-  "Restore the terminal, emit the prepared notice, and force CONTROLLER to exit.
-Fullscreen restoration bypasses the UI lock, which may be held during shutdown."
-  (unwind-protect
-       (let* ((application (application-input-controller-application controller))
-              (ui          (application-ui application))
-              (terminal    (terminal-ui-terminal ui)))
-         ;; Each restoration step is best-effort: the forced exit must still happen.
-         (when (typep ui 'fullscreen-terminal-ui)
-           ; mallet:suppress no-ignore-errors -- best-effort fullscreen restoration before a forced exit
-           (ignore-errors (terminal-ui-fullscreen-leave ui)))
-         ; mallet:suppress no-ignore-errors -- best-effort terminal restoration before a forced exit
-         (ignore-errors (terminal-stop terminal))
-         ; mallet:suppress no-ignore-errors -- best-effort exit notice before a forced exit
-         (ignore-errors
-           (clinedi:terminal-write-text
-            terminal (application-input-controller-forced-exit-message controller))
-           (terminal-flush terminal)))
-    (funcall (application-input-controller-forced-exit-function controller)
-             *application-forced-interrupt-status*))
-  nil)
-
-(-> application-input-controller--forced-exit-message
-    (application-input-controller keyword)
-    string)
-(defun application-input-controller--forced-exit-message (controller reason)
-  "Return CONTROLLER's forced-exit notice for shutdown or cancellation REASON.
-
-The attached client reports its own reopen advice after releasing its screen;
-only a direct terminal includes the command in this prepared notice."
-  (let* ((application
-           (application-input-controller-application controller))
-         (conversation
-           (and (slot-boundp application 'conversation)
-                (application-conversation application)))
-         (open-command
-           (and conversation
-                (conversation-persisted-p conversation)
-                (not (application--client-reports-exit-p application))
-                (application--open-command application))))
-    (format nil
-            "~%~A~%~@[To open this channel again, run:~%  ~A~%~]"
-            (case reason
-              (:turn-cancellation
-               (application-input-controller--forced-exit-text))
-              (:world-terminal-kill
-               "A world-terminal kill request is stopping Autolith.")
-              (otherwise
-               "Ctrl-C pressed during shutdown; forcing Autolith to exit."))
-            open-command)))
-
-(-> application-input-controller--show-interrupt-hint
-    (application-input-controller real)
-    boolean)
-(defun application-input-controller--show-interrupt-hint
-    (controller remaining-seconds)
-  "Show CONTROLLER's force-exit notice for REMAINING-SECONDS and report display.
-
-The notice expires with the force-exit window itself, and a contended
-presentation lock reports no display so a later reader pass can try again."
-  (let ((ui (application-ui
-             (application-input-controller-application controller))))
-    (not (null (nth-value
-                1
-                (terminal-ui-set-notice
-                 ui
-                 (format nil
-                         "press Ctrl-C again within ~A seconds to force exit"
-                         (application-input-controller--interrupt-window-text))
-                 :duration-seconds remaining-seconds))))))
-
-(-> application-input-controller--refresh-interrupt-hint
-    (application-input-controller)
-    null)
-(defun application-input-controller--refresh-interrupt-hint (controller)
-  "Show CONTROLLER's force-exit hint once cancellation outlives the hint delay.
-
-Waiting keeps a promptly cancelled turn from flashing an option it no longer
-offers, so the hint appears only while forcing exit is still worth explaining.
-After an error the hint stays due for the next reader pass, and the terminal
-reader keeps running."
-  (handler-case
-      (let ((hint-time         nil)
-            (remaining-seconds nil))
-        (with-lock-held ((application-input-controller-lock controller))
-          (let ((due
-                  (application-input-controller-interrupt-hint-time controller))
-                (deadline
-                  (application-input-controller-interrupt-deadline controller)))
-            (when (and due deadline)
-              (let ((now
-                      (funcall
-                       (application-input-controller-interrupt-clock-function
-                        controller))))
-                (when (>= now due)
-                  (setf hint-time due
-                        remaining-seconds (- deadline now)))))))
-        (when (and remaining-seconds
-                   (plusp remaining-seconds)
-                   (application-input-controller--show-interrupt-hint
-                    controller remaining-seconds))
-          (with-lock-held ((application-input-controller-lock controller))
-            ;; A newer press owns any hint time this pass did not observe.
-            (when (eql (application-input-controller-interrupt-hint-time
-                        controller)
-                       hint-time)
-              (setf (application-input-controller-interrupt-hint-time controller)
-                    nil)))))
-    (error ()
-      nil))
-  nil)
 
 (-> application-input-controller--queues
     (application-input-controller)
@@ -496,17 +314,13 @@ second reports whether shutdown was prepared."
   (let ((active-p            nil)
         (prepared-p          nil)
         (pending-publication nil)
-        (cancelled           nil)
-        (message
-          (application-input-controller--forced-exit-message controller reason)))
+        (cancelled           nil))
     (with-lock-held ((application-input-controller-lock controller))
       (setf active-p (application-input-controller-active-p controller))
       (unless (application-input-controller-stopping-p controller)
         (setf prepared-p t)
         (unless (application-input-controller-exit-reason controller)
-          (setf (application-input-controller-exit-reason controller) reason
-                (application-input-controller-forced-exit-message controller)
-                message))
+          (setf (application-input-controller-exit-reason controller) reason))
         (when active-p
           (setf (application-input-controller-turn-cancellation-p controller) t
                 (application-input-controller-turn-cancellation-delivery-pending-p
@@ -1026,33 +840,6 @@ never waits for work that holds it."
   (application-input-controller--publish-counts controller)
   nil)
 
-(-> application-input-controller--restore-follow-up-edit
-    (application-input-controller)
-    boolean)
-(defun application-input-controller--restore-follow-up-edit (controller)
-  "Restore CONTROLLER's recalled follow-up to its virtual FIFO position."
-  (let ((restored-p nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (let ((index
-              (application-input-controller-follow-up-edit-index controller))
-            (work
-              (application-input-controller-follow-up-edit-work controller)))
-        (when (and index work)
-          (deque-insert
-           (application-input-controller-work-items controller)
-           (min index
-                (deque-count
-                 (application-input-controller-work-items controller)))
-           work)
-          (setf (application-input-controller-follow-up-edit-index controller) nil
-                (application-input-controller-follow-up-edit-work controller) nil
-                restored-p t)
-          (sb-thread:condition-broadcast
-           (application-input-controller-condition-variable controller)))))
-    (when restored-p
-      (application-input-controller--publish-counts controller))
-    restored-p))
-
 (-> application-input-controller--interrupt-main
     (application-input-controller condition)
     null)
@@ -1558,23 +1345,15 @@ work receive steering as soon as possible instead of as follow-ups."
 
 (-> application-input-controller--request-active-turn-cancellation
     (application-input-controller
-     &key (:force-exit-window-p boolean)
-          (:pause-queued-work-p boolean))
+     &key (:pause-queued-work-p boolean))
     boolean)
 (defun application-input-controller--request-active-turn-cancellation
-    (controller &key force-exit-window-p pause-queued-work-p)
+    (controller &key pause-queued-work-p)
   "Atomically request cancellation only for CONTROLLER's current active turn.
 
-When FORCE-EXIT-WINDOW-P is true, arm the repeated-Ctrl-C option before
-cancellation can finish and schedule the hint that explains it. When
-PAUSE-QUEUED-WORK-P is true, hold follow-ups after cancellation until explicit
-new input resumes them. Unconsumed steering is promoted in FIFO order when
-the active work finishes."
-  (let ((accepted-p nil)
-        (message
-          (and force-exit-window-p
-               (application-input-controller--forced-exit-message
-                controller ':turn-cancellation))))
+PAUSE-QUEUED-WORK-P holds follow-ups after cancellation until explicit new input
+resumes them. Unconsumed steering is promoted in FIFO order after the turn."
+  (let ((accepted-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (when (and (application-input-controller-active-p controller)
                  (not (application-input-controller-stopping-p controller))
@@ -1588,18 +1367,7 @@ the active work finishes."
               t
               (application-input-controller-queued-work-paused-p controller)
               pause-queued-work-p
-              accepted-p t)
-        (when force-exit-window-p
-          (let ((now
-                  (funcall
-                   (application-input-controller-interrupt-clock-function
-                    controller))))
-            (setf (application-input-controller-interrupt-deadline controller)
-                  (+ now *application-interrupt-exit-window-seconds*)
-                  (application-input-controller-interrupt-hint-time controller)
-                  (+ now *application-interrupt-hint-delay-seconds*)
-                  (application-input-controller-forced-exit-message controller)
-                  message)))))
+              accepted-p t)))
     (when accepted-p
       (let ((application
               (application-input-controller-application controller)))
@@ -1618,43 +1386,6 @@ the active work finishes."
         (error ()
           nil)))
     accepted-p))
-
-(-> application-input-controller--active-turn-interrupt-action
-    (application-input-controller)
-    (option keyword))
-(defun application-input-controller--active-turn-interrupt-action (controller)
-  "Return and apply CONTROLLER's active-cancellation Ctrl-C action, if any.
-
-The forced-exit notice is prepared outside the lock because a lapsed press
-re-arms a window that a wedged turn may never let ordinary shutdown reach."
-  (let ((message
-          (application-input-controller--forced-exit-message
-           controller ':turn-cancellation)))
-    (with-lock-held ((application-input-controller-lock controller))
-      (when (application-input-controller-turn-cancellation-p controller)
-        (let* ((now
-                 (funcall
-                  (application-input-controller-interrupt-clock-function
-                   controller)))
-               (deadline
-                 (application-input-controller-interrupt-deadline controller)))
-          (if (and deadline (<= now deadline))
-              (progn
-                (setf (application-input-controller-interrupt-deadline controller)
-                      nil
-                      (application-input-controller-interrupt-hint-time controller)
-                      nil)
-                ':force)
-              (progn
-                ;; This press already outlived one window, so the wedged turn
-                ;; has earned its hint at the reader's next opportunity.
-                (setf (application-input-controller-interrupt-deadline controller)
-                      (+ now *application-interrupt-exit-window-seconds*)
-                      (application-input-controller-interrupt-hint-time controller)
-                      now
-                      (application-input-controller-forced-exit-message controller)
-                      message)
-                ':hint)))))))
 
 (-> application-input-controller--present-scheduled-lisp
     (application-input-controller string)
@@ -2356,25 +2087,10 @@ may execute immediately; other Lisp waits for the idle boundary."
     (:detach
      (application-input-controller--handle-submission controller "(exit)" :steer-p nil)
      t)
-    (:interrupt
-     (case (application-input-controller--active-turn-interrupt-action controller)
-       (:force
-        (application-input-controller--force-interrupt-exit controller)
-        t)
-       (:hint
-        t)
-       (t
-        (not (null (application-input-controller--request-active-turn-cancellation
-                    controller
-                    :force-exit-window-p t
-                    :pause-queued-work-p t))))))
     (:escape
      (not (null (or (application-input-controller--turn-cancellation-active-p controller)
                     (application-input-controller--request-active-turn-cancellation
                      controller)))))
-    (:restore-follow-up
-     (application-input-controller--restore-follow-up-edit controller)
-     t)
     (:cleared
      (application-input-controller--clear-follow-up-edit controller)
      t)
@@ -2386,9 +2102,6 @@ may execute immediately; other Lisp waits for the idle boundary."
      t)
     (:end-of-input
      (application-input-controller--request-exit controller ':end-of-input)
-     t)
-    (:exit
-     (application-input-controller--request-exit controller ':interrupt)
      t)))
 
 (-> application-input-controller--process-event
@@ -2403,14 +2116,11 @@ may execute immediately; other Lisp waits for the idle boundary."
     (application-input-controller)
     boolean)
 (defun application-input-controller--input-ready-p (controller)
-  "Apply pending resizes and report whether CONTROLLER's terminal has input.
-
-A stopping controller no longer follows resizes; its reader only watches for a
-forced exit."
-  (let ((ui (application-ui
-             (application-input-controller-application controller))))
-    (unless (application-input-controller-exit-requested-p controller)
-      (terminal-ui-refresh-size ui #'application-pending-terminal-size))
+  "Apply pending resizes and report whether CONTROLLER's terminal has input."
+  (let ((ui (application-ui (application-input-controller-application controller))))
+    (when (application-input-controller-exit-requested-p controller)
+      (return-from application-input-controller--input-ready-p nil))
+    (terminal-ui-refresh-size ui #'application-pending-terminal-size)
     (terminal-ui-refresh-status ui)
     (when (typep ui 'fullscreen-terminal-ui)
       (terminal-ui-fullscreen--autoscroll-tick ui))
@@ -2420,25 +2130,14 @@ forced exit."
     (application-input-controller)
     (option keyword))
 (defun application-input-controller--reader-step (controller)
-  "Read and handle one terminal event, returning :STOP when the reader should end.
-
-While the controller is stopping, the reader only forces exit on a further
-interrupt and ends when its input does."
-  (let ((ui (application-ui
-             (application-input-controller-application controller))))
-    (if (application-input-controller-exit-requested-p controller)
-        (case (terminal-read-event (terminal-ui-terminal ui))
-          (:interrupt
-           (application-input-controller--force-interrupt-exit controller)
-           nil)
-          ((:end-of-input :stream-end)
-           ':stop)
-          (otherwise
-           nil))
-        (progn
-          (application-input-controller--process-event
-           controller (application-read-terminal-event ui))
-          nil))))
+  "Read and handle one terminal event, ending the reader during shutdown."
+  (if (application-input-controller-exit-requested-p controller)
+      ':stop
+      (progn
+        (application-input-controller--process-event
+         controller (application-read-terminal-event
+                     (application-ui (application-input-controller-application controller))))
+        nil)))
 
 (-> application-input-controller-reader-live-p (application-input-controller) boolean)
 (defun application-input-controller-reader-live-p (controller)
@@ -3322,8 +3021,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
         (when (application-input-controller-turn-cancellation-p controller)
           (setf (application-input-controller-prompt-marker-status controller) 130))
         (setf clear-notice-p
-              (or (application-input-controller-turn-cancellation-p controller)
-                  (application-input-controller-interrupt-deadline controller))
+              (application-input-controller-turn-cancellation-p controller)
               marker-work-p
               (application-input-controller-prompt-marker-work-p controller)
               continuation-p
@@ -3350,9 +3048,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
               (application-input-controller-completed-turn-p controller) nil
               (application-input-controller-prompt-marker-reopen-p controller) nil
               (application-input-controller-turn-cancellation-p controller) nil
-              (application-input-controller-turn-cancellation-delivery-pending-p controller) nil
-              (application-input-controller-interrupt-deadline controller) nil
-              (application-input-controller-interrupt-hint-time controller) nil))
+              (application-input-controller-turn-cancellation-delivery-pending-p controller) nil))
       (when (and
              (application-input-controller-queued-work-paused-p controller)
              (not
@@ -3417,9 +3113,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
            (application-input-controller-turn-cancellation-p controller) nil
            (application-input-controller-turn-cancellation-delivery-pending-p
             controller)
-           nil
-           (application-input-controller-interrupt-deadline controller) nil
-           (application-input-controller-interrupt-hint-time controller) nil)
+          nil)
      (sb-thread:condition-broadcast
       (application-input-controller-condition-variable controller)))
     (dolist (work cancelled)
@@ -3432,20 +3126,6 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
         (setf (terminal-ui-exclusive-input-function (application-ui application))
               #'funcall))))
   nil)
-
-(-> application-input-controller-call-with-shutdown-escape
-    (application-input-controller function)
-    t)
-(defun application-input-controller-call-with-shutdown-escape
-    (controller function)
-  "Call potentially blocking shutdown FUNCTION while Ctrl-C remains effective.
-
-Normal editor input is already disabled while FUNCTION runs. The controller's
-reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
-  (application-input-controller--prepare-shutdown controller ':shutdown)
-  (unwind-protect
-       (funcall function)
-    (application-input-controller-stop controller)))
 
 (-> application--record-turn-aborted
     (application serious-condition

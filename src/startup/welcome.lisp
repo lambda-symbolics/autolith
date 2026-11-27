@@ -35,7 +35,7 @@
            (list :switch :new-p t :initial-input (list :action action :payload payload))
            (welcome-input-port-finished-p port) t)
      t)
-    ((:end-of-input :exit :detach)
+    ((:end-of-input :detach)
      (setf (welcome-input-port-finished-p port) t)
      t)))
 

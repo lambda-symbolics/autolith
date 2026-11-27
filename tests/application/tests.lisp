@@ -988,9 +988,9 @@
                        "A folded result and resize preserve its attached verdict."))
         (test-assert (null *tool-authorization-context*) "Authorization restores the caller's context.")))))
 
-(-> test-interrupt-open-instruction () null)
-(defun test-interrupt-open-instruction ()
-  "Test direct quit, interrupt and EOF present one reopen command for durable conversations."
+(-> test-end-of-input-open-instruction () null)
+(defun test-end-of-input-open-instruction ()
+  "Test EOF presents one reopen command for durable conversations."
   (with-test-configuration (configuration)
     (labels ((exit-output (conversation events &key reason)
                "Run CONVERSATION through EVENTS and verify its actual exit REASON."
@@ -1004,14 +1004,6 @@
                                                     :agent         nil
                                                     :ui            (terminal-ui-create :terminal terminal))))
                  (setf (queued-recording-terminal-events terminal) events)
-                 (when (and (equal events '(:interrupt)) (conversation-persisted-p conversation))
-                   (test-assert
-                    (search (application--open-command application)
-                            (application-input-controller--forced-exit-message
-                             (make-instance 'application-input-controller :application application
-                                                                          :main-thread (current-thread))
-                             ':turn-cancellation))
-                    "A session on its own terminal includes reopen advice in its forced-exit notice"))
                  ;; Boot linger can consume queued EOF before the controller reads it.
                  (let ((actual-reason
                          (handler-case
@@ -1029,8 +1021,7 @@
                (loop for start = 0 then (+ position (length substring))
                      for position = (search substring text :start2 start)
                      while position count position)))
-      (dolist (case '((:interrupt (:interrupt))
-                      (:end-of-input (:end-of-input))))
+      (dolist (case '((:end-of-input (:end-of-input))))
         (destructuring-bind (reason events) case
           (let* ((durable (conversation-create configuration
                                                :identifier (format nil "resume-~(~A~)" reason)))
@@ -1046,144 +1037,6 @@
                            (format nil "Direct ~S gives no reopen command for an empty channel" reason))
               (test-assert (not (conversation-storage-occupied-p (conversation-pathname empty)))
                            (format nil "Direct ~S does not persist an empty conversation" reason))))))))
-  nil)
-
-(-> test-repeated-interrupt-forces-exit () null)
-(defun test-repeated-interrupt-forces-exit ()
-  "Test a second active-cancellation Ctrl-C forces exit before cleanup finishes."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation  (conversation-create configuration
-                                             :identifier "force-resume")))
-    (unwind-protect
-         (let* ((terminal                        (make-instance 'recording-terminal :columns 80))
-                (ui                              (terminal-ui-create :terminal terminal))
-                (application                     (make-instance 'application
-                                                                :configuration configuration
-                                                                :conversation  conversation
-                                                                :ui            ui))
-                (forced-status                   nil)
-                (terminal-restored-before-exit-p nil)
-                (controller
-                  (make-instance
-                   'application-input-controller
-                   :application              application
-                   :main-thread              (current-thread)
-                   :interrupt-clock-function (lambda () 10)
-                   :forced-exit-function
-                   (lambda (status)
-                     (setf forced-status status
-                           terminal-restored-before-exit-p
-                           (and (not (terminal-started-p terminal))
-                                (not (terminal-interactive-p terminal))))))))
-           (conversation-append-user-message conversation "keep this conversation")
-           (setf (application-input-controller application) controller
-                 (application-input-controller-active-p controller) t)
-           (with-terminal-ui (active-ui ui)
-             (application-input-controller--process-event controller ':interrupt)
-             (test-assert
-              (application-input-controller-turn-cancellation-p controller)
-              "the first Ctrl-C leaves cancellation cleanup pending")
-             (test-assert (null forced-status)
-                          "the first active Ctrl-C never forces exit")
-             (application-input-controller--process-event controller ':interrupt)
-             (test-assert (= forced-status *application-forced-interrupt-status*)
-                          "a timely second active Ctrl-C forces process status 130")
-             (test-assert terminal-restored-before-exit-p
-                          "forced interruption restores the terminal before exit")
-             (test-assert
-              (null (application-input-controller-exit-reason controller))
-              "active cancellation does not become application shutdown")
-             (let ((output (recording-terminal-output terminal)))
-                (test-assert (search "Ctrl-C" output)
-                             "forced interruption reports a Ctrl-C notice")
-               (test-assert
-                (search "autolith open force-resume" output)
-                "forced cancellation carries the exact resume command"))))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-forced-exit-without-durable-conversation () null)
-(defun test-forced-exit-without-durable-conversation ()
-  "Test forced exit offers no resume command for an unsaved conversation."
-  (let* ((terminal      (make-instance 'recording-terminal :columns 80))
-         (ui            (terminal-ui-create :terminal terminal))
-         (application   (make-instance 'application :ui ui))
-         (forced-status nil)
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () 10)
-            :forced-exit-function
-            (lambda (status)
-              (setf forced-status status)))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (with-terminal-ui (active-ui ui)
-      (application-input-controller--process-event controller ':interrupt)
-      (application-input-controller--process-event controller ':interrupt)
-      (test-assert (= forced-status *application-forced-interrupt-status*)
-                   "a timely second active Ctrl-C still forces exit")
-      (let ((output (recording-terminal-output terminal)))
-        (test-assert (search "Ctrl-C" output)
-                     "forced interruption still reports a Ctrl-C notice")
-        (test-assert (not (search "autolith open" output))
-                     "an unsaved conversation produces no resume command"))))
-  nil)
-
-(-> test-graceful-shutdown-retains-interrupt-escape () null)
-(defun test-graceful-shutdown-retains-interrupt-escape ()
-  "Test Ctrl-C forces already-pending shutdown while Escape remains harmless."
-  (dolist (reason '(:end-of-input :shutdown))
-    (let* ((terminal      (make-instance 'queued-recording-terminal :columns 80))
-           (ui            (terminal-ui-create :terminal terminal))
-           (application   (make-instance 'application :ui ui))
-           (status-lock   (make-lock "Autolith graceful shutdown test"))
-           (forced-status nil)
-           (controller    nil))
-      (unwind-protect
-           (with-terminal-ui (active-ui ui)
-             (let ((*application-forced-exit-function*
-                     (lambda (status)
-                       (with-lock-held (status-lock)
-                         (setf forced-status status)))))
-               (setf controller
-                     (application-input-controller-create application)))
-             (application-input-controller--request-exit controller reason)
-             (test-assert
-              (application-input-controller-reader-live-p controller)
-              "graceful shutdown preserves its interrupt-only reader")
-             (test-assert
-              (null (application-input-controller-interrupt-deadline controller))
-              "ordinary shutdown never owns the active-cancellation timer")
-             (test-assert (null (terminal-ui-notice ui))
-                          "ordinary shutdown never shows the force-window hint")
-             (queued-recording-terminal-enqueue terminal ':escape)
-             (sleep 0.05)
-             (test-assert
-              (null (with-lock-held (status-lock) forced-status))
-              "Escape remains harmless during graceful shutdown")
-             (queued-recording-terminal-enqueue terminal ':interrupt)
-             (test-assert
-              (task-tests--wait-until
-               (lambda ()
-                 (with-lock-held (status-lock)
-                   (= (or forced-status -1)
-                      *application-forced-interrupt-status*)))
-               2)
-              "Ctrl-C immediately forces already-pending shutdown")
-             (application-input-controller-stop controller)
-             (setf controller nil)
-             (test-assert
-              (search
-               "Ctrl-C pressed during shutdown; forcing Autolith to exit."
-               (recording-terminal-output terminal))
-              "forced shutdown explains that cleanup was already pending"))
-        (when controller
-          (ignore-errors (application-input-controller-stop controller)))
-        (ignore-errors (terminal-ui-stop ui)))))
   nil)
 
 (-> test-detach-control-event-dispatch () null)
@@ -1215,20 +1068,18 @@
 
 (-> test-active-turn-interrupt-events () null)
 (defun test-active-turn-interrupt-events ()
-  "Test cancellation preserves FIFO steering, with Ctrl-C pausing follow-ups."
-  (dolist (event '(:interrupt :escape))
-    (let* ((now         10)
-           (terminal    (make-instance 'recording-terminal :columns 80))
-           (ui          (terminal-ui-create
-                         :terminal       terminal
-                         :clock-function (lambda () now)))
-           (application (make-instance 'application :ui ui))
-           (controller
-             (make-instance
-              'application-input-controller
-              :application              application
-              :main-thread              (current-thread)
-              :interrupt-clock-function (lambda () now))))
+  "Test Escape preserves FIFO steering and finishes cancellation."
+  (let* ((now         10)
+         (terminal    (make-instance 'recording-terminal :columns 80))
+         (ui          (terminal-ui-create
+                       :terminal       terminal
+                       :clock-function (lambda () now)))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :main-thread (current-thread))))
       (setf (application-input-controller application) controller
             (application-input-controller-active-p controller) t)
       (deque-push-back
@@ -1247,103 +1098,54 @@
          (application-input-controller-steering-items controller)
          steering))
       (terminal-ui-set-input ui "draft survives")
-      (application-input-controller--process-event controller event)
-      (test-assert (not (application-input-controller-stopping-p controller))
-                   "an active-turn stop keeps the application running")
-      (test-assert (null (application-input-controller-exit-reason controller))
-                   "an active-turn stop does not set an application exit reason")
-      (test-assert
-       (string= (line-editor-text (terminal-ui-editor ui)) "draft survives")
-       "active-turn stop keys preserve the current draft")
-      (test-assert
-       (equal (application-input-controller--state controller :work-items)
-              (list (list ':message "queued")))
-       "cancellation defers steering promotion until active work finishes")
-      (test-assert
-       (equal (application-input-controller--state controller :steering-items)
-              (list "older steering" "newest steering"))
-       "cancellation preserves pending steering order")
-      (test-assert
-       (application-input-controller-turn-cancellation-p controller)
-       "the cancellation lifecycle remains active until work cleanup finishes")
-      (test-assert
-       (eq (application-input-controller-queued-work-paused-p controller)
-           (eq event ':interrupt))
-       "only active Ctrl-C pauses queued work after cancellation")
-      (test-assert
-       (eq (not (null
-                 (application-input-controller-interrupt-deadline controller)))
-           (eq event ':interrupt))
-       "only active Ctrl-C arms the force-exit window")
-      (test-assert
-       (eq (not (null
-                 (application-input-controller-interrupt-hint-time controller)))
-           (eq event ':interrupt))
-       "only active Ctrl-C schedules the transient force-exit notice")
-      (test-assert
-       (string= (terminal-ui-notice ui) "· interrupting request")
-       "an accepted stop immediately announces request interruption")
-      (application-input-controller--refresh-interrupt-hint controller)
-      (test-assert
-       (string= (terminal-ui-notice ui) "· interrupting request")
-       "a cancellation inside the hint delay keeps its interruption notice")
-      (setf now 21/2)
-      (application-input-controller--refresh-interrupt-hint controller)
-      (test-assert
-       (string=
-        (terminal-ui-notice ui)
-        (if (eq event ':interrupt)
-            "· press Ctrl-C again within 2.5 seconds to force exit"
-            "· interrupting request"))
-       "a persistent Ctrl-C replaces the interruption notice with its force hint")
-      (test-assert
-       (or (eq event ':escape)
-           (= (terminal-ui-notice-deadline ui)
-              (application-input-controller-interrupt-deadline controller)))
-       "the visible Ctrl-C force hint expires exactly with the force-exit window")
-      (test-assert
-       (application-input-controller--consume-turn-cancellation-delivery-p
-        controller)
-       "the first active stop records one pending cancellation delivery")
-      (test-assert
-       (not
-        (application-input-controller--request-active-turn-cancellation
-         controller))
-       "turn-only cancellation has a single request winner")
-      (test-assert
-       (not
-        (application-input-controller--consume-turn-cancellation-delivery-p
-         controller))
-       "a repeated request does not re-arm cancellation delivery")
-      (application-input-controller--finish-work controller)
-      (test-assert
-       (and (not (application-input-controller-turn-cancellation-p controller))
-            (null
-             (application-input-controller-interrupt-deadline controller)))
-       "work cleanup ends the cancellation lifecycle and force window")
-      (test-assert
-       (equal (application-input-controller--state controller :work-items)
-              (list (list ':message "first in flight")
-                    (list ':message "second in flight")
-                    (list ':message "older steering")
-                    (list ':message "newest steering")
-                    (list ':message "queued")))
-       "cancellation promotes in-flight and pending steering in FIFO order")
-      (test-assert
-       (eq (not (null (terminal-ui-notice ui)))
-           (eq event ':interrupt))
-       "only Ctrl-C explains that queued work remains held")
-      (when (eq event ':interrupt)
-        (test-assert
-         (application-input-controller-queued-work-paused-p controller)
-         "Ctrl-C leaves queued work paused after cancellation cleanup")
-        (application-input-controller--enqueue
-         controller ':message "explicitly resume")
-        (test-assert
-         (and
-          (not (application-input-controller-queued-work-paused-p controller))
-          (null (terminal-ui-notice ui)))
-         "new explicit input resumes held queued work and clears its notice"))))
+    (application-input-controller--process-event controller ':escape)
+    (test-assert (not (application-input-controller-stopping-p controller))
+                 "an active-turn stop keeps the application running")
+    (test-assert (null (application-input-controller-exit-reason controller))
+                 "an active-turn stop does not set an application exit reason")
+    (test-assert
+     (string= (line-editor-text (terminal-ui-editor ui)) "draft survives")
+     "active-turn stop keys preserve the current draft")
+    (test-assert
+     (equal (application-input-controller--state controller :work-items)
+            (list (list ':message "queued")))
+     "cancellation defers steering promotion until active work finishes")
+    (test-assert
+     (equal (application-input-controller--state controller :steering-items)
+            (list "older steering" "newest steering"))
+     "cancellation preserves pending steering order")
+    (test-assert
+     (application-input-controller-turn-cancellation-p controller)
+     "the cancellation lifecycle remains active until work cleanup finishes")
+    (test-assert
+     (string= (terminal-ui-notice ui) "· interrupting request")
+     "an accepted stop immediately announces request interruption")
+    (test-assert
+     (application-input-controller--consume-turn-cancellation-delivery-p
+      controller)
+     "the first active stop records one pending cancellation delivery")
+    (test-assert
+     (not
+      (application-input-controller--request-active-turn-cancellation
+       controller))
+     "turn-only cancellation has a single request winner")
+    (test-assert
+     (not
+      (application-input-controller--consume-turn-cancellation-delivery-p
+       controller))
+     "a repeated request does not re-arm cancellation delivery")
+    (application-input-controller--finish-work controller)
+    (test-assert
+     (not (application-input-controller-turn-cancellation-p controller))
+     "work cleanup ends the cancellation lifecycle")
+    (test-assert
+     (equal (application-input-controller--state controller :work-items)
+            (list (list ':message "first in flight")
+                  (list ':message "second in flight")
+                  (list ':message "older steering")
+                  (list ':message "newest steering")
+                  (list ':message "queued")))
+     "cancellation promotes in-flight and pending steering in FIFO order"))
   nil)
 
 (-> test-active-turn-cancellation-side-effects () null)
@@ -1426,153 +1228,6 @@
       (terminal-ui-stop ui)))
   nil)
 
-(-> test-idle-interrupt-exits-without-force-hint () null)
-(defun test-idle-interrupt-exits-without-force-hint ()
-  "Test idle Ctrl-C clears a draft or exits directly without force state."
-  (let* ((terminal    (make-instance 'recording-terminal :columns 80))
-         (ui          (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () 10))))
-    (setf (application-input-controller application) controller)
-    (terminal-ui-set-input ui "clear me")
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert (not (application-input-controller-stopping-p controller))
-                 "idle Ctrl-C only clears a nonempty draft")
-    (test-assert (string= (line-editor-text (terminal-ui-editor ui)) "")
-                 "idle Ctrl-C clears the current draft")
-    (test-assert
-     (and (null (application-input-controller-interrupt-deadline controller))
-          (null (terminal-ui-notice ui)))
-     "clearing an idle draft never arms or displays forced exit")
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert (application-input-controller-stopping-p controller)
-                 "idle Ctrl-C at an empty prompt requests graceful exit")
-    (test-assert (eq (application-input-controller-exit-reason controller)
-                     ':interrupt)
-                 "empty-prompt Ctrl-C preserves the interrupt exit reason")
-    (test-assert
-     (and (null (application-input-controller-interrupt-deadline controller))
-          (null (terminal-ui-notice ui)))
-     "empty-prompt Ctrl-C exits without a force window or hint"))
-  nil)
-
-(-> test-recalled-follow-up-interrupt () null)
-(defun test-recalled-follow-up-interrupt ()
-  "Test Ctrl-C restores recalled work before cancelling or exiting."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (labels ((call-with-controller (identifier function)
-               (let* ((conversation
-                        (conversation-create configuration :identifier identifier))
-                      (terminal
-                        (make-instance 'recording-terminal :columns 80))
-                      (ui         (terminal-ui-create :terminal terminal))
-                      (application
-                        (make-instance 'application
-                                       :configuration configuration
-                                       :conversation  conversation
-                                       :ui            ui))
-                      (controller nil))
-                 (with-terminal-ui (active-ui ui)
-                   (setf controller
-                         (application-input-controller-create
-                          application
-                          :load-pending-p nil
-                          :start-reader-p nil))
-                   (unwind-protect
-                        (funcall function controller conversation ui)
-                     (application-input-controller-stop controller))))))
-      (unwind-protect
-           (progn
-             (call-with-controller
-              "recalled-interrupt-active"
-              (lambda (controller conversation ui)
-                (application-input-controller--enqueue
-                 controller ':message "active turn")
-                (application-input-controller--next-work controller)
-                (deque-append
-                 (application-input-controller-work-items controller)
-                 '((:message "first queued") (:message "last queued")))
-                (setf
-                 (application-input-controller-follow-up-edit-index controller) 1
-                 (application-input-controller-follow-up-edit-work controller)
-                 '(:message "recalled queued")
-                 (application-input-controller-steering-promotion-prefix-count
-                  controller)
-                 2)
-                (terminal-ui-set-input ui "edited recalled queued")
-                (application-input-controller--process-event
-                 controller ':interrupt)
-                (test-assert
-                 (and
-                  (application-input-controller-turn-cancellation-p controller)
-                  (application-input-controller-queued-work-paused-p controller)
-                  (null
-                   (application-input-controller-follow-up-edit-index controller))
-                  (null
-                   (application-input-controller-follow-up-edit-work controller))
-                  (= (application-input-controller-steering-promotion-prefix-count
-                      controller)
-                     2)
-                  (string= (line-editor-text (terminal-ui-editor ui)) "")
-                  (equal
-                   (application-input-controller--state controller :work-items)
-                   '((:message "first queued")
-                     (:message "recalled queued")
-                     (:message "last queued"))))
-                 "active Ctrl-C restores recalled FIFO work and cancels the turn")
-                (multiple-value-bind (form complete-p)
-                    (snapshot-read
-                     (configuration-pending-inputs-path
-                      configuration (conversation-pathname conversation)))
-                  (test-assert
-                   (and complete-p
-                        (equal (getf (rest form) :work)
-                               '((:message "first queued")
-                                 (:message "recalled queued")
-                                 (:message "last queued")))
-                        (= (getf (rest form)
-                                 :steering-promotion-prefix-count)
-                           2))
-                   "active Ctrl-C publishes restored work durably in FIFO order"))))
-             (call-with-controller
-              "recalled-interrupt-idle"
-              (lambda (controller conversation ui)
-                (deque-append
-                 (application-input-controller-work-items controller)
-                 '((:message "first queued") (:message "last queued")))
-                (setf
-                 (application-input-controller-follow-up-edit-index controller) 1
-                 (application-input-controller-follow-up-edit-work controller)
-                 '(:message "recalled queued"))
-                (terminal-ui-set-input ui "edited recalled queued")
-                (application-input-controller--process-event
-                 controller ':interrupt)
-                (test-assert
-                 (and (application-input-controller-stopping-p controller)
-                      (eq (application-input-controller-exit-reason controller)
-                          ':interrupt)
-                      (string= (line-editor-text (terminal-ui-editor ui)) ""))
-                 "idle Ctrl-C restores the edit and follows normal exit handling")
-                (multiple-value-bind (form complete-p)
-                    (snapshot-read
-                     (configuration-pending-inputs-path
-                      configuration (conversation-pathname conversation)))
-                  (test-assert
-                   (and complete-p
-                        (equal (getf (rest form) :work)
-                               '((:message "first queued")
-                                 (:message "recalled queued")
-                                 (:message "last queued"))))
-                   "idle Ctrl-C preserves restored FIFO work in pending storage")))))
-        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
-  nil)
-
 (-> application-tests--serve-host (application) null)
 (defun application-tests--serve-host (application)
   "Serve a prepared terminal application under its real world owner on the test thread."
@@ -1591,11 +1246,11 @@
 
 (-> test-active-turn-stop-keys () null)
 (defun test-active-turn-stop-keys ()
-  "Test Ctrl-C and Escape cancel one provider turn and return to the prompt."
+  "Test Escape cancels one provider turn and returns to the prompt."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
-         (dolist (event '(:interrupt :escape))
+         (let ((event ':escape))
            (let* ((conversation
                     (conversation-create
                      configuration
@@ -1627,7 +1282,6 @@
                                    :worker        nil
                                    :agent         agent
                                    :ui            ui))
-                  (forced-status                    nil)
                   (provider-entered-observed-p      nil)
                   (cancellation-finished-observed-p nil)
                   (draft-preserved-observed-p       nil)
@@ -1679,10 +1333,7 @@
                       (queued-recording-terminal-enqueue terminal ':stream-end))
                     :name "Autolith active-turn stop-key test"))
              (unwind-protect
-                  (let ((*application-forced-exit-function*
-                          (lambda (status)
-                            (setf forced-status status))))
-                    (application-tests--serve-host application))
+                 (application-tests--serve-host application)
                (gated-provider-release provider)
                (when producer
                  (join-thread producer)
@@ -1695,8 +1346,6 @@
               (not (search "not cancelled"
                            (recording-terminal-output terminal)))
               "the stop key cancels the active provider turn")
-             (test-assert (null forced-status)
-                          "one active-turn stop key never forces exit")
              (test-assert draft-preserved-observed-p
                          "the active reader preserves draft text while cancelling")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
@@ -1788,7 +1437,6 @@
          (command-entered-p                nil)
          (command-released-p               nil)
          (registrations                    (application-command--registry-snapshot))
-         (forced-status                    nil)
          (cancellation-finished-observed-p nil)
          (draft-preserved-observed-p       nil)
          (producer                         nil))
@@ -1852,19 +1500,13 @@
                              (with-lock-held (command-lock)
                                (setf command-released-p t)
                                (condition-notify command-gate)))
-                           (queued-recording-terminal-enqueue terminal ':interrupt)
-                           (queued-recording-terminal-enqueue terminal ':interrupt)))
+                           (queued-recording-terminal-enqueue terminal ':stream-end)))
                        :name "Autolith active command stop-key test"))
-                (let ((*application-forced-exit-function*
-                        (lambda (status)
-                          (setf forced-status status))))
-                  (application-tests--serve-host application))
+                (application-tests--serve-host application)
                 (test-assert cancellation-finished-observed-p
                              "Escape cancels a shared active command and returns to input")
                 (test-assert draft-preserved-observed-p
-                             "command cancellation preserves the draft")
-                (test-assert (null forced-status)
-                             "command cancellation never enters forced exit"))
+                             "command cancellation preserves the draft"))
            (with-lock-held (command-lock)
              (setf command-released-p t)
              (condition-notify command-gate))
@@ -1925,7 +1567,6 @@
                                  :worker        nil
                                  :agent         agent
                                  :ui            ui))
-                (forced-status                    nil)
                 (tool-entered-observed-p          nil)
                 (cancellation-finished-observed-p nil)
                 (next-turn-observed-p             nil)
@@ -1992,10 +1633,7 @@
                       (queued-recording-terminal-enqueue terminal ':stream-end)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
-                (let ((*application-forced-exit-function*
-                        (lambda (status)
-                          (setf forced-status status))))
-                  (application-tests--serve-host application))
+               (application-tests--serve-host application)
              (application-test-gated-tool-release tool)
              (when producer
                (join-thread producer)
@@ -2012,8 +1650,6 @@
                         "the repaired next turn finishes before test shutdown")
            (test-assert (not (application-test-gated-tool-completed-p tool))
                         "cancellation leaves the tool outcome unknown")
-           (test-assert (null forced-status)
-                        "one active-tool stop key never forces exit")
            (let* ((snapshots
                     (nreverse
                      (copy-list
@@ -2039,278 +1675,6 @@
                        *conversation-interrupted-tool-output*)
               "the repaired result explains that tool state is unknown")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-interrupt-force-window () null)
-(defun test-interrupt-force-window ()
-  "Test only a second Ctrl-C within 2.5 seconds requests forced exit."
-  (let* ((now         10)
-         (application (make-instance 'application))
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () now))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (test-assert
-     (null
-      (application-input-controller--active-turn-interrupt-action controller))
-     "an idle Ctrl-C owns no active-cancellation action")
-    (test-assert
-     (application-input-controller--request-active-turn-cancellation
-      controller :force-exit-window-p t)
-     "the first Ctrl-C only arms forced exit")
-    (setf now 25/2)
-    (test-assert
-     (eq (application-input-controller--active-turn-interrupt-action controller)
-         ':force)
-     "a second Ctrl-C at the 2.5-second boundary forces exit")
-    (setf now 15)
-    (test-assert
-     (eq (application-input-controller--active-turn-interrupt-action controller)
-         ':hint)
-     "a later first Ctrl-C starts a fresh window")
-    (setf now 17501/1000)
-    (test-assert
-     (eq (application-input-controller--active-turn-interrupt-action controller)
-         ':hint)
-     "a Ctrl-C after 2.5 seconds does not force exit")
-    (setf now 20)
-    (test-assert
-     (eq (application-input-controller--active-turn-interrupt-action controller)
-         ':force)
-     "the press after an expired window can arm a new timely second press"))
-  nil)
-
-(-> test-visible-interrupt-hint-does-not-extend-window () null)
-(defun test-visible-interrupt-hint-does-not-extend-window ()
-  "Test a delayed visible notice cannot extend an expired force deadline."
-  (let* ((now         0)
-         (terminal    (make-instance 'recording-terminal :columns 80))
-         (ui          (terminal-ui-create
-                       :terminal       terminal
-                       :clock-function (lambda () now)))
-         (application (make-instance 'application :ui ui))
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () now))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (test-assert
-     (application-input-controller--request-active-turn-cancellation
-      controller :force-exit-window-p t)
-     "the first Ctrl-C arms the force-exit deadline")
-    (terminal-ui-set-notice
-     ui
-     "press Ctrl-C again within 2.5 seconds to force exit"
-     :duration-seconds 5)
-    (setf now 3)
-    (test-assert
-     (eq (application-input-controller--active-turn-interrupt-action controller)
-         ':hint)
-     "a visible notice cannot make an expired Ctrl-C force exit")
-    (test-assert
-     (= (application-input-controller-interrupt-deadline controller) 11/2)
-     "the expired press starts a fresh 2.5-second window"))
-  nil)
-
-(-> test-dropped-interrupt-hint-reappears () null)
-(defun test-dropped-interrupt-hint-reappears ()
-  "Test contended presentation only delays the force-exit hint."
-  (let* ((now            0)
-         (terminal       (make-instance 'recording-terminal :columns 80))
-         (ui             (terminal-ui-create
-                          :terminal       terminal
-                          :clock-function (lambda () now)))
-         (application    (make-instance 'application :ui ui))
-         (gate           (make-lock "Autolith hint contention test"))
-         (gate-condition (make-condition-variable :name "Autolith hint test"))
-         (holding-p      nil)
-         (released-p     nil)
-         (holder         nil)
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () now))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (application-input-controller--request-active-turn-cancellation
-     controller :force-exit-window-p t)
-    (setf now 1/2)
-    (setf holder
-          (make-thread
-           (lambda ()
-             (with-terminal-ui-locked (ui)
-               (with-lock-held (gate)
-                 (setf holding-p t)
-                 (condition-notify gate-condition)
-                 (loop until released-p
-                       do (condition-wait gate-condition gate)))))
-           :name "Autolith hint contention holder"))
-    (unwind-protect
-         (progn
-           (with-lock-held (gate)
-             (loop until holding-p
-                   do (condition-wait gate-condition gate :timeout 2)))
-           (application-input-controller--refresh-interrupt-hint controller)
-           (test-assert
-            (string= (terminal-ui-notice ui) "· interrupting request")
-            "contended presentation retains the earlier interruption notice")
-           (test-assert
-            (application-input-controller-interrupt-hint-time controller)
-            "a dropped hint stays due for a later reader pass"))
-      (with-lock-held (gate)
-        (setf released-p t)
-        (condition-notify gate-condition))
-      (join-thread holder))
-    (application-input-controller--refresh-interrupt-hint controller)
-    (test-assert (terminal-ui-notice ui)
-                 "the delayed hint appears once presentation is free")
-    (test-assert
-     (null (application-input-controller-interrupt-hint-time controller))
-     "a shown hint stops asking for another reader pass"))
-  nil)
-
-(-> test-failed-interrupt-hint-stays-due () null)
-(defun test-failed-interrupt-hint-stays-due ()
-  "Test a failed hint pass leaves the reader running and the hint due."
-  (let* ((now         0)
-         (failing-p   nil)
-         (terminal    (make-instance 'recording-terminal :columns 80))
-         (ui          (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda ()
-                                        (if failing-p
-                                            (application-ui nil)
-                                            now)))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (application-input-controller--request-active-turn-cancellation
-     controller :force-exit-window-p t)
-    (setf now       1/2
-          failing-p t)
-    (test-assert
-     (null (handler-case
-               (application-input-controller--refresh-interrupt-hint controller)
-             (error (condition)
-               condition)))
-     "a generic function call that fails on the hint path signals nothing")
-    (test-assert
-     (string= (terminal-ui-notice ui) "· interrupting request")
-     "a failed hint pass retains the earlier interruption notice")
-    (test-assert
-     (application-input-controller-interrupt-hint-time controller)
-     "a failed hint stays due for a later reader pass")
-    (setf failing-p nil)
-    (application-input-controller--refresh-interrupt-hint controller)
-    (test-assert
-     (string= (terminal-ui-notice ui)
-              "· press Ctrl-C again within 2.5 seconds to force exit")
-     "the hint appears on the first pass that works")
-    (test-assert
-     (null (application-input-controller-interrupt-hint-time controller))
-     "a shown hint stops asking for another reader pass"))
-  nil)
-
-(-> test-active-cancellation-interrupt-window-expiry () null)
-(defun test-active-cancellation-interrupt-window-expiry ()
-  "Test an expired active-cancellation window requires a new timely press."
-  (let* ((now           0)
-         (terminal      (make-instance 'recording-terminal :columns 80))
-         (ui            (terminal-ui-create :terminal terminal))
-         (application   (make-instance 'application :ui ui))
-         (forced-status nil)
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () now)
-            :forced-exit-function
-            (lambda (status)
-              (setf forced-status status)))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert
-     (= (application-input-controller-interrupt-deadline controller) 5/2)
-     "the first active Ctrl-C starts the 2.5-second window")
-    (setf now 3)
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert (null forced-status)
-                 "an expired second active Ctrl-C does not force exit")
-    (test-assert
-     (= (application-input-controller-interrupt-deadline controller) 11/2)
-     "an expired second active Ctrl-C starts a fresh window")
-    (setf now 5)
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert (= forced-status *application-forced-interrupt-status*)
-                 "a new timely second active Ctrl-C forces exit"))
-  nil)
-
-(-> test-cancellation-completion-clears-interrupt-state () null)
-(defun test-cancellation-completion-clears-interrupt-state ()
-  "Test completed cancellation clears force state and restores idle Ctrl-C."
-  (let* ((now           0)
-         (terminal      (make-instance 'recording-terminal :columns 80))
-         (ui            (terminal-ui-create :terminal terminal))
-         (application   (make-instance 'application :ui ui))
-         (forced-status nil)
-         (controller
-           (make-instance
-            'application-input-controller
-            :application              application
-            :main-thread              (current-thread)
-            :interrupt-clock-function (lambda () now)
-            :forced-exit-function
-            (lambda (status)
-              (setf forced-status status)))))
-    (setf (application-input-controller application) controller
-          (application-input-controller-active-p controller) t)
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert
-     (and (application-input-controller-turn-cancellation-p controller)
-          (application-input-controller-interrupt-deadline controller)
-          (application-input-controller-interrupt-hint-time controller))
-     "active Ctrl-C establishes cancellation lifecycle and force state")
-    (setf now 1/2)
-    (application-input-controller--refresh-interrupt-hint controller)
-    (test-assert (terminal-ui-notice ui)
-                 "a cancellation past the hint delay explains forced exit")
-    (application-input-controller--finish-work controller)
-    (test-assert
-     (and (not (application-input-controller-active-p controller))
-          (not (application-input-controller-turn-cancellation-p controller))
-          (not
-           (application-input-controller-turn-cancellation-delivery-pending-p
-            controller))
-          (null (application-input-controller-interrupt-deadline controller))
-          (null (application-input-controller-interrupt-hint-time controller))
-          (null (terminal-ui-notice ui)))
-     "turn cleanup clears cancellation delivery, deadline, and notice")
-    (application-input-controller--process-event controller ':interrupt)
-    (test-assert (application-input-controller-stopping-p controller)
-                 "the next empty-prompt Ctrl-C follows idle exit semantics")
-    (test-assert (eq (application-input-controller-exit-reason controller)
-                     ':interrupt)
-                 "post-cancellation idle Ctrl-C records ordinary interrupt exit")
-    (test-assert (null forced-status)
-                 "post-cancellation idle Ctrl-C never inherits forced exit")
-    (test-assert
-     (null (application-input-controller-interrupt-deadline controller))
-     "post-cancellation idle Ctrl-C does not arm a force window"))
   nil)
 
 (-> test-native-tool-result-presentation () null)
@@ -5842,47 +5206,6 @@
                          (:message "late accepted steer")
                          (:message "older follow-up"))))
            "completion race keeps earlier steering ahead of a late prompt"))))
-    (call-with-controller
-     (lambda (controller)
-       (application-input-controller--enqueue
-        controller ':message "initial active message")
-       (application-input-controller--next-work controller)
-       (application-input-controller-submit-primary-prompt
-        controller "first promoted steer")
-       (application-input-controller-submit-primary-prompt
-        controller "second promoted steer")
-       (application-input-controller--finish-work controller)
-       (test-assert
-        (= (application-input-controller-steering-promotion-prefix-count controller)
-           2)
-        "completion records both promoted steering messages")
-       (application-input-controller--next-work controller)
-       (test-assert
-        (= (application-input-controller-steering-promotion-prefix-count controller)
-           1)
-        "dispatch consumes one promoted prefix slot")
-       (test-assert
-        (application-input-controller--recall-follow-up controller)
-        "remaining promoted steering may be recalled while work is active")
-       (application-input-controller--process-event controller ':interrupt)
-       (test-assert
-        (and
-         (= (application-input-controller-steering-promotion-prefix-count controller)
-            1)
-         (equal (application-input-controller--state controller :work-items)
-                '((:message "second promoted steer"))))
-        "interrupting a recalled promoted steer restores its prefix slot")
-       (application-input-controller--enqueue
-        controller ':message "older follow-up")
-       (application-input-controller--finish-work controller)
-       (application-input-controller-submit-primary-prompt
-        controller "late prompt after restore")
-       (test-assert
-        (equal (application-input-controller--state controller :work-items)
-               '((:message "second promoted steer")
-                 (:message "late prompt after restore")
-                 (:message "older follow-up")))
-        "restored prefix places a late prompt after promoted steering")))
     (call-with-controller
      (lambda (controller)
        (setf (application-input-controller-pending-persistence-enabled-p controller)

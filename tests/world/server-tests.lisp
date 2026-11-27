@@ -719,7 +719,7 @@ the version the client says it is, when it says one."
 
 (-> test-world-server-client-exit () null)
 (defun test-world-server-client-exit ()
-  "Leave a channel through EXIT or Ctrl-Z while its work completes."
+  "Leave a channel through (exit), Ctrl-C or Ctrl-Z while its work completes."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry       (world-client-entry configuration))
@@ -730,6 +730,7 @@ the version the client says it is, when it says one."
             (application (world-host-application host))
             (controller  (application-input-controller application)))
        (dolist (events (list '((:insert "(exit)") :submit)
+                             (list (terminal--decode-editing-event (make-string-input-stream (string (code-char 3)))))
                             (list (terminal--decode-editing-event (make-string-input-stream (string (code-char 26)))))
                             (list (terminal--decode-editing-event (make-string-input-stream (format nil "~C[122;5u" #\Escape))))))
          (let ((gate      (sb-thread:make-semaphore :count 0))

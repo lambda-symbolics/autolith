@@ -123,7 +123,7 @@
 (defun world-terminal--queued-input-p (command)
   "Return true when client COMMAND is input that waits its turn: every action but cancelling."
   (and (eq (first command) ':input)
-       (not (member (getf (rest command) :action) '(:interrupt :escape)))))
+       (not (eq (getf (rest command) :action) ':escape))))
 
 (-> world-terminal--client-geometry (application list) null)
 (defun world-terminal--client-geometry (application arguments)

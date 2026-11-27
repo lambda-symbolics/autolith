@@ -244,9 +244,9 @@ not undo effects that happened before the error. Escape during diagnosis
 returns to the picker; Escape at the picker aborts the failed operation.
 
 During a model turn, Escape cancels that turn and lets queued steering proceed.
-Ctrl-C cancels the turn and pauses queued work until your next submission. A
-second Ctrl-C within the force-exit window exits the application. Use =(cwd)= to
-see the current workspace. If you submit =(cwd "../other-project")= during a
+Press Ctrl-C or Ctrl-Z to detach the terminal without stopping the channel.
+To cancel the current turn before detaching, press Escape first. Use =(cwd)=
+to see the current workspace. If you submit =(cwd "../other-project")= during a
 turn, the relative path is resolved when that input reaches its place in the
 steering queue.
 
