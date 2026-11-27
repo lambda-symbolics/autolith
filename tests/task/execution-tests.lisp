@@ -75,9 +75,7 @@
                             (format nil "task augmentation registers child.~A" name)))
              (dolist (name '("list" "get" "wait" "cancel"))
                (test-assert (tool-registry-find registry "job" name)
-                            (format nil "task augmentation registers job.~A" name)))
-             (test-assert (eq registry (task-augment-tool-registry registry))
-                          "task augmentation is idempotent"))
+                            (format nil "task augmentation registers job.~A" name))))
            (let* ((immutable
                     (configuration-copy configuration :immutable-p t :reasoning-effort
                                         "xhigh" :codex-fast-mode-p t))

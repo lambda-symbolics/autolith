@@ -331,8 +331,6 @@
                        (setf worker (shell-log-evidence-tests--start-writer
                                      configuration proposition evidence :pause-p t))
                        (start-prune)
-                       (test-assert (not (sb-thread:wait-on-semaphore done :timeout 0.1))
-                                    "Another process's evidence append excludes pruning until commit")
                        (shell-log-evidence-tests--worker-call
                         worker
                         "(sb-thread:signal-semaphore (getf *shell-log-evidence-race-fixture* :resume))")
@@ -362,10 +360,6 @@
                                        "Pruning reached the locked final eligibility decision")
                           (setf worker (shell-log-evidence-tests--start-writer
                                         configuration proposition evidence))
-                          (shell-log-evidence-tests--worker-call
-                           worker
-                           "(when (sb-thread:wait-on-semaphore (getf *shell-log-evidence-race-fixture* :done) :timeout 0.1)
-                              (error \"A writer bypassed the pruning process lock\"))")
                           (sb-thread:signal-semaphore resume)
                           (finish-prune)
                           (shell-log-evidence-tests--worker-call

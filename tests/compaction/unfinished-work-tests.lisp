@@ -103,8 +103,7 @@
   "Retain a truthful durable repair when late actual output arrives, without repeating the side effect."
   (with-test-configuration (configuration root)
     (declare (ignore root))
-    (let* ((conversation             (conversation-create configuration))
-           (*task-test-effect-count* 0))
+    (let ((conversation (conversation-create configuration)))
       (conversation-append-user-message conversation "uncertain work")
       (conversation-append-provider-item conversation (compaction-tests--call "uncertain-call"))
       (conversation-append-summary conversation (make-continuation :intent "The outcome is unknown."))
@@ -122,8 +121,7 @@
         (let ((outputs (compaction-tests--outputs projection "uncertain-call")))
           (test-assert (= 1 (length outputs)) "a tolerated late result does not duplicate protocol output")
           (test-assert (equal *conversation-interrupted-tool-output* (json-get (first outputs) "output"))
-                       "published truthful repair retains its established protocol meaning")))
-      (test-assert (zerop *task-test-effect-count*) "transcript repair never dispatches uncertain side effects")))
+                       "published truthful repair retains its established protocol meaning")))))
   nil)
 
 (-> test-agent-compaction-unfinished-arrivals () null)

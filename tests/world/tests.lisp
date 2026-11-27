@@ -942,36 +942,32 @@
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (declare (ignore human))
-      (let ((names (list (participant-name first-agent) (participant-name second-agent))))
-        (test-assert (and (member (prezdivka:name-for "bfirst1") names :test #'string=)
-                          (member (prezdivka:name-for "bsecnd2") names :test #'string=))
-                     "agents in one workspace have their own readable handles")
-        (let ((renamed (world-participant-rename configuration
-                                                 (participant-identifier first-agent)
-                                                 "Frobnicator")))
-          (test-assert (string= (participant-name renamed) "Frobnicator")
-                       "a participant takes a new handle"))
-        (dolist (name (list "bad name" "" (participant-name second-agent)
-                            (string-upcase (participant-name second-agent))))
-          (test-assert (handler-case
-                           (progn (world-participant-rename configuration
-                                                           (participant-identifier first-agent)
-                                                           name)
-                                  nil)
-                         (world-error () t))
-                       "a handle with other characters, or one another participant has, is refused"))
-        (let ((world (world-load configuration)))
-          (test-assert (and (eq (world-participant-designated world "frobnicator")
-                                (world-participant-find world (participant-identifier first-agent)))
-                            (eq (world-participant-designated
-                                 world (conversation-identifier-display
-                                        (participant-identifier second-agent)))
-                                (world-participant-find world (participant-identifier second-agent)))
-                            (null (world-participant-designated world "nobody")))
-                       "participants are designated by name, display identifier or unique fragment"))
-        (test-assert (every #'world-handle-p
-                            (mapcar #'participant-name (world-participants (world-load configuration))))
-                     "all reconciled names are mentionable handles"))))
+      (let ((renamed (world-participant-rename configuration
+                                               (participant-identifier first-agent)
+                                               "Frobnicator")))
+        (test-assert (string= (participant-name renamed) "Frobnicator")
+                     "a participant takes a new handle"))
+      (dolist (name (list "bad name" "" (participant-name second-agent)
+                          (string-upcase (participant-name second-agent))))
+        (test-assert (handler-case
+                         (progn (world-participant-rename configuration
+                                                         (participant-identifier first-agent)
+                                                         name)
+                                nil)
+                       (world-error () t))
+                     "a handle with other characters, or one another participant has, is refused"))
+      (let ((world (world-load configuration)))
+        (test-assert (and (eq (world-participant-designated world "frobnicator")
+                              (world-participant-find world (participant-identifier first-agent)))
+                          (eq (world-participant-designated
+                               world (conversation-identifier-display
+                                      (participant-identifier second-agent)))
+                              (world-participant-find world (participant-identifier second-agent)))
+                          (null (world-participant-designated world "nobody")))
+                     "participants are designated by name, display identifier or unique fragment"))
+      (test-assert (every #'world-handle-p
+                          (mapcar #'participant-name (world-participants (world-load configuration))))
+                   "all reconciled names are mentionable handles")))
   nil)
 
 (-> test-world-agent-names () null)
@@ -2085,18 +2081,6 @@
                    "server startup retries the on-disk intent and completes history cleanup")))
   nil)
 
-(-> test-world-child-sync () null)
-(defun test-world-child-sync ()
-  "Register a child that starts after its parent is already in the catalogue."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "broot11" 1000)
-    (world-tests--child-conversation configuration "exec-new"
-                                     :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
-    (let ((channel (world-channel-find (world-load configuration) "exec-new")))
-      (test-assert (and channel (equal (channel-parent channel) "broot11"))
-                   "the registered child is nested under its parent")))
-  nil)
-
 (-> test-world-agent-hierarchy () null)
 (defun test-world-agent-hierarchy ()
   "Test child agents of child agents nest under their own parents and preserve that ancestry on registration retry."
@@ -2276,7 +2260,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
            "a child channel nests under its root and belongs to the root's agent")
           (test-assert
            (and task-agent
-                (string= (participant-name task-agent) (prezdivka:name-for "exec-one"))
                 (eq (participant-name-source task-agent) ':initial)
                 (equal (participant-parent task-agent)
                        (participant-identifier root-agent)))

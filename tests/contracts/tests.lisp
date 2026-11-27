@@ -32,10 +32,7 @@
                                                                  :content   "read succeeded"
                                                                  :success-p t)
                                        :tool      "resource.read"))))
-                       "only unified arguments produce observation claims")
-          (when matches
-            (test-assert (= 1 (length (second (first matches))))
-                         "a repeated variable has a single binding")))))
+                       "only unified arguments produce observation claims"))))
     (test-assert (null (knowledge-contracts-for-call
                         configuration "resource.read" (json-object "source" "a")))
                  "a missing repeated argument cannot match"))

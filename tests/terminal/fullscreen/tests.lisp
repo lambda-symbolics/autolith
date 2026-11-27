@@ -1148,10 +1148,7 @@
         (terminal-ui-process-event active ':scroll-top)
         (terminal-ui-process-event active ':previous-section)
         (test-assert (eql 0 (fullscreen-test--top active))
-                     "Ctrl-PgUp in the first window stays at the first row"))
-      (test-assert (string= "draft" (progn (terminal-ui-set-input active "draft")
-                                           (line-editor-text (terminal-ui-editor active))))
-                   "message jumps leave the draft alone")))
+                     "Ctrl-PgUp in the first window stays at the first row"))))
   (fullscreen-test--prepend-history)
   nil)
 

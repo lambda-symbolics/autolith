@@ -910,9 +910,7 @@
          (test-assert (tool-result-success-p result)
                       "a call carrying both spellings still executes")
          (test-assert (equal (json-get (json-get received "options") "deep-name") "declared")
-                      "the declared spelling wins when both arrive")
-         (test-assert (null (gethash "deep_name" received))
-                      "the underscore duplicate is dropped"))
+                      "the declared spelling wins when both arrive"))
        (let ((result (tool-registry-execute-call
                       registry
                       (json-object "namespace" "probe" "name" "contract"

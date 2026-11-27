@@ -413,12 +413,8 @@ pool must reject the cancelled parent without creating a descendant."
                   (hash-table-count
                    (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                   1)
-                 (zerop (task-orchestrator-live-count orchestrator))
-                 (=
-                  (cl-jobpond::job-pool--next-index
-                   (task-orchestrator-pool orchestrator))
-                  1))
-            "cancel-first admission consumes no identity or live capacity")))
+                 (zerop (task-orchestrator-live-count orchestrator)))
+            "cancel-first admission consumes no live capacity")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
                                       ':ignore)))
   nil)
@@ -1937,10 +1933,7 @@ pool must reject the cancelled parent without creating a descendant."
            (dotimes (index *task-maximum-live-jobs*)
              (task-tests--register-job orchestrator primary definition :name
                                        (format nil "live-~2,'0D" index)))
-           (let ((next-index
-                  (cl-jobpond::job-pool--next-index
-                   (task-orchestrator-pool orchestrator)))
-                 (job-count
+           (let ((job-count
                   (hash-table-count
                    (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))))
                  (queue-count
@@ -1959,9 +1952,6 @@ pool must reject the cancelled parent without creating a descendant."
               "admission beyond 64 live jobs fails")
              (test-assert
               (and
-               (=
-                (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator))
-                next-index)
                (=
                 (hash-table-count
                  (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))

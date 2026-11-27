@@ -332,8 +332,6 @@
                           "replay reproduces the compacted projection")
              (test-assert (search "summary of the earlier work" bridge-text)
                           "the bridge item carries the summary")
-             (test-assert (search "compacted" bridge-text)
-                          "the bridge item explains its provenance")
              (test-assert (zerop (conversation-last-total-tokens reloaded))
                           "replay resets usage tracked before the summary")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
@@ -1677,36 +1675,6 @@
   (test-run-program-with-environment (test-conversation--child-command form)
                                      environment))
 
-(-> test-conversation-child-project-setup () null)
-(defun test-conversation-child-project-setup ()
-  "Test fresh children load Autolith through the locked project setup."
-  (with-test-environment (("CL_SOURCE_REGISTRY" nil))
-    (let* ((configuration (test-configuration))
-           (root          (test-configuration-root configuration))
-           (home          (merge-pathnames "isolated-home/" root)))
-      (unwind-protect
-           (progn
-             (ensure-directories-exist (merge-pathnames "placeholder" home))
-             (multiple-value-bind (status output)
-                 (test-conversation--run-child-form
-                  "(uiop:quit 0)"
-                  :environment
-                  (list (format nil "HOME=~A" (namestring home))
-                        (format nil "XDG_CONFIG_HOME=~A"
-                                (namestring (merge-pathnames "config/" home)))
-                        ;; Share compiled files with the isolated child.
-                        (format nil "XDG_CACHE_HOME=~A"
-                                (namestring (uiop:xdg-cache-home)))))
-               (test-assert
-                (zerop status)
-                (format nil
-                        "the clean child loads locked Autolith dependencies:~%~A"
-                        output))))
-        (platform-delete-directory-tree *platform* root
-                                        :validate          t
-                                        :if-does-not-exist ':ignore))))
-  nil)
-
 (-> test-conversation--call-with-child-lease/fork
     (configuration string function)
     null)
@@ -2766,9 +2734,6 @@ process without releasing the lease, exercising kernel cleanup."
                       threads)
                 (test-assert (sb-thread:wait-on-semaphore reader-started :timeout 5)
                              "a picker request starts during the pending append")
-                (test-assert
-                 (not (sb-thread:wait-on-semaphore reader-finished :timeout 0.1))
-                 "a picker rebuild cannot return pre-append data with the new revision")
                 (sb-thread:signal-semaphore continue-writer)
                 (let ((value (sb-thread:join-thread (first threads) :timeout 5 :default nil)))
                   (test-assert

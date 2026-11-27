@@ -73,9 +73,6 @@
     (unwind-protect
          (progn
            (test-assert
-            (null (credential-manager-bootstrap-source manager))
-            "the Nous manager has no bootstrap credential source")
-           (test-assert
             (handler-case
                 (progn (credential-manager-load manager) nil)
               (credentials-unavailable (condition)

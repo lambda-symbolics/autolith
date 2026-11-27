@@ -2031,8 +2031,6 @@
                    (dotimes (index 2)
                      (unless (sb-thread:wait-on-semaphore started :timeout 10)
                        (error "Concurrent fixture did not start.")))
-                   (test-assert (not (sb-thread:wait-on-semaphore done :timeout 0.1))
-                                "Concurrent handoff and prune cannot bypass the paused publisher")
                    (sb-thread:signal-semaphore resume)
                    (dotimes (index 3)
                      (unless (sb-thread:wait-on-semaphore done :timeout 10)

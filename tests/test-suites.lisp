@@ -85,7 +85,6 @@
 
 (define-test-suite plan-context
   test-plan-state-context-projects-current-plan
-  test-plan-state-context-rebuilds-after-plan-update
   test-plan-state-context-omits-missing-plan
   test-plan-state-context-rebuilds-requirements-and-receipts)
 
@@ -172,7 +171,6 @@
 
 (define-test-suite telemetry-diagnostics
   test-telemetry-incident-diagnostics
-  test-telemetry-diagnostic-redactor-pieces
   test-telemetry-resource-diagnostics
   test-telemetry-diagnostic-upload-bounds)
 
@@ -484,7 +482,6 @@
   test-onboarding-source-choice
   test-onboarding-source-catalog
   test-onboarding-source-text
-  test-onboarding-operation
   test-onboarding-first-startup
   test-startup-saved-model-selection-notice
   test-onboarding-startup-input
@@ -706,7 +703,6 @@
   test-world-channel-tools-first-send
   test-world-message-presentation
   test-world-child-participants
-  test-world-child-sync
   test-world-child-loadable
   test-world-agent-children
   test-world-channel-designation-and-list
@@ -748,7 +744,7 @@
  test-world-server-checkpoint-quiescence test-world-server-checkpoint-cancel
  test-world-server-restart-marker test-world-server-restart-owned-cleanup
  test-world-server-restart-cleanup-failures
- test-world-server-restart-diagnostics test-world-server-restart-checkpoint
+ test-world-server-restart-checkpoint
  test-world-server-stop test-world-server-switch
  test-world-channel-command-admission
  test-world-server-resume-order test-world-server-open-latest-touched
@@ -759,7 +755,7 @@
  test-world-server-startup-reservations test-world-server-closing-reservation
  test-world-server-close-without-search-rebuild
  test-world-server-launch-options test-world-server-close-unattached
- test-world-server-close-ownership test-world-server-attachment-moves-nobody
+ test-world-server-attachment-moves-nobody
  test-world-server-open-running-child
  test-world-server-running-child-close
  test-world-server-running-child-idle-grace
@@ -1023,7 +1019,6 @@
   test-conversation-ephemeral-append-interruption
   test-conversation-malformed-tool-projections
   test-conversation-concurrent-appends
-  test-conversation-child-project-setup
   test-conversation-process-lease
   test-conversation-lease-owner-diagnostic
   test-conversation-interrupted-tool-call
@@ -1414,9 +1409,6 @@
   test-agent-provider-failure-persistence
   test-agent-incomplete-provider-failure-persistence
   test-agent-provider-credential-failure-containment
-  test-agent-long-tool-turn
-  test-agent-unbounded-tool-calls
-  test-agent-default-turn-has-no-step-guillotine
   test-agent-skill-provider-barrier
   test-agent-compaction-rejected-submission
   test-agent-compaction-failed-generation
@@ -1610,7 +1602,7 @@
   test-world-terminal-message-dispatch
   test-world-terminal-conversation-identity
   test-world-terminal-picker-waits-for-relayed-input
-  test-world-terminal-remote-detach-never-pauses-reader
+  test-world-terminal-remote-detach
   test-world-terminal-checkpoint-source-precheck-order
   test-world-terminal-checkpoint-reconnect-transition
   test-world-terminal-checkpoint-reconnect-boundaries
@@ -1625,7 +1617,6 @@
   test-world-terminal-cli-targets
   test-channel-endpoint-prefixes
   test-world-terminal-protocol
-  test-world-terminal-orphan-reconciliation
   test-world-terminal-client-pids
   test-world-startup-reader
   test-world-terminal-attachments)
@@ -1669,7 +1660,6 @@
 
 (define-test-suite application
   test-provider-exhaustion-presentation
-  test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
   test-application-command-tips

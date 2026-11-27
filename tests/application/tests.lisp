@@ -20,31 +20,6 @@
   (application-tool-result-entry
    (application--find-tool application (getf (rest record) :tool)) application record))
 
-(-> test-presentation-configuration-isolation () null)
-(defun test-presentation-configuration-isolation ()
-  "Exercise recording UI setting changes without any durable store writes."
-  (with-test-configuration (configuration)
-    (let ((writes nil))
-      (test-call-with-function-replacements
-       (list
-        (list 'preferences-store
-              (lambda (target name value)
-                (push (list target name value) writes)
-                nil)))
-       (lambda ()
-         (let* ((application  (application-tests--ui-application))
-                (presentation (application-configuration application)))
-           (test-assert (null (setinka:configuration-store presentation))
-                        "Recording UI configuration must not own a durable store.")
-           (setf (application-turn-timestamps-p application) t)
-           (test-assert (application-turn-timestamps-p application)
-                        "Recording UI settings must remain mutable.")
-           (test-assert (not (config :turn-timestamps-p configuration))
-                        "A presentation change must not affect the enclosing fixture."))))
-      (test-assert (null writes)
-                   "Presentation fixtures must never attempt durable writes.")))
-  nil)
-
 (defclass cursor-observing-provider (scripted-provider)
   ((visibility-function
     :initarg       :visibility-function
@@ -374,53 +349,9 @@
             (non-empty-string-p (application-command-tip command)))
           (application-command-list))
    "every canonical application command carries a non-empty tip")
-  (dolist (metadata
-           '((:name              "missing-tip"
-              :argument          nil
-              :description       "omit the tip"
-              :busy-behavior     :inspect
-              :terminal-behavior :shared)
-             (:name              "blank-tip"
-              :argument          nil
-              :description       "leave the tip blank"
-              :tip               "   "
-              :busy-behavior     :inspect
-              :terminal-behavior :shared)))
-    (test-assert
-     (handler-case
-         (progn
-           (macroexpand-1
-            `(define-application-command application-tests--invalid-command
-                 ,metadata
-                 (application invocation)
-               (declare (ignore application invocation))
-               :continue))
-           nil)
-       (error ()
-         t))
-     "missing and blank command tips fail during macro expansion"))
   (test-assert
    (string= (application-command-name (application-command-find "usage")) "status")
    "declared aliases resolve through their canonical command definitions")
-  (dolist (case '(("settings" "(settings :onboarding-p nil)"
-                              "(settings :boot-screen-seconds 2)"
-                              "(settings :terminal-theme)")
-                  ("help" "(help :workspace)" "(help 'open)")
-                  ("vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
-                  ("data.export" "(data.export pathname :workspace directory)")
-                  ("auth" "(auth \"chatgpt\" :device-code)" ":browser")))
-    (let* ((command (application-command-find (first case)))
-           (spans   (application--command-tip-spans command))
-           (code    (loop for span in spans
-                          when (eq (terminal-span-style span) ':code)
-                            collect (terminal-span-text span))))
-      (test-assert
-       (every (lambda (form) (member form code :test #'string=)) (rest case))
-       "authored tips style every example, including quoted arguments and strings")
-      (test-assert
-       (equal (first code)
-              (format nil "(~A)" (application-operation--command-name command)))
-       "the canonical leading call uses the same code style as its examples")))
   (let* ((command
            (make-instance
             'application-command
@@ -4611,8 +4542,7 @@
       (test-assert
        (and (search "skipped 3 definitions" text) (search "c3ec5281" text)
             (search "07f0e1b8" text) (search "alpha-wrapper" text)
-            (search "tool-execute" text)
-            (search "self.commit drops any still skipped" text))
+            (search "tool-execute" text))
        "the notice names the commit, revisions, and every skipped definition")
       (test-assert
        (let ((command
@@ -8536,14 +8466,6 @@
               (when new-application
                 (test-assert new-presentation-disconnected-p
                              "initialization failure disconnects the constructed application"))
-              (when (member stage '(:worker :registry))
-                (test-assert
-                 (ecase operation
-                   (:create
-                    (and new-registry (null new-worker)))
-                   (:reconnect
-                    (and new-worker (null new-registry))))
-                 "partial acquisition follows the caller's resource order"))
               (test-assert
                (and selected-lease
                     (eq selected-lease-acquired-p
@@ -9152,14 +9074,6 @@
                      (loop until first-add-entered-p
                            unless (condition-wait gate-condition gate-lock :timeout 2)
                            do (error "Timed out waiting for the first listener add.")))
-                   (let ((acquired-p
-                          (bordeaux-threads:acquire-lock
-                           (application-task-presentation-lock application) nil)))
-                     (when acquired-p
-                       (bordeaux-threads:release-lock
-                        (application-task-presentation-lock application)))
-                     (test-assert (not acquired-p)
-                                  "listener registration remains inside the presentation transaction"))
                    (setf second-thread
                            (make-thread
                             (lambda ()

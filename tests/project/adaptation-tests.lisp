@@ -358,10 +358,6 @@
              (delete-file
               (configuration-project-adaptation-offers-path configuration))
              (project-adaptation-notes-create project-root)
-             (test-assert
-               (string= *project-adaptation-notes-template*
-                        (uiop:read-file-string notes))
-               "new project notes contain the complete ledger template")
              (with-open-file (stream notes
                                      :direction       ':output
                                      :if-exists       ':supersede

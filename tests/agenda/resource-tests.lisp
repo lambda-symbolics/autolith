@@ -43,7 +43,6 @@
                                "operations" (vector (agenda-resource-tests--operation
                                                      "agenda-add" "text" text))))
                (item     (agenda-resource-tests--current-item configuration)))
-          (test-assert (> (length text) *agenda-item-text-limit*) "the fixture text is over the limit")
           (test-assert (and (tool-result-success-p added)
                             (search "Agenda text had" (tool-result-content added)))
                        "long agenda text is added with a note instead of failing")

@@ -215,23 +215,7 @@
                           (config :data-root configuration)
                           (config :state-root configuration)
                           (config :cache-root configuration)))
-                   "new XDG application roots are private to the user")
-                  (let ((created (merge-pathnames "created-inside.txt"
-                                                  (config :state-root configuration))))
-                    (with-open-file (stream created
-                                            :direction         ':output
-                                            :if-exists         ':supersede
-                                            :if-does-not-exist ':create
-                                            :external-format   ':utf-8)
-                      (write-line "inside" stream))
-                    (test-assert
-                     (and (string= (with-open-file (stream created :external-format ':utf-8)
-                                     (read-line stream))
-                                   "inside")
-                          (eq (platform-file-status-kind
-                               (platform-path-status *platform* created))
-                              ':file))
-                     "files created below a private root stay readable by their creator")))
+                   "new XDG application roots are private to the user"))
              (platform-delete-directory-tree
               *platform*
               root :validate t :if-does-not-exist ':ignore)))

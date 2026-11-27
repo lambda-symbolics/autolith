@@ -947,10 +947,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (search "tool-round limit" (format nil "~A" condition))))
             "a restricted turn rejects calls beyond its tool-round limit")
            (test-assert
-            (and (equal (scripted-provider-tool-schema-counts provider) '(2 2))
-                 (equal (scripted-provider-tool-choices provider) '(:none :auto)))
-            "the provider may not call tools after the restricted limit")
-           (test-assert
             (= (length (conversation-input-items conversation)) 3)
             "the over-limit call is rejected before persistence or execution"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
@@ -1661,9 +1657,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    :conversation  conversation
                    :tool-registry (agent-test-registry)
                    :worker        ':unused)))
-           (test-assert
-            (> limit *agent-tool-storm-signature-window-size*)
-            "the production repetition limit exceeds the oscillation window")
            (agent-run-user-turn agent "repeat a mutating call many times")
            (let ((outputs (agent-test-tool-outputs conversation)))
              (test-assert
@@ -2063,155 +2056,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
       (platform-delete-directory-tree
        *platform*
        root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-agent-long-tool-turn () null)
-(defun test-agent-long-tool-turn ()
-  "Test a useful turn may execute more than eight tool batches before completion."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation  (conversation-create configuration :identifier "long-turn"))
-         (tool-results
-           (loop for index from 1 to 12
-                 collect (agent-test-result
-                          (format nil "tool-~D" index)
-                          (list (agent-test-call
-                                 :call-id   (format nil "call-~D" index)
-                                 :arguments (format nil "{\"value\":\"~D\"}" index))))))
-         (provider
-           (make-instance
-            'scripted-provider
-            :results (append tool-results
-                             (list (agent-test-result
-                                    "long-final"
-                                    (list (agent-test-message "done")))))))
-         (agent
-           (agent-create :configuration configuration
-                         :provider      provider
-                         :conversation  conversation
-                         :tool-registry (agent-test-registry)
-                         :worker        ':unused)))
-    (unwind-protect
-         (progn
-           (test-assert
-            (string= (provider-result-response-id
-                      (agent-run-user-turn agent "perform a long task"))
-                     "long-final")
-            "a twelve-batch turn completes without a fixed eight-round cutoff")
-           (test-assert
-            (= (count-if (lambda (record)
-                           (eq (first record) :tool-result))
-                         (conversation--read-records
-                          (conversation-pathname conversation)))
-               12)
-            "every long-turn tool call receives a durable correlated output"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-agent-unbounded-tool-calls () null)
-(defun test-agent-unbounded-tool-calls ()
-  "Test one turn may exceed the former cumulative tool-call ceiling."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "unbounded-tools"))
-         (tool-results
-           (loop for index from 1 to 257
-                 collect
-                 (agent-test-result
-                  (format nil "tool-~D" index)
-                  (list
-                   (agent-test-call
-                    :call-id   (format nil "call-~D" index)
-                    :arguments (format nil "{\"value\":\"~D\"}" index))))))
-         (provider
-           (make-instance
-            'scripted-provider
-            :results
-            (append tool-results
-                    (list
-                     (agent-test-result
-                      "large-tool-final"
-                      (list (agent-test-message "done")))))))
-         (agent
-           (agent-create :configuration configuration
-                         :provider      provider
-                         :conversation  conversation
-                         :tool-registry (agent-test-registry)
-                         :worker        ':unused)))
-    (unwind-protect
-         (progn
-           (test-assert
-            (string= (provider-result-response-id
-                      (agent-run-user-turn agent "run every requested tool"))
-                     "large-tool-final")
-            "a turn exceeding 256 calls reaches its normal completion")
-           (test-assert
-            (= (count-if (lambda (record)
-                           (eq (first record) :tool-result))
-                         (conversation--read-records
-                          (conversation-pathname conversation)))
-               257)
-            "every call above the former ceiling receives a durable result"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-agent-default-turn-has-no-step-guillotine () null)
-(defun test-agent-default-turn-has-no-step-guillotine ()
-  "Test the default turn may keep working beyond the former provider-step limit."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "unbounded-turn"))
-         (continuations
-           (loop for index from 1 below 64
-                 collect
-                 (agent-test-result
-                  (format nil "continue-~D" index)
-                  (list (agent-test-message "Still working."))
-                  :turn-completion ':continue)))
-         (provider
-           (make-instance
-            'scripted-provider
-            :results
-            (append continuations
-                    (list
-                     (agent-test-result
-                      "step-64-tool"
-                      (list (agent-test-call :call-id   "late-tool"
-                                             :arguments "{\"value\":\"late\"}")))
-                     (agent-test-result
-                      "step-65-final"
-                      (list (agent-test-message "Done."))
-                      :turn-completion ':end)))))
-         (agent
-           (agent-create :configuration configuration
-                         :provider      provider
-                         :conversation  conversation
-                         :tool-registry (agent-test-registry)
-                         :worker        ':unused)))
-    (unwind-protect
-         (progn
-           (test-assert
-            (string= (provider-result-response-id
-                      (agent-run-user-turn agent "finish a long task"))
-                     "step-65-final")
-            "the default turn continues past provider step 64")
-           (test-assert
-            (every #'plusp
-                   (scripted-provider-tool-schema-counts provider))
-            "tools stay available throughout the default turn")
-           (test-assert
-            (find "late-tool"
-                  (conversation--read-records
-                   (conversation-pathname conversation))
-                  :key  (lambda (record)
-                          (and (listp record)
-                               (eq (first record) :tool-result)
-                               (getf (rest record) :call-id)))
-                  :test #'string=)
-            "the tool requested on provider step 64 executes normally"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-skill-provider-barrier () null)

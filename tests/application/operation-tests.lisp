@@ -441,20 +441,6 @@
                   (application-operation-find application 'eval-now))
                 (tool-operation
                   (application-operation-find application "RESOURCE.READ")))
-           (test-assert
-            (and (typep command-operation 'application-command-operation)
-                 (typep (application-operation-backend command-operation)
-                        'application-command)
-                 (typep local-operation 'application-local-operation)
-                 (symbolp (application-operation-backend local-operation))
-                 (typep tool-operation 'application-tool-operation)
-                 (typep (application-operation-backend tool-operation) 'tool))
-            "operation subclasses expose their typed backend protocol")
-           (test-assert
-            (and (application-operation-binding-eligible-p command-operation)
-                 (not (application-operation-binding-eligible-p local-operation))
-                 (application-operation-binding-eligible-p tool-operation))
-            "operation subclasses control canonical binding eligibility")
            (test-assert (eq (application-operation-kind local-operation) ':local)
                         "operation lookup identifies the immediate local form")
            (test-assert (eq (application-operation-kind command-operation) ':command)

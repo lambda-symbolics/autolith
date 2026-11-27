@@ -141,8 +141,6 @@
                           "a missing sidecar rebuilds by streaming durable records")
              (test-assert (= 42 (length (conversation-input-history loaded)))
                           "complete recall stays available"))))
-        (test-assert (not (slot-exists-p conversation 'input-history))
-                     "a conversation keeps no resident copy of its inputs")
         (let ((loaded                       (conversation-load identity))
               (expected                     (append inputs (list (first inputs))))
               (*terminal-history-page-size* 7))

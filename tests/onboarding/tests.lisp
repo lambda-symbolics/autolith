@@ -32,26 +32,6 @@
         (list :id "second" :version 2 :title "Second" :body "Second page")
         (list :id "third" :version 1 :title "Third" :body "Third page")))
 
-(-> test-onboarding-operation () null)
-(defun test-onboarding-operation ()
-  "Resolve and invoke the replay command through the real operation boundary."
-  (onboarding-tests--call
-   (lambda (application controller configuration terminal)
-     (declare (ignore controller configuration terminal))
-     (let* ((operation (application-operation-find application 'onboard))
-            (called    nil))
-       (test-assert (typep operation 'application-command-operation) "onboard resolves to a command operation")
-       (test-call-with-function-replacements
-        (list (list 'application-onboard
-                    (lambda (target &key new-only-p)
-                      (test-assert (eq target application) "operation invokes the current application")
-                      (test-assert (not new-only-p) "manual replay includes acknowledged lessons")
-                      (setf called t)
-                      ':completed)))
-        (lambda () (application-operation-invoke operation application nil)))
-       (test-assert called "operation invocation reaches onboarding"))))
-  nil)
-
 (-> test-onboarding-first-startup () null)
 (defun test-onboarding-first-startup ()
   "Present first-run onboarding and acknowledge completed lessons."

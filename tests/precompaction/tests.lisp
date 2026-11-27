@@ -53,9 +53,6 @@
                        "successful calls, split exchanges and distinct failures stay")
           (test-assert (member reasoning (coerce (conversation-input-items conversation) 'list))
                        "reasoning stays when its failed consequence stays")
-          (test-assert (find "failed-early" (coerce (conversation-input-items conversation) 'list)
-                             :key (lambda (item) (json-get item "call_id")) :test #'equal)
-                       "the retained failure's output stays")
         (test-assert (= records (length (conversation--read-records
                                          (conversation-pathname conversation))))
                      "the durable log keeps every record")

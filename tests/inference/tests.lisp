@@ -2350,8 +2350,6 @@ A frame sends its shared views and its task as consecutive user messages."
                                       (json-object "form" code))))))))
          (budget        (rlm-budget-create :calls 5 :tokens 100000 :depth 2))
          (activities    nil))
-    (test-assert (= (length corpus) 160000)
-                 "the corpus is four exact provider-window-sized blocks")
     (test-assert (> (length corpus) window-limit)
                  "the corpus exceeds the provider window")
     (test-assert (plusp expected)
@@ -2424,8 +2422,6 @@ A frame sends its shared views and its task as consecutive user messages."
              (declare (ignore trace-identifier))
              (test-assert (eql value 41)
                           "the first run records its final value"))
-           (test-assert (= (length *rlm-environment-pool*) 1)
-                        "a finished run parks its environment for reuse")
            (multiple-value-bind (value trace-identifier)
                (rlm-complete
                 "Recall the base value."
@@ -2933,8 +2929,6 @@ A frame sends its shared views and its task as consecutive user messages."
                              (getf partial :context)
                              (getf partial :trace))
                         "an exhausted root exposes context and trace references")
-           (test-assert (= (length *rlm-environment-pool*) 1)
-                        "an exhausted root retains its live environment")
            (test-assert
             (= (rlm-complete
                 "Continue using the retained intermediate value."

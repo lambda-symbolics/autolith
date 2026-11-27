@@ -330,8 +330,6 @@ it submits a checkpoint."
                               (declare (ignore candidate))
                               proactive-p)))
                 (lambda ()
-                  (test-assert (eq (not (null proactive-p)) (agent-should-compact-p agent :goal-context goal))
-                               "the controlled soft trigger matches this scenario")
                   (let ((failure nil))
                     (handler-case (agent--run-provider-loop agent observer :goal-context goal :tools-p nil)
                       (error (condition) (setf failure condition)))

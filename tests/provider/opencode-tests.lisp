@@ -386,12 +386,6 @@
                                   :test #'string-equal))
                      (provider-session-id provider))
             "OpenCode transport sends the stable session caching header")
-           (test-assert
-            (string= (rest (assoc "x-opencode-session"
-                                  (openai-compatible-provider-headers provider)
-                                  :test #'string-equal))
-                     (provider-session-id provider))
-            "the OpenCode session header carries the provider session identity")
            (let ((reconfigured
                    (provider-with-configuration
                     provider

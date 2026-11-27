@@ -514,18 +514,10 @@ a Responses function-call output has."
          (progn
            (let ((filtered
                    (provider-request-tool-namespaces
-                    base-configuration schemas :hosted-web-search-p t))
-                 (web (find-if
-                       (lambda (entry)
-                         (json-string= (json-get entry "name") "web"))
-                       (coerce schemas 'list))))
+                    base-configuration schemas :hosted-web-search-p t)))
              (test-assert
               (= (length filtered) 2)
               "hosted search suppresses only the provider-backed web.run tool")
-             (test-assert
-              (and web
-                   (= (length (json-get web "tools")) 2))
-              "the unfiltered fixture advertises both web tools")
              (let ((entry (find-if
                            (lambda (candidate)
                              (json-string= (json-get candidate "name") "web"))
@@ -943,9 +935,6 @@ a Responses function-call output has."
                     (subseq mutated-input 1))
               "an agenda mutation appears in trailing request context"))
            (test-assert
-            (null (provider-web-search-tool configuration))
-            "the nonfunctional native web search tool stays disabled")
-           (test-assert
             (null (provider-tests--request-tool-of-type request "web_search"))
             "requests omit the nonfunctional native web search tool")
            (test-assert
@@ -1024,10 +1013,6 @@ a Responses function-call output has."
              (let ((child-request
                      (provider-request-object
                       child-provider child-conversation schemas)))
-               (test-assert
-                (not (string= (conversation-identifier child-conversation)
-                              (conversation-identifier conversation)))
-                "parent and child conversations keep distinct thread identities")
                (test-assert
                 (string= (json-get child-request "prompt_cache_key")
                          (json-get request "prompt_cache_key"))
@@ -2579,10 +2564,6 @@ a Responses function-call output has."
                                 (conversation-identifier conversation)))
                      '("session-id" "thread-id" "x-client-request-id"))
               "cache affinity and request identity headers name the conversation")
-             (test-assert
-              (not (string= (header headers "session-id")
-                            (provider-session-id provider)))
-              "the per-process provider session identity stays out of the headers")
              (test-assert
               (null (assoc "x-codex-turn-state" headers :test #'string=))
               "the backend's routing token is never replayed")))

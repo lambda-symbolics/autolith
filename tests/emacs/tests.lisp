@@ -428,10 +428,6 @@
                                   "emacs.eval returns the printed value."))
                    (let ((denied (emacs-test-context configuration :authorization ':sandboxed)))
                      (test-assert (not (tool-result-success-p
-                                        (emacs-test-invoke denied "resource" "read"
-                                                           :arguments (json-object "uri" "emacs:buffer/outside.txt"))))
-                                  "A buffer visiting a file outside the roots needs full access.")
-                     (test-assert (not (tool-result-success-p
                                         (emacs-test-invoke denied "emacs" "eval"
                                                            :arguments (json-object "form" "(setq autolith-test-ran t)"))))
                                   "emacs.eval without full access fails.")

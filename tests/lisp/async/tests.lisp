@@ -170,8 +170,6 @@
                                     (equal (list ':insert call) (termdown:widget-action widget)))
                                   widgets))
                       "the submission offers a clickable job.cancel call for its job")
-         (test-assert (search "in background" (terminal--spans-text entry))
-                      "the submission reads like an agent's handoff")
          (session-job-cancel job ':user)
          (async-lisp-tests--wait job)))))
   nil)

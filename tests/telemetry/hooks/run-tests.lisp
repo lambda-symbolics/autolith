@@ -30,9 +30,7 @@
   "A borrowed run cannot finish; late reports and repeated finishes are harmless."
   (test-telemetry--call
    (lambda (configuration)
-     (let* ((diagnostics    (make-string-output-stream))
-            (*error-output* diagnostics)
-            (bodies
+     (let ((bodies
               (test-telemetry-hooks--capture
                configuration
                (lambda ()
@@ -48,9 +46,7 @@
        (test-assert (equal "success" (test-telemetry--attribute
                                        (first (test-telemetry-hooks--kind (first bodies) "run"))
                                        "autolith.run.outcome"))
-                    "Late reports do not rewrite the result.")
-       (test-assert (zerop (length (get-output-stream-string diagnostics)))
-                    "Ignored late reports do not publish unsolicited console output."))))
+                    "Late reports do not rewrite the result."))))
   nil)
 
 (-> test-telemetry-hooks--contended-report

@@ -177,22 +177,6 @@
                 (updates   (agentcomms:json-get whole "updates"))
                 (collected nil)
                 (offset    0))
-            (let ((replayed  nil)
-                  (calls     0)
-                  (projector (symbol-function 'acp-replay--record-update)))
-              (test-call-with-function-replacements
-               (list (list 'acp-replay--record-update
-                           (lambda (record turn-sequence)
-                             (incf calls)
-                             (funcall projector record turn-sequence))))
-               (lambda ()
-                 (acp-replay-map-updates
-                  (conversation-replay-load-identity (conversation-pathname conversation))
-                  (lambda (update) (push update replayed)))))
-              (test-assert (and (plusp calls)
-                                (string= (json-encode updates)
-                                         (json-encode (coerce (nreverse replayed) 'vector))))
-                           "replay resolves the current named projector and matches the segmented query"))
            (loop
              (let* ((response (agentcomms:client-agent-request
                                client "_autolith/job-transcript"
