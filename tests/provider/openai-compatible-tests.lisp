@@ -263,14 +263,6 @@
                      (lambda (configuration arguments)
                        (declare (ignore configuration arguments))
                        nil))
-               (list 'application-recovery-state
-                     (lambda (configuration)
-                       (declare (ignore configuration))
-                       (values nil nil nil)))
-               (list 'application-recovery-diagnosis-prompt
-                     (lambda (configuration)
-                       (declare (ignore configuration))
-                       nil))
                (list 'main--interactive-input-p (constantly t))
                (list 'main--run-world-client
                      (lambda (configuration &rest arguments)
@@ -347,14 +339,6 @@
                (list 'world-startup-selection
                      (lambda (configuration arguments)
                        (declare (ignore configuration arguments))
-                       nil))
-               (list 'application-recovery-state
-                     (lambda (configuration)
-                       (declare (ignore configuration))
-                       (values nil nil nil)))
-               (list 'application-recovery-diagnosis-prompt
-                     (lambda (configuration)
-                       (declare (ignore configuration))
                        nil))
                (list 'user-init-load
                      (lambda (configuration)

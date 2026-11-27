@@ -612,8 +612,7 @@ combination."
            :message "Unset AUTOLITH_CODEX_FAST_MODE before changing the Fast mode setting."))
   (let ((configuration (application-configuration application)))
     (setf (config :codex-fast-mode-p configuration) enabled-p)
-    (application--install-configuration application configuration)
-    (application-publish-recovery-session application))
+    (application--install-configuration application configuration))
   nil)
 
 (-> application--control-choice (t list) keyword)
@@ -647,7 +646,6 @@ combination."
       (application-reset-history-pagination application)))
   (unless enabled-p
     (terminal-ui-set-preview-rows (application-ui application) nil))
-  (application-publish-recovery-session application)
   nil)
 
 (-> application--boolean-setting-command (application keyword t) null)
@@ -673,7 +671,6 @@ combination."
   (unless (eq (application-turn-timestamps-p application) enabled-p)
     (setf (application-turn-timestamps-p application) enabled-p)
     (application-reset-history-pagination application))
-  (application-publish-recovery-session application)
   nil)
 
 (-> application-set-cache-miss-notices (application boolean) null)

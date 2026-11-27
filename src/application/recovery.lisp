@@ -9,11 +9,11 @@
     :type          serious-condition
     :documentation "The unexpected condition that made the active path untrustworthy.")
    (capsule-pathname
-    :initarg       :capsule-pathname
-    :reader        fatal-control-path-error-capsule-pathname
-    :type          pathname
-    :documentation "The best-effort crash capsule written before recovery."))
-  (:documentation "An unexpected active-agent failure requiring stable recovery."))
+    :initarg        :capsule-pathname
+    :reader         fatal-control-path-error-capsule-pathname
+     :type          (option pathname)
+     :documentation "The private crash capsule, if it could be written."))
+  (:documentation "An unexpected failure that ends the active session."))
 
 (-> application-safe-backtrace () list)
 (defun application-safe-backtrace ()
@@ -30,28 +30,6 @@ function and the classes of its arguments."
       (autolith-error-message condition)
       (format nil "Unexpected condition of type ~S.~@[ ~A~]"
               (type-of condition) (safe-condition-report condition))))
-
-(-> application-publish-crash-pointer (configuration pathname) null)
-(defun application-publish-crash-pointer (configuration capsule-pathname)
-  "Publish CAPSULE-PATHNAME to this launcher's private pointer, when configured.
-
-Only a capsule in CONFIGURATION's private crash directory is published, since
-a relaying terminal publishes the capsule its detached session reports."
-  (let ((pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-    (when (non-empty-string-p pointer-value)
-      (let ((pointer-pathname (pathname pointer-value)))
-        (when (and (uiop:subpathp pointer-pathname
-                                  (config :state-root configuration))
-                   (uiop:subpathp capsule-pathname
-                                  (merge-pathnames "crashes/"
-                                                   (config :state-root configuration))))
-          (publish-file
-           pointer-pathname
-           (format nil "~A~%" (namestring capsule-pathname))
-           :prepare-function
-           (lambda (temporary)
-             (platform-make-private *platform* temporary)))))))
-  nil)
 
 (-> application-write-crash-capsule
     (application serious-condition &key (:backtrace list))
@@ -105,287 +83,16 @@ a relaying terminal publishes the capsule its detached session reports."
                    (file-length stream))
                  0))))
     (platform-make-private *platform* pathname)
-    (application-publish-crash-pointer configuration pathname)
     pathname))
-
-
-;;;; -- Recovered Diagnosis --
-
-(defparameter *application-recovery-diagnostic-tool-names*
-  '("resource.read"
-    "search.files" "search.glob" "search.content"
-    "lisp.describe" "lisp.source" "self.status" "self.diff"
-    "self.generations")
-  "Read-only native tools available to the recovered diagnosis turn.")
-
-(defparameter *application-recovery-pointer-byte-limit* 4096
-  "Maximum crash-pointer file size accepted during recovered startup.")
-
-(defparameter *application-recovery-capsule-byte-limit* 65536
-  "Maximum crash-capsule file size accepted during recovered startup.")
-
-(-> application--bounded-file-p (pathname integer) boolean)
-(defun application--bounded-file-p (pathname limit)
-  "Return true when PATHNAME names a file no larger than LIMIT bytes."
-  (handler-case
-      (with-open-file (stream pathname
-                              :direction    ':input
-                              :element-type '(unsigned-byte 8))
-        (<= (file-length stream) limit))
-    (error ()
-      nil)))
-
-(-> application--bounded-string-p (t integer &key (:empty-p boolean)) boolean)
-(defun application--bounded-string-p (value limit &key (empty-p nil))
-  "Return true when VALUE is a string no longer than LIMIT characters."
-  (and (stringp value)
-       (<= (length value) limit)
-       (or empty-p (plusp (length value)))
-       t))
-
-(-> application--crash-capsule-record-p (t) boolean)
-(defun application--crash-capsule-record-p (record)
-  "Return true when RECORD is one bounded version-one crash capsule."
-  (handler-case
-      (let* ((properties      (and (proper-list-p record)
-                                   (rest record)))
-             (keys            '(:version :id :time :condition-type :condition
-                                :backtrace :conversation-id :rendered-sequence
-                                :history-floor-sequence :git-commit
-                                :journal-position))
-             (conversation-id (and properties
-                                   (getf properties :conversation-id)))
-             (commit          (and properties (getf properties :git-commit))))
-        (and properties
-             (= (length record) 23)
-             (eq (first record) :crash)
-             (loop for key in keys
-                   always
-                   (= (loop for candidate in properties by (partial #'nthcdr 2)
-                            count (eq candidate key))
-                      1))
-             (= (getf properties :version) 1)
-             (application--bounded-string-p (getf properties :id) 128)
-             (typep (getf properties :time) '(integer 0))
-             (application--bounded-string-p
-              (getf properties :condition-type) 300)
-             (application--bounded-string-p
-              (getf properties :condition) 2000 :empty-p t)
-             (let ((backtrace (getf properties :backtrace)))
-               (and (proper-list-p backtrace)
-                    (<= (length backtrace) 30)
-                    (every (lambda (frame)
-                             (application--bounded-string-p frame 300
-                                                            :empty-p t))
-                           backtrace)))
-             (or (null conversation-id)
-                 (application--bounded-string-p conversation-id 128))
-             (typep (getf properties :rendered-sequence) '(integer 0))
-             (typep (getf properties :history-floor-sequence)
-                    '(option (integer 1)))
-             (or (null commit)
-                 (and (application--bounded-string-p commit 40)
-                      (every (lambda (character)
-                               (digit-char-p character 16))
-                             commit)))
-             (typep (getf properties :journal-position) '(integer 0))))
-    (error ()
-      nil)))
-
-(-> application--recovery-crash-capsule-pathname
-    (configuration)
-    (option pathname))
-(defun application--recovery-crash-capsule-pathname (configuration)
-  "Return this recovered launcher's contained crash capsule, when available."
-  (handler-case
-      (let ((pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-        (when (non-empty-string-p pointer-value)
-          (let* ((pointer-pathname (pathname pointer-value))
-                 (pointer-root
-                   (merge-pathnames "crash-pointers/"
-                                    (config :state-root configuration)))
-                 (crash-root
-                   (merge-pathnames "crashes/"
-                                    (config :state-root configuration))))
-            (when (and (uiop:absolute-pathname-p pointer-pathname)
-                       (uiop:subpathp pointer-pathname pointer-root)
-                       (probe-file pointer-pathname)
-                       (application--bounded-file-p
-                        pointer-pathname
-                        *application-recovery-pointer-byte-limit*))
-              (with-open-file (stream pointer-pathname
-                                      :direction       ':input
-                                      :external-format ':utf-8)
-                (let ((capsule       (read-line stream nil nil))
-                      (trailing-line (read-line stream nil nil)))
-                  (when (and (stringp capsule)
-                             (plusp (length capsule))
-                             (<= (length capsule) 4096)
-                             (null trailing-line))
-                    (let ((capsule-pathname (pathname capsule)))
-                      (and (uiop:absolute-pathname-p capsule-pathname)
-                           (uiop:subpathp capsule-pathname crash-root)
-                           (probe-file capsule-pathname)
-                           (application--bounded-file-p
-                            capsule-pathname
-                            *application-recovery-capsule-byte-limit*)
-                           capsule-pathname)))))))))
-    (error ()
-      nil)))
-
-(-> application--recovery-crash-capsule-record
-    (configuration)
-    (option list))
-(defun application--recovery-crash-capsule-record (configuration)
-  "Return this recovered launcher's validated bounded crash capsule."
-  (when-let ((pathname
-               (application--recovery-crash-capsule-pathname configuration)))
-    (handler-case
-        (multiple-value-bind (record complete-p)
-            (snapshot-read pathname)
-          (and complete-p
-               (application--crash-capsule-record-p record)
-               record))
-      (error ()
-        nil))))
-
-(-> application--recovery-session-state
-    (configuration)
-    (values (option string) (option integer) (option integer)))
-(defun application--recovery-session-state (configuration)
-  "Return validated per-launch recovery session state for CONFIGURATION."
-  (block nil
-    (handler-case
-        (let ((pointer-value
-                (uiop:getenv "AUTOLITH_RECOVERY_SESSION_POINTER")))
-          (unless (non-empty-string-p pointer-value)
-            (return (values nil nil nil)))
-          (let* ((pointer-pathname (pathname pointer-value))
-                 (pointer-root
-                   (merge-pathnames
-                    "recovery-session-pointers/"
-                    (config :state-root configuration))))
-            (unless (and (uiop:absolute-pathname-p pointer-pathname)
-                         (uiop:subpathp pointer-pathname pointer-root)
-                         (probe-file pointer-pathname)
-                         (application--bounded-file-p
-                          pointer-pathname
-                          *application-recovery-pointer-byte-limit*))
-              (return (values nil nil nil)))
-            (multiple-value-bind (record complete-p)
-                (snapshot-read pointer-pathname)
-              (unless (and complete-p
-                           (proper-list-p record))
-                (return (values nil nil nil)))
-              (let* ((properties        (rest record))
-                     (conversation-id   (getf properties :conversation-id))
-                     (resolved-conversation-id
-                       (and
-                        (application--bounded-string-p conversation-id 128)
-                        (conversation-identifier-migration-resolve
-                         configuration conversation-id)))
-                     (rendered-sequence (getf properties :rendered-sequence))
-                     (history-floor-sequence
-                       (getf properties :history-floor-sequence))
-                     (history-floor-present-p
-                       (loop for key in properties by (partial #'nthcdr 2)
-                             thereis (eq key :history-floor-sequence))))
-                (unless
-                    (and (member (length record) '(7 9) :test #'=)
-                         (eq (first record) :recovery-session)
-                         (= (loop for key in properties by (partial #'nthcdr 2)
-                                  count (eq key :version))
-                            1)
-                         (= (loop for key in properties by (partial #'nthcdr 2)
-                                  count (eq key :conversation-id))
-                            1)
-                         (= (loop for key in properties by (partial #'nthcdr 2)
-                                  count (eq key :rendered-sequence))
-                            1)
-                         (<= (loop for key in properties by (partial #'nthcdr 2)
-                                   count (eq key :history-floor-sequence))
-                             1)
-                         (= (getf properties :version) 1)
-                         (identifier-p
-                          resolved-conversation-id)
-                         (typep rendered-sequence '(integer 0))
-                         (or (not history-floor-present-p)
-                             (null history-floor-sequence)
-                             (typep history-floor-sequence '(integer 1)))
-                         (loop for key in properties by (partial #'nthcdr 2)
-                               always
-                               (member key
-                                       '(:version :conversation-id
-                                         :rendered-sequence
-                                         :history-floor-sequence)
-                                       :test #'eq)))
-                  (return (values nil nil nil)))
-                (values resolved-conversation-id
-                        rendered-sequence
-                        history-floor-sequence)))))
-      (error ()
-        (values nil nil nil)))))
-
-(-> application-recovery-state
-    (configuration)
-    (values (option string) (option integer) (option integer)))
-(defun application-recovery-state (configuration)
-  "Return trustworthy conversation and cursor state for recovered startup."
-  (let ((crash-pointer (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-    (if (and (non-empty-string-p crash-pointer)
-             (application--recovery-conversation-id)
-             (null (application--recovery-crash-capsule-record configuration)))
-        (application--recovery-session-state configuration)
-        (values (application--recovery-conversation-id)
-                (application--recovery-sequence
-                 "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-                (application--recovery-sequence
-                 "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")))))
-
-(-> application-recovery-diagnosis-prompt
-    (configuration)
-    (option string))
-(defun application-recovery-diagnosis-prompt (configuration)
-  "Return one read-only crash diagnosis prompt for CONFIGURATION, when recovered."
-  (let ((record
-          (application--recovery-crash-capsule-record configuration)))
-    (when record
-      (let* ((properties (rest record))
-             (backtrace  (getf properties :backtrace))
-             (commit     (getf properties :git-commit)))
-        (format
-         nil
-         "Autolith recovered this conversation after its active process ~
-          crashed. Diagnose the likely cause from the bounded crash context ~
-          below and the recent conversation history. This is a diagnosis-only ~
-           turn. Only bounded read-only diagnostic tool rounds are available ~
-           for inspecting the restored workspace, tracked source, and active ~
-           state. Filesystem reads are confined to the workspace and source ~
-           roots. Do not modify source, files, private mutation state, ~
-           generations, or the active image. Explain the failure, the ~
-          supporting evidence, your confidence, and the safest specific repair. ~
-          End by asking the user whether you should apply that repair to the ~
-          active image. Do not apply any repair until the user explicitly agrees.~
-          ~%~%Crash condition type: ~A~%Crash condition: ~A~%~
-          Source commit: ~A~%Mutation journal position: ~D~%~
-          Bounded backtrace:~%~{  ~A~%~}"
-         (sanitize-text (getf properties :condition-type)
-                        :single-line-p t)
-         (sanitize-text (getf properties :condition)
-                        :single-line-p t)
-         (sanitize-text (or commit "unknown") :single-line-p t)
-         (getf properties :journal-position)
-         (mapcar (lambda (frame)
-                   (sanitize-text frame :single-line-p t))
-                 backtrace))))))
 
 (-> application-raise-fatal
     (application serious-condition list)
     nil)
 (defun application-raise-fatal (application condition backtrace)
-  "Write fatal CONDITION context and leave APPLICATION through recovery status."
-  (let ((capsule (application-write-crash-capsule
-                  application condition :backtrace backtrace)))
+  "Record fatal CONDITION context if possible, then end APPLICATION."
+  (let ((capsule (handler-case
+                     (application-write-crash-capsule application condition :backtrace backtrace)
+                   (error () nil))))
     (error 'fatal-control-path-error
            :message          "The active agent path failed unexpectedly."
            :cause            condition

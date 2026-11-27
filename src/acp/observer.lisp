@@ -11,8 +11,7 @@
   "Maximum wait for an editor permission response.")
 
 (defparameter *acp-turn-work-kinds*
-  '(:message :command :lisp :native-lisp :operation-request :job-completion :recovery-diagnosis
-    :client-work)
+  '(:message :command :lisp :native-lisp :operation-request :job-completion :client-work)
   "The kinds of channel work an editor sees as turns.")
 
 

@@ -599,14 +599,13 @@ to another checkpoint."
   nil)
 
 (-> world-terminal-relay-exit
-    (configuration (option list) keyword &key (:session-id (option string)))
+    ((option list) keyword &key (:session-id (option string)))
     null)
-(defun world-terminal-relay-exit (configuration exit mode &key session-id)
+(defun world-terminal-relay-exit (exit mode &key session-id)
   "Report EXIT and how to reopen SESSION-ID after releasing the client's terminal.
 
-For a controlling terminal, publish EXIT's crash capsule to the launcher and
-exit with its status. Read-only observers report without publishing or exiting.
-A detach or connection loss has no EXIT but still names the channel to reopen."
+A controlling terminal exits with the session's status. Read-only observers
+only report it. A detach or connection loss has no EXIT."
   (let ((message (getf exit :message)))
     (when message
       (format *error-output* "~&~A~%" message))
@@ -617,13 +616,6 @@ A detach or connection loss has no EXIT but still names the channel to reopen."
                 (terminal--render-spans terminal (channel-open-instruction session-id)))))
     (finish-output *error-output*))
   (when (and exit (not (eq mode ':read-only)))
-    (let ((capsule (getf (getf exit :details) :crash-capsule)))
-      (when (non-empty-string-p capsule)
-        (handler-case
-            (application-publish-crash-pointer configuration (pathname capsule))
-          (error (condition)
-            (format *error-output* "~&Could not hand the crash capsule to recovery: ~A~%"
-                    condition)))))
     (uiop:quit (getf exit :status)))
   nil)
 

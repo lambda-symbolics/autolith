@@ -44,12 +44,12 @@
 (defparameter *launcher-value-options*
   '("--permissions" "--world-startup" "--id" "--input"
     "--prompt" "--timeout-seconds" "--output" "--events" "--generation"
-    "--status" "--capsule" "--original-argument" "--workspace" "--token"
+    "--status" "--workspace" "--token"
     "--days" "--examples")
   "Options whose next argument is forwarded verbatim, as script/launcher-cli.sh does.")
 
-(defparameter *launcher-terminal-statuses* '(64 76 130 143)
-  "Session exit statuses that end the launcher without entering recovery.")
+(defparameter *launcher-terminal-statuses* '(64 70 76 130 143)
+  "Session exit statuses that need no launcher-level failure advice.")
 
 (defparameter *launcher-active-heap-size* "4GB"
   "The dynamic space for hosted channels, including room for SBCL's copying GC.
@@ -310,8 +310,7 @@ before deleting the listed directories."
   "The paths and runtime one launch works with."
   source-root sbcl data-root state-root
   recovery-core recovery-manifest active-core active-manifest
-  restart-pointer
-  crash-pointer recovery-session-pointer)
+  restart-pointer)
 
 (defun launcher-environment-pathname (variable default)
   "Return the file VARIABLE names, or DEFAULT when it is unset."
@@ -343,11 +342,6 @@ before deleting the listed directories."
      :recovery-manifest (merge-pathnames "manifest.sexp" recovery-core)
      :active-core       active-core
      :active-manifest   (merge-pathnames "manifest.sexp" active-core)
-     :crash-pointer     (merge-pathnames (format nil "crash-pointers/launcher-~D.path" process-id)
-                                         state-root)
-     :recovery-session-pointer
-     (merge-pathnames (format nil "recovery-session-pointers/launcher-~D.sexp" process-id)
-                      state-root)
      :restart-pointer
      (merge-pathnames (format nil "restart-pointers/launcher-~D.sexp" process-id)
                       state-root))))
@@ -360,7 +354,9 @@ before deleting the listed directories."
                                      :output output
                                      :error  error-output
                                      :wait   t)))
-    (or (sb-ext:process-exit-code process) 1)))
+    (if (eq (sb-ext:process-status process) :signaled)
+        (+ 128 (sb-ext:process-exit-code process))
+        (or (sb-ext:process-exit-code process) 1))))
 
 (defun launcher-run-diagnostic (command)
   "Run COMMAND with diagnostic output on standard error."
@@ -473,6 +469,7 @@ before deleting the listed directories."
     (cond
       ((not (zerop status))
        (launcher-note "~A" (launcher-style "31;1" (format nil "Autolith bootstrap failed with status ~D." status)))
+       (launcher-note "Run autolith --pristine to start a pristine session.")
        64)
       (t
        (launcher-refresh-runtime context)
@@ -481,6 +478,7 @@ before deleting the listed directories."
            0
            (progn
              (launcher-note "~A" (launcher-style "31;1" "Autolith bootstrap completed without a usable fast startup image."))
+             (launcher-note "Run autolith --pristine to start a pristine session.")
              64))))))
 
 (defun launcher-offer-bootstrap (context)
@@ -605,62 +603,17 @@ boot therefore leaves the generation identity available to recovery."
               (return status)))))
 
 
-;;;; -- Crash Pointers --
+;;;; -- Restart Envelope --
 
-(defun launcher-prepare-pointers (context)
-  "Create the pointer directories, clear stale pointers, and export their paths."
-  (dolist (pointer (list (launcher-context-crash-pointer context)
-                         (launcher-context-recovery-session-pointer context)
-                         (launcher-context-restart-pointer context)))
+(defun launcher-prepare-restart (context)
+  "Prepare the exact-heap restart envelope and identify its supervising launcher."
+  (let ((pointer (launcher-context-restart-pointer context)))
     (ensure-directories-exist pointer)
     (when (probe-file pointer)
-      (delete-file pointer)))
-  (autolith-script-setenv "AUTOLITH_CRASH_POINTER"
-                          (uiop:native-namestring (launcher-context-crash-pointer context)))
-  (autolith-script-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
-                          (uiop:native-namestring
-                           (launcher-context-recovery-session-pointer context)))
-  (autolith-script-setenv "AUTOLITH_RESTART_POINTER"
-                          (uiop:native-namestring
-                           (launcher-context-restart-pointer context)))
-  ;; This launcher outlives a process that saves its heap for a restart and
-  ;; boots the saved core, so it names the restart's supervisor.
+      (delete-file pointer))
+    (autolith-script-setenv "AUTOLITH_RESTART_POINTER" (uiop:native-namestring pointer)))
   (autolith-script-setenv "AUTOLITH_LAUNCHER_PID" (princ-to-string (sb-posix:getpid)))
   nil)
-
-(defun launcher-delete-pointers (context)
-  "Delete transient launch pointers, retaining any failed restart envelope."
-  (dolist (pointer (list (launcher-context-crash-pointer context)
-                        (launcher-context-recovery-session-pointer context)))
-    (when (probe-file pointer)
-      (ignore-errors (delete-file pointer))))
-  nil)
-
-(defun launcher-capsule (context)
-  "Return the crash capsule the session recorded, when it is a real capsule file."
-  (let ((pointer (launcher-context-crash-pointer context)))
-    (when (probe-file pointer)
-      (let* ((capsule (with-open-file (stream pointer :direction       :input
-                                                      :external-format :utf-8)
-                        (read-line stream nil nil)))
-             (crashes (namestring (merge-pathnames "crashes/"
-                                                   (launcher-context-state-root context)))))
-        (when (and capsule
-                   (uiop:string-prefix-p crashes (namestring (uiop:parse-native-namestring capsule)))
-                   (uiop:string-suffix-p capsule ".sexp")
-                   (probe-file capsule))
-          capsule)))))
-
-(defun launcher-recovery-arguments (context status arguments)
-  "Return the recovery arguments describing a session that ended with STATUS."
-  (append (list "--status" (princ-to-string status))
-          (let ((capsule (launcher-capsule context)))
-            (when capsule
-              (list "--capsule" capsule)))
-          (loop for argument in arguments
-                append (list "--original-argument" argument))
-          (list "--")
-          arguments))
 
 
 ;;;; -- Entry --
@@ -684,7 +637,7 @@ boot therefore leaves the generation identity available to recovery."
               (launcher-restore-console console)
               (launcher-run-recovery context (launcher-request-arguments request))))
            (t
-            (launcher-prepare-pointers context)
+            (launcher-prepare-restart context)
             (let ((status (if (launcher-request-acp-p request)
                               ;; ACP owns stdin/stdout.  Do not publish a restart
                               ;; or replace a failed service with recovery UI.
@@ -697,16 +650,17 @@ boot therefore leaves the generation identity available to recovery."
                 ((or (launcher-request-acp-p request)
                      (launcher-request-data-p request)
                      (launcher-request-run-job-p request)
-                     (launcher-request-world-startup-p request)
-                     (member status *launcher-terminal-statuses*))
+                     (launcher-request-world-startup-p request))
                  status)
+                ((= status 75)
+                 (launcher-run-recovery context
+                                        (append (list "--status" "75" "--")
+                                                (launcher-request-arguments request))))
                 (t
-                 (launcher-run-recovery
-                  context
-                  (launcher-recovery-arguments context status
-                                               (launcher-request-arguments request))))))))
-      (launcher-restore-console console)
-      (launcher-delete-pointers context))))
+                 (unless (member status *launcher-terminal-statuses*)
+                   (launcher-note "Run autolith --pristine to start a pristine session."))
+                 status)))))
+      (launcher-restore-console console))))
 
 (uiop:quit
  (handler-bind ((sb-sys:interactive-interrupt

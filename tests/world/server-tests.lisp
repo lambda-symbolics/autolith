@@ -2713,8 +2713,7 @@ the version the client says it is, when it says one."
                               (push ':release lifecycle)
                               (funcall release screen)))
                       (list 'world-terminal-relay-exit
-                            (lambda (candidate exit mode &key session-id)
-                              (declare (ignore candidate))
+                             (lambda (exit mode &key session-id)
                               (push (list session-id exit mode) reports)
                               (push ':report lifecycle)
                               (when quit-p
@@ -2973,8 +2972,8 @@ the version the client says it is, when it says one."
                        (setf left-p t)
                        (list ':switch :session-id "bsecnd2"))))))
           (list 'world-terminal-relay-exit
-                (lambda (candidate exit mode &key session-id)
-                  (declare (ignore candidate mode))
+                 (lambda (exit mode &key session-id)
+                   (declare (ignore mode))
                   (setf reported (list session-id exit)))))
          (lambda ()
            (let ((*error-output* (make-broadcast-stream)))

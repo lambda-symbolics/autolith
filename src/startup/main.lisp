@@ -264,19 +264,12 @@ Attached clients report their own channel after releasing their shared screen."
        ui (channel-open-instruction (conversation-identifier conversation)))
       t)))
 
-(-> application--initial-work-items
-    ((option string) (option string))
-    list)
-(defun application--initial-work-items
-    (initial-command recovery-diagnosis)
-  "Return ordered controller work for command-line and recovery startup behavior."
-  (cond
-    (initial-command
-     (when-let ((work (input-work-from-input initial-command))) (list work)))
-    (recovery-diagnosis
-     (list (list ':recovery-diagnosis recovery-diagnosis)))
-    (t
-     nil)))
+(-> application--initial-work-items ((option string)) list)
+(defun application--initial-work-items (initial-command)
+  "Return controller work for an initial command, when supplied."
+  (when initial-command
+    (when-let ((work (input-work-from-input initial-command)))
+      (list work))))
 
 (-> application-call-with-session-quiesced (application function) t)
 (defun application-call-with-session-quiesced (application function)
@@ -311,7 +304,6 @@ controller, only the update check and the endpoint are quiesced."
 (-> application-serve
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
-                      (:recovery-diagnosis (option string))
                       (:adaptation-offer-p boolean)
                       (:quiescer (option function))
                       (:ready-function (option function))
@@ -321,7 +313,7 @@ controller, only the update check and the endpoint are quiesced."
                       (:boot-screen-p boolean))
     (option keyword))
 (defun application-serve
-    (application &key initial-command initial-input recovery-diagnosis
+    (application &key initial-command initial-input
                       adaptation-offer-p quiescer ready-function
                       resume-p world-terminal-identity notice (boot-screen-p t))
   "Serve APPLICATION's world-owned channel on this thread until it exits.
@@ -339,13 +331,9 @@ recovery, WORLD-TERMINAL-IDENTITY, the :TOKEN, :CREATED-AT and
 the session shows again. Without BOOT-SCREEN-P the session opens without
 the boot screen, as for a terminal that switched to it. Return the
 controller's exit reason."
-  (let* ((ui                 (application-ui application))
-         (input-controller   nil)
-         (exit-reason        nil)
-         (recovery-startup-p (application-recovery-startup-p application))
-         (recovery-input-storage-ready-p
-           (or (not recovery-startup-p)
-               (application-recovery-input-vault-import application))))
+  (let* ((ui               (application-ui application))
+         (input-controller nil)
+         (exit-reason      nil))
     (unless (terminal-ui-fullscreen-p ui)
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
@@ -408,20 +396,14 @@ controller's exit reason."
                       (when-let ((skips (application-replay-skips-entry application)))
                         (application-present application skips)))
                     (application-render-records application)
-                    (setf (application-recovery-startup-p application) nil)
                     (when initial-input
                       (terminal-ui-set-input ui initial-input))
                     (setf input-controller
                           (application-input-controller-create
                            application
                            :initial-work-items
-                           (application--initial-work-items
-                            initial-command
-                            recovery-diagnosis)
+                            (application--initial-work-items initial-command)
                            :project-adaptation-offer-p adaptation-offer-p
-                           :load-pending-p             (not recovery-startup-p)
-                           :pending-persistence-enabled-p
-                           recovery-input-storage-ready-p
                            :start-reader-p             nil))
                     (application-assignment-begin input-controller)
                     (unless resume-p
@@ -438,14 +420,13 @@ controller's exit reason."
                           (application-present application notice))
                         (application-startup-presentation
                          application input-controller
-                         :onboarding-p  (null recovery-diagnosis)
+                          :onboarding-p t
                          :boot-screen-p boot-screen-p))
                     (when (and (terminal-ui-fullscreen-p ui) (not resume-p))
                       (with-terminal-ui-locked (ui)
                         (setf (terminal-ui-live-output-suspended-p ui) nil)
                         (terminal-ui--paint-live ui)))
-                    (when (and (not resume-p) (null initial-command)
-                               (null initial-input) (null recovery-diagnosis))
+                    (when (and (not resume-p) (null initial-command) (null initial-input))
                       (application--offer-startup-update application))
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
@@ -513,10 +494,10 @@ controller's exit reason."
 
 ;;;; -- Command-Line Entry --
 
-(defparameter *main-fatal-recovery-status* 70
-  "The process status asking the stable launcher to recover after a fatal error.")
+(defparameter *main-fatal-status* 70
+  "The process status for a fatal session failure.")
 
-(defparameter *main-rollback-recovery-status* 75
+(defparameter *main-rollback-status* 75
   "The process status asking the stable launcher to start a selected rollback.")
 
 (defparameter *main-update-request-status* 76
@@ -528,9 +509,8 @@ controller's exit reason."
 
 (defgeneric main--launcher-exit (condition)
   (:documentation
-   "Return the launcher status for session-ending CONDITION, the message announcing
-it, the terminal style that message is shown in, and the exit details plist a
-relaying terminal needs to hand the stable launcher, or NIL."))
+   "Return CONDITION's exit status, terminal message and style, and optional
+exit details for attached clients."))
 
 (defmethod main--launcher-exit ((condition update-requested))
   "Ask the packaged outer launcher to install the requested release."
@@ -541,19 +521,20 @@ relaying terminal needs to hand the stable launcher, or NIL."))
 
 (defmethod main--launcher-exit ((condition rollback-requested))
   "Ask the stable launcher to start the selected retained generation."
-  (values *main-rollback-recovery-status*
+  (values *main-rollback-status*
           (format nil "~A is rolling back to retained generation ~A."
                   (product-name) (rollback-requested-generation-id condition))
           ':notice))
 
 (defmethod main--launcher-exit ((condition fatal-control-path-error))
-  "Ask the stable launcher to boot recovery after a fatal error."
-  (values *main-fatal-recovery-status*
-          (format nil "~A entered recovery after a fatal error. Capsule: ~A"
-                  (product-name) (fatal-control-path-error-capsule-pathname condition))
-          ':failure
-          (list :crash-capsule
-                (namestring (fatal-control-path-error-capsule-pathname condition)))))
+  "Report the crash capsule and end the session."
+  (let ((capsule (fatal-control-path-error-capsule-pathname condition)))
+    (values *main-fatal-status*
+            (format nil
+                    "~A stopped after a fatal error.~@[~%Crash capsule: ~A~]~%If startup fails or self-modifications cause instability, run ~A --pristine."
+                    (product-name) capsule (product-command-name))
+            ':failure
+            (when capsule (list :crash-capsule (namestring capsule))))))
 
 (-> main--launcher-exit-text (condition) (values integer string list))
 (defun main--launcher-exit-text (condition)
@@ -740,16 +721,7 @@ dependencies."
          (effective-open-id
            (when (and (null handoff-record) open-id)
              (main-resolve-conversation configuration open-id)))
-         (recovery-state
-            (if (or handoff-record new-directory)
-               (list nil nil)
-               (multiple-value-list
-                (application-recovery-state configuration))))
-         (recovery-conversation-id (first recovery-state))
-         (recovery-diagnosis
-            (and (not (or handoff-record new-directory effective-open-id))
-                 (application-recovery-diagnosis-prompt configuration)))
-         (conversation-id          (or effective-open-id recovery-conversation-id))
+         (conversation-id          effective-open-id)
          (latest-p                 (and effective-open-requested-p (null conversation-id)))
          (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record new-directory)))
          (image-state-loaded-p
@@ -765,8 +737,7 @@ dependencies."
                          authentication-selection
                          authentication-method))
     (when handoff-record
-      (world-startup-begin-startup handoff-record)
-      (application--clear-recovery-environment))
+      (world-startup-begin-startup handoff-record))
     (when handoff-record
       (let* ((*world-startup-record* handoff-record)
              (status                 (world-server-run configuration
@@ -792,25 +763,23 @@ dependencies."
     (if (main--interactive-input-p)
         (main--run-world-client
          configuration
-         :permission-mode    permission-mode
-         :immutable-p        immutable-p
-         :conversation-id    conversation-id
-         :attachment-mode    attachment-mode
-         :new-p              (not (null new-directory))
-         :inbox-p            inbox-p
-         :latest-p           latest-p
-         :welcome-p          inbox-p
-         :recovery-diagnosis recovery-diagnosis
-         :launch             (main--launch-options
-                              command :permission-mode explicit-permission-mode))
+         :permission-mode permission-mode
+         :immutable-p     immutable-p
+         :conversation-id conversation-id
+         :attachment-mode attachment-mode
+         :new-p           (not (null new-directory))
+         :inbox-p         inbox-p
+         :latest-p        latest-p
+         :welcome-p       inbox-p
+         :launch          (main--launch-options
+                           command :permission-mode explicit-permission-mode))
         (apply #'world-client-run-script configuration
                :conversation-id conversation-id
                :permission-mode permission-mode
                :immutable-p     immutable-p
                :launch          (main--launch-options
                                  command :permission-mode explicit-permission-mode)
-               (when latest-p (list :latest-p t))))
-    (application--clear-recovery-environment))
+               (when latest-p (list :latest-p t)))))
   nil)
 
 (-> main--interactive-input-p () boolean)
@@ -823,13 +792,12 @@ dependencies."
                         (:conversation-id (option string))
                         (:pick-channel-p boolean)
                         (:inbox-p boolean) (:latest-p boolean) (:attach-expected-p boolean)
-                        (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean))
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p inbox-p latest-p
+                        pick-channel-p launch new-p inbox-p latest-p
                         (attach-expected-p t))
   "Open this terminal's channel in the world server and return its session identifier.
 
@@ -841,18 +809,17 @@ a client view. A server that refuses the open, or cannot be started or reached,
 ends the start with the reason; no session runs in this terminal instead."
   (handler-case
       (world-client-open configuration
-                         :directory          (config :working-directory configuration)
-                         :channel            conversation-id
-                         :permission-mode    permission-mode
-                         :immutable-p        immutable-p
-                         :pick-channel-p     pick-channel-p
-                         :inbox-p            inbox-p
-                         :latest-p           latest-p
-                         :attach-expected-p  attach-expected-p
-                         :switch-p           (not attach-expected-p)
-                         :recovery-diagnosis recovery-diagnosis
-                         :launch             launch
-                         :new-p              new-p)
+                         :directory         (config :working-directory configuration)
+                         :channel           conversation-id
+                         :permission-mode   permission-mode
+                         :immutable-p       immutable-p
+                         :pick-channel-p    pick-channel-p
+                         :inbox-p           inbox-p
+                         :latest-p          latest-p
+                         :attach-expected-p attach-expected-p
+                         :switch-p          (not attach-expected-p)
+                         :launch            launch
+                         :new-p             new-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1019,11 +986,10 @@ still shows the boot panel keeps it until the user starts the session."
 
 (-> main--welcome-frame
     (world-terminal-screen string &key (:total (option integer)) (:local (option integer))
-     (:immutable-p boolean) (:recovered-p boolean) (:tip list) (:height-limit (option integer))
-     (:recovery-conversation-id (option string)) (:notice (option string)))
+     (:immutable-p boolean) (:tip list) (:height-limit (option integer)) (:notice (option string)))
     clinedi:frame-snapshot)
 (defun main--welcome-frame
-    (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice height-limit)
+    (screen directory &key total local immutable-p tip notice height-limit)
   "Render safe client startup information centered in the current pane."
   (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
     (let* ((height        (if height-limit (min height height-limit) height))
@@ -1057,13 +1023,6 @@ still shows the boot panel keeps it until the user starts the session."
              (append header
               (list (terminal-span ':dim "Sidebar: select channel. Enter: new. Ctrl-C: quit.")
                     (terminal-span ':plain (format nil "~%")))
-              (when (or recovered-p recovery-conversation-id)
-                (list (terminal-span ':notice
-                       (if recovery-conversation-id
-                           (format nil "Recovery available: ~A open ~A~%"
-                                   (product-command-name)
-                                   (conversation-identifier-display recovery-conversation-id))
-                           (format nil "Recovered startup.~%")))))
               (when notice
                 (list (terminal-span ':notice
                        (format nil "~A~%" (sanitize-text (bounded-string notice :limit 200)
@@ -1096,12 +1055,11 @@ still shows the boot panel keeps it until the user starts the session."
 
 (-> main--welcome-world-client
     (world-terminal-screen configuration string
-     &key (:immutable-p boolean) (:recovery-diagnosis (option string))
-     (:recovery-conversation-id (option string)) (:notice (option string))
+     &key (:immutable-p boolean) (:notice (option string))
      (:launch list) (:input t))
     (option list))
 (defun main--welcome-world-client
-    (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice launch input)
+    (screen configuration directory &key immutable-p notice launch input)
   "Show startup information above the normal composer and retain its first input for a new channel."
   (let* ((overrides     (loop for key in '(:model :provider)
                               for value = (getf launch key)
@@ -1120,8 +1078,7 @@ still shows the boot panel keeps it until the user starts the session."
      screen configuration
      (lambda (height)
        (main--welcome-frame screen directory :total total :local local :immutable-p immutable-p
-                            :recovered-p (not (null recovery-diagnosis)) :tip tip
-                            :recovery-conversation-id recovery-conversation-id :notice notice
+                           :tip tip :notice notice
                             :height-limit height))
      :input input)))
 
@@ -1129,12 +1086,12 @@ still shows the boot panel keeps it until the user starts the session."
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
      (:conversation-id (option string)) (:attachment-mode (member :control :read-only))
      (:pick-channel-p boolean) (:new-p boolean) (:inbox-p boolean) (:latest-p boolean) (:welcome-p boolean)
-     (:recovery-diagnosis (option string)) (:launch list))
+     (:launch list))
     (values boolean list))
 (defun main--run-world-client
        (configuration
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
-        pick-channel-p new-p inbox-p latest-p welcome-p recovery-diagnosis launch)
+        pick-channel-p new-p inbox-p latest-p welcome-p launch)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
 Interactive switches wait for discovery and attachment until completion or cancellation.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
@@ -1150,10 +1107,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
          (unless welcome-p
            (world-sidebar-start panel))
          (multiple-value-bind (session-id started-p)
-             (cond
-               ((and welcome-p recovery-diagnosis)
-                (values nil nil))
-               (t
                 (main--call-with-channel-loading
                  screen (if welcome-p "Loading home" "Opening channel")
                  (lambda ()
@@ -1166,18 +1119,17 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                    :attach-expected-p nil)
                          (values nil nil))
                        (main--open-world-channel configuration
-                                                 :permission-mode    permission-mode
-                                                 :immutable-p        immutable-p
-                                                 :conversation-id    conversation-id
-                                                 :pick-channel-p     pick-channel-p
-                                                 :new-p              new-p
-                                                 :inbox-p            inbox-p
-                                                 :latest-p           latest-p
-                                                 :recovery-diagnosis recovery-diagnosis
-                                                 :launch             launch)))
+                                                 :permission-mode permission-mode
+                                                 :immutable-p     immutable-p
+                                                 :conversation-id conversation-id
+                                                 :pick-channel-p  pick-channel-p
+                                                 :new-p           new-p
+                                                 :inbox-p         inbox-p
+                                                 :latest-p        latest-p
+                                                 :launch          launch)))
                  :start-p (not (null (terminal--terminal-mode-or-nil
                                       (world-terminal-screen-terminal screen))))
-                 :boot-p  (config :boot-screen-p configuration))))
+                 :boot-p  (config :boot-screen-p configuration))
            (when welcome-p
              (world-sidebar-start panel))
            (loop with origin = nil
@@ -1191,8 +1143,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                              (if (null session-id)
                                  (main--welcome-world-client
                                   screen configuration launch-directory
-                                  :immutable-p immutable-p :recovery-diagnosis recovery-diagnosis
-                                  :recovery-conversation-id conversation-id :notice (shiftf notice nil)
+                                  :immutable-p immutable-p :notice (shiftf notice nil)
                                   :launch launch :input (getf pending-input :payload))
                                (prog1
                                    (main--attach-world-channel configuration session-id attachment-mode
@@ -1290,7 +1241,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
         (cleanup "client-screen" (lambda () (world-terminal-client-screen-release screen)))
         (cleanup "sidebar" (lambda () (world-sidebar-stop panel))))
       (setf cleanup-failures (nreverse cleanup-failures)))
-    (world-terminal-relay-exit configuration final-exit attachment-mode :session-id last-channel)
+    (world-terminal-relay-exit final-exit attachment-mode :session-id last-channel)
     (values t (when cleanup-failures (list :cleanup-failures cleanup-failures)))))
 
 (-> main--session-options () list)
@@ -1810,6 +1761,10 @@ The line is colored as a failure when STREAM is a terminal that allows color."
   (shell-log-accounting-reset)
   (handler-case
       (main-dispatch arguments)
+    (fatal-control-path-error (condition)
+      (multiple-value-bind (status message) (main--launcher-exit condition)
+        (format *error-output* "~&~A~%" message)
+        (uiop:quit status)))
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
       (format *error-output* "~A~%"
               (main--startup-failure-line (main--startup-error-text condition)

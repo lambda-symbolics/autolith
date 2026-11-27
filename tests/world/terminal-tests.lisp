@@ -1806,7 +1806,7 @@ Each transcript event takes a line of its own."
                   (multiple-value-bind (exit ended-p) (funcall await-exit)
                     (let* ((command  (application--open-command application))
                            (output   (with-output-to-string (*error-output*)
-                                       (world-terminal-relay-exit configuration exit ':read-only
+                                       (world-terminal-relay-exit exit ':read-only
                                                               :session-id identifier)))
                            (position (search command output)))
                       (test-assert (and ended-p
@@ -1862,89 +1862,68 @@ Each transcript event takes a line of its own."
 
 (-> test-world-terminal-relay-exit () null)
 (defun test-world-terminal-relay-exit ()
-  "Test the relaying process exits like its session, and observers only report it."
-  (with-test-configuration (configuration)
-    (let* ((statuses nil)
-           (exit     (list :status 76 :message "Autolith will update to 9.9.9."))
-           (state    (config :state-root configuration))
-           (pointer  (merge-pathnames "crash-pointers/launcher-1.path" state))
-           (capsule  (merge-pathnames "crashes/capsule.sexp" state))
-           (crash    (list :status  70
-                           :message "Autolith entered recovery after a fatal error."
-                           :details (list :crash-capsule (namestring capsule)))))
-      (ensure-directories-exist pointer)
-      (test-call-with-function-replacements
-       (list (list 'uiop:quit (lambda (&optional (status 0) &rest ignored)
-                                (declare (ignore ignored))
-                                (push status statuses))))
-       (lambda ()
-         (with-test-environment (("AUTOLITH_CRASH_POINTER" (namestring pointer)))
-            (dolist (case (list (list exit ':control) (list exit ':read-only)
-                               (list nil ':control) (list nil ':read-only)))
-              (destructuring-bind (result mode) case
-                (let* ((report   (with-output-to-string (*error-output*)
-                                   (world-terminal-relay-exit configuration result mode :session-id "bopen1")))
-                       (command  (channel-open-command "bopen1"))
-                       (position (search command report)))
-                  (test-assert (and position
-                                    (not (search command report :start2 (+ position (length command)))))
-                               "Controllers and observers report one reopen command, including detach or connection loss")
-                  (test-assert (eq (not (null (search (getf exit :message) report)))
-                                   (not (null result)))
-                               "An attachment's exit message is reported only when one was received"))))
-            (test-assert (equal statuses '(76))
-                         "Only the controlling terminal exits with the session's status")
-            (let* ((command  (channel-open-command "bopen1"))
-                   (message  (format nil "Channel closed. Run ~A" command))
-                   (report   (with-output-to-string (*error-output*)
-                               (world-terminal-relay-exit configuration (list :status 78 :message message)
-                                                      ':control :session-id "bopen1")))
-                   (position (search command report)))
-              (test-assert (and position
-                                (not (search command report :start2 (+ position (length command)))))
-                           "A legacy server's reopen command is reported once")
-              (test-assert (eql (first statuses) 78)
-                           "Already-reported advice preserves the controlling exit status"))
-           (with-output-to-string (*error-output*)
-             (world-terminal-relay-exit configuration crash ':read-only))
-           (test-assert (not (probe-file pointer))
-                        "an observer leaves the session's crash capsule to the controller")
-           (with-output-to-string (*error-output*)
-             (world-terminal-relay-exit configuration crash ':control))
-           (test-assert (and (eql (first statuses) 70)
-                             (string= (uiop:read-file-line pointer) (namestring capsule)))
-                        "the controlling terminal hands the session's crash capsule to its launcher")
-           (delete-file pointer)
-           (with-output-to-string (*error-output*)
-             (world-terminal-relay-exit
-              configuration
-              (list :status 70 :details (list :crash-capsule "/tmp/elsewhere.sexp"))
-              ':control))
-           (test-assert (not (probe-file pointer))
-                        "a capsule outside private crash state is never handed to recovery"))))))
-  (dolist (case '((:update 76 "update to 1.2.3" :notice)
-                  (:rollback 75 "retained generation G1" :notice)
-                  (:fatal 70 "Capsule: " :failure)))
-    (destructuring-bind (kind status text style) case
+  "Test controlling terminal exit status and launcher metadata."
+  (let ((statuses nil)
+        (exit     (list :status 76 :message "Autolith will update to 9.9.9."))
+        (crash    (list :status 70 :details '(:crash-capsule "/tmp/capsule.sexp"))))
+    (test-call-with-function-replacements
+     (list (list 'uiop:quit (lambda (&optional (status 0) &rest ignored)
+                              (declare (ignore ignored))
+                              (push status statuses))))
+     (lambda ()
+       (dolist (case (list (list exit ':control) (list exit ':read-only)
+                           (list nil ':control) (list nil ':read-only)))
+         (destructuring-bind (result mode) case
+           (let* ((report   (with-output-to-string (*error-output*)
+                              (world-terminal-relay-exit result mode :session-id "bopen1")))
+                  (command  (channel-open-command "bopen1"))
+                  (position (search command report)))
+             (test-assert (and position
+                               (not (search command report :start2 (+ position (length command)))))
+                          "Controllers and observers report one reopen command, including detach or connection loss")
+             (test-assert (eq (not (null (search (getf exit :message) report)))
+                              (not (null result)))
+                          "An attachment's exit message is reported only when one was received"))))
+       (test-assert (equal statuses '(76))
+                    "Only the controlling terminal exits with the session's status")
+       (let* ((command  (channel-open-command "bopen1"))
+              (message  (format nil "Channel closed. Run ~A" command))
+              (report   (with-output-to-string (*error-output*)
+                          (world-terminal-relay-exit (list :status 78 :message message)
+                                                     ':control :session-id "bopen1")))
+              (position (search command report)))
+         (test-assert (and position
+                           (not (search command report :start2 (+ position (length command)))))
+                      "A legacy server's reopen command is reported once")
+         (test-assert (eql (first statuses) 78)
+                      "Already-reported advice preserves the controlling exit status"))
+       (with-output-to-string (*error-output*)
+         (world-terminal-relay-exit crash ':read-only))
+       (test-assert (eql (first statuses) 78)
+                    "An observer does not exit on a fatal session")
+       (with-output-to-string (*error-output*)
+         (world-terminal-relay-exit crash ':control))
+       (test-assert (eql (first statuses) 70)
+                    "The controlling terminal receives the fatal session status"))))
+  (dolist (case '((:update 76 :notice)
+                  (:rollback 75 :notice)
+                  (:fatal 70 :failure)))
+    (destructuring-bind (kind status style) case
       (multiple-value-bind (actual-status message actual-style details)
           (main--launcher-exit
            (ecase kind
              (:update
               (make-condition 'update-requested :message "Update." :tag "v1.2.3"))
              (:rollback
-              (make-condition 'rollback-requested :message       "Roll back."
-                                                  :generation-id "G1"))
+              (make-condition 'rollback-requested :message "Roll back." :generation-id "G1"))
              (:fatal
               (make-condition 'fatal-control-path-error
-                              :message          "Fatal."
-                              :cause            (make-condition 'simple-error)
+                              :message "Fatal." :cause (make-condition 'simple-error)
                               :capsule-pathname #P"/tmp/capsule.sexp"))))
-        (test-assert (and (= actual-status status) (search text message)
-                          (eq actual-style style))
-                     (format nil "a ~(~A~) exit maps to launcher status ~D in ~(~A~) style"
-                             kind status style))
+        (declare (ignore message))
+        (test-assert (and (= actual-status status) (eq actual-style style))
+                     "The launcher exit preserves status and style")
         (test-assert (equal details (and (eq kind :fatal)
                                          '(:crash-capsule "/tmp/capsule.sexp")))
-                     (format nil "a ~(~A~) exit relays ~:[no details~;its crash capsule~]"
-                             kind (eq kind :fatal))))))
+                     "The fatal exit retains its crash capsule metadata"))))
   nil)

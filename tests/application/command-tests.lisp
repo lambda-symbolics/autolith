@@ -702,8 +702,6 @@
               (list 'application-present
                     (lambda (candidate entry &key group)
                       (declare (ignore candidate entry group)) t))
-              (list 'application-publish-recovery-session
-                    (lambda (candidate) (declare (ignore candidate)) nil))
               (list 'application-reset-history-pagination
                     (lambda (candidate) (declare (ignore candidate)) nil))
               (list 'application--install-configuration
@@ -1477,11 +1475,7 @@
            (list 'application--pick-identifier
                  (lambda (candidate &rest arguments)
                    (declare (ignore candidate arguments))
-                   (pop picks)))
-           (list 'application-publish-recovery-session
-                 (lambda (candidate)
-                   (declare (ignore candidate))
-                   nil)))
+                   (pop picks))))
           (lambda ()
             (test-assert
              (eq (application--builtin-settings-command application) ':continue)

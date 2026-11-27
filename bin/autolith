@@ -152,8 +152,6 @@ recovery_core=${AUTOLITH_RECOVERY_CORE:-$data_home/$directory_name/recovery/auto
 recovery_manifest=$(dirname -- "$recovery_core")/manifest.sexp
 active_core=${AUTOLITH_ACTIVE_CORE:-$data_home/$directory_name/active/autolith-active.core}
 active_manifest=$(dirname -- "$active_core")/manifest.sexp
-crash_pointer=
-recovery_session_pointer=
 
 if [[ -t 0 ]]; then
   terminal_state=$(stty -g 2>/dev/null || true)
@@ -183,12 +181,6 @@ restore_terminal()
 finish_launcher()
 {
   restore_terminal
-  if [[ -n "$crash_pointer" ]]; then
-    rm -f -- "$crash_pointer"
-  fi
-  if [[ -n "$recovery_session_pointer" ]]; then
-    rm -f -- "$recovery_session_pointer"
-  fi
 }
 
 run_recovery()
@@ -263,12 +255,14 @@ bootstrap_active_image()
   if [[ "$bootstrap_status" -ne 0 ]]; then
     printf '%sAutolith bootstrap failed with status %d.%s\n' \
       "$launcher_failure" "$bootstrap_status" "$launcher_reset" >&2
+    printf 'Run autolith --pristine to start a pristine session.\n' >&2
     return 64
   fi
   refresh_runtime_command
   if ! active_image_valid; then
     printf '%sAutolith bootstrap completed without a usable fast startup image.%s\n' \
       "$launcher_failure" "$launcher_reset" >&2
+    printf 'Run autolith --pristine to start a pristine session.\n' >&2
     return 64
   fi
   return 0
@@ -333,18 +327,6 @@ if [[ "$recovery_requested" == true ]]; then
   exit $?
 fi
 
-crash_pointer_directory="$state_home/$directory_name/crash-pointers"
-(umask 077; mkdir -p -- "$state_home/$directory_name" "$crash_pointer_directory") || exit 1
-crash_pointer="$crash_pointer_directory/launcher-$$.path"
-rm -f -- "$crash_pointer"
-export AUTOLITH_CRASH_POINTER="$crash_pointer"
-
-recovery_session_pointer_directory="$state_home/$directory_name/recovery-session-pointers"
-(umask 077; mkdir -p -- "$recovery_session_pointer_directory") || exit 1
-recovery_session_pointer="$recovery_session_pointer_directory/launcher-$$.sexp"
-rm -f -- "$recovery_session_pointer"
-export AUTOLITH_RECOVERY_SESSION_POINTER="$recovery_session_pointer"
-
 if run_active ${remaining_arguments[@]+"${remaining_arguments[@]}"}; then
   exit 0
 else
@@ -353,41 +335,22 @@ fi
 
 restore_terminal
 
-# A detached session relays its exit to the attached terminal, whose own
-# launcher updates, rolls back, or recovers; recovering here as well would race
-# it for the conversation without a terminal to show. ACP owns standard I/O,
-# and headless jobs publish their own terminal result before returning a status.
+# Detached sessions and protocol clients handle their own exit status.
 if [[ "$data_requested" == true || "$acp_requested" == true ||
       "$run_job_requested" == true || "$world_startup_requested" == true ]]; then
   exit "$status"
 fi
 
-if [[ "$status" -ne 64 && "$status" -ne 76 &&
-      "$status" -ne 130 && "$status" -ne 143 ]]; then
-  capsule=
-  if [[ -f "$crash_pointer" ]]; then
-    IFS= read -r capsule < "$crash_pointer" || capsule=
-    case "$capsule" in
-      "$state_home/$directory_name/crashes/"*.sexp)
-        if [[ ! -f "$capsule" ]]; then
-          capsule=
-        fi
-        ;;
-      *)
-        capsule=
-        ;;
-    esac
-  fi
-  recovery_arguments=("--status" "$status")
-  if [[ -n "$capsule" ]]; then
-    recovery_arguments+=("--capsule" "$capsule")
-  fi
-  for argument in ${remaining_arguments[@]+"${remaining_arguments[@]}"}; do
-    recovery_arguments+=("--original-argument" "$argument")
-  done
-  recovery_arguments+=("--" ${remaining_arguments[@]+"${remaining_arguments[@]}"})
-  run_recovery "${recovery_arguments[@]}"
+# Rollback is an explicit request recorded by the active image.
+if [[ "$status" -eq 75 ]]; then
+  run_recovery --status 75 -- ${remaining_arguments[@]+"${remaining_arguments[@]}"}
   exit $?
+fi
+
+# Status 70 already carries pristine advice from the active fatal reporter.
+if [[ "$status" -ne 64 && "$status" -ne 70 && "$status" -ne 76 &&
+      "$status" -ne 130 && "$status" -ne 143 ]]; then
+  printf 'Run autolith --pristine to start a pristine session.\n' >&2
 fi
 
 exit "$status"

@@ -69,14 +69,6 @@
      :fields (list (list :indicator ':conversation-id :required t :validate #'stringp)
                    (list :indicator ':captures :required t :validate #'proper-list-p)))))
 
-(-> application-recovery-input-vault--pending-payload-equal-p (list list) boolean)
-(defun application-recovery-input-vault--pending-payload-equal-p (left right)
-  "Return true when LEFT and RIGHT represent the same accepted input payload."
-  (not
-   (null
-    (equal (input-state->payload left)
-           (input-state->payload right)))))
-
 (-> application-recovery-input-vault--read-pending-path
     (application pathname &key (:other-conversation-p boolean))
     (values (option list) keyword))
@@ -138,65 +130,6 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                    (namestring pathname))
            :cause condition))))))
 
-(-> application-recovery-input-vault--read-pending
-    (application)
-    (values (option list) (option pathname) (option pathname)))
-(defun application-recovery-input-vault--read-pending (application)
-  "Return APPLICATION's normalized pending state, source, and legacy cleanup path."
-  (let* ((configuration (application-configuration application))
-         (conversation  (application-conversation application))
-         (canonical
-           (configuration-pending-inputs-path
-            configuration (conversation-pathname conversation)))
-         (legacy        (configuration-legacy-pending-inputs-path configuration)))
-    (cond
-      ((probe-file canonical)
-       (multiple-value-bind (canonical-state status)
-           (application-recovery-input-vault--read-pending-path
-            application canonical)
-         (declare (ignore status))
-         (let ((legacy-cleanup-pathname nil))
-           (when (probe-file legacy)
-             (let ((legacy-state      nil)
-                   (legacy-status     nil)
-                   (legacy-readable-p nil))
-               (handler-case
-                   (multiple-value-bind (state state-status)
-                       (application-recovery-input-vault--read-pending-path
-                        application legacy :other-conversation-p t)
-                     (setf legacy-state state
-                           legacy-status state-status
-                           legacy-readable-p t))
-                 (recovery-input-vault-error ()
-                   ;; A canonical record is authoritative.  An unreadable global
-                   ;; legacy record cannot be safely attributed or deleted here.
-                   nil))
-               (when (and legacy-readable-p (eq legacy-status ':current))
-                 (unless
-                     (application-recovery-input-vault--pending-payload-equal-p
-                      canonical-state legacy-state)
-                   (application-recovery-input-vault--signal
-                    legacy ':validate-pending
-                    :message
-                    (format nil "Legacy pending input at ~A conflicts with the conversation-scoped snapshot."
-                            (namestring legacy))))
-                 (setf legacy-cleanup-pathname legacy))))
-           (values canonical-state canonical legacy-cleanup-pathname))))
-      ((probe-file legacy)
-       (handler-case
-           (multiple-value-bind (legacy-state status)
-               (application-recovery-input-vault--read-pending-path
-                application legacy :other-conversation-p t)
-             (if (eq status ':current)
-                 (values legacy-state legacy legacy)
-                 (values nil nil nil)))
-         (recovery-input-vault-error ()
-           ;; An unreadable process-global legacy snapshot cannot be safely
-           ;; attributed to this conversation.  Preserve and ignore it.
-           (values nil nil nil))))
-      (t
-       (values nil nil nil)))))
-
 
 ;;;; -- Vault Captures --
 
@@ -247,15 +180,6 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
     (remf payload :vault-capture-identifiers)
     (list* :id (copy-seq (getf capture :id)) :captured-at (getf capture :captured-at)
            payload)))
-
-(-> application-recovery-input-vault--capture-payload-equal-p (list list) boolean)
-(defun application-recovery-input-vault--capture-payload-equal-p (left right)
-  "Return true when LEFT and RIGHT carry the same captured pending input."
-  (not
-   (null
-    (equal
-     (input-state->payload left)
-     (input-state->payload right)))))
 
 (-> application-recovery-input-vault--sort-captures (list) list)
 (defun application-recovery-input-vault--sort-captures (captures)
@@ -467,7 +391,7 @@ When CREATE-P is false, only an existing capture for the snapshot is updated."
     capture-identifier))
 
 
-;;;; -- Recovery Import Transaction --
+;;;; -- Capture and Deletion --
 
 (-> application-recovery-input-vault--capture-state (list integer) list)
 (defun application-recovery-input-vault--capture-state (state captured-at)
@@ -484,70 +408,6 @@ When CREATE-P is false, only an existing capture for the snapshot is updated."
         (getf state :steering-promotion-prefix-count)
         :legacy-p                  nil))
 
-(-> application-recovery-input-vault--replacement-captures
-    (application list list)
-    list)
-(defun application-recovery-input-vault--replacement-captures
-    (application captures pending-state)
-  "Return the vault state after transactionally importing PENDING-STATE."
-  (let* ((vault-pathname (application-recovery-input-vault--path application))
-         (represented-identifiers
-           (getf pending-state :vault-capture-identifiers))
-         (remaining
-           (remove-if
-            (lambda (capture)
-              (member (getf capture :id)
-                      represented-identifiers
-                      :test #'string=))
-            captures)))
-    (if (zerop
-         (input-state-count pending-state))
-        remaining
-        (let* ((identifier (getf pending-state :snapshot-identifier))
-               (existing
-                 (find identifier remaining
-                       :key  (lambda (capture) (getf capture :id))
-                       :test #'string=))
-               (capture
-                 (application-recovery-input-vault--capture-state
-                  pending-state (get-universal-time))))
-          (cond
-            ((null existing)
-             (append remaining (list capture)))
-            ((application-recovery-input-vault--capture-payload-equal-p
-              existing capture)
-             remaining)
-            (t
-             (application-recovery-input-vault--signal
-              vault-pathname ':validate-vault
-              :message
-              (format nil "Recovery vault capture ~A conflicts with the pending snapshot at ~A."
-                      identifier (namestring vault-pathname)))))))))
-
-(-> application-recovery-input-vault--write-canonical-pending
-    (application list pathname)
-    null)
-(defun application-recovery-input-vault--write-canonical-pending
-    (application state pathname)
-  "Publish normalized pending STATE at canonical PATHNAME."
-  (handler-case
-      (progn
-        (ensure-directories-exist pathname)
-        (snapshot-write
-         pathname
-         (input-state->form
-          state
-          (conversation-identifier (application-conversation application)))
-         :mode #o600))
-    (error (condition)
-      (application-recovery-input-vault--signal
-       pathname ':write-pending
-       :message
-       (format nil "Could not normalize recovered pending input at ~A."
-               (namestring pathname))
-       :cause condition)))
-  nil)
-
 (-> application-recovery-input-vault--delete (pathname keyword) null)
 (defun application-recovery-input-vault--delete (pathname operation)
   "Delete PATHNAME for OPERATION or signal a recovery-input error."
@@ -562,69 +422,6 @@ When CREATE-P is false, only an existing capture for the snapshot is updated."
                (namestring pathname))
        :cause condition)))
   nil)
-
-(-> application-recovery-input-vault--import-locked (application) null)
-(defun application-recovery-input-vault--import-locked (application)
-  "Import APPLICATION's pending snapshot inside its publication boundary."
-  (multiple-value-bind (pending-state source-pathname legacy-cleanup-pathname)
-      (application-recovery-input-vault--read-pending application)
-    ;; Both durable inputs are fully validated before the first mutation.
-    (let ((captures (application-recovery-input-vault--read-captures application)))
-      (when pending-state
-        (let* ((configuration (application-configuration application))
-               (conversation  (application-conversation application))
-               (canonical-pathname
-                 (configuration-pending-inputs-path
-                  configuration (conversation-pathname conversation)))
-               (replacement-captures
-                 (application-recovery-input-vault--replacement-captures
-                  application captures pending-state)))
-          (when (or (getf pending-state :legacy-p)
-                    (not (equal source-pathname canonical-pathname)))
-            (application-recovery-input-vault--write-canonical-pending
-             application pending-state canonical-pathname))
-          (application-recovery-input-vault--write-captures
-           application replacement-captures)
-          (when legacy-cleanup-pathname
-            (application-recovery-input-vault--delete
-             legacy-cleanup-pathname ':delete-legacy-pending))
-          (application-recovery-input-vault--delete
-           canonical-pathname ':delete-pending)))))
-  nil)
-
-(-> application-recovery-input-vault--import (application) null)
-(defun application-recovery-input-vault--import (application)
-  "Import APPLICATION's pending snapshot into its vault without enqueueing it."
-  (application-recovery-input-vault--call-with-publication-lock
-   application
-   (lambda ()
-     (application-recovery-input-vault--import-locked application))))
-
-(-> application-recovery-input-vault-import (application) boolean)
-(defun application-recovery-input-vault-import (application)
-  "Vault recovered pending input for APPLICATION and record any safe failure."
-  (handler-case
-      (progn
-        (application-recovery-input-vault--import application)
-        (setf (application-recovery-input-vault-failure application) nil)
-        t)
-    (recovery-input-vault-error (condition)
-      (setf (application-recovery-input-vault-failure application) condition)
-      nil)
-    (error (cause)
-      (let* ((pathname (application-recovery-input-vault--path application))
-             (condition
-               (make-condition
-                'recovery-input-vault-error
-                :message
-                (format nil "Could not preserve recovered input for conversation ~A."
-                        (conversation-identifier
-                         (application-conversation application)))
-                :pathname  pathname
-                :operation ':import
-                :cause     cause)))
-        (setf (application-recovery-input-vault-failure application) condition)
-        nil))))
 
 
 ;;;; -- Controller Restore Transactions --

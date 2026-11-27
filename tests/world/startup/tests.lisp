@@ -237,22 +237,7 @@ With PERSISTED-P its conversation holds a message."
                   (test-assert (and (eq before (application-conversation application))
                                     (null (image-daemon:daemon-registry-read pathname)))
                                "failed retirement restores identity and removes its replacement")
-                  (assert-identity before))
-                (test-call-with-function-replacements
-                 (list
-                  (list 'application-publish-recovery-session
-                        (lambda (ignored)
-                          (declare (ignore ignored))
-                          (error "Injected failure after endpoint rekey."))))
-                 (lambda ()
-                   (test-assert
-                    (handler-case
-                     (progn (application-install-conversation application blocked) nil)
-                     (application-runtime-replacement-error nil t))
-                    "a failure after successful rekey rolls back the conversation")))
-                (test-assert (eq before (application-conversation application))
-                 "late failure restores the previous active conversation")
-                (assert-identity before))
+                  (assert-identity before)))
               (application-resume-conversation application
                                                (conversation-identifier saved))
               (assert-identity saved)
