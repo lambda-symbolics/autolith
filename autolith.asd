@@ -10,6 +10,14 @@
                  (sb-kernel::ftype-proclamation-mismatch-warning #'muffle-warning))
     (call-next-method)))
 
+#+(and sbcl win32)
+(defmethod asdf:perform :before ((operation asdf:compile-op) (component asdf:cl-source-file))
+  "Keep Windows mmap's size dispatch out of PNGLOAD's callers."
+  ;; SBCL 2.6.10 infers a NIL size when inlining this call. Remove this
+  ;; workaround when the locked mmap or the minimum SBCL no longer needs it.
+  (when (string-equal (asdf:component-name (asdf:component-system component)) "pngload")
+    (proclaim (list 'notinline (find-symbol "%MMAP" "MMAP")))))
+
 (asdf:defsystem #:autolith
   :description             "A live, self-modifying Common Lisp agent."
   :author                  "Lukáš Hozda"
