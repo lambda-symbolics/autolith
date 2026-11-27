@@ -2,9 +2,6 @@
 
 ;;;; -- Channel Deletion --
 
-(defparameter *application-channel-deletion-handoff-seconds* 10
-  "Maximum time to wait for the invoking terminal and command to leave a channel.")
-
 (-> application--delete-channel (application string) null)
 (defun application--delete-channel (application identifier)
   "Remove IDENTIFIER through the durable removal boundary and present its outcome.
@@ -43,21 +40,18 @@ its idle host ends it."
 (defun application--finish-channel-deletion (application request)
   "Finish a confirmed REQUEST on the destination channel, outside its former host.
 
-Wait only for the initiating work and attachment. Fresh removal validation refuses
-other attached clients, new work, descendants in use, and competing leases."
-  (handler-case
-      (let ((deadline (+ (get-internal-real-time)
-                         (* *application-channel-deletion-handoff-seconds*
-                            internal-time-units-per-second))))
-        (loop until (application--channel-deletion-ready-p request)
-              do (when (>= (get-internal-real-time) deadline)
-                   (error 'configuration-error
-                          :message "The terminal or command has not left the channel; deletion was not started."))
-                 (sleep 0.01))
-        (application--delete-channel application (getf request :target)))
-    (autolith-error (condition)
-      (application-present application
-                           (application-failure-line (autolith-error-message condition)))))
+Wait for the initiating work and attachment unless the destination is stopping.
+Fresh removal validation refuses other attached clients, new work, descendants
+in use, and competing leases."
+  (let ((controller (application-input-controller application)))
+    (handler-case
+        (loop until (application-input-controller-exit-requested-p controller)
+              when (application--channel-deletion-ready-p request)
+                do (return (application--delete-channel application (getf request :target)))
+              do (sleep 0.01))
+      (autolith-error (condition)
+        (application-present application
+                             (application-failure-line (autolith-error-message condition))))))
   nil)
 
 (-> application--handoff-channel-deletion (application string string) null)
