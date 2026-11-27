@@ -41,10 +41,8 @@ developers, but I consider correct for self-modifiability.
   They live in separate Lisp images and cannot directly modify the agent.
 - *Durable records* live under reasonable XDG folders. This roughly includes
   conversations, memories, agendas, images, and credentials
-- The *recovery image* is a separately built pristine core, which Autolith
-  will reboot into in case the current image is FUBAR. Autolith can use the
-  recovery image to figure out or fix the issue with your current image, or
-  try to finish your task if that's a priority.
+- The *recovery image* is a separate core for explicit =--recovery= and
+  retained-generation rollback.
 
 * Configuration layers
 
@@ -644,7 +642,7 @@ stable launcher
    |                                               |
    |                                               +--> retained generation
    |
-   +--> failure --> recovery --> pristine exact-source checkout
+   +--> fatal exit --> crash capsule and exit status
    |
    +--> explicit generation or rollback --> recovery --> retained generation
 #+END_SRC
@@ -656,9 +654,8 @@ stable launcher
 - Updates validate provenance and refresh a readable availability cache.
   Startup reads cached state only. An accepted packaged update runs the
   bundled installer and restarts.
-- Recovery reports sanitized crash context. Automatic failure recovery boots
-  current committed source without private mutations or user init. Explicit
-  generation selection and rollback retain their saved-state path
+- A fatal session exit reports its private crash capsule when available.
+  Use =--pristine= to start without private mutations or executable user init.
 
 * Source map
 

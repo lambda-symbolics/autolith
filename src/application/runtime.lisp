@@ -234,13 +234,6 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-input-controller
     :type          t
     :documentation "The active responsive input controller, when one is running.")
-   (recovery-startup-p
-    :initarg  :recovery-startup-p
-    :initform nil
-    :accessor application-recovery-startup-p
-    :type     boolean
-    :documentation
-    "Whether this application reconnected the launcher-selected crash conversation.")
    (recovery-input-vault-failure
     :initform nil
     :accessor application-recovery-input-vault-failure
@@ -303,11 +296,6 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-history-floor-sequence
     :type          (option (integer 0))
     :documentation "The oldest transcript candidate explicitly shown in this process.")
-   (recovery-session-publication
-    :initform      nil
-    :accessor      application-recovery-session-publication
-    :type          t
-    :documentation "The last recovery-session record published by this process.")
    (presentation-counter
     :initform      0
     :accessor      application-presentation-counter
@@ -400,93 +388,6 @@ Clicking the rendered call's header inserts it into the composer.")
 
 ;;;; -- Construction and Reconnection --
 
-(-> application--recovery-session-pointer
-    (configuration)
-    (option pathname))
-(defun application--recovery-session-pointer (configuration)
-  "Return this launcher's contained recovery-session pointer, when configured."
-  (let ((value (uiop:getenv "AUTOLITH_RECOVERY_SESSION_POINTER")))
-    (when (non-empty-string-p value)
-      (let* ((pathname (pathname value))
-             (root
-               (merge-pathnames
-                "recovery-session-pointers/"
-                (config :state-root configuration))))
-        (and (uiop:absolute-pathname-p pathname)
-             (uiop:subpathp pathname root)
-             pathname)))))
-
-(-> application-publish-recovery-session (application) null)
-(defun application-publish-recovery-session (application)
-  "Best-effort publish the active durable conversation for hard-crash recovery."
-  (handler-case
-      (with-recursive-lock-held ((application-render-lock application))
-        (let* ((configuration (application-configuration application))
-               (pathname
-                 (application--recovery-session-pointer configuration))
-               (conversation  (application-conversation application)))
-          (when pathname
-            (let* ((record
-                     (and
-                      (conversation-persisted-p conversation)
-                      (list :recovery-session
-                            :version 1
-                            :conversation-id
-                            (conversation-identifier conversation)
-                            :rendered-sequence
-                            (max
-                             0
-                             (application-rendered-sequence application))
-                            :history-floor-sequence
-                            (application-history-floor-sequence application))))
-                   (publication
-                     (list (namestring pathname) record)))
-              (unless
-                  (equal publication
-                         (application-recovery-session-publication
-                          application))
-                (if record
-                    (snapshot-write pathname record)
-                    (when (probe-file pathname)
-                      (delete-file pathname)))
-                (setf (application-recovery-session-publication application)
-                      publication))))))
-    (error ()
-      nil))
-  nil)
-
-(-> application--recovery-conversation-id () (option string))
-(defun application--recovery-conversation-id ()
-  "Return the conversation selected by automatic recovery, when present."
-  (configuration-environment-value "AUTOLITH_RECOVERY_CONVERSATION_ID"))
-
-(-> application--recovery-sequence (string) (option integer))
-(defun application--recovery-sequence (name)
-  "Return one nonnegative recovery sequence from environment variable NAME."
-  (handler-case
-      (let ((value (uiop:getenv name)))
-        (and
-         (non-empty-string-p value)
-         (let ((parsed (parse-integer value :junk-allowed nil)))
-           (and (not (minusp parsed)) parsed))))
-    (error ()
-      nil)))
-
-(-> application--selected-conversation-id
-    ((option string) (option string))
-    (option string))
-(defun application--selected-conversation-id
-    (conversation-id recovery-conversation-id)
-  "Return explicit CONVERSATION-ID before automatic recovery selection."
-  (or conversation-id recovery-conversation-id))
-
-(-> application--clear-recovery-environment () null)
-(defun application--clear-recovery-environment ()
-  "Remove one-shot recovery reconnection metadata after successful startup."
-  (platform-unsetenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
-  (platform-unsetenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-  (platform-unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
-  nil)
 
 (-> application-pending-terminal-size
     (terminal-ui)
@@ -1256,7 +1157,6 @@ leaves no registrations of the user init it ran."
                      :explicit-permission-mode       explicit-permission-mode
                      :ignore-saved-permission-mode-p ignore-saved-permission-mode-p
                      :pristine-p                     pristine-p
-                     :recovery-p                     t
                      :mutation-replay-failures       mutation-replay-failures)
                (setf completed-p t)))
         (unless completed-p
@@ -1310,13 +1210,13 @@ Validate PREVIOUS-PROVIDER against the effective registrations before replacing 
           (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:pristine-p boolean) (:installation-provenance installation-provenance)
           (:update-availability (option update-availability))
-          (:recovering-p boolean) (:client-pane list) (:hurry-up-p boolean)
+          (:client-pane list) (:hurry-up-p boolean)
            (:agent (option agent)))
     application)
 (defun application--make-connected-application
     (&key configuration conversation conversation-lease provider tool-registry worker
           permission-state (permission-mode ':ask) pristine-p installation-provenance
-           update-availability recovering-p client-pane hurry-up-p agent)
+          update-availability client-pane hurry-up-p agent)
   "Construct an application around caller-owned resources without initializing history.
 The caller must retain the result before fallible connection initialization.
 AGENT, when supplied, retains its participant state and execution resources."
@@ -1344,32 +1244,18 @@ AGENT, when supplied, retains its participant state and execution resources."
                    :permission-mode         permission-mode
                    :pristine-p              pristine-p
                    :installation-provenance installation-provenance
-                   :update-availability     update-availability
-                   :recovery-startup-p      recovering-p)))
+                   :update-availability     update-availability)))
 
-(-> application--initialize-connection
-    (application &key (:recovering-p boolean)
-                      (:rendered-sequence (option integer))
-                      (:history-floor-sequence (option integer)))
-    null)
-(defun application--initialize-connection
-    (application &key recovering-p rendered-sequence history-floor-sequence)
-  "Restore APPLICATION's transcript cursors, input history, and context estimate.
-The caller owns APPLICATION and its resources if any initialization step fails."
+(-> application--initialize-connection (application) null)
+(defun application--initialize-connection (application)
+  "Initialize APPLICATION's transcript cursors, input history, and context estimate."
   (let ((conversation (application-conversation application)))
-    (multiple-value-bind (rendered history-floor)
-        (application--normalize-recovery-cursors
-         conversation
-         :recovering-p           recovering-p
-         :rendered-sequence      rendered-sequence
-         :history-floor-sequence history-floor-sequence)
-      (setf (application-rendered-sequence application)        rendered
-            (application-render-position application)        0
-            (application-render-generation application)      (conversation-log-generation conversation)
-            (application-transcript-synchronized-p application) nil
-            (application-history-floor-sequence application) history-floor))
-    (application--load-conversation-input-history
-     (application-ui application) conversation)
+    (setf (application-rendered-sequence application) 0
+          (application-render-position application) 0
+          (application-render-generation application) (conversation-log-generation conversation)
+          (application-transcript-synchronized-p application) nil
+          (application-history-floor-sequence application) nil)
+    (application--load-conversation-input-history (application-ui application) conversation)
     (application-refresh-context-meter application))
   nil)
 
@@ -1379,7 +1265,6 @@ The caller owns APPLICATION and its resources if any initialization step fails."
                         (:explicit-permission-mode (option keyword))
                         (:ignore-saved-permission-mode-p boolean)
                         (:pristine-p boolean)
-                        (:recovery-p boolean)
                         (:mutation-replay-failures list)
                         (:client-pane list)
                         (:tool-registry-function (option function)))
@@ -1387,27 +1272,18 @@ The caller owns APPLICATION and its resources if any initialization step fails."
 (defun application--build
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
                         explicit-permission-mode ignore-saved-permission-mode-p
-                        recovery-p mutation-replay-failures client-pane
+                        mutation-replay-failures client-pane
                         tool-registry-function)
   "Build one connected application on bootstrapped CONFIGURATION.
 
-Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
-RECOVERY-P is true, falling back to a fresh conversation.
+Load CONVERSATION-ID if supplied; otherwise create a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
 CLIENT-PANE is a plist of the :ROWS and :COLUMNS of the client a hosted
 channel opens for. Without it, use this process's terminal setup.
 TOOL-REGISTRY-FUNCTION receives the conversation configuration and target conversation.
 It builds the registry instead of the ordinary factory, as for an editor's own
 MCP servers. Release acquired resources if construction fails."
-  (let* ((recovery-state
-           (if recovery-p
-               (multiple-value-list
-                (application-recovery-state configuration))
-               (list nil nil nil)))
-         (recovery-conversation-id      (first recovery-state))
-         (selected-conversation-id
-           (application--selected-conversation-id
-            conversation-id recovery-conversation-id))
+  (let* ((selected-conversation-id      conversation-id)
          (registry                      nil)
          (worker                        nil)
          (conversation                  nil)
@@ -1428,14 +1304,7 @@ MCP servers. Release acquired resources if construction fails."
            (let* ((permission-state (permissions-load configuration))
                   (configuration
                     (application--configuration-for-conversation
-                     configuration conversation))
-                  (recovering-conversation-p
-                    (and (null conversation-id)
-                         recovery-conversation-id
-                         (string=
-                          (conversation-identifier conversation)
-                          (conversation-identifier-migration-resolve
-                           configuration recovery-conversation-id)))))
+                     configuration conversation)))
              (multiple-value-bind (provider provenance update)
                  (application--prepare-connection-provider configuration)
                (setf registry (if tool-registry-function
@@ -1458,51 +1327,23 @@ MCP servers. Release acquired resources if construction fails."
                       :pristine-p              pristine-p
                       :installation-provenance provenance
                       :update-availability     update
-                      :recovering-p            (not (null recovering-conversation-p))
                       :client-pane             client-pane)
                      (application-mutation-replay-failures application)
                      mutation-replay-failures)
-               (application--initialize-connection
-                application
-                :recovering-p           (not (null recovering-conversation-p))
-                :rendered-sequence      (second recovery-state)
-                :history-floor-sequence (third recovery-state))
-               (application-connect-task-presentation application)
-               (application--load-goal application)
-               (when explicit-permission-mode
-                 (application-set-channel-permission-mode application explicit-permission-mode))
-               (application-publish-recovery-session application)
-               (application-world-sync application)
-               (telemetry--call-safely
-                (lambda () (telemetry-attach configuration)))
-               (setf completed-p t)
-               application)))
+              (application--initialize-connection application)
+              (application-connect-task-presentation application)
+              (application--load-goal application)
+              (when explicit-permission-mode
+                (application-set-channel-permission-mode application explicit-permission-mode))
+              (application-world-sync application)
+              (telemetry--call-safely
+               (lambda () (telemetry-attach configuration)))
+              (setf completed-p t)
+              application)))
       (unless completed-p
         (application--discard-connection-resources application registry worker)
         (when conversation-lease-acquired-p
           (conversation-lease-release conversation-lease))))))
-
-(-> application--normalize-recovery-cursors
-    (conversation &key (:recovering-p boolean)
-                       (:rendered-sequence (option integer))
-                       (:history-floor-sequence (option integer)))
-    (values (integer 0) (option (integer 1))))
-(defun application--normalize-recovery-cursors
-    (conversation &key recovering-p rendered-sequence history-floor-sequence)
-  "Clamp recovered transcript cursors to CONVERSATION's durable sequence range."
-  (let* ((latest-sequence
-           (max 0 (1- (conversation-next-sequence conversation))))
-         (rendered
-           (if (and recovering-p
-                    (typep rendered-sequence '(integer 0)))
-               (min rendered-sequence latest-sequence)
-               0))
-         (history-floor
-           (and recovering-p
-                (typep history-floor-sequence '(integer 1))
-                (<= history-floor-sequence (1+ rendered))
-                history-floor-sequence)))
-    (values rendered history-floor)))
 
 (-> application--reconnect-configuration (configuration boolean) configuration)
 (defun application--reconnect-configuration (previous immutable-p)
@@ -1572,13 +1413,7 @@ MCP servers. Release acquired resources if construction fails."
                                      retained-configuration))
                               retained-configuration))
                            (permission-state         (permissions-load prepared-configuration))
-                           (recovery-state
-                            (multiple-value-list
-                             (application-recovery-state prepared-configuration)))
-                           (recovery-conversation-id (first recovery-state))
-                           (selected-conversation-id
-                            (application--selected-conversation-id
-                             conversation-id recovery-conversation-id))
+                           (selected-conversation-id conversation-id)
                            (conversation
                             (multiple-value-bind
                                   (owned-conversation lease acquired-p)
@@ -1608,13 +1443,6 @@ MCP servers. Release acquired resources if construction fails."
                            :previous-provider
                            (and (slot-boundp application 'provider)
                                 (application-provider application)))
-                        (let ((recovering-conversation-p
-                                (and (null conversation-id)
-                                     recovery-conversation-id
-                                     (string=
-                                      (conversation-identifier conversation)
-                                      (conversation-identifier-migration-resolve
-                                       prepared-configuration recovery-conversation-id)))))
                          (setf (config :hurry-up-p configuration) hurry-up-p
                                worker (lisp-worker-pool-create configuration)
                                 registry (application--create-tool-registry configuration)
@@ -1633,14 +1461,9 @@ MCP servers. Release acquired resources if construction fails."
                                 :pristine-p              (application-pristine-p application)
                                 :installation-provenance provenance
                                 :update-availability     update
-                                :recovering-p            (not (null recovering-conversation-p))
                                 :hurry-up-p              hurry-up-p)
                                (application-mutation-replay-failures new-application) nil)
-                         (application--initialize-connection
-                          new-application
-                          :recovering-p           (not (null recovering-conversation-p))
-                          :rendered-sequence      (second recovery-state)
-                          :history-floor-sequence (third recovery-state))
+                         (application--initialize-connection new-application)
                          (application--load-goal new-application)
                          (image-state-reconnect)
                          (setf retirement-started-p t
@@ -1657,7 +1480,6 @@ MCP servers. Release acquired resources if construction fails."
                          (context-runtime-reset)
                          (when explicit-permission-mode
                            (application-set-channel-permission-mode new-application explicit-permission-mode))
-                         (application-publish-recovery-session new-application)
                          (management-repl-transfer application new-application)
                          (telemetry--call-safely
                           (lambda () (telemetry-attach
@@ -1675,7 +1497,7 @@ MCP servers. Release acquired resources if construction fails."
                            (ignore-errors
                              (lisp-worker-manager-stop
                               (application-worker application))))
-                         new-application)))
+                         new-application))
                  (unless completed-p
                    (application--extension-registry-restore
                     extension-registry-snapshot))))
@@ -2290,7 +2112,6 @@ A confirmed deletion may hand off to the inbox, retiring the previous runtime."
           (context-runtime-reset)
           (when ui (application--load-conversation-input-history ui conversation))
           (application-world-terminal-sync-conversation application)
-          (application-publish-recovery-session application)
           (setf committed-p t))
          (serious-condition (condition) (setf failure condition)))
       (unless committed-p
@@ -3483,8 +3304,7 @@ may fill the remainder."
                   (let ((records         active-records)
                         (outcomes        active-outcomes)
                         (older-history-p (> active-count limit)))
-                    (when (and (not (application-recovery-startup-p application))
-                               (zerop after-sequence)
+                    (when (and (zerop after-sequence)
                                (< active-count limit)
                                previous)
                       (let ((remaining (- limit active-count)))
@@ -3665,7 +3485,6 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
        (application--render-streamed-records
         application streamed-assistant-text streamed-reasoning-text
         :assistant-publication assistant-publication :reasoning-publication reasoning-publication))))
-  (application-publish-recovery-session application)
   nil)
 
 (-> application--history-page-records
@@ -3780,7 +3599,6 @@ A fullscreen transcript evicts its oldest output; those records page in again."
                   (application-hint-line "no earlier transcript history remains"))))
             (application-present application
                                  (application-hint-line "no earlier transcript history remains"))))))
-  (application-publish-recovery-session application)
   nil)
 
 
@@ -4389,8 +4207,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                                        :automatic-p       continuation-p
                                        :operation-request (unless continuation-p operation-request))))
                     (application--present-conversation-record application record))
-                  (setf (application-rendered-sequence application) sequence)))
-              (application-publish-recovery-session application))
+                  (setf (application-rendered-sequence application) sequence))))
              (:related-memories
               (unless related-memories-shown-p
                 (application-present
@@ -4426,7 +4243,6 @@ clients as :TEXT, :REASONING and :STATUS events."
               (setf presented-reasoning-text nil
                     activity-label (application-thinking-label))
               (application-note-prompt-cache-request-started application)
-              (application-publish-recovery-session application)
               (application-set-activity application activity-label))
              (:provider-retries-exhausted
               (application--finish-stream application)
@@ -4870,14 +4686,12 @@ refusal, as a secondary value."
       (terminal-ui-stream-update ui :tail nil)
       (application-render-records application))
     ;; Only a finished provider turn on this controller's owning lane counts.
-    ;; Recovery diagnostics use the same provider machinery but are startup work.
     (let ((controller (application-input-controller application)))
       (when (and (typep turn-result 'provider-result)
                  controller
                  (eq (current-thread) (application-input-controller-main-thread controller)))
         (with-lock-held ((application-input-controller-lock controller))
-          (when (and (application-input-controller-active-p controller)
-                     (not (eq (application-input-controller-active-work-kind controller) ':recovery-diagnosis)))
+          (when (application-input-controller-active-p controller)
             (setf (application-input-controller-completed-turn-p controller) t)))))
     (values nil turn-result)))
 

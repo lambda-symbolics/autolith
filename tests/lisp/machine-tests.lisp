@@ -829,7 +829,7 @@
                       (application-input-controller-create
                        application
                        :initial-work-items
-                       '((:recovery-diagnosis "internal"))
+                       '((:lisp "(values)"))
                        :load-pending-p nil))))
              (test-assert
               (and (eq reader-state ':input)
@@ -930,7 +930,7 @@
                         controller)
                        nil)
                  (application-input-controller--begin-prompt-work
-                  controller '(:recovery-diagnosis "internal"))
+                  controller '(:job-completion nil))
                  (application-input-controller--finish-work controller)
                  (test-assert
                   (and
@@ -983,7 +983,7 @@
       (unwind-protect
            (with-terminal-ui (active ui)
              (terminal-ui-open-prompt-block active)
-             (dolist (kind '(:job-completion :operation-request :recovery-diagnosis))
+             (dolist (kind '(:job-completion :operation-request))
                (setf (application-input-controller-active-work-kind controller) kind)
                (application-input-controller--begin-prompt-work controller (list kind))
                (test-assert (equal (terminal-ui-program-status active) '(:working nil))

@@ -1320,9 +1320,9 @@
 
 (-> test-crash-capsule-correlation () null)
 (defun test-crash-capsule-correlation ()
-  "Test secret-free crash capsules and per-launch pointer publication."
-  (let* ((configuration    (test-configuration))
-         (root             (test-configuration-root configuration))
+  "Test secret-free crash capsules and conversation correlation."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
          (conversation
            (conversation-create configuration :identifier "crash-capsule"))
          (application
@@ -1333,34 +1333,12 @@
                           :tool-registry (make-instance 'tool-registry)
                           :worker        nil
                           :agent         nil
-                          :ui            nil))
-         (pointer          (merge-pathnames "crash-pointers/test-launch.path"
-                                            (config :state-root configuration)))
-         (session-pointer
-           (merge-pathnames
-            "recovery-session-pointers/test-launch.sexp"
-            (config :state-root configuration)))
-         (previous-pointer (uiop:getenv "AUTOLITH_CRASH_POINTER"))
-         (previous-session-pointer
-           (uiop:getenv "AUTOLITH_RECOVERY_SESSION_POINTER")))
+                           :ui           nil)))
     (unwind-protect
          (progn
            (conversation-append-user-message conversation "preserve crash context")
            (setf (application-rendered-sequence application) 42
                  (application-history-floor-sequence application) 7)
-           (platform-setenv "AUTOLITH_CRASH_POINTER" (namestring pointer))
-           (platform-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
-                            (namestring session-pointer))
-           (application-publish-recovery-session application)
-           (let ((record (read-portable-form session-pointer)))
-             (test-assert
-              (and (eq (first record) :recovery-session)
-                   (= (getf (rest record) :version) 1)
-                   (string= (getf (rest record) :conversation-id)
-                            "crash-capsule")
-                   (= (getf (rest record) :rendered-sequence) 42)
-                   (= (getf (rest record) :history-floor-sequence) 7))
-              "the per-launch session pointer preserves transcript position"))
            (let* ((capsule
                     (application-write-crash-capsule
                      application
@@ -1382,12 +1360,7 @@
               "crash capsules retain the bounded history floor")
              (test-assert
               (string= (getf (rest record) :conversation-id) "crash-capsule")
-              "crash capsules correlate persisted conversations")
-             (test-assert
-              (string= (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                    (uiop:read-file-string pointer))
-                       (namestring capsule))
-              "the exact launch pointer names its own crash capsule"))
+              "crash capsules correlate persisted conversations"))
            (let* ((capsule
                     (application-write-crash-capsule
                      application
@@ -1414,23 +1387,12 @@
                                        :format-control   "empty crash"
                                        :format-arguments nil))))
                   (empty-record (read-portable-form empty-capsule)))
-             (application-publish-recovery-session application)
              (test-assert (null (getf (rest empty-record) :conversation-id))
                           "crashes do not advertise an unpersisted conversation")
              (test-assert
               (not (conversation-storage-occupied-p
                     (conversation-pathname empty)))
-              "crash reporting does not materialize an empty conversation")
-             (test-assert
-              (not (probe-file session-pointer))
-              "an empty active conversation clears stale recovery correlation")))
-      (if previous-pointer
-          (platform-setenv "AUTOLITH_CRASH_POINTER" previous-pointer)
-          (platform-unsetenv "AUTOLITH_CRASH_POINTER"))
-      (if previous-session-pointer
-          (platform-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
-                           previous-session-pointer)
-          (platform-unsetenv "AUTOLITH_RECOVERY_SESSION_POINTER"))
+              "crash reporting does not materialize an empty conversation")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

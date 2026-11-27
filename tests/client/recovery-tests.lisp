@@ -156,8 +156,8 @@
                  (push "sidebar" attempts)
                  (error "private sidebar cleanup payload")))
          (list 'world-terminal-relay-exit
-               (lambda (candidate result mode &key session-id)
-                 (declare (ignore candidate mode))
+                (lambda (result mode &key session-id)
+                  (declare (ignore mode))
                  (test-assert (equal session-id "bfirst1")
                   "cleanup retains the last attached channel")
                  (setf relayed-p t

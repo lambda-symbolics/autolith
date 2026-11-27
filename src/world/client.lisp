@@ -76,14 +76,14 @@ fails, and its client then waits for the winner like any other."
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pick-channel-p boolean)
-                        (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
+                        (:launch list) (:new-p boolean)
                         (:mcp-servers list) (:switch-p boolean)
                          (:inbox-p boolean) (:latest-p boolean)
                          (:attach-expected-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
-                        pick-channel-p recovery-diagnosis launch new-p mcp-servers
+                        pick-channel-p launch new-p mcp-servers
                         inbox-p latest-p
                         switch-p (attach-expected-p t))
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
@@ -135,13 +135,12 @@ sharing one it already served."
                                   (list :mcp-servers mcp-servers))
                                 (when switch-p
                                   (list :switch-p t))
-                                (list :progress-p         t
-                                      :permission-mode    permission-mode
-                                      :pick-channel-p     (not (null pick-channel-p))
-                                      :recovery-diagnosis recovery-diagnosis
-                                      :rows               rows
-                                      :columns            columns
-                                      :styled-p           (not (null (terminal-environment-styling-p)))))))
+                                (list :progress-p      t
+                                      :permission-mode permission-mode
+                                      :pick-channel-p  (not (null pick-channel-p))
+                                      :rows            rows
+                                      :columns         columns
+                                      :styled-p        (not (null (terminal-environment-styling-p)))))))
                    (world-terminal-error (condition)
                      ;; Only an explicit rejection establishes that retrying is safe.
                      ;; A transport failure may follow an accepted mutating open.

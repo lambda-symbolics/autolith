@@ -3251,7 +3251,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
 (-> application-input-controller--continuation-work-p ((option keyword)) boolean)
 (defun application-input-controller--continuation-work-p (kind)
   "Return whether KIND can resume model work without a new terminal submission."
-  (not (null (member kind '(:job-completion :operation-request :recovery-diagnosis)))))
+  (not (null (member kind '(:job-completion :operation-request)))))
 
 (-> application-input-controller--finish-work
     (application-input-controller)
@@ -3737,17 +3737,6 @@ however it ended."
                        :pending-input-identifier pending-input-identifier)))
                 (application-input-controller--record-prompt-result
                  controller result)))
-             (:recovery-diagnosis
-              (application-input-controller--record-prompt-result
-               controller
-               (application--run-message-input
-                application
-                (second work)
-                :tools-p                   t
-                :tool-allowlist            *application-recovery-diagnostic-tool-names*
-                :tool-restriction-p        t
-                :goal-continuations-p      nil
-                :fatal-agent-loop-errors-p nil)))
              ((:native-lisp :lisp)
               (let ((result
                       (if (input-async-lisp-p (second work))

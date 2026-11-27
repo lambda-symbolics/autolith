@@ -467,7 +467,7 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 ;;;; -- Residents --
 
 (defparameter *world-agent-turn-kinds*
-  '(:message :operation-request :job-completion :recovery-diagnosis :idle-compaction)
+  '(:message :operation-request :job-completion :idle-compaction)
   "Work kinds in which a channel's agent is in a turn.")
 
 (-> application-world-agent-present-p (application) boolean)

@@ -2555,28 +2555,18 @@ autolith --recovery --generation GENERATION-ID
 Pristine and retained-image sessions use separate world endpoints from the
 ordinary active image. A retained core must support world startup.
 
-*Automatic recovery* uses a private clean checkout of the current committed
-source with =--pristine=. It uses a separate recovery core if valid and can
-fall back to source. Use explicit generation selection to return to an older
-compatible core.
-
-After a fatal active failure, Autolith restores the terminal and writes a
-private crash capsule. Recovery resumes the conversation without duplicating
-scrollback. With a valid capsule, it queues one read-only diagnosis before
-ordinary input. The turn can inspect bounded crash context, workspace and
-tracked source, indexed source and active state. It cannot use shell, MCP,
-hosted-provider or image tools. It asks before applying a repair.
-
-To start a rescue session yourself, use:
+After a fatal failure, Autolith restores the terminal, prints the path to the
+private crash capsule if one was written, and exits. If Autolith will not
+start or becomes unstable after self-modification, start it with =--pristine=.
+For example, to reopen a conversation in pristine mode:
 
 #+BEGIN_SRC sh
 autolith open --pristine --permissions full
 #+END_SRC
 
-A manual pristine session skips private image replay, mutation journal
-reconstruction and executable user initialization. Autolith enables
-=--immutable= and leaves mutation and conversation data on disk. Crash
-diagnosis requires a valid crash capsule from a supervised recovery.
+A pristine session skips private image replay, mutation journal reconstruction
+and executable user initialization. Autolith enables =--immutable= and leaves
+mutation and conversation data on disk.
 
 Saved cores require the recorded SBCL version, OS build and architecture.
 To reconstruct without a core:

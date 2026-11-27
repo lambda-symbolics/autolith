@@ -77,10 +77,11 @@
 
 (-> test-vault-store-publication-failures () null)
 (defun test-vault-store-publication-failures ()
-  "Fail after each publication and verify queue rollback and restart deduplication."
+  "Fail after each publication and verify queue rollback."
   (dolist (failure-point '(1 2 3))
     (vault-edit-tests--call
      (lambda (application controller)
+       (declare (ignore application))
        (application-input-controller--enqueue controller ':message "queued")
        (let ((calls 0))
          (vault-edit-tests--publications
@@ -92,11 +93,7 @@
                            (recovery-input-vault-error () t)) "store reports publication failure"))))
        (test-assert (equal (application-input-controller--state controller :work-items) '((:message "queued")))
                     "failed store restores queued input")
-       (test-assert (null (vault-contents)) "rollback removes the staged duplicate")
-       (test-assert (application-recovery-input-vault-import application) "recovery reads the rolled-back pending state")
-       (test-assert (= 1 (length (mapcan #'application-recovery-input-vault--capture-work
-                                       (application-recovery-input-vault-captures application))))
-                    "restart recovers the input once"))))
+       (test-assert (null (vault-contents)) "rollback removes the staged duplicate"))))
   nil)
 
 (-> test-vault-store-crash-boundaries () null)
@@ -110,10 +107,18 @@
          (vault-edit-tests--publications
           (lambda () (when (= (incf calls) crash-point) (throw 'crash nil)))
           (lambda () (catch 'crash (application-input-controller-vault-store controller)))))
-       (test-assert (application-recovery-input-vault-import application) "interrupted store imports cleanly")
-       (test-assert (equal (mapcan #'application-recovery-input-vault--capture-work
-                                  (application-recovery-input-vault-captures application))
-                           '((:message "queued"))) "each crash boundary recovers exactly one copy"))))
+       (let ((restored (make-instance 'application-input-controller
+                                      :application application :main-thread nil)))
+         (application-input-controller--load-pending restored)
+         (let* ((represented
+                  (cons (application-input-controller-pending-snapshot-identifier restored)
+                        (application-input-controller-vault-capture-identifiers restored)))
+                (parked (application-vault--parked-captures
+                         (application-recovery-input-vault-captures application) represented)))
+           (test-assert (equal (append (application-input-controller--state restored :work-items)
+                                       (mapcan #'application-recovery-input-vault--capture-work parked))
+                               '((:message "queued")))
+                        "each crash boundary retains exactly one available copy"))))))
   nil)
 
 (-> test-vault-store-active-routing () null)

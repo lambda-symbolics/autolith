@@ -1010,7 +1010,7 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
   "Open the channel ARGUMENTS select and answer with its session identifier.
 
 ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
-:PERMISSION-MODE, :PICK-CHANNEL-P, :RECOVERY-DIAGNOSIS,
+:PERMISSION-MODE, :PICK-CHANNEL-P,
 :ROWS, :COLUMNS and :STYLED-P. The answer arrives once the channel's endpoint
 is published, so the client can attach at once. A workspace channel whose
 conversation cannot be loaded is passed over, and the channel that opens
@@ -1722,10 +1722,7 @@ forgotten again when no thread could start."
                "The owned channel startup was cancelled."))
       (world-server--serve-host server host :initial-command
                                 (and (getf arguments :pick-channel-p) "(open)")
-                                :recovery-diagnosis
-                                (getf arguments :recovery-diagnosis)
-                                :adaptation-offer-p
-                                (null (getf arguments :recovery-diagnosis))
+                                :adaptation-offer-p t
                                 :boot-screen-p
                                 (not (getf arguments :switch-p))))
      (serious-condition (condition)
@@ -1738,16 +1735,17 @@ forgotten again when no thread could start."
               (setf (world-host-failure host) condition)
               (world-server--release-host server host))
             (error condition)))
-    host))(-> world-server--serve-host
+    host))
+
+(-> world-server--serve-host
            (world-server world-host &key (:initial-command (option string))
-                                         (:recovery-diagnosis (option string))
                                          (:adaptation-offer-p boolean)
                                          (:resume-p boolean)
                                          (:reconnect-id (option string))
                                          (:notice (or null string list))
                                          (:boot-screen-p boolean))
            null)
-(defun world-server--serve-host (server host &key initial-command recovery-diagnosis
+(defun world-server--serve-host (server host &key initial-command
                                                   adaptation-offer-p resume-p reconnect-id notice
                                                   (boot-screen-p t))
   "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P.
@@ -1760,7 +1758,6 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
          (lambda ()
            (world-server--host server host
                                :initial-command    initial-command
-                               :recovery-diagnosis recovery-diagnosis
                                :adaptation-offer-p adaptation-offer-p
                                :resume-p           resume-p
                                :reconnect-id       reconnect-id
@@ -1786,7 +1783,6 @@ itself so that threads those threads start inherit it too."
 
 (-> world-server--host
     (world-server world-host &key (:initial-command (option string))
-                                  (:recovery-diagnosis (option string))
                                   (:adaptation-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
@@ -1795,7 +1791,7 @@ itself so that threads those threads start inherit it too."
     null)
 (defun world-server--host
        (server host
-        &key initial-command recovery-diagnosis adaptation-offer-p resume-p
+        &key initial-command adaptation-offer-p resume-p
         reconnect-id notice (boot-screen-p t))
   "Serve HOST's application on this thread until its session ends.
 
@@ -1826,8 +1822,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
            (setf (world-host-exit-reason host)
                  (or
                   (application-serve application :initial-command
-                                     initial-command :recovery-diagnosis
-                                     recovery-diagnosis :adaptation-offer-p
+                                     initial-command :adaptation-offer-p
                                      adaptation-offer-p :resume-p
                                      resume-p :notice notice :boot-screen-p
                                      boot-screen-p :world-terminal-identity
@@ -1907,7 +1902,12 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
       (setf (world-server-exit-status server)
             (values (main--launcher-exit condition)))))
   (if (typep condition 'fatal-control-path-error)
-      (world-server--wake server)
+      (progn
+        (multiple-value-bind (status message) (main--launcher-exit condition)
+          (declare (ignore status))
+          (format *error-output* "~&~A~%" message)
+          (finish-output *error-output*))
+        (world-server--wake server))
       (world-server-stop server))
   nil)
 

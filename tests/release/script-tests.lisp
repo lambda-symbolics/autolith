@@ -898,30 +898,26 @@ esac
 (-> release-script-tests--source-launcher (pathname pathname) null)
 (defun release-script-tests--source-launcher (source-root root)
   "Exercise source-image selection, bootstrap prompting, and forced source use."
-  (let* ((fixture-root       (merge-pathnames "source-launcher/" root))
-         (bin-directory      (merge-pathnames "bin/" fixture-root))
-         (script-directory   (merge-pathnames "script/" fixture-root))
-         (recovery-directory (merge-pathnames "recovery/" fixture-root))
-         (data-home          (merge-pathnames "data/" fixture-root))
-         (state-home         (merge-pathnames "state/" fixture-root))
-         (home               (merge-pathnames "home/" fixture-root))
-         (active-directory   (merge-pathnames "autolith/active/" data-home))
-         (active-core        (merge-pathnames "autolith-active.core" active-directory))
-         (active-manifest    (merge-pathnames "manifest.sexp" active-directory))
-         (launcher           (merge-pathnames "autolith" bin-directory))
-         (active-source      (merge-pathnames "autolith-active" bin-directory))
-         (bootstrap          (merge-pathnames "bootstrap" script-directory))
-         (recovery-source    (merge-pathnames "launcher.lisp" recovery-directory))
-         (fake-sbcl          (merge-pathnames "fake-sbcl" fixture-root))
-         (log                (merge-pathnames "launcher.log" fixture-root)))
+  (let* ((fixture-root     (merge-pathnames "source-launcher/" root))
+         (bin-directory    (merge-pathnames "bin/" fixture-root))
+         (script-directory (merge-pathnames "script/" fixture-root))
+         (data-home        (merge-pathnames "data/" fixture-root))
+         (state-home       (merge-pathnames "state/" fixture-root))
+         (home             (merge-pathnames "home/" fixture-root))
+         (active-directory (merge-pathnames "autolith/active/" data-home))
+         (active-core      (merge-pathnames "autolith-active.core" active-directory))
+         (active-manifest  (merge-pathnames "manifest.sexp" active-directory))
+         (launcher         (merge-pathnames "autolith" bin-directory))
+         (active-source    (merge-pathnames "autolith-active" bin-directory))
+         (bootstrap        (merge-pathnames "bootstrap" script-directory))
+         (fake-sbcl        (merge-pathnames "fake-sbcl" fixture-root))
+         (log              (merge-pathnames "launcher.log" fixture-root)))
     (uiop:ensure-all-directories-exist
-     (list bin-directory script-directory recovery-directory
-           data-home state-home home))
+     (list bin-directory script-directory data-home state-home home))
     (uiop:copy-file (merge-pathnames "bin/autolith" source-root) launcher)
     (uiop:copy-file (merge-pathnames "script/launcher-cli.sh" source-root)
                     (merge-pathnames "launcher-cli.sh" script-directory))
     (test-write-text active-source "")
-    (test-write-text recovery-source "")
     (test-write-text
      (merge-pathnames "sbcl.version" fixture-root)
      (format nil "2.6.6~%"))
@@ -943,7 +939,6 @@ for argument in \"$@\"; do
     --autolith-internal-active-image-probe) probe=true ;;
     */bin/autolith-active) mode=SOURCE ;;
     */autolith-active.core) mode=ACTIVE ;;
-    */recovery/launcher.lisp) mode=RECOVERY ;;
   esac
 done
 if [ \"$probe\" = true ]; then
@@ -955,12 +950,6 @@ case \" $* \" in
   *\" fixture-data-failure \"*) exit 1 ;;
   *\" fixture-session-crash \"*) exit 70 ;;
 esac
-if [ \"$mode\" = SOURCE ]; then
-  case \" $* \" in
-    *\" fixture-active-failure \"*) exit 1 ;;
-    *\" fixture-runtime-loss \"*) rm -- \"$0\"; exit 1 ;;
-  esac
-fi
 ")
     (test-write-text
      bootstrap
@@ -991,23 +980,6 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
             (not (search "fast startup image" source-output))
             (not (search "--from-source" (uiop:read-file-string log))))
        "--from-source quietly bypasses images and is not forwarded")
-      (dolist (relative '("autolith/" "autolith/crash-pointers/"
-                          "autolith/recovery-session-pointers/"))
-        (let ((directory (merge-pathnames relative state-home)))
-          (test-assert
-           (= #o700 (test-fixture-file-mode *platform* directory))
-           "the launcher creates state roots and pointer directories privately under umask 022")
-          (release-script-tests--chmod "750" directory)))
-      (release-script-tests--run
-       (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
-             (namestring launcher) "--from-source")
-       :environment environment)
-      (dolist (relative '("autolith/" "autolith/crash-pointers/"
-                          "autolith/recovery-session-pointers/"))
-        (test-assert
-         (= #o750 (test-fixture-file-mode
-                   *platform* (merge-pathnames relative state-home)))
-         "the launcher preserves modes on pre-existing state directories"))
       (let* ((managed-runtime
                (merge-pathnames "autolith/runtimes/2.6.6/installation/bin/sbcl" data-home))
              (recorded-command (merge-pathnames "autolith/runtimes/command" data-home))
@@ -1079,8 +1051,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
       (let* ((recorded-command
                (merge-pathnames "autolith/runtimes/command" data-home))
              (missing-runtime       (merge-pathnames "missing-sbcl" fixture-root))
-             (nonexecutable-runtime (merge-pathnames "nonexecutable-sbcl" fixture-root))
-             (disappearing-runtime  (merge-pathnames "disappearing-sbcl" fixture-root)))
+             (nonexecutable-runtime (merge-pathnames "nonexecutable-sbcl" fixture-root)))
         (test-write-text
          recorded-command (format nil "~A~%" (namestring fake-sbcl)))
         (test-write-text nonexecutable-runtime "")
@@ -1096,15 +1067,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
           (dolist (runtime (list missing-runtime nonexecutable-runtime fixture-root))
             (test-assert
              (search "SOURCE" (run-with-runtime runtime))
-             "unavailable configured runtimes fall back to the executable registry runtime")
-            (test-assert
-             (search "RECOVERY" (run-with-runtime runtime "fixture-active-failure"))
-             "a stale runtime override cannot prevent fatal-error recovery"))
-          (uiop:copy-file fake-sbcl disappearing-runtime)
-          (release-script-tests--chmod "755" disappearing-runtime)
-          (test-assert
-           (search "RECOVERY" (run-with-runtime disappearing-runtime "fixture-runtime-loss"))
-           "recovery reselects the registry runtime when the active runtime disappears"))
+             "unavailable configured runtimes fall back to the executable registry runtime")))
         (delete-file recorded-command))
       (let* ((fallback-environment
                (list (format nil "HOME=~A" (namestring home))
@@ -1118,9 +1081,6 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                 :environment fallback-environment)))
         (test-assert
          (and (search "SOURCE" output)
-              (uiop:directory-exists-p
-               (merge-pathnames
-                ".local/state/autolith/crash-pointers/" home))
               (not
                (uiop:directory-exists-p
                 (merge-pathnames "relative/state/autolith/" fixture-root))))
@@ -1133,7 +1093,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
            :output              nil)
         (declare (ignore output error-output))
         (test-assert (= status 76)
-                     "update handoff bypasses crash recovery unchanged"))
+                     "the update request returns its handoff status"))
       (multiple-value-bind (output error-output status)
           (release-script-tests--run
            (list (namestring launcher) "--from-source" "data" "import" "fixture-data-failure")
@@ -1141,14 +1101,6 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
         (declare (ignore error-output))
         (test-assert (and (= status 1) (not (search "/recovery/launcher.lisp" output)))
                      "a noninteractive data failure returns without starting recovery"))
-      (multiple-value-bind (output error-output status)
-          (release-script-tests--run
-           (list (namestring launcher) "--from-source"
-                 "--world-startup" "fixture-ticket" "fixture-session-crash")
-           :environment environment :ignore-error-status t)
-        (declare (ignore error-output))
-        (test-assert (and (= status 70) (not (search "RECOVERY" output)))
-                     "a detached session's crash leaves recovery to its relaying terminal"))
       (let* ((cache-home  (merge-pathnames "cache/" fixture-root))
              (config-home (merge-pathnames "config/" fixture-root))
              (artifacts
@@ -3958,11 +3910,6 @@ esac
                         :forwarded     '("--pristine" "resume" "saved"))
       (check-forwarding '("resume" "saved" "--from-source")
                         :from-source-p t :forwarded '("resume" "saved"))
-      (check-forwarding '("--recovery" "--original-argument" "--from-source"
-                          "--" "--recovery")
-                        :recovery-p t
-                        :forwarded  '("--original-argument" "--from-source"
-                                      "--" "--recovery"))
       (dolist (kind '("source" "nix"))
         (dolist (tail '(nil ("--") ("extra") ("--help" "extra")
                         ("--" "--help") ("--recovery") ("--from-source")))

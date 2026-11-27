@@ -1368,7 +1368,6 @@
   test-recovery-object-store-copy
   test-recovery-xdg-directories
   test-recovery-conversation-identifiers
-  test-recovery-session-handoff
   test-recovery-status-boundary
   test-recovery-source-failure-reporting
   test-recovery-generation-revision-boundary)
@@ -1708,11 +1707,9 @@
   test-search-source-highlighting
   test-lsp-result-visibility
   test-tool-execution-handoff-presentation
-  test-recovery-cursor-normalization
   test-fatal-boundaries-keep-backtraces
   test-reader-failure-preserves-pending-during-stop
-  test-recovery-diagnosis-prompt
-  test-recovery-application-construction
+  test-explicit-application-reconnect
   test-bounded-transcript-replay
   test-chunked-transcript-replay
   test-hidden-reasoning-does-not-crowd-replay
@@ -1725,7 +1722,6 @@
   test-turn-cursor-visibility
   test-responsive-model-input
   test-responsive-command-scheduling
-  test-recovery-diagnosis-tool-surface
   test-input-reader-quiescence
   test-project-adaptation-offer-lifecycle
   test-primary-prompt-admission
@@ -1885,10 +1881,7 @@
   test-help-markdown-rendering)
 
 (define-test-suite recovery-input-vault
-  test-recovery-input-vault-import
-  test-recovery-input-vault-legacy-isolation
   test-recovery-input-vault-corruption
-  test-recovery-input-vault-unattributed-legacy
   test-recovery-input-vault-restore
   test-recovery-input-vault-active-restore-crash
   test-recovery-input-vault-restore-rollback
@@ -1898,8 +1891,6 @@
   test-recovery-input-vault-disabled-recalled-ingress
   test-recovery-input-vault-startup-notice
   test-recovery-input-vault-presentation
-  test-recovery-input-vault-recovery-startup
-  test-recovery-input-vault-corrupt-startup
   test-recovery-input-vault-ordinary-startup
   test-recovery-input-vault-live-primary-submit
   test-recovery-input-vault-capture-message

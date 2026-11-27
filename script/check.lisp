@@ -508,8 +508,7 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
                      (eql (getf (rest probe) :version) 2))
           (check--print-process-log (first entries))
           (check--fail "Autolith's pristine recovery probe is invalid."))
-        (unless (and (search "boots pristine committed source" fallback)
-                     (search "Starting clean committed source" fallback)
+        (unless (and (search "Starting clean committed source" fallback)
                      (search (format nil "autolith version ~A"
                                      (check--committed-version source-root))
                              fallback))

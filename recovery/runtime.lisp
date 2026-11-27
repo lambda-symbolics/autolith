@@ -196,7 +196,7 @@
 
 (serapeum:-> recovery-print-introduction () null)
 (defun recovery-print-introduction ()
-  "Explain the pristine recovery image before it inspects or boots state."
+  "Explain the explicit pristine and retained-generation boot choices."
   (let ((styled-p
           (and (interactive-stream-p *error-output*)
                (null (uiop:getenv "NO_COLOR")))))
@@ -206,10 +206,7 @@
     (when styled-p
       (format *error-output* "~C[0m" #\Escape))
     (format *error-output*
-            "This pristine image starts after active Autolith fails or when ~
-             recovery is requested.~%It inspects the failure and boots ~
-             pristine committed source. Explicit generation selection and ~
-             rollback can boot retained state.~2%")
+            "Recovery boots pristine committed source.~%Explicit generation selection and rollback can boot retained state.~2%")
     (finish-output *error-output*))
   nil)
 
@@ -262,56 +259,6 @@
        (member (length value) '(40 64))
        (every (lambda (character) (digit-char-p character 16)) value)
        t))
-
-(serapeum:-> recovery-read-journal-records (pathname) list)
-(defun recovery-read-journal-records (pathname)
-  "Read complete journal forms from PATHNAME, ignoring an incomplete final form."
-  (if (probe-file pathname)
-      (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
-        (let ((*read-eval* nil)
-              (end-marker  (cons nil nil))
-              (records     nil))
-          (handler-case
-              (loop for record = (read stream nil end-marker)
-                    until (eq record end-marker)
-                    do (push record records))
-            (end-of-file ()
-              nil))
-          (nreverse records)))
-      nil))
-
-(serapeum:-> recovery-report-mutations (recovery-context) null)
-(defun recovery-report-mutations (context)
-  "Print pending durable mutation identities from CONTEXT's journal."
-  (let ((latest   (make-hash-table :test #'equal))
-        (pathname (merge-pathnames "mutations.sexp"
-                                   (recovery-context-state-root context))))
-    (handler-case
-        (progn
-          (dolist (record (recovery-read-journal-records pathname))
-            (when (and (listp record)
-                       (eq (first record) :mutation)
-                       (eq (getf (rest record) :kind) :durable-definition)
-                       (recovery-identifier-p (getf (rest record) :id)))
-              (setf (gethash (getf (rest record) :id) latest) record)))
-          (let ((pending
-                  (loop for record being the hash-values of latest
-                        unless (member (getf (rest record) :result)
-                                       '(:durable :failed :superseded)
-                                       :test #'eq)
-                          collect record)))
-            (when pending
-              (format *error-output* "Pending durable mutations: ~D~%"
-                      (length pending))
-              (dolist (record pending)
-                (format *error-output* "  ~A  ~A  ~A~%"
-                        (recovery-sanitize-text (getf (rest record) :id))
-                        (recovery-sanitize-text (getf (rest record) :result))
-                        (recovery-sanitize-text (getf (rest record) :pathname)))))))
-      (error (condition)
-        (format *error-output* "Could not inspect the mutation journal: ~A~%"
-                (recovery-sanitize-text condition)))))
-  nil)
 
 
 ;;;; -- Generation Validation --
@@ -590,28 +537,7 @@ The validator applies recovery's stricter checks to each manifest."
   nil)
 
 
-;;;; -- Crash Context --
-
-(serapeum:-> recovery-clear-reconnection-environment () null)
-(defun recovery-clear-reconnection-environment ()
-  "Remove retained crash reconnection metadata from the recovery environment."
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
-  nil)
-
-(serapeum:-> recovery-conversation-identifier-display (string) string)
-(defun recovery-conversation-identifier-display (identifier)
-  "Return a short conversation identifier with its visual hyphen."
-  (if (and (= (length identifier) 7)
-           (every
-            (lambda (character)
-              (find character
-                    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-                    :test #'char=))
-            identifier))
-      (format nil "~A-~A" (subseq identifier 0 1) (subseq identifier 1))
-      identifier))
+;;;; -- Conversation Identifiers --
 
 (serapeum:-> recovery-conversation-identifier-stored-p (t) boolean)
 (defun recovery-conversation-identifier-stored-p (value)
@@ -773,238 +699,6 @@ The validator applies recovery's stricter checks to each manifest."
                (return))
     normalized))
 
-(serapeum:-> recovery-publish-reconnection-environment
-    (string t &key (:history-floor-sequence t))
-    null)
-(defun recovery-publish-reconnection-environment
-    (conversation-id rendered-sequence &key history-floor-sequence)
-  "Publish validated canonical recovery metadata for a child process."
-  (when (recovery-identifier-p conversation-id)
-    (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" conversation-id 1))
-  (when (and (integerp rendered-sequence)
-             (not (minusp rendered-sequence)))
-    (sb-posix:setenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE"
-                     (write-to-string rendered-sequence)
-                     1))
-  (when (and (integerp history-floor-sequence)
-             (plusp history-floor-sequence))
-    (sb-posix:setenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE"
-                     (write-to-string history-floor-sequence)
-                     1))
-  nil)
-
-(serapeum:-> recovery-report-crash-capsule
-    (recovery-context t)
-    (or null string))
-(defun recovery-report-crash-capsule (context capsule)
-  "Report and publish one valid CAPSULE, returning its normalized pathname."
-  (when (and (stringp capsule) (plusp (length capsule)))
-    (handler-case
-        (let* ((capsule-pathname (pathname capsule))
-               (crash-root       (merge-pathnames "crashes/"
-                                                  (recovery-context-state-root context))))
-          (unless (and (uiop:subpathp capsule-pathname crash-root)
-                       (probe-file capsule-pathname))
-            (error "The crash capsule is absent or outside private Autolith state."))
-          (let* ((record            (recovery-read-form capsule-pathname))
-                 (properties        (and (listp record) (rest record)))
-                 (conversation-id   (and properties
-                                         (getf properties :conversation-id)))
-                 (rendered-sequence (and properties
-                                         (getf properties :rendered-sequence)))
-                 (history-floor-sequence
-                   (and properties
-                        (getf properties :history-floor-sequence)))
-                 (resolved-conversation-id
-                   (and (stringp conversation-id)
-                        (recovery-conversation-identifier-resolve
-                         context
-                         conversation-id))))
-            (unless (eq (first record) :crash)
-              (error "The crash capsule has an invalid header."))
-            (recovery-clear-reconnection-environment)
-            (format *error-output*
-                    "Crash capsule: ~A~%Condition: ~A~%Conversation: ~A~%"
-                    (recovery-sanitize-text capsule-pathname)
-                    (recovery-sanitize-text
-                     (or (getf properties :condition) "unknown"))
-                    (recovery-sanitize-text
-                     (if resolved-conversation-id
-                         (recovery-conversation-identifier-display
-                          resolved-conversation-id)
-                         "unknown")))
-            (when resolved-conversation-id
-              (recovery-publish-reconnection-environment
-               resolved-conversation-id
-               rendered-sequence
-               :history-floor-sequence history-floor-sequence))
-            (namestring capsule-pathname)))
-      (error (condition)
-        (format *error-output* "Could not read crash capsule ~A: ~A~%"
-                (recovery-sanitize-text capsule)
-                (recovery-sanitize-text condition))
-        nil))))
-
-(serapeum:-> recovery-read-crash-pointer
-    (recovery-context)
-    (or null string))
-(defun recovery-read-crash-pointer (context)
-  "Return the contained capsule named by this launcher's current pointer."
-  (let ((pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-    (when (and (stringp pointer-value) (plusp (length pointer-value)))
-      (let* ((pointer-pathname (pathname pointer-value))
-             (pointer-root     (merge-pathnames "crash-pointers/"
-                                                (recovery-context-state-root context)))
-             (crash-root       (merge-pathnames "crashes/"
-                                                (recovery-context-state-root context))))
-        (unless (uiop:subpathp pointer-pathname pointer-root)
-          (error "The crash pointer is outside private Autolith state."))
-        (when (probe-file pointer-pathname)
-          (with-open-file (stream pointer-pathname
-                                  :direction       ':input
-                                  :external-format ':utf-8)
-            (let ((capsule       (read-line stream nil nil))
-                  (trailing-line (read-line stream nil nil)))
-              (unless (and (stringp capsule)
-                           (plusp (length capsule))
-                           (<= (length capsule) 4096)
-                           (null trailing-line))
-                (error "The crash pointer is not one bounded pathname line."))
-              (let ((capsule-pathname (pathname capsule)))
-                (unless (and (uiop:subpathp capsule-pathname crash-root)
-                             (probe-file capsule-pathname))
-                  (error "The crash pointer names an invalid capsule."))
-                (namestring capsule-pathname)))))))))
-
-(serapeum:-> recovery-read-session-pointer
-    (recovery-context)
-    (or null list))
-(defun recovery-read-session-pointer (context)
-  "Return this launcher's validated recovery-session record, when published."
-  (let ((pointer-value
-          (uiop:getenv "AUTOLITH_RECOVERY_SESSION_POINTER")))
-    (when (and (stringp pointer-value) (plusp (length pointer-value)))
-      (let* ((pointer-pathname (pathname pointer-value))
-             (pointer-root
-               (merge-pathnames "recovery-session-pointers/"
-                                (recovery-context-state-root context))))
-        (unless (uiop:subpathp pointer-pathname pointer-root)
-          (error "The recovery-session pointer is outside private Autolith state."))
-        (when (probe-file pointer-pathname)
-          (let* ((record     (recovery-read-form pointer-pathname))
-                 (properties (and (recovery-proper-list-p record)
-                                  (rest record)))
-                 (conversation-id
-                   (and properties (getf properties :conversation-id)))
-                 (rendered-sequence
-                   (and properties (getf properties :rendered-sequence)))
-                 (history-floor-sequence
-                   (and properties
-                        (getf properties :history-floor-sequence)))
-                 (history-floor-present-p
-                   (and properties
-                        (loop for key in properties by (lambda (tail) (nthcdr 2 tail))
-                              thereis (eq key :history-floor-sequence)))))
-            (unless (and (recovery-proper-list-p record)
-                         (member (length record) '(7 9) :test #'=)
-                         (eq (first record) :recovery-session)
-                         (= (or (getf properties :version) 0) 1)
-                         (stringp conversation-id)
-                         (recovery-identifier-p conversation-id)
-                         (integerp rendered-sequence)
-                         (not (minusp rendered-sequence))
-                         (or (not history-floor-present-p)
-                             (null history-floor-sequence)
-                             (and (integerp history-floor-sequence)
-                                  (plusp history-floor-sequence)))
-                         (loop for key in properties by (lambda (tail) (nthcdr 2 tail))
-                               always
-                               (member key
-                                       '(:version :conversation-id
-                                         :rendered-sequence
-                                         :history-floor-sequence)
-                                       :test #'eq)))
-              (error "The recovery-session pointer record is invalid."))
-            record))))))
-
-(serapeum:-> recovery-report-session-pointer (recovery-context) boolean)
-(defun recovery-report-session-pointer (context)
-  "Publish a valid per-launch session pointer and return whether one existed."
-  (handler-case
-      (let ((record (recovery-read-session-pointer context)))
-        (when record
-          (let* ((properties        (rest record))
-                 (conversation-id   (getf properties :conversation-id))
-                 (rendered-sequence (getf properties :rendered-sequence))
-                 (history-floor-sequence
-                   (getf properties :history-floor-sequence))
-                 (resolved-conversation-id
-                   (recovery-conversation-identifier-resolve
-                    context
-                    conversation-id)))
-            (recovery-clear-reconnection-environment)
-            (recovery-publish-reconnection-environment
-             resolved-conversation-id
-             rendered-sequence
-             :history-floor-sequence history-floor-sequence)
-            (format *error-output*
-                    "Recovery session: ~A~%"
-                    (recovery-sanitize-text
-                     (recovery-conversation-identifier-display
-                      resolved-conversation-id))))
-          t))
-    (error (condition)
-      (format *error-output* "Could not read the recovery-session pointer: ~A~%"
-              (recovery-sanitize-text condition))
-      nil)))
-
-(serapeum:-> recovery-refresh-crash-context
-    (recovery-context (or null string) &key (:session-p boolean))
-    (or null string))
-(defun recovery-refresh-crash-context
-    (context current-capsule &key (session-p t))
-  "Publish the newest capsule or per-launch session available after a failed boot."
-  (handler-case
-      (let ((pointer-capsule (recovery-read-crash-pointer context)))
-        (cond
-          ((null pointer-capsule)
-           (when session-p
-             (recovery-report-session-pointer context))
-           current-capsule)
-          ((and current-capsule (string= pointer-capsule current-capsule))
-           (when session-p
-             (recovery-report-session-pointer context))
-           current-capsule)
-          (t
-           (format *error-output*
-                   "Refreshing recovery context from the latest crash capsule.~%")
-           (or (recovery-report-crash-capsule context pointer-capsule)
-               current-capsule))))
-    (error (condition)
-      (format *error-output* "Could not refresh the crash pointer: ~A~%"
-              (recovery-sanitize-text condition))
-      current-capsule)))
-
-(serapeum:-> recovery-report-crash
-    (recovery-context
-     &key (:status t) (:capsule t) (:original-arguments list))
-    (or null string))
-(defun recovery-report-crash
-    (context &key status capsule (original-arguments nil))
-  "Report bounded crash context and publish safe reconnection metadata."
-  (recovery-clear-reconnection-environment)
-  (when status
-    (format *error-output* "Active Autolith exited with status ~A.~%"
-            (recovery-sanitize-text status)))
-  (let ((reported-capsule (recovery-report-crash-capsule context capsule)))
-    (unless reported-capsule
-      (recovery-report-session-pointer context))
-    (when original-arguments
-      (format *error-output* "Original arguments: ~{~A~^ ~}~%"
-              (mapcar #'recovery-sanitize-text original-arguments)))
-    (recovery-report-mutations context)
-    reported-capsule))
-
 
 ;;;; -- Exact Source and Core Boot --
 
@@ -1048,17 +742,6 @@ The validator applies recovery's stricter checks to each manifest."
     (unless (recovery-git-commit-p commit)
       (error "The current source revision is not one full Git commit."))
     commit))
-
-(serapeum:-> recovery-automatic-source-commit
-    (recovery-context (or null string) (or null string))
-    (or null string))
-(defun recovery-automatic-source-commit (context generation status)
-  "Return the source revision constraining automatic failure recovery."
-  (when (and (null generation)
-             status
-             (/= (parse-integer status :junk-allowed nil)
-                 *recovery-rollback-status*))
-    (recovery-source-commit context)))
 
 (serapeum:-> recovery-source-checkout-valid-p (pathname string) boolean)
 (defun recovery-source-checkout-valid-p (checkout commit)
@@ -1271,164 +954,76 @@ Colocation lets older committed source use its original Git provenance code."
            (uiop:wait-process process))
       (recovery-terminal-state-restore terminal-state))))
 
-(serapeum:-> recovery-boot-source-with-report
-    (recovery-context list &key (:capsule (or null string)))
-    integer)
-(defun recovery-boot-source-with-report (context forwarded-arguments &key capsule)
-  "Boot clean committed source and report any secondary recovery failure."
+(serapeum:-> recovery-boot-source-with-report (recovery-context list) integer)
+(defun recovery-boot-source-with-report (context forwarded-arguments)
+  "Boot clean committed source and report an unsuccessful exit."
   (let ((status (recovery-boot-source context forwarded-arguments)))
-    (unless (recovery-generation-terminal-status-p status)
-      (format *error-output*
-              "Clean committed source exited with status ~D.~%"
-              status)
-      (recovery-refresh-crash-context context capsule))
+    (unless (zerop status)
+      (format *error-output* "Clean committed source exited with status ~D.~%" status))
     status))
 
-(serapeum:-> recovery-generation-terminal-status-p (integer) boolean)
-(defun recovery-generation-terminal-status-p (status)
-  "Return true when STATUS should end retained-generation fallback."
-  (not (null (member status '(0 130 143) :test #'=))))
-
 (serapeum:-> recovery-boot-with-fallback
-    (recovery-context recovery-generation list
-     &key (:capsule (or null string))
-          (:source-commit (or null string)))
+    (recovery-context recovery-generation list &key (:source-commit (or null string)))
     integer)
-(defun recovery-boot-with-fallback
-    (context selected forwarded-arguments &key capsule source-commit)
-  "Boot SELECTED and fall back only to generations matching SOURCE-COMMIT."
-  (let ((candidates
-          (cons selected
-                (remove (recovery-generation-identifier selected)
-                        (recovery-generation-list context)
-                        :key  #'recovery-generation-identifier
-                        :test #'string=)))
-        (terminal-state (recovery-terminal-state-capture))
-        (current-capsule
-          (recovery-refresh-crash-context
-           context capsule :session-p nil)))
-    (loop for remaining on candidates
-          for generation = (first remaining)
-          do (if (recovery-generation-bootable-p
-                  generation
-                  :source-commit source-commit)
-                 (let ((status      nil)
-                       (completed-p nil))
-                   (unwind-protect
-                        (handler-case
-                            (setf status
-                                  (recovery-boot-generation
-                                   context
-                                   generation
-                                   forwarded-arguments)
-                                  completed-p t)
-                          (error (condition)
-                            (format *error-output*
-                                    "Could not boot generation ~A: ~A~%"
-                                    (recovery-sanitize-text
-                                     (recovery-generation-identifier generation))
-                                    (recovery-sanitize-text condition))))
-                     (recovery-terminal-state-restore terminal-state))
-                   (when (and completed-p
-                              (recovery-generation-terminal-status-p status))
-                     (return-from recovery-boot-with-fallback status))
-                   (when completed-p
-                     (format *error-output*
-                             "Generation ~A exited with status ~D; trying fallback.~%"
-                             (recovery-sanitize-text
-                              (recovery-generation-identifier generation))
-                             status))
-                   (when (rest remaining)
-                     (setf current-capsule
-                           (recovery-refresh-crash-context context
-                                                           current-capsule))))
-                 (format *error-output*
-                         "Skipping ~:[incompatible~;cross-revision~] generation ~A.~%"
-                         (and
-                          source-commit
-                          (recovery-generation-compatible-p generation)
-                          (not
-                           (string=
-                            (recovery-generation-git-commit generation)
-                            source-commit)))
-                         (recovery-sanitize-text
-                          (recovery-generation-identifier generation)))))
+(defun recovery-boot-with-fallback (context selected forwarded-arguments &key source-commit)
+  "Boot the first compatible retained generation, returning its actual exit status."
+  (let ((candidates     (cons selected
+                              (remove (recovery-generation-identifier selected)
+                                      (recovery-generation-list context)
+                                      :key #'recovery-generation-identifier :test #'string=)))
+        (terminal-state (recovery-terminal-state-capture)))
+    (dolist (generation candidates)
+      (when (recovery-generation-bootable-p generation :source-commit source-commit)
+        (return-from recovery-boot-with-fallback
+          (unwind-protect
+               (recovery-boot-generation context generation forwarded-arguments)
+            (recovery-terminal-state-restore terminal-state)))))
     (error "No retained generation could be booted.")))
 
 (serapeum:-> recovery-boot-with-source-fallback
     (recovery-context (or null recovery-generation) list
-     &key (:capsule (or null string))
-          (:source-commit (or null string)))
+     &key (:source-commit (or null string)))
     integer)
-(defun recovery-boot-with-source-fallback
-    (context selected forwarded-arguments &key capsule source-commit)
-  "Boot retained state when selected, otherwise boot pristine committed source."
+(defun recovery-boot-with-source-fallback (context selected forwarded-arguments &key source-commit)
+  "Boot a compatible selected generation or pristine committed source."
   (when selected
     (recovery-require-generation-world-entry selected))
-  (if selected
-      (handler-case
-          (recovery-boot-with-fallback context
-                                       selected
-                                       forwarded-arguments
-                                       :capsule       capsule
-                                       :source-commit source-commit)
-       (error (condition)
-         (format *error-output*
-                 "Retained-generation recovery failed: ~A~%"
-                 (recovery-sanitize-text condition))
-         (recovery-boot-source-with-report
-          context (adjoin "--pristine" forwarded-arguments :test #'string=)
-          :capsule capsule)))
-    (recovery-boot-source-with-report
-     context (adjoin "--pristine" forwarded-arguments :test #'string=)
-     :capsule capsule)))
+  (let ((candidate
+          (and selected
+               (find-if (lambda (generation)
+                          (recovery-generation-bootable-p generation :source-commit source-commit))
+                        (cons selected
+                              (remove (recovery-generation-identifier selected)
+                                      (recovery-generation-list context)
+                                      :key #'recovery-generation-identifier :test #'string=))))))
+    (if candidate
+        (recovery-boot-with-fallback context candidate forwarded-arguments :source-commit source-commit)
+        (recovery-boot-source-with-report
+         context (adjoin "--pristine" forwarded-arguments :test #'string=)))))
 
 
 ;;;; -- Argument Parsing and Entry --
 
 (serapeum:-> recovery-parse-arguments (list) *)
 (defun recovery-parse-arguments (arguments)
-  "Return recovery options and forwarded application arguments from ARGUMENTS."
-  (let ((generation         nil)
-        (list-p             nil)
-        (status             nil)
-        (capsule            nil)
-        (forwarded          nil)
-        (original-arguments nil)
-        (remaining          arguments))
+  "Return generation, list flag, rollback status, and forwarded arguments."
+  (let ((generation nil) (list-p nil) (status nil) (forwarded nil) (remaining arguments))
     (loop while remaining
           for argument = (pop remaining)
-          do (cond
-               ((string= argument "--")
-                (setf forwarded remaining
-                      remaining nil))
-               ((string= argument "--list")
-                (setf list-p t))
-               ((string= argument "--generation")
-                (setf generation
-                      (or (pop remaining)
-                          (error "--generation requires an identifier."))))
-               ((string= argument "--status")
-                (setf status
-                      (or (pop remaining)
-                          (error "--status requires an exit code."))))
-               ((string= argument "--capsule")
-                (setf capsule
-                      (or (pop remaining)
-                          (error "--capsule requires a pathname."))))
-               ((string= argument "--original-argument")
-                (push (or (pop remaining)
-                          (error "--original-argument requires a value."))
-                      original-arguments))
-               (t
-                (setf forwarded (cons argument remaining)
-                      remaining nil))))
-    (values generation
-            list-p
-            status
-            capsule
-            forwarded
-            (nreverse original-arguments))))
+          do (cond ((string= argument "--")
+                    (setf forwarded remaining remaining nil))
+                   ((string= argument "--list")
+                    (setf list-p t))
+                   ((string= argument "--generation")
+                    (setf generation (or (pop remaining)
+                                         (error "--generation requires an identifier."))))
+                   ((string= argument "--status")
+                    (setf status (or (pop remaining) (error "--status requires an exit code.")))
+                    (unless (string= status (write-to-string *recovery-rollback-status*))
+                      (error "Only the explicit rollback status is supported.")))
+                   (t
+                    (setf forwarded (cons argument remaining) remaining nil))))
+    (values generation list-p status forwarded)))
 
 (serapeum:-> recovery-run (list) integer)
 (defun recovery-run (arguments)
@@ -1450,48 +1045,23 @@ Colocation lets older committed source use its original Git provenance code."
             (finish-output))
           0)
         (let ((context (recovery-context-create source-root)))
-          (multiple-value-bind
-              (generation list-p status capsule forwarded original-arguments)
+          (multiple-value-bind (generation list-p status forwarded)
               (recovery-parse-arguments (rest arguments))
-            (setf forwarded
-                  (recovery-normalize-forwarded-arguments context forwarded))
+            (setf forwarded (recovery-normalize-forwarded-arguments context forwarded))
             (if list-p
-                (progn
-                  (recovery-print-generations context)
-                  0)
+                (progn (recovery-print-generations context) 0)
                 (progn
                   (recovery-print-introduction)
-                  (let ((reported-capsule
-                          (recovery-report-crash
-                           context
-                           :status             status
-                           :capsule            capsule
-                           :original-arguments original-arguments)))
-                    (if (or generation
-                            (and status
-                                 (= (parse-integer status :junk-allowed nil)
-                                    *recovery-rollback-status*)))
-                        (let* ((source-commit
-                                 (recovery-automatic-source-commit
-                                  context generation status))
-                               (selected
-                                 (if generation
-                                     (recovery-load-generation
-                                      context
-                                      (recovery-manifest-pathname
-                                       context generation)
-                                      :expected-identifier generation)
-                                     (recovery-selected-generation-or-fallback
-                                      context
-                                      :source-commit source-commit))))
-                          (recovery-boot-with-source-fallback
-                           context selected forwarded
-                           :capsule       reported-capsule
-                           :source-commit source-commit))
-                        (recovery-boot-source-with-report
-                         context
-                         (adjoin "--pristine" forwarded :test #'string=)
-                         :capsule reported-capsule))))))))))
+                  (if (or generation status)
+                      (let ((selected
+                              (if generation
+                                  (recovery-load-generation
+                                   context (recovery-manifest-pathname context generation)
+                                   :expected-identifier generation)
+                                  (recovery-selected-generation-or-fallback context))))
+                        (recovery-boot-with-source-fallback context selected forwarded))
+                      (recovery-boot-source-with-report
+                       context (adjoin "--pristine" forwarded :test #'string=))))))))))
 
 (serapeum:-> recovery-main () null)
 (defun recovery-main ()

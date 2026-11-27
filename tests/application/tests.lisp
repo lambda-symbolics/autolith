@@ -3344,46 +3344,6 @@
      "a wrapped argument retains its complete table rather than a partial inline header"))
   nil)
 
-(-> test-recovery-cursor-normalization () null)
-(defun test-recovery-cursor-normalization ()
-  "Test recovered transcript cursors cannot exceed durable conversation state."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "cursor-recovery")))
-    (unwind-protect
-         (progn
-           (dotimes (index 3)
-             (conversation-append-user-message
-              conversation
-              (format nil "message-~D" index)))
-           (multiple-value-bind (rendered floor)
-               (application--normalize-recovery-cursors
-                conversation :recovering-p           t
-                             :rendered-sequence      999
-                             :history-floor-sequence 999)
-             (test-assert
-              (and (= rendered 3) (null floor))
-              "oversized recovered cursors clamp or reset at the durable tail"))
-           (multiple-value-bind (rendered floor)
-               (application--normalize-recovery-cursors
-                conversation :recovering-p           t
-                             :rendered-sequence      2
-                             :history-floor-sequence 3)
-             (test-assert
-              (and (= rendered 2) (= floor 3))
-              "a valid recovered history boundary remains intact"))
-           (multiple-value-bind (rendered floor)
-               (application--normalize-recovery-cursors
-                conversation :recovering-p           nil
-                             :rendered-sequence      2
-                             :history-floor-sequence 1)
-             (test-assert
-              (and (zerop rendered) (null floor))
-              "cursor metadata is ignored outside its recovered conversation")))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-fatal-boundaries-keep-backtraces () null)
 (defun test-fatal-boundaries-keep-backtraces ()
   "Test each fatal boundary hands recovery the frames of the failure it ends."
@@ -3499,149 +3459,19 @@
         (terminal-ui-stop (application-ui application)))))
   nil)
 
-(-> test-recovery-diagnosis-prompt () null)
-(defun test-recovery-diagnosis-prompt ()
-  "Test recovered crash context becomes one bounded diagnosis-only prompt."
-  (let* ((configuration     (test-configuration))
-         (root              (test-configuration-root configuration))
-         (state-root        (config :state-root configuration))
-         (capsule-pathname
-           (merge-pathnames "crashes/diagnosis.sexp" state-root))
-         (pointer-pathname
-           (merge-pathnames "crash-pointers/diagnosis.path" state-root))
-         (session-pathname
-           (merge-pathnames
-            "recovery-session-pointers/diagnosis.sexp" state-root))
-         (pointer-name      "AUTOLITH_CRASH_POINTER")
-         (session-name      "AUTOLITH_RECOVERY_SESSION_POINTER")
-         (conversation-name "AUTOLITH_RECOVERY_CONVERSATION_ID")
-         (sequence-name     "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-         (floor-name        "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
-         (environment-names
-           (list pointer-name session-name conversation-name sequence-name floor-name))
-         (previous-environment
-           (loop for name in environment-names
-                 collect (cons name (uiop:getenv name)))))
-    (unwind-protect
-         (progn
-           (configuration-ensure-directories configuration)
-           (snapshot-write
-            session-pathname
-            (list :recovery-session
-                  :version 1
-                  :conversation-id        "2345678"
-                  :rendered-sequence      4
-                  :history-floor-sequence 2))
-           (snapshot-write
-            capsule-pathname
-            (list :crash
-                  :version 1
-                  :id                     "diagnosis"
-                  :time                   1
-                  :condition-type         "SIMPLE-ERROR"
-                  :condition              "Injected recovery failure."
-                  :backtrace              '("FRAME-ONE" "FRAME-TWO")
-                  :conversation-id        "recover1"
-                  :rendered-sequence      2
-                  :history-floor-sequence 1
-                  :git-commit             "0123456789abcdef0123456789abcdef01234567"
-                  :journal-position       17))
-           (ensure-directories-exist pointer-pathname)
-           (with-open-file (stream pointer-pathname
-                                   :direction         ':output
-                                   :if-exists         ':supersede
-                                   :if-does-not-exist ':create
-                                   :external-format   ':utf-8)
-             (write-line (namestring capsule-pathname) stream))
-           (platform-setenv pointer-name (namestring pointer-pathname))
-           (platform-setenv session-name (namestring session-pathname))
-           (let ((prompt
-                   (application-recovery-diagnosis-prompt configuration)))
-             (test-assert
-              (and prompt
-                   (search "diagnosis-only" prompt)
-                   (search "bounded read-only diagnostic tool rounds" prompt)
-                   (search "workspace and source" prompt)
-                   (search "Injected recovery failure" prompt)
-                   (search "FRAME-ONE" prompt)
-                   (search "ask" prompt)
-                   (search "active image" prompt))
-              "a valid recovered capsule requests diagnosis and user-approved repair"))
-           (snapshot-write capsule-pathname '(:crash))
-           (platform-setenv conversation-name "untrusted-capsule")
-           (platform-setenv sequence-name "99")
-           (platform-setenv floor-name "98")
-           (multiple-value-bind (conversation-id rendered-sequence
-                                 history-floor-sequence)
-               (application-recovery-state configuration)
-             (test-assert
-              (and (string= conversation-id "2345678")
-                   (= rendered-sequence 4)
-                   (= history-floor-sequence 2))
-              "an invalid crash capsule falls back to validated session state"))
-           (test-assert
-            (null (application-recovery-diagnosis-prompt configuration))
-            "an invalid crash capsule does not queue diagnosis")
-           (snapshot-write
-            session-pathname
-            (list :recovery-session
-                  :version 1
-                  :version           1
-                  :conversation-id   "../bad"
-                  :rendered-sequence 0))
-           (multiple-value-bind (conversation-id rendered-sequence
-                                 history-floor-sequence)
-               (application-recovery-state configuration)
-             (test-assert
-              (and (null conversation-id)
-                   (null rendered-sequence)
-                   (null history-floor-sequence))
-              "malformed session state cannot replace invalid crash context"))
-           (platform-setenv pointer-name
-                           (namestring
-                            (merge-pathnames "outside.path" root)))
-           (test-assert
-            (null (application-recovery-diagnosis-prompt configuration))
-            "diagnosis rejects a crash pointer outside private state"))
-      (dolist (entry previous-environment)
-        (if (rest entry)
-            (platform-setenv (first entry) (rest entry))
-            (platform-unsetenv (first entry))))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-recovery-application-construction () null)
-(defun test-recovery-application-construction ()
-  "Test source and retained recovery restore conversations and cursor state."
+(-> test-explicit-application-reconnect () null)
+(defun test-explicit-application-reconnect ()
+  "Test an explicit reconnect restores the selected conversation and its history."
   (let* ((configuration                 (test-configuration))
          (root                          (test-configuration-root configuration))
-         (recovered
-           (conversation-create configuration :identifier "recover-source"))
          (explicit
            (conversation-create configuration :identifier "explicit-resume"))
-         (crash-pointer-name            "AUTOLITH_CRASH_POINTER")
-         (session-pointer-name          "AUTOLITH_RECOVERY_SESSION_POINTER")
-         (conversation-name             "AUTOLITH_RECOVERY_CONVERSATION_ID")
-         (sequence-name                 "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-         (floor-name                    "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
-         (environment-names
-           (list crash-pointer-name session-pointer-name conversation-name sequence-name floor-name))
-         (previous-environment
-           (loop for name in environment-names
-                 collect (cons name (uiop:getenv name))))
          (mcp-registration-snapshot     (mcp--registry-snapshot))
          (context-registration-snapshot (context--registry-snapshot))
          (command-registration-snapshot
            (application-command--registry-snapshot))
          (application                   nil))
-    (labels ((publish-recovery-context ()
-               "Publish RECOVERED's one-shot cursor handoff."
-               (platform-setenv
-                conversation-name (conversation-identifier recovered))
-               (platform-setenv sequence-name "2")
-               (platform-setenv floor-name "1"))
-
-             (check-history (expected)
+    (labels ((check-history (expected)
                "Recall EXPECTED from the installed UI and return to its draft."
                (let* ((ui     (application-ui application))
                       (editor (terminal-ui-editor ui)))
@@ -3667,15 +3497,8 @@
                  (setf application nil))))
       (unwind-protect
            (progn
-             ;; Exercise the direct handoff, not a launcher's crash/session pointers.
-             (platform-unsetenv crash-pointer-name)
-             (platform-unsetenv session-pointer-name)
              (configuration-ensure-directories configuration)
-             (dotimes (index 3)
-               (conversation-append-user-message
-                recovered (format nil "recovery message ~D" index)))
              (conversation-append-user-message explicit "explicit message")
-             (publish-recovery-context)
              (test-call-with-function-replacements
               (list
                (list 'durable-mutations-load
@@ -3707,34 +3530,7 @@
                         (make-instance 'recording-terminal :columns 80)))))
               (lambda ()
                 (setf application (application-create configuration))
-                (test-assert
-                 (and
-                  (string=
-                   (conversation-identifier
-                    (application-conversation application))
-                   (conversation-identifier recovered))
-                  (= (application-rendered-sequence application) 2)
-                  (= (application-history-floor-sequence application) 1))
-                 "clean-source recovery restores its conversation and cursors")
-                (check-history "recovery message 2")
-                (let ((ui (application-ui application)))
-                  (test-assert
-                    (and (plusp (terminal-ui-context-used ui))
-                         (terminal-ui-context-estimated-p ui)
-                         (= (terminal-ui-context-window ui) 272000)
-                         (= (terminal-ui-context-compaction-limit ui) 217600))
-                   "application creation seeds its idle context meter")
-                  (test-assert (null (recording-terminal-chunks
-                                      (terminal-ui-terminal ui)))
-                               "seeding an unstarted meter does not paint")
-                  (terminal-ui-start ui)
-                  (test-assert (search "272K"
-                                       (recording-terminal-output
-                                        (terminal-ui-terminal ui)))
-                              "the first application paint includes its context meter")
-                  (terminal-ui-stop ui))
                 (application-set-hurry-up application t)
-                (publish-recovery-context)
                 (setf application
                       (application-reconnect
                        application
@@ -3749,22 +3545,8 @@
                   (agent-hurry-up-p (application-agent application))
                   (zerop (application-rendered-sequence application))
                   (null (application-history-floor-sequence application)))
-                 "explicit resume overrides recovery conversation and cursor state")
+                 "explicit resume restores the selected conversation")
                 (check-history "explicit message")
-                (publish-recovery-context)
-                (setf application (application-reconnect application))
-                (test-assert
-                 (and
-                  (string=
-                   (conversation-identifier
-                    (application-conversation application))
-                   (conversation-identifier recovered))
-                  (application-hurry-up-p application)
-                  (agent-hurry-up-p (application-agent application))
-                  (= (application-rendered-sequence application) 2)
-                  (= (application-history-floor-sequence application) 1))
-                 "retained-generation reconnect restores recovery state")
-                (check-history "recovery message 2")
                 (let ((ui (application-ui application)))
                   (test-assert
                     (and (plusp (terminal-ui-context-used ui))
@@ -3782,10 +3564,6 @@
                               "the first reconnect paint includes its context meter")
                   (terminal-ui-stop ui)))))
         (close-application)
-        (dolist (entry previous-environment)
-          (if (rest entry)
-              (platform-setenv (first entry) (rest entry))
-              (platform-unsetenv (first entry))))
         (mcp--registry-restore mcp-registration-snapshot)
         (context--registry-restore context-registration-snapshot)
         (application-command--registry-restore command-registration-snapshot)
@@ -4120,36 +3898,6 @@
                          (search "active-chunk-message" output)
                          (not (search "use (history) to load an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
-                 (let* ((recovery-terminal
-                          (make-instance 'recording-terminal :columns 80))
-                        (recovery-application
-                          (make-instance
-                           'application
-                           :configuration      configuration
-                           :conversation       loaded
-                           :recovery-startup-p t
-                           :ui
-                           (terminal-ui-create :terminal recovery-terminal)))
-                        (recovery-pathnames nil))
-                   (let ((*application-history-page-size* 3))
-                     (test-call-with-function-replacements
-                      (list
-                       (list
-                        'sexp-store:log-map
-                        (lambda (function pathname &key (start-position 0))
-                          (push pathname recovery-pathnames)
-                          (funcall map-records-function
-                                   function pathname
-                                   :start-position start-position))))
-                      (lambda ()
-                        (application-render-records recovery-application))))
-                   (let ((output
-                           (recording-terminal-output recovery-terminal)))
-                     (test-assert
-                      (and (equal (nreverse recovery-pathnames) (list active))
-                           (not (search "middle-chunk-message" output))
-                           (search "active-chunk-message" output))
-                      "zero-cursor recovery scans only the active chunk")))
                  (recording-terminal-reset terminal)
                  (application-render-history application)
                  (let ((output (recording-terminal-output terminal)))
@@ -5781,57 +5529,13 @@
                   "exclusive input restores the reader's initial lifecycle"))
             (application-input-controller-stop controller))))))
   (test-assert
-   (equal (application--initial-work-items nil nil)
+   (equal (application--initial-work-items nil)
           nil)
-   "startup without command or recovery does not queue adaptation work")
+   "startup without a command does not queue work")
   (test-assert
-   (equal (application--initial-work-items "(resume)" nil)
+   (equal (application--initial-work-items "(resume)")
           (list (list ':lisp "(resume)")))
    "bare command-line resume runs through canonical local Lisp")
-  (test-assert
-   (equal (application--initial-work-items nil "diagnose")
-          (list (list ':recovery-diagnosis "diagnose")))
-   "automatic crash recovery queues exactly one diagnostic model turn")
-  nil)
-
-(-> test-recovery-diagnosis-tool-surface () null)
-(defun test-recovery-diagnosis-tool-surface ()
-  "Test recovered diagnosis work receives only the read-only native allowlist."
-  (let* ((application (make-instance 'application))
-         (controller
-           (make-instance 'application-input-controller
-                          :application application))
-         (observed    nil))
-    (test-call-with-function-replacements
-     (list
-      (list
-       'application--run-message-input
-       (lambda (active-application input
-                &key steering-function tools-p tool-allowlist
-                     tool-restriction-p goal-continuations-p
-                     fatal-agent-loop-errors-p &allow-other-keys)
-         (declare (ignore steering-function))
-         (setf observed
-               (list active-application input tools-p tool-allowlist
-                     tool-restriction-p goal-continuations-p
-                     fatal-agent-loop-errors-p))
-         ':continue)))
-     (lambda ()
-       (application-input-controller--run-work
-        controller (list ':recovery-diagnosis "diagnose"))))
-    (test-assert
-     (and (eq (first observed) application)
-          (string= (second observed) "diagnose")
-          (third observed)
-          (equal (fourth observed)
-                 '("resource.read"
-                   "search.files" "search.glob" "search.content"
-                   "lisp.describe" "lisp.source" "self.status" "self.diff"
-                   "self.generations"))
-          (fifth observed)
-          (null (sixth observed))
-          (null (seventh observed)))
-     "recovery diagnosis enables only its read-only tool surface"))
   nil)
 
 (-> test-command-turn-steering () null)
@@ -5902,7 +5606,7 @@
                            configuration :results (loop repeat 9 collect (mission-test--result "done"))))
              (controller  (application-input-controller-create
                            application
-                           :initial-work-items         (application--initial-work-items (and picker-p "(open)") nil)
+                            :initial-work-items        (application--initial-work-items (and picker-p "(open)"))
                            :project-adaptation-offer-p t
                            :load-pending-p nil :start-reader-p nil))
              (queue       (application-input-controller-work-items controller))
@@ -5943,11 +5647,10 @@
                                  "picker startup supplies its initial work")
                     (application-input-controller--finish-work controller))
                   (run (list ':idle-compaction episode))
-                  (run (list ':recovery-diagnosis "diagnose"))
                   (run (list ':message "cancelled") :cancelled-p t)
                   (run (list ':job-completion nil))
                   (test-assert (deque-empty-p queue)
-                               "startup, diagnostics, maintenance, cancellation and stale tickets do not offer")
+                               "startup, maintenance, cancellation and stale tickets do not offer")
                   (setf awaited-p t)
                   (run (list ':message "start work"))
                   (test-assert (deque-empty-p queue) "a wake-authorized job blocks the offer")
@@ -6714,15 +6417,6 @@
 (-> test-conversation-picker () null)
 (defun test-conversation-picker ()
   "Test saved-conversation picker items and interactive selection."
-  (test-assert
-   (string= (application--selected-conversation-id
-             "explicit" "recovered")
-            "explicit")
-   "an explicit resume identifier overrides automatic recovery selection")
-  (test-assert
-   (string= (application--selected-conversation-id nil "recovered")
-            "recovered")
-   "automatic recovery supplies the conversation without an explicit resume")
   (dolist (case '(("sandbox" :sandboxed) ("full" :full-access)))
     (let ((observed-mode nil))
       (test-call-with-function-replacements
@@ -6734,73 +6428,6 @@
        (lambda () (main-dispatch (list "--permissions" (first case)))))
       (test-assert (eq observed-mode (second case))
                    "an explicit permission selection reaches the world channel launch")))
-  (let* ((environment-names
-           '("AUTOLITH_RECOVERY_CONVERSATION_ID"
-             "AUTOLITH_RECOVERY_RENDERED_SEQUENCE"
-             "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE"
-             "AUTOLITH_CRASH_POINTER"))
-         (previous-environment
-           (loop for name in environment-names
-                 collect (cons name (uiop:getenv name))))
-         (observed-conversation-id    :unset)
-         (observed-latest-p           :unset)
-         (observed-recovery-diagnosis :unset)
-         (startup-failure-p           nil))
-    (unwind-protect
-         (test-call-with-function-replacements
-          (list
-           (list 'main--interactive-input-p (constantly t))
-           (list 'main-resolve-conversation
-                 (lambda (configuration prefix)
-                   (declare (ignore configuration))
-                   prefix))
-           (list 'application-recovery-diagnosis-prompt
-                 (lambda (configuration)
-                   (declare (ignore configuration))
-                   "diagnose"))
-           (list 'main--run-world-client
-                 (lambda (configuration &key conversation-id latest-p recovery-diagnosis
-                                              &allow-other-keys)
-                   (declare (ignore configuration))
-                   (when startup-failure-p (error "world client startup failed"))
-                   (setf observed-conversation-id conversation-id
-                         observed-latest-p latest-p
-                         observed-recovery-diagnosis recovery-diagnosis))))
-          (lambda ()
-            (platform-unsetenv "AUTOLITH_CRASH_POINTER")
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
-            (main-dispatch '("open"))
-            (test-assert
-             (and (equal observed-conversation-id "recovered")
-                  (null observed-latest-p)
-                  (equal observed-recovery-diagnosis "diagnose"))
-             "automatic recovery selects its channel and diagnosis instead of the latest channel")
-            (test-assert
-             (null (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID"))
-             "successful world client startup consumes one-shot recovery metadata")
-            (setf observed-conversation-id :unset
-                  observed-latest-p :unset
-                  observed-recovery-diagnosis :unset)
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
-            (main-dispatch '("open" "explicit"))
-            (test-assert
-             (and (equal observed-conversation-id "explicit")
-                  (null observed-latest-p)
-                  (null observed-recovery-diagnosis))
-             "an explicit recovered open overrides crash reconnection and its diagnosis")
-            (setf startup-failure-p t)
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
-            (test-assert
-             (handler-case (progn (main-dispatch '("open")) nil)
-               (simple-error () t))
-             "failed world client startup reports its error")
-            (test-assert
-             (equal (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID") "recovered")
-             "failed world client startup preserves recovery metadata")))
-      (dolist (entry previous-environment)
-        (if (rest entry)
-            (platform-setenv (first entry) (rest entry))
-            (platform-unsetenv (first entry))))))
   (let* ((base-configuration (test-configuration))
          (root               (test-configuration-root base-configuration))
          (current-workspace  (merge-pathnames "current-workspace/" root))
@@ -7925,16 +7552,7 @@
                  'application--create-tool-registry
                  (lambda (configuration &key shared-mcp-manager)
                    (declare (ignore configuration shared-mcp-manager))
-                   conversation-registry))
-                (list
-                 'application-publish-recovery-session
-                 (lambda (installed-application)
-                   (test-assert
-                    (eq installed-application application)
-                    "the late installation hook receives the active application")
-                   (terminal-ui-set-input ui "concurrent draft")
-                   (terminal-ui-process-event ui :left)
-                   nil)))
+                   conversation-registry)))
                (lambda ()
                  (application-install-conversation
                   application second-conversation)))
@@ -7969,15 +7587,6 @@
                     (tool-registry-provider-schemas
                      conversation-registry))))
                  "conversation installation advertises only fresh tool schemas")
-                (test-assert
-                 (and
-                  (equalp
-                   (line-editor-history editor)
-                   #("second conversation history"))
-                  (string= (line-editor-text editor) "concurrent draft")
-                  (= (line-editor-cursor editor) 15)
-                  (not (terminal-ui--editor-history-navigating-p editor)))
-                 "conversation installation preserves input entered before its final history commit")
                 (test-assert
                  (and
                   (eq
