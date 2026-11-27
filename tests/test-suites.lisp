@@ -44,6 +44,7 @@
   test-context-admission-measured-resume
   test-context-admission-measured-header-resume
   test-context-admission-measured-header-identity
+   test-context-admission-version-snapshot
   test-context-admission-final-request
   test-context-admission-images
   test-context-admission-tool-output-images
@@ -1022,6 +1023,7 @@
   test-conversation-model-selection
   test-conversation-titles
   test-conversation-cross-family-reasoning
+  test-conversation-provider-item-generation
   test-conversation-compaction
   test-conversation-native-compaction
   test-conversation-chunk-storage
@@ -1116,6 +1118,8 @@
   test-provider-tool-choice
   test-provider-prompt-cache-ttl
   test-provider-shared-items-breakpoint
+  test-provider-cache-versioned-entry
+   test-provider-cache-versioned-entry-algorithm-change
   test-provider-cost
   test-provider-rate-limits
   test-provider-context-presentation

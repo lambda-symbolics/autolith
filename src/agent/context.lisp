@@ -556,42 +556,51 @@ stays cached across midnight; this separate block carries the change instead."
 
 A matched measurement already includes request-local guidance. Charge only
 new retained history here; admission replaces temporary context when encoding."
-  (let* ((tools  (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
-         (items  (conversation-input-items-for-family
-                  conversation (or family (and provider (provider-family provider))
-                                   (model-family (config :model configuration)
-                                                 (config :model-provider configuration)))
-                  :model (when (or (null provider) (typep provider 'responses-api-provider)
-                                   (null (compute-applicable-methods #'provider-configuration (list provider))))
-                           (config :model configuration))))
-         (sample (conversation-context-usage-sample conversation)))
-    ;; Only a measured prefix needs prompt and tool fingerprints. For an
-    ;; unmeasured channel, estimate the current input directly.
-    (when (and provider sample (null (conversation-ephemeral-input-entries conversation)))
-      (let ((header     (provider-context--soft-header provider tools))
-            (components (provider-context--header-components provider tools)))
-        (when (provider-context--sample-matches-p
-               sample header (mapcar #'provider-cache-prefix--entry items) :components components)
-          (let* ((new    (nthcdr (getf sample :history-count) items))
-                 (charge (if (= 2 (getf sample :format))
-                             (provider-context--header-charge sample components) 0)))
-            (return-from context-estimate-known-tokens
-              (values (+ charge (provider-context--input-tokens provider sample (and new (coerce new 'vector))))
-                      (and (null new) (equal header (getf sample :soft-header)))))))
-        (multiple-value-bind (added matched-p)
-            (provider-context--switch-history provider conversation :sample sample :current items)
-          (when matched-p
-            (return-from context-estimate-known-tokens
-              (values (+ (provider-context--header-charge sample components)
-                         (provider-context--input-tokens
-                          provider sample (and added (coerce added 'vector))))
-                      nil))))))
-    (values
-     (provider-context--input-tokens
-      provider nil (vector (system-prompt configuration)
-                           (request-context-session-state configuration :hurry-up-p hurry-up-p)
-                           (coerce items 'vector) tools))
-     nil)))
+    (let* ((tools          (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
+           (history-family (or family (and provider (provider-family provider))
+                                (model-family (config :model configuration)
+                                              (config :model-provider configuration))))
+           (history-model
+             (when (or (null provider) (typep provider 'responses-api-provider)
+                       (null (compute-applicable-methods #'provider-configuration (list provider))))
+               (config :model configuration)))
+           (sample         (conversation-context-usage-sample conversation)))
+      (multiple-value-bind (items generation)
+          (with-recursive-lock-held ((conversation-append-lock conversation))
+            (values (conversation-input-items-for-family conversation history-family
+                                                         :model history-model)
+                    (conversation-provider-item-generation conversation)))
+        ;; Only a measured prefix needs prompt and tool fingerprints. For an
+        ;; unmeasured channel, estimate the current input directly.
+        (when (and provider sample (null (conversation-ephemeral-input-entries conversation)))
+          (let ((header     (provider-context--soft-header provider tools))
+                (components (provider-context--header-components provider tools)))
+           (when (provider-context--sample-matches-p
+                    sample header (mapcar (lambda (item)
+                                             (provider-cache-prefix--versioned-entry
+                                              conversation item generation))
+                                          items)
+                          :components components)
+             (let* ((new    (nthcdr (getf sample :history-count) items))
+                    (charge (if (= 2 (getf sample :format))
+                                (provider-context--header-charge sample components) 0)))
+               (return-from context-estimate-known-tokens
+                 (values (+ charge (provider-context--input-tokens provider sample (and new (coerce new 'vector))))
+                         (and (null new) (equal header (getf sample :soft-header)))))))
+           (multiple-value-bind (added matched-p)
+               (provider-context--switch-history provider conversation :sample sample :current items)
+             (when matched-p
+               (return-from context-estimate-known-tokens
+                 (values (+ (provider-context--header-charge sample components)
+                            (provider-context--input-tokens
+                             provider sample (and added (coerce added 'vector))))
+                         nil))))))
+       (values
+        (provider-context--input-tokens
+         provider nil (vector (system-prompt configuration)
+                              (request-context-session-state configuration :hurry-up-p hurry-up-p)
+                              (coerce items 'vector) tools))
+        nil))))
 
 (-> context--render (list) (option string))
 (defun context--render (contributions)

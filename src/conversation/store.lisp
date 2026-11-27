@@ -171,6 +171,10 @@
            (log-generation :initform 0 :accessor conversation-log-generation :type
             (integer 0) :documentation
             "The count of active-log replacements since this object loaded.")
+
+           (provider-item-generation :initform 0 :accessor
+            conversation-provider-item-generation :type (integer 0) :documentation
+            "The count of provider projection mutations since this object loaded.")
            (append-lock :initform (make-recursive-lock "Autolith conversation append")
             :reader conversation-append-lock :type t :documentation
             "The lock serializing durable record sequence assignment.")
@@ -359,6 +363,12 @@ not yet been told that work from the previous process is gone.")
             "The newest durable goal record observed in this conversation."))
           (:documentation "An append-only conversation and its provider projection."))
 
+(-> conversation--advance-provider-item-generation (conversation) null)
+(defun conversation--advance-provider-item-generation (conversation)
+  "Advance the version used for cached provider item fingerprints."
+  (incf (slot-value conversation 'provider-item-generation))
+  nil)
+
 (defmethod initialize-instance
     :after ((conversation conversation) &key (input-items nil supplied-p) &allow-other-keys)
   "Initialize CONVERSATION's provider projection and lineage key."
@@ -367,7 +377,8 @@ not yet been told that work from the previous process is gone.")
           (conversation-identifier conversation)))
   (when supplied-p
     (clinker-transcript:projection-replace
-     (conversation-projection conversation) input-items)))
+     (conversation-projection conversation) input-items)
+    (conversation--advance-provider-item-generation conversation)))
 
 (-> conversation-input-items (conversation) list)
 (defun conversation-input-items (conversation)
@@ -379,7 +390,8 @@ not yet been told that work from the previous process is gone.")
 (defun (setf conversation-input-items) (items conversation)
   "Replace CONVERSATION's provider projection and prune discarded metadata."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (clinker-transcript:projection-replace (conversation-projection conversation) items))
+      (clinker-transcript:projection-replace (conversation-projection conversation) items)
+      (conversation--advance-provider-item-generation conversation))
   items)
 
 (-> conversation--note-prompt-cache-usage (conversation list) null)
@@ -1663,7 +1675,9 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
         (when (encrypted-reasoning-item-p item)
           (setf (gethash item (clinker-transcript:projection-metadata-table
                                (conversation-projection conversation) ':reasoning-model)) model)))
-      (clinker-transcript:projection-append (conversation-projection conversation) item))))
+      (prog1
+          (clinker-transcript:projection-append (conversation-projection conversation) item)
+        (conversation--advance-provider-item-generation conversation)))))
 
 (-> conversation--append-record-item (conversation json-object list) json-object)
 (defun conversation--append-record-item (conversation item record)

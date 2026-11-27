@@ -203,6 +203,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
        (when validate-projection
          (let ((candidate (conversation-compaction-summary-view conversation nil)))
            (setf (slot-value candidate 'projection) projection)
+
+           (conversation--advance-provider-item-generation candidate)
            (funcall validate-projection candidate)))
        (let* ((previous-function *conversation-append-publication-function*)
               (*conversation-append-publication-function*
@@ -217,6 +219,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
            (let ((published (conversation-append-record conversation record)))
              (setf (slot-value conversation 'projection) projection
                    (conversation-last-total-tokens conversation) 0)
+
+             (conversation--advance-provider-item-generation conversation)
              published)))))))
 
 (-> conversation-append-summary
@@ -269,6 +273,8 @@ readers that do not know the typed form."
   (conversation-compaction--check-correlations conversation properties projection)
   (setf (slot-value conversation 'projection) projection
         (conversation-last-total-tokens conversation) 0)
+
+  (conversation--advance-provider-item-generation conversation)
   nil)
 
 (-> conversation-compaction--row-metadata-p (keyword t) boolean)

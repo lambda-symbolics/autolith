@@ -1402,6 +1402,47 @@
                       "legacy samples do not authorize a changed header")))))
   nil)
 
+(-> test-context-admission-version-snapshot () null)
+(defun test-context-admission-version-snapshot ()
+  "History items and their generation are read under one conversation lock."
+  (context-admission-test--with-measured-context
+    (lambda (agent)
+      (context-admission-test--measure agent)
+      (let* ((configuration (agent-configuration agent))
+             (conversation  (agent-conversation agent))
+             (provider      (agent-provider agent))
+             (items-reader  (symbol-function 'conversation-input-items-for-family))
+             (generation-reader
+               (symbol-function 'conversation-provider-item-generation))
+             (observations  nil))
+        (labels ((locked-p (target)
+                   (eq (sb-thread:mutex-value (conversation-append-lock target))
+                       (bordeaux-threads:current-thread)))
+
+                 (record (kind target)
+                   (push (cons kind (locked-p target)) observations)))
+          (test-call-with-function-replacements
+              (list
+               (list 'conversation-input-items-for-family
+                     (lambda (target family &rest arguments)
+                       (record :items target)
+                       (apply items-reader target family arguments)))
+               (list 'conversation-provider-item-generation
+                     (lambda (target)
+                       (record :generation target)
+                       (funcall generation-reader target))))
+            (lambda ()
+              (provider-context--history provider conversation)
+              (context-estimate-known-tokens configuration conversation
+                                             :provider provider))))
+        (test-assert (member :items observations :key #'first)
+                     "the snapshot reads conversation history items")
+        (test-assert (member :generation observations :key #'first)
+                     "the snapshot reads the provider item generation")
+        (test-assert (every #'rest observations)
+                     "history items and generation are read under the append lock"))))
+  nil)
+
 (-> test-context-admission-measured-resume () null)
 (defun test-context-admission-measured-resume ()
   "Revalidate persisted measurements after restart and charge newly retained evidence."

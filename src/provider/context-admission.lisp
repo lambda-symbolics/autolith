@@ -88,8 +88,11 @@ may use provider token counts when available; the default is not a tokenizer."))
 (-> provider-context--history (model-provider conversation) list)
 (defun provider-context--history (provider conversation)
   "Fingerprint compatible retained history without storing prompt bodies."
-  (mapcar #'provider-cache-prefix--entry
-          (provider-history-items provider conversation :include-ephemeral-p nil)))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((generation (conversation-provider-item-generation conversation)))
+      (mapcar (lambda (item)
+                (provider-cache-prefix--versioned-entry conversation item generation))
+              (provider-history-items provider conversation :include-ephemeral-p nil)))))
 
 (-> provider-context--extends-p (list list) boolean)
 (defun provider-context--extends-p (previous current)
