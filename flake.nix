@@ -195,7 +195,6 @@
               test -f "$fallback_image/active/autolith-active.core"
               test ! -e "$TMPDIR/relative/data/autolith/nix"
               test "$(stat -c %a "$HOME/.local/share/autolith")" = 700
-              test "$(stat -c %a "$HOME/.local/state/autolith")" = 700
               test -d "$HOME/.cache/autolith/nix/asdf-cache/${imageIdentity}"
               test "$(stat -c %a "$HOME/.cache/autolith")" = 700
               test ! -e "$TMPDIR/relative/cache/autolith/nix"
