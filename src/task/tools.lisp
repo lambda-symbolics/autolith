@@ -450,11 +450,34 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
      :preview-limit      preview-limit
      :include-progress-p include-progress-p)))
 
+(-> task--tool-result-content (t integer (option string)) t)
+(defun task--tool-result-content (content preview-limit artifact-path)
+  "Return CONTENT inline, or its leading preview and where the rest is kept."
+  (if (or (not (stringp content)) (<= (length content) preview-limit))
+      content
+      (list :preview (task--retained-prefix content preview-limit)
+            (if artifact-path :in-artifact :omitted)
+            (list* :field :content :characters (length content)
+                   (when artifact-path (list :path artifact-path))))))
+
+(-> task--tool-result-artifact-path (tool-execution-job list agent) (option string))
+(defun task--tool-result-artifact-path (job result viewer)
+  "Return where tool JOB's complete terminal RESULT is retained, or NIL."
+  (or (getf result :output-path)
+      (let ((path (merge-pathnames
+                   (format nil "~A/terminal.sexp" (session-job-execution-identifier job))
+                   (task--artifact-group-root
+                    (agent-configuration viewer)
+                    (session-job-root-conversation-identifier job)))))
+        (and (probe-file path) (namestring path)))))
+
 (defmethod session-job-native-record
     ((job tool-execution-job) snapshot viewer
      &key (preview-limit 0) include-progress-p)
-  "Return tool execution JOB's bounded native inspection record."
-  (declare (ignore preview-limit))
+  "Return tool execution JOB's native inspection record.
+
+A NIL PREVIEW-LIMIT keeps the result whole. An integer bounds its content and
+details, pointing at the retained terminal artifact when one exists."
   (let ((progress (getf snapshot :progress))
         (result   (getf snapshot :result)))
     (append
@@ -472,11 +495,22 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
            (getf (shell-log-job-metadata (agent-configuration viewer) job) :shell-logs)
            :result
            (and result
-                (list :status      (getf result :status)
-                      :content     (getf result :content)
-                      :details     (getf result :details)
-                      :shell-logs  (getf result :shell-logs)
-                      :duration-ms (getf result :duration-ms)))
+                (if preview-limit
+                    (let ((artifact-path (task--tool-result-artifact-path job result viewer)))
+                      (list :status      (getf result :status)
+                            :content     (task--tool-result-content
+                                          (getf result :content) preview-limit artifact-path)
+                            :details     (task--artifact-field
+                                          (getf result :details) :details
+                                          :preview-limit        preview-limit
+                                          :artifact-available-p (and artifact-path t))
+                            :shell-logs  (getf result :shell-logs)
+                            :duration-ms (getf result :duration-ms)))
+                    (list :status      (getf result :status)
+                          :content     (getf result :content)
+                          :details     (getf result :details)
+                          :shell-logs  (getf result :shell-logs)
+                          :duration-ms (getf result :duration-ms))))
            :cleanup             (getf snapshot :cleanup)
            :cancellation-reason (getf snapshot :cancellation-reason)
            :condition-report    (getf snapshot :condition-report))
@@ -531,7 +565,10 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
           (getf snapshot :result)
           (append (copy-list (getf snapshot :result))
                   (list :output-path (namestring artifact-path)))))
-  (loop for limit = preview-limit then (floor limit 2)
+  ;; A tool job is first shown whole, as before bounding existed, and is bounded
+  ;; only when that does not fit.
+  (loop for limit = (if (typep job 'tool-execution-job) nil preview-limit)
+          then (if limit (floor limit 2) preview-limit)
         for record = (if job
                          (session-job-native-record job snapshot viewer
                                                     :preview-limit limit :include-progress-p t)
@@ -541,7 +578,7 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
         for content = (task--write-readable-sexp form :pretty-p t)
         when (<= (length content) *task-tool-content-limit*)
           return (values form content)
-        when (zerop limit)
+        when (eql limit 0)
           do (error 'task-error
                     :message   "The mandatory job snapshot exceeds its native result bound."
                     :tool-name (if artifact-path "job.get" "job.wait"))))

@@ -1512,6 +1512,7 @@
   test-execution-admission-presentation
   test-tool-execution-overflow-binding
   test-tool-execution-retention
+  test-tool-execution-job-snapshot-bound
   test-task-job-list-pagination
   test-task-refresh-after-delayed-close
   test-task-terminal-cancellation-and-publication

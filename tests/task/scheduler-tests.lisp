@@ -1589,6 +1589,159 @@ pool must reject the cancelled parent without creating a descendant."
                                            :if-does-not-exist   ':ignore)))
   nil)
 
+(-> test-tool-execution-job-snapshot-bound () null)
+(defun test-tool-execution-job-snapshot-bound ()
+  "Test that job.get bounds a finished tool job only when its output does not fit."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (registry      (task-augment-tool-registry (make-default-tool-registry)))
+         (orchestrator  (task-run-tool-orchestrator
+                         (tool-registry-find registry "child" "spawn")))
+         (primary       (task-tests--primary-agent
+                         configuration "execution-snapshot-bound-primary" registry)))
+    (flet ((finished-job (text &key failure-p)
+             (let ((job (task-orchestrator-start-execution-job
+                         orchestrator primary
+                         :tool-name  "lisp.eval"
+                         :summary    "snapshot bound"
+                         :operation-function
+                         (lambda ()
+                           (let ((details (list :evaluation (list :output text :values nil))))
+                             (if failure-p
+                                 (tool-failure text :details details)
+                                 (tool-success text :details details))))
+                         :detached-p t)))
+               (test-assert (nth-value 1 (session-job-await job 2))
+                            "the tool job finishes")
+               job))
+           (job-get-record (job &optional (snapshot (session-job-snapshot job)))
+             (let ((failure nil) (form nil) (content nil))
+               (handler-case
+                   (multiple-value-setq (form content)
+                     (task--job-native-form
+                      job snapshot primary
+                      :preview-limit 6000
+                      :wrapper       (lambda (record)
+                                       (list :job-get :durable-p nil :job record))))
+                 (task-error (condition)
+                   (setf failure (princ-to-string condition))))
+               (values (getf (rest form) :job) content failure)))
+           (terminal-path (job)
+             (merge-pathnames
+              (format nil "~A/terminal.sexp" (session-job-execution-identifier job))
+              (task--artifact-group-root (agent-configuration primary)
+                                         (session-job-root-conversation-identifier job)))))
+      (unwind-protect
+           (let ((large (finished-job (make-string 20000 :initial-element #\x)))
+                 (small (finished-job "small result")))
+             (multiple-value-bind (record content failure) (job-get-record large)
+               (test-assert (null failure)
+                            (format nil "job.get renders a large tool job~@[: ~A~]" failure))
+               (let* ((result        (getf record :result))
+                      (content-field (getf result :content)))
+                 (test-assert (and content (<= (length content) *task-tool-content-limit*))
+                              "the rendered snapshot fits the tool content limit")
+                 (test-assert (and (listp content-field)
+                                   (stringp (getf content-field :preview))
+                                   (or (getf content-field :omitted)
+                                       (getf content-field :in-artifact)))
+                              "large content keeps a preview and an omission marker")
+                 (test-assert (and (string= (getf record :id) (session-job-identifier large))
+                                   (string= (getf record :tool) "lisp.eval")
+                                   (eq (getf record :state) :completed)
+                                   (eq (getf result :status) :success))
+                              "the bounded snapshot identifies the job and its outcome")))
+             (let ((result (getf (job-get-record small) :result)))
+               (test-assert (and (equal (getf result :content) "small result")
+                                 (equal (getf result :details)
+                                        '(:evaluation (:output "small result" :values nil))))
+                            "small tool results are shown inline unchanged"))
+             ;; Above the preview limit and within the content limit, job.get
+             ;; shows exactly the record it showed before bounding existed.
+             (let* ((medium   (finished-job (make-string 7000 :initial-element #\m)))
+                    (snapshot (session-job-snapshot medium))
+                    (result   (getf snapshot :result))
+                    (expected
+                      (list :job-get :durable-p nil :job
+                            (list :id                  (getf snapshot :job-id)
+                                  :execution-id        (getf snapshot :execution-id)
+                                  :type                :tool
+                                  :tool                "lisp.eval"
+                                  :description         (getf snapshot :description)
+                                  :summary             (getf snapshot :summary)
+                                  :state               (getf snapshot :state)
+                                  :detached            (and (getf snapshot :detached) t)
+                                  :owner               (getf snapshot :owner)
+                                  :completion-policy   (getf snapshot :completion-policy)
+                                  :shell-logs          (getf (shell-log-job-metadata
+                                                              configuration medium)
+                                                             :shell-logs)
+                                  :result              (list :status      (getf result :status)
+                                                             :content     (getf result :content)
+                                                             :details     (getf result :details)
+                                                             :shell-logs  (getf result :shell-logs)
+                                                             :duration-ms (getf result :duration-ms))
+                                  :cleanup             (getf snapshot :cleanup)
+                                  :cancellation-reason (getf snapshot :cancellation-reason)
+                                  :condition-report    (getf snapshot :condition-report)
+                                  :progress            (list :duration-ms
+                                                             (getf (getf snapshot :progress)
+                                                                   :duration-ms))))))
+               (test-assert (equal (nth-value 1 (job-get-record medium snapshot))
+                                   (task--write-readable-sexp expected :pretty-p t))
+                            "a result that fits is rendered byte-equal to the unbounded record"))
+             ;; Without a retained artifact the marker says the rest was omitted.
+             (let ((orphan (finished-job (make-string 20000 :initial-element #\o))))
+               (when (probe-file (terminal-path orphan))
+                 (delete-file (terminal-path orphan)))
+               (multiple-value-bind (record content failure) (job-get-record orphan)
+                 (let ((content-field (getf (getf record :result) :content)))
+                   (test-assert (and (null failure) content
+                                     (<= (length content) *task-tool-content-limit*)
+                                     (stringp (getf content-field :preview))
+                                     (getf content-field :omitted)
+                                     (not (getf content-field :in-artifact))
+                                     (not (member :path (getf content-field :omitted))))
+                                "a large result without an artifact is omitted without a path"))))
+             ;; Failed and aborted results keep their error text and reason.
+             (let ((failed (finished-job
+                            (concatenate 'string "ERROR-MARK boom "
+                                         (make-string 20000 :initial-element #\e))
+                            :failure-p t)))
+               (multiple-value-bind (record content failure) (job-get-record failed)
+                 (declare (ignore content))
+                 (let* ((result  (getf record :result))
+                        (preview (getf (getf result :content) :preview)))
+                   (test-assert (and (null failure)
+                                     (eq (getf record :state) :failed)
+                                     (eq (getf result :status) :failed)
+                                     (stringp preview)
+                                     (eql 0 (search "ERROR-MARK boom" preview)))
+                                "a large failure keeps its status and leading error text")))
+               (let ((aborted (copy-list (session-job-snapshot failed))))
+                 (setf (getf aborted :state)               :aborted
+                       (getf aborted :cancellation-reason) :user
+                       (getf aborted :condition-report)    "Cancelled by the user."
+                       (getf aborted :result)
+                       (let ((result (copy-list (getf aborted :result))))
+                         (setf (getf result :status) :aborted)
+                         result))
+                 (multiple-value-bind (record content failure) (job-get-record failed aborted)
+                   (test-assert (and (null failure) content
+                                     (<= (length content) *task-tool-content-limit*)
+                                     (eq (getf record :state) :aborted)
+                                     (eq (getf (getf record :result) :status) :aborted)
+                                     (eq (getf record :cancellation-reason) :user)
+                                     (equal (getf record :condition-report)
+                                            "Cancelled by the user."))
+                                "a large aborted result keeps its state and cancellation reason")))))
+        (ignore-errors (task-orchestrator-close orchestrator))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (platform-delete-directory-tree *platform* root
+                                        :validate          t
+                                        :if-does-not-exist ':ignore))))
+  nil)
+
 (-> test-task-job-list-pagination () null)
 (defun test-task-job-list-pagination ()
   "Test content-aware native pagination at the maximum job.list page size."
