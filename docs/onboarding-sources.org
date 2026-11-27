@@ -522,13 +522,12 @@ Inspect the sources before relying on recalled information.
 * Follow facts through rules
 :PROPERTIES:
 :ID: symbolic-rules
-:VERSION: 2
+:VERSION: 3
 :END:
 *Rules* become active on definition. Facts are derived locally from active rules. If you update a meeting fact, the calculated departure time is recomputed locally.
 
 =(rules)=                   inspect latest and active versions
 =(retire-rule "departure")= stop a rule deriving facts
-=(what-changed)=            inspect changes and their causes
 
 Use =(why "ID")= to inspect the premises of a conclusion.
 

@@ -3,9 +3,8 @@
 ;;;; -- Knowledge Commands --
 
 ;;; Facts appear inside (memories), and (memory "ID") explains a fact as it
-;;; explains a memory: (why "ID") is the same command. (what-changed) reports
-;;; what changed since the person last asked. (rules) lists derivations, and
-;;; (retire-rule) stops a rule deriving facts.
+;;; explains a memory: (why "ID") is the same command. (rules) lists
+;;; derivations, and (retire-rule) stops a rule deriving facts.
 
 (defparameter *knowledge-command-fact-limit* 20
   "The most facts (memories) lists before asking for a query.")
@@ -302,62 +301,6 @@ matches of an ambiguous prefix."
        (values nil ':ambiguous matches)))))
 
 
-;;; (what-changed)
-
-(-> application-knowledge-changes-entry (application) list)
-(defun application-knowledge-changes-entry (application)
-  "Return what changed in this workspace's facts since the person last asked."
-  (let ((view (application-knowledge--view application)))
-    (multiple-value-bind (changes previous first-p)
-        (knowledge-viewer-changes (application-configuration application) "user" view)
-      (cond
-        (first-p
-         (application-hint-line
-          (format nil "~D fact~:P hold now; (what-changed) reports changes from here on"
-                  (length (knowledge-view-snapshot view)))))
-        ((null changes)
-         (application-hint-line
-          (format nil "nothing changed since ~A" (format-utc-timestamp previous))))
-        (t
-         (append
-          (list (terminal-span ':brand "# what changed")
-                (terminal-span ':dim (format nil "  since ~A~%"
-                                             (format-utc-timestamp previous))))
-          (loop for change in changes
-                append
-                (ecase (getf change :kind)
-                  (:changed
-                   (list (terminal-span ':notice "  ~ ")
-                         (terminal-span ':strong (format nil "~A~%"
-                                                         (sanitize-text (getf change :to)
-                                                                        :single-line-p t)))
-                         (terminal-span ':dim (format nil "    was ~A~%"
-                                                      (sanitize-text (getf change :from)
-                                                                     :single-line-p t)))))
-                  (:new
-                   (list (terminal-span ':success "  + ")
-                         (terminal-span ':plain (format nil "~A~%"
-                                                        (sanitize-text (getf change :text)
-                                                                       :single-line-p t)))))
-                  (:withdrawn
-                   (list (terminal-span ':failure "  - ")
-                         (terminal-span ':plain (format nil "~A~%"
-                                                        (sanitize-text (getf change :text)
-                                                                       :single-line-p t)))))
-                  (:conflict
-                   (list (terminal-span ':failure "  ! ")
-                         (terminal-span ':plain (format nil "~A now conflicts~%"
-                                                        (sanitize-text (getf change :text)
-                                                                       :single-line-p t))))))
-                append (when (getf change :causes)
-                         (list (terminal-span
-                                ':dim
-                                (format nil "    because ~A~%"
-                                        (sanitize-text (format nil "~{~A~^; ~}"
-                                                               (getf change :causes))
-                                                       :single-line-p t))))))))))))
-
-
 ;;; (rules)
 
 (-> application-knowledge-rules-entry (application) list)
@@ -409,17 +352,6 @@ matches of an ambiguous prefix."
 
 
 ;;;; -- Command Definitions --
-
-(define-application-command application--builtin-what-changed-command
-    (:name              "what-changed"
-     :argument          nil
-     :description       "show how facts changed since you last asked"
-     :tip               "reports facts that changed, appeared, or stopped holding, and why."
-     :busy-behavior     :inspect
-     :terminal-behavior :shared)
-    (application)
-  (application-present application (application-knowledge-changes-entry application))
-  ':continue)
 
 (define-application-command application--builtin-rules-command
     (:name              "rules"

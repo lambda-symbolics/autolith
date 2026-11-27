@@ -499,11 +499,10 @@ For an example, ask the agent to use the =appointments= recipe:
 2. Run =(rules)= to inspect the active departure rule.
 3. Change the start from 13:00 to 13:15. The derived departure changes from
    12:20 to 12:35 without another model request to run the rule. Run
-   =(what-changed)= to see the change and its cause.
+   =(memories)= to see the updated departure time.
 
 #+BEGIN_SRC lisp
 (rules)
-(what-changed)
 (why "c4dfffae")
 (retire-rule "departure")
 #+END_SRC

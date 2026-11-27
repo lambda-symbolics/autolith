@@ -1349,7 +1349,7 @@
 
 (-> test-knowledge-commands () null)
 (defun test-knowledge-commands ()
-  "Test facts in (memories), explaining and forgetting facts, (what-changed), and rules."
+  "Test listing, explaining, and forgetting facts, and listing and retiring rules."
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
@@ -1369,22 +1369,12 @@
                                      :quote "half an hour to get there")
             (test-assert (search "facts  4" (text (application-memories-entry application)))
                          "(memories) lists facts even without prose memories")
-            (test-assert (search "4 facts hold now"
-                                 (text (application-knowledge-changes-entry application)))
-                         "the first (what-changed) records what the person saw")
             (knowledge-tests--schedule-review configuration workspace "14:00")
             (let ((listing (text (application-memories-entry application))))
               (test-assert (and (search "facts  5 · 1 no longer holding" listing)
                                 (< (search "stale: schedule.txt" listing)
                                    (search "leave for review at 2026-10-22 13:20 UTC" listing)))
                            "a fact that stopped holding is listed first with its cause"))
-            (let ((changes (text (application-knowledge-changes-entry application))))
-              (test-assert (and (search "~ leave for review at 2026-10-22 13:20 UTC" changes)
-                                (search "was leave for review at 2026-10-22 12:20 UTC" changes))
-                           "(what-changed) shows the departure moving with its cause"))
-            (test-assert (search "nothing changed since"
-                                 (text (application-knowledge-changes-entry application)))
-                         "(what-changed) reports each change once")
             (let* ((view      (application-knowledge--view application))
                    (departure (first (knowledge-view-holds view '("event.departure" "?e" "?t"))))
                    (why       (text (application-memory-entry

@@ -331,8 +331,8 @@ An admitted tool contract refuses a call whose required facts do not
 hold, and the refused call was not made: establish the missing fact
 instead of retrying the call unchanged.
 
-To show the user why something holds or what changed, suggest
-=(why "ID")=, =(what-changed)=, =(rules)=, =(procedures)=, or
+To show the user why a fact holds, suggest =(why "ID")=. To inspect
+rules, procedures, or diagnoses, suggest =(rules)=, =(procedures)=, or
 =(diagnoses)=.
 
 ** Diagnosis
