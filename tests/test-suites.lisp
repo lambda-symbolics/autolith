@@ -779,7 +779,6 @@
   test-client-input-queue-lifecycle
   test-channel-view-drafts
   test-channel-view-history-delivery
-  test-channel-view-event-backpressure
   test-channel-view-detach
   test-channel-view-initial-replay
   test-channel-view-durable-history

@@ -369,32 +369,6 @@
              (world-terminal-screen-close screen)))))))
   nil)
 
-(-> test-channel-view-event-backpressure () null)
-(defun test-channel-view-event-backpressure ()
-  "Retire an overrun view rather than dropping an ordered delta, by count or storage-byte budget."
-  (dolist (large-p '(nil t))
-    (let* ((view                             (make-instance 'channel-view))
-           (connection                       (make-instance 'world-terminal-client-connection :socket nil
-                                                            :stream                                   (make-string-output-stream)))
-           (*channel-view-event-count-limit* 2)
-           (*channel-view-event-byte-limit*  1024))
-      (setf (channel-subscription-connection view) connection)
-      (if large-p
-          (channel-subscription-receive-event view
-                                              (list :ui :operation :notice :text (make-string 1024)))
-          (dotimes (index 3)
-            (channel-subscription-receive-event view (list :ui :operation :turn :active-p (evenp index)))))
-      (test-assert (and (channel-subscription-closed-p view)
-                        (world-terminal-client-connection-closed-p connection)
-                        (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection))
-                        (eq (getf (rest (channel-view-exit view)) :kind) ':queue-overflow)
-                        (zerop (deque-count (channel-view-events view)))
-                        (zerop (channel-view-event-bytes view)))
-                   "Overflow closes transport, evaluation and ordered delivery and releases queued payloads.")
-      (channel-subscription-receive-event view '(:ui :operation :turn :active-p t))
-      (test-assert (zerop (deque-count (channel-view-events view))) "Late deltas cannot reopen a closed view.")))
-  nil)
-
 (-> test-channel-view-detach () null)
 (defun test-channel-view-detach ()
   "Detach through transport shutdown without acquiring a stalled writer's lock."
@@ -429,21 +403,20 @@
   "Stream a large initial replay on the UI owner, then admit live delivery; reject broken prefixes."
   (with-test-configuration (configuration)
     (dolist (mode '(:replay :old :eof :closed))
-      (let* ((screen                           (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
-             (view                             (channel-view-create configuration "replay" screen))
-             (wire                             (with-output-to-string (output)
-                                                 (write-string (image-daemon:daemon-packet-string '(:ui :operation :reset)) output)
-                                                 (dotimes (index 1000)
-                                                   (write-string (image-daemon:daemon-packet-string
-                                                                  (list :ui :operation :turn :active-p (evenp index))) output))
-                                                 (unless (eq mode ':eof)
-                                                   (write-string (image-daemon:daemon-packet-string '(:ui :operation :replayed)) output))
-                                                 (write-string (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t)) output)))
-             (connection                       (make-instance 'world-terminal-client-connection :socket nil
-                                                              :stream                                   (make-string-input-stream wire)
-                                                              :attached                                 (list :attached :sequence 0 :record-sequence 0
-                                                                                                              :presentation-replay-p (not (eq mode ':old)))))
-             (*channel-view-event-count-limit* 2))
+      (let* ((screen     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
+             (view       (channel-view-create configuration "replay" screen))
+             (wire       (with-output-to-string (output)
+                           (write-string (image-daemon:daemon-packet-string '(:ui :operation :reset)) output)
+                           (dotimes (index 1000)
+                             (write-string (image-daemon:daemon-packet-string
+                                            (list :ui :operation :turn :active-p (evenp index))) output))
+                           (unless (eq mode ':eof)
+                             (write-string (image-daemon:daemon-packet-string '(:ui :operation :replayed)) output))
+                           (write-string (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t)) output)))
+             (connection (make-instance 'world-terminal-client-connection :socket nil
+                                        :stream                                   (make-string-input-stream wire)
+                                        :attached                                 (list :attached :sequence 0 :record-sequence 0
+                                                                                         :presentation-replay-p (not (eq mode ':old))))))
         (unwind-protect
              (progn
                (channel-subscription-begin-attachment view)
@@ -461,7 +434,7 @@
                  (channel-subscription-initialize-connection view connection)
                  (test-assert (and (zerop (deque-count (channel-view-events view)))
                                    (not (channel-subscription-closed-p view)))
-                              "The initial transcript never accumulates in the bounded live queue.")
+                              "The initial transcript is delivered before the live queue is used.")
                  (test-assert
                   (eq (getf (rest (daemon-read-decodable-packet (world-terminal-client-connection-stream connection))) :operation)
                       (if (eq mode ':old) ':reset ':turn))

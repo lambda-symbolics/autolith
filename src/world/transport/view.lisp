@@ -139,11 +139,8 @@ modal reader so the view can act on it."
 
 ;;;; -- Views --
 
-(defparameter *channel-view-event-count-limit* 256
-  "Maximum presentation events waiting for the view's UI loop.")
-
-(defparameter *channel-view-event-byte-limit* (* 4 1024 1024)
-  "Maximum conservative storage-byte weight of waiting presentation events.")
+(defparameter *channel-view-event-batch-size* 256
+  "Maximum presentation events applied per UI pass before checking for input.")
 
 (defvar *channel-view-delivering* nil
   "The view this thread is currently draining, preventing nested modal polling from redelivering.")
@@ -220,9 +217,6 @@ modal reader so the view can act on it."
    (events
     :initform (make-deque) :reader channel-view-events
     :documentation "Transport events waiting for the UI owner, in arrival order.")
-   (event-bytes
-    :initform 0 :accessor channel-view-event-bytes :type (integer 0)
-    :documentation "Conservative retained storage weight of waiting events.")
    (queue-lock
     :initform (make-lock "Autolith view events") :reader channel-view-queue-lock
     :documentation "Guard only event admission and removal, never presentation or transport.")
@@ -326,79 +320,19 @@ time avoids retaining a second transcript in the bounded live event queue."
     (error 'channel-subscription-unavailable :message "Channel requests await the initial presentation."))
   (call-next-method))
 
-(-> channel-view--event-bytes (list) (integer 0))
-(defun channel-view--event-bytes (event)
-  "Charge conservative storage bytes for plain packet data without serializing it.
-
-Stop at the queue budget. Shared or circular objects are charged once; unsupported
-reader objects exceed the budget rather than escaping its bound."
-  (let ((pending (list event))
-        (seen    (make-hash-table :test #'eq))
-        (bytes   0))
-    (loop while pending
-          do (let ((object (pop pending)))
-               (unless (gethash object seen)
-                 (setf (gethash object seen) t)
-                 (incf bytes
-                       (typecase object
-                         (string
-                          (+ 32 (* 4 (length object))))
-                         (cons
-                          32)
-                         (integer
-                          (+ 32 (ceiling (integer-length object) 8)))
-                         (vector
-                          (+ 32 (* 8 (length object))))
-                         ((or symbol character float ratio complex)
-                          32)
-                         (t
-                          (1+ *channel-view-event-byte-limit*))))
-                 (when (> bytes *channel-view-event-byte-limit*)
-                   (return))
-                 (typecase object
-                   (cons
-                    (push (first object) pending)
-                    (push (rest object) pending))
-                   (string
-                    nil)
-                   (ratio
-                    (push (numerator object) pending)
-                    (push (denominator object) pending))
-                   (complex
-                    (push (realpart object) pending)
-                    (push (imagpart object) pending))
-                   (vector
-                    (map nil (lambda (value) (push value pending)) object))))))
-    bytes))
-
 (-> channel-view--close-events (channel-view) null)
 (defun channel-view--close-events (view)
-  "Close event admission and discard pending deltas once the view leaves or loses ordering."
+  "Close event admission and discard pending deltas when the view leaves."
   (with-lock-held ((channel-view-queue-lock view))
-    (setf (channel-view-queue-closed-p view) t
-          (channel-view-event-bytes view) 0)
+    (setf (channel-view-queue-closed-p view) t)
     (deque-clear (channel-view-events view)))
   nil)
 
 (defmethod channel-subscription-receive-event ((view channel-view) event)
   "Queue ordered events for the UI loop, leaving the transport reader free to settle history replies."
-  (let ((bytes      (channel-view--event-bytes event))
-        (overflow-p nil))
-    (with-lock-held ((channel-view-queue-lock view))
-      (unless (channel-view-queue-closed-p view)
-        (if (or (>= (deque-count (channel-view-events view)) *channel-view-event-count-limit*)
-                (> (+ bytes (channel-view-event-bytes view)) *channel-view-event-byte-limit*))
-            (setf overflow-p t
-                  (channel-view-queue-closed-p view) t)
-            (progn
-              (deque-push-back (channel-view-events view) (cons event bytes))
-              (incf (channel-view-event-bytes view) bytes)))))
-    (when overflow-p
-      (channel-view--close-events view)
-      (channel-view--finish view (list ':attachment-lost :kind ':queue-overflow
-                                      :message                 "The view fell behind its channel; reconnect to resynchronize."))
-      (channel-subscription--mark-closed view)
-      (when-let ((connection (channel-subscription-connection view))) (world-terminal-client--disconnect connection))))
+  (with-lock-held ((channel-view-queue-lock view))
+    (unless (channel-view-queue-closed-p view)
+      (deque-push-back (channel-view-events view) event)))
   nil)
 
 (-> channel-view--drain-events (channel-view) null)
@@ -406,14 +340,12 @@ reader objects exceed the budget rather than escaping its bound."
   "Apply a bounded batch on the UI owner, including during boot and modal polling."
   (unless (eq *channel-view-delivering* view)
     (let ((*channel-view-delivering* view))
-      (loop repeat *channel-view-event-count-limit*
-            do (let ((entry (with-lock-held ((channel-view-queue-lock view))
+      (loop repeat *channel-view-event-batch-size*
+            do (let ((event (with-lock-held ((channel-view-queue-lock view))
                               (unless (deque-empty-p (channel-view-events view))
-                                (let ((next (deque-pop-front (channel-view-events view))))
-                                  (decf (channel-view-event-bytes view) (rest next))
-                                  next)))))
-                 (unless entry (return))
-                 (channel-subscription-event view (first entry))))))
+                                (deque-pop-front (channel-view-events view))))))
+                 (unless event (return))
+                 (channel-subscription-event view event)))))
   nil)
 
 (defmethod channel-subscription-forget ((view channel-view) &key wire-p)
