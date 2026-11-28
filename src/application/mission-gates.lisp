@@ -60,7 +60,10 @@
     ((uiop:directory-exists-p pathname)
      (mission--reject ':invalid "Deterministic gate inputs must name files, not directories."))
     (t
-     (ironclad:byte-array-to-hex-string (ironclad:digest-file ':sha256 pathname)))))
+     ;; Ironclad's default dynamic-extent buffer can crash Windows SBCL.
+     (let ((buffer (make-array (* 128 1024) :element-type '(unsigned-byte 8))))
+       (ironclad:byte-array-to-hex-string
+        (ironclad:digest-file ':sha256 pathname :buffer buffer))))))
 
 (-> mission--gate-fingerprint-unlocked (list tool-context) list)
 (defun mission--gate-fingerprint-unlocked (gate context)
