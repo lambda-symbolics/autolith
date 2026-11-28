@@ -342,11 +342,9 @@
   '(:read))
 
 (defmethod resource-context-child-agent-p ((context tool-context))
-  "Return true when CONTEXT's agent is a restricted task child agent."
-  (let ((class (find-class 'task-child-agent nil)))
-    (and class
-         (typep (tool-context-agent context) class)
-         t)))
+  "Return true when CONTEXT belongs to a child conversation."
+  (let ((conversation (tool-context-conversation context)))
+    (and conversation (conversation-parent-identifier conversation) t)))
 
 (defvar *tool-authorization-context* nil
   "The exact tool execution whose permission callback is running on this thread.")

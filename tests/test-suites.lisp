@@ -110,21 +110,17 @@
   test-telemetry-late-report-presentation
   test-telemetry-borrower-outcomes
   test-telemetry-finish-freezes-counters
-  test-telemetry-detached-run-lifetime
   test-telemetry-run-unwind
-  test-telemetry-scheduler-run-ownership
   test-telemetry-headless-run-unwind
   test-telemetry-recovered-process-trace
   test-telemetry-shell-context-isolation
   test-telemetry-launch-context-validation
   test-telemetry-launch-context-lifetime
   test-telemetry-launch-context-atomic-claim
-  test-telemetry-scheduler-cancellation-publication
   test-telemetry-run-job-publication-outcomes
   test-telemetry-run-job-zero-request-failure
   test-telemetry-run-job-provider-failure
   test-telemetry-run-job-unregistered-model
-  test-telemetry-run-job-terminal-failures
   test-telemetry-run-protocol-failure
   test-telemetry-job-cancellation-hooks
   test-telemetry-configuration-owner-hook
@@ -507,16 +503,13 @@
   test-job-cancellation-presentation-boundaries
   test-job-cancellation-selected-delivery-presentation
   test-job-cancellation-terminal-replay
-  test-job-cancellation-rejected-root-descendants
   test-job-completion-checkpoint-resume
   test-job-completion-durable-delivery
   test-job-completion-delivery-crash-points
   test-job-completion-terminal-truth-and-reconstruction
   test-job-completion-outstanding-index
   test-job-completion-event-wakeup
-  test-job-completion-history-rollover
-  test-job-completion-capacity-recovery
-  test-job-completion-headless-owner)
+  test-job-completion-history-rollover)
 
 (define-test-suite job-completion-controller
   test-job-completion-no-resume-reasons
@@ -1414,7 +1407,6 @@
   test-agent-compaction
   test-agent-parallel-tool-wave
   test-agent-tool-wave-cancellation
-  test-agent-tool-wave-retained-cleanup
   test-agent-tool-concurrency-key
   test-agent-exclusive-tool-waves
   test-agent-parallel-tool-failure
@@ -1422,19 +1414,12 @@
   test-agent-tool-search-round)
 
 (define-test-suite task-agent
-  test-task-tool-default-argument-types
-  test-task-child-steering-mailbox
-  test-task-child-messaging)
+  test-task-tool-default-argument-types)
 
 (define-test-suite task-execution
   test-task-abort-control-condition
   test-task-orchestration
-  test-task-child-execution-job-controls
-  test-task-child-cancels-lisp-executions
-  test-task-participant-state
-  test-task-child-assignment-provenance
-  test-task-child-sends-to-parent
-  test-task-child-shared-agent-loop)
+  test-child-spawn-channel-delivery)
 
 (define-test-suite inference
   test-rlm-job-activity
@@ -1489,34 +1474,12 @@
   run-run-job-tests)
 
 (define-test-suite task-scheduler
-  test-task-child-identity
-  test-task-child-channel-lease
-  test-task-children-limit
-  test-task-default-detachment
-  test-task-running-cancellation
-  test-task-runtime-deadline
-  test-task-nested-parent-cancellation
-  test-task-admission-cancellation-barrier
-  test-task-hurry-up-admission-races
-  test-task-publication-coherence
-  test-task-terminal-wakeup-ordering
-  test-task-job-visibility
   test-task-durable-job-lookup
   test-session-tool-execution-jobs
   test-shell-execution-jobs
   test-execution-admission-presentation
   test-tool-execution-overflow-binding
-  test-tool-execution-retention
-  test-task-job-list-pagination
-  test-task-refresh-after-delayed-close
-  test-task-terminal-cancellation-and-publication
-  test-task-cancellation-cleanup-ownership
-  test-task-retention-and-admission
-  test-task-evicted-identity-retention
-  test-task-live-activity-snapshots
-  test-task-cumulative-child-usage
-  test-task-closed-runtime-refresh
-  test-task-scheduler)
+  test-tool-execution-retention)
 
 (define-test-suite executable-skill
   test-executable-skill-admission
@@ -1524,10 +1487,8 @@
   test-executable-skill-verification-contracts)
 
 (define-test-suite task-continuity
-  test-child-overflow-continuity-capacity
-  test-child-overflow-context-ownership
+  test-task-continuity-channel-owner
   test-task-continuity-classification
-  test-task-continuity-revive
   test-task-continuity-ownership)
 
 (define-test-suite mission-review
@@ -1759,8 +1720,6 @@
   test-pending-native-work-identities)
 
 (define-test-suite mission-inference
-  test-mission-child-bounded-unknown-length-continuation
-  test-mission-child-bounded-unknown-quota-continuation
   test-mission-child-unknown-settlement-controls
   test-mission-child-bounded-accounting-controls
   test-mission-child-unknown-reservation-drain-and-recovery
@@ -1829,10 +1788,8 @@
   test-async-lisp-output-concurrent-writes)
 
 (define-test-suite compaction-unfinished-work
-  test-compaction-child-owner-receipts
   test-compaction-job-state-bounds
   test-compaction-job-state-delivery
-  test-compaction-job-state-exact-owner
   test-compaction-job-state-index
   test-compaction-job-state-live-unknown
   test-compaction-job-state-request-context
@@ -1841,7 +1798,7 @@
   test-compaction-announced-before-job-state
   test-agent-compaction-unfinished-arrivals
   test-compaction-unfinished-failure-atomicity
-  test-agent-compaction-live-child-shell
+  test-agent-compaction-live-tools
   test-compaction-unfinished-corrupt-replay
   test-agent-compaction-completed-during-request)
 
@@ -1952,10 +1909,8 @@
   test-acp-extension-conversations-paging-and-fields
   test-acp-extension-conversations-live-tool-result
   test-acp-extension-conversations-invalid-bounds
-  test-acp-extension-job-foreign-rejection
   test-acp-extension-job-transcript-window
   test-acp-extension-job-transcript-streaming
-  test-acp-extension-job-steer-and-cancel-authority
   test-acp-extension-job-durable-fallback
   test-acp-extension-resource-windows
   test-acp-extension-resource-authorization

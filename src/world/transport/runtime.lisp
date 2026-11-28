@@ -172,15 +172,13 @@ conversation transaction can roll back before releasing either lease."
        (application-input-controller-condition-variable controller)))
     t))
 
-(-> world-terminal--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
-(defun world-terminal--task-counts (application)
-  "Return live children, active children, and all live jobs for APPLICATION."
+(-> world-terminal--live-job-count (application) (integer 0))
+(defun world-terminal--live-job-count (application)
+  "Return the number of live jobs for APPLICATION."
   (if-let ((orchestrator (application-task-presentation-orchestrator application)))
       (with-lock-held ((task-orchestrator-lock orchestrator))
-        (values (task-orchestrator-live-count orchestrator)
-                (task-orchestrator-active-count orchestrator)
-                (task-orchestrator-session-live-count orchestrator)))
-      (values 0 0 0)))
+        (task-orchestrator-session-live-count orchestrator))
+      0))
 
 (-> application-terminal-attached-p (application) boolean)
 (defun application-terminal-attached-p (application)
@@ -198,18 +196,15 @@ conversation transaction can roll back before releasing either lease."
 (-> world-terminal--activity-locked (application (option application-input-controller)) list)
 (defun world-terminal--activity-locked (application controller)
   "Return APPLICATION's activity fields. The caller holds CONTROLLER's lock when present."
-  (let ((paused-p          (application-world-terminal-paused-p application))
-        (active-p          nil)
-        (queued-count      0)
-        (steering-count    0)
-        (recalled-p        nil)
-        (stopping-p        t)
-        (cancelling-p      nil)
-        (reader-paused-p   nil)
-        (failed-p          nil)
-        (task-live-count   0)
-        (task-active-count 0)
-        (job-live-count    0))
+  (let ((paused-p        (application-world-terminal-paused-p application))
+        (active-p        nil)
+        (queued-count    0)
+        (steering-count  0)
+        (recalled-p      nil)
+        (stopping-p      t)
+        (cancelling-p    nil)
+        (reader-paused-p nil)
+        (failed-p        nil))
     (when controller
         (setf active-p (application-input-controller-active-p controller)
               queued-count
@@ -223,9 +218,8 @@ conversation transaction can roll back before releasing either lease."
               cancelling-p (application-input-controller-turn-cancellation-p controller)
               reader-paused-p (application-input-controller-reader-paused-p controller)
               failed-p (not (null (application-input-controller-failure controller)))))
-    (multiple-value-setq (task-live-count task-active-count job-live-count)
-      (world-terminal--task-counts application))
-    (let* ((waiting-for-input-p
+    (let* ((job-live-count (world-terminal--live-job-count application))
+           (waiting-for-input-p
              (and controller (not active-p) (zerop queued-count) (zerop steering-count)
                   (not recalled-p) (not stopping-p) (not cancelling-p)
                   (not reader-paused-p) (not failed-p)))
@@ -234,7 +228,7 @@ conversation transaction can roll back before releasing either lease."
                  (and waiting-for-input-p (not paused-p)
                       (application-job-completions--controller-admissible-p controller)
                       (application-job-completions-awaited-p application :include-terminal-p t))))
-           (idle-p (and waiting-for-input-p (not paused-p) (not waiting-for-jobs-p)))
+           (idle-p         (and waiting-for-input-p (not paused-p) (not waiting-for-jobs-p)))
            (state
             (cond (stopping-p
                    ':stopping)
@@ -259,8 +253,7 @@ conversation transaction can roll back before releasing either lease."
             :active-turn-p       (not (null active-p))
             :queued-input-count queued-count :steering-input-count steering-count
             :recalled-input-p (not (null recalled-p)) :turn-cancelling-p (not (null cancelling-p))
-            :reader-paused-p (not (null reader-paused-p)) :task-live-count task-live-count
-            :task-active-count task-active-count :job-live-count job-live-count))))
+            :reader-paused-p (not (null reader-paused-p)) :job-live-count job-live-count))))
 
 (-> world-terminal-status-snapshot (channel-endpoint) list)
 (defun world-terminal-status-snapshot (session)

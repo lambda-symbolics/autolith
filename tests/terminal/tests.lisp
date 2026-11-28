@@ -1247,7 +1247,7 @@
                   :detached                 t))))
     (let ((oversized-activity (copy-list (first activities))))
       (setf (getf oversized-activity :recent-tools)
-            (loop repeat (1+ *task-progress-recent-tool-limit*)
+            (loop repeat (1+ *terminal-agent-activity-recent-tool-limit*)
                   collect "tool"))
       (test-assert
        (not (terminal-agent-activity-p oversized-activity))
@@ -2996,21 +2996,19 @@ Resize tests drive size changes through COLUMNS and LINES."
                  "noninteractive output has no program status control sequences"))
   nil)
 
-(-> terminal-tests--status-job (symbol integer &key (:owner string)) session-job)
-(defun terminal-tests--status-job (class index &key (owner "status-owner"))
-  "Create an inert job with a stable UUID for status transport tests."
-  (apply #'make-instance class
-         :identifier (format nil "exec:~D" index) :index index
-         :name "Visible job" :payload nil :pool nil :root-identifier owner
-         :execution-identifier (format nil "00000000-0000-0000-0000-~12,'0D" index)
-         (when (eq class 'tool-execution-job)
-           (list :tool-name "shell.run" :description "Visible tool"))))
+(-> terminal-tests--status-job (integer &key (:owner string)) tool-execution-job)
+(defun terminal-tests--status-job (index &key (owner "status-owner"))
+  "Create an inert tool job with a stable UUID for status transport tests."
+  (make-instance 'tool-execution-job
+                 :identifier (format nil "exec:~D" index) :index index
+                 :payload nil :pool nil :root-identifier owner
+                 :execution-identifier (format nil "00000000-0000-0000-0000-~12,'0D" index)
+                 :tool-name "shell.run" :description "Visible tool"))
 
 (-> test-terminal-job-status-records () null)
 (defun test-terminal-job-status-records ()
-  "Check record paths, both job types, lifecycle states, and bounded capacity."
-  (dolist (class '(task-job tool-execution-job))
-    (let ((job (terminal-tests--status-job class 1)))
+  "Check record paths, lifecycle states, and bounded capacity."
+  (let ((job (terminal-tests--status-job 1)))
       (dolist (case '((:queued :working) (:running :working) (:completed :done)
                       (:failed :error) (:aborted :idle)))
         (setf (job-state job) (first case))
@@ -3021,13 +3019,12 @@ Resize tests drive size changes through COLUMNS and LINES."
              (and (string= (getf report :id) "jobs/00000000000000000000000000000001")
                   (search (format nil ":state=~(~A~)" (second case)) text)
                   (eq active-p (eq (second case) ':working))
-                  (equal (getf report :title)
-                         (if (eq class 'task-job) "Visible job" "Visible tool"))
+                  (equal (getf report :title) "Visible tool")
                   (not (search ":progress=" text)))
-             "job identity, state and short title form one independent record"))))))
-  (let* ((active   (terminal-tests--status-job 'task-job 1))
+             "job identity, state and short title form one independent record")))))
+  (let* ((active   (terminal-tests--status-job 1))
          (finished (loop for index from 2 to 70
-                         for job = (terminal-tests--status-job 'task-job index)
+                         for job = (terminal-tests--status-job index)
                          do (setf (job-state job) ':completed)
                          collect job))
          (reports  (application--job-program-status-reports (cons active finished))))
@@ -3044,7 +3041,7 @@ Resize tests drive size changes through COLUMNS and LINES."
   "Check that per-job records stay private and old records are cleared."
   (let* ((terminal (make-instance 'scripted-terminal))
          (ui       (terminal-ui-create :terminal terminal))
-         (job      (terminal-tests--status-job 'task-job 1))
+         (job      (terminal-tests--status-job 1))
          (working  (application--job-program-status-report job))
          (done     nil))
     (setf (job-state job) ':completed

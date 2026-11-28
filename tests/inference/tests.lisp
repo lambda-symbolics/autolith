@@ -93,17 +93,17 @@
   "Exercise RLM job admission and ownership from a real child agent."
   (with-test-configuration (configuration root)
     (declare (ignore root))
-    (let* ((provider (make-instance 'rlm-inference-test-provider :results nil))
-           (registry (task-augment-tool-registry
-                      (rlm-register-tools (make-instance 'tool-registry) :provider provider)))
+    (let* ((provider     (make-instance 'rlm-inference-test-provider :results nil))
+           (registry     (task-augment-tool-registry
+                          (rlm-register-tools (make-instance 'tool-registry) :provider provider)))
            (orchestrator (task-run-tool-orchestrator
                           (tool-registry-find registry "child" "spawn")))
            (conversation (conversation-create configuration :identifier "rlm-child"
-                                              :parent-identifier "rlm-parent"))
-           (child (agent-create :configuration configuration :provider provider
-                                :conversation conversation :tool-registry registry :worker nil))
-           (context (make-instance 'tool-context :configuration configuration :worker nil
-                                   :conversation conversation :registry registry :agent child)))
+                                              :parent-identifier        "rlm-parent"))
+           (child        (agent-create :configuration configuration :provider provider
+                                       :conversation conversation :tool-registry registry :worker nil))
+           (context      (make-instance 'tool-context :configuration configuration :worker nil
+                                        :conversation conversation :registry registry :agent child)))
       (unwind-protect
            (dolist (specification '(("infer" infer) ("map" rlm-map)
                                     ("complete" rlm-complete)))
@@ -118,15 +118,15 @@
                                           (declare (ignore arguments))
                                           (values "answer" "trace" 0))))
                   (lambda ()
-                    (let* ((result (tool-execute (tool-registry-find registry "rlm" name)
-                                                 context arguments))
-                           (details (tool-result-details result))
-                           (record (and (listp details) (getf (rest details) :job)))
+                    (let* ((result     (tool-execute (tool-registry-find registry "rlm" name)
+                                                     context arguments))
+                           (details    (tool-result-details result))
+                           (record     (and (listp details) (getf (rest details) :job)))
                            (identifier (getf record :id))
-                           (execution (and identifier
-                                           (task-orchestrator-find-visible-job
-                                            orchestrator identifier :viewer child
-                                            :tool-name (format nil "rlm.~A" name)))))
+                           (execution  (and identifier
+                                            (task-orchestrator-find-visible-job
+                                             orchestrator identifier :viewer child
+                                             :tool-name                      (format nil "rlm.~A" name)))))
                       (test-assert (and (tool-result-success-p result) execution)
                                    "a child admits and owns its RLM background job")
                       (multiple-value-bind (snapshot terminal-p)
@@ -193,7 +193,7 @@
                                                 '(:completed :failed :aborted)))
                                (with-lock-held (lock)
                                  (setf finished-p t)
-                                 (task--condition-broadcast condition))))))
+                                 (sb-thread:condition-broadcast condition))))))
                    (list operation
                          (lambda (&rest arguments)
                            (setf reporter (getf (rest arguments) :activity-callback))
@@ -204,7 +204,7 @@
                              :name "RLM nested activity test"))
                            (with-lock-held (lock)
                              (setf ready-p t)
-                             (task--condition-broadcast condition)
+                             (sb-thread:condition-broadcast condition)
                              (loop until release-p
                                    do (condition-wait condition lock :timeout 2)))
                            (if (eq expected-state ':failed)
@@ -256,7 +256,7 @@
                                (session-job-cancel job ':test)
                                (with-lock-held (lock)
                                  (setf release-p t)
-                                 (task--condition-broadcast condition)))
+                                 (sb-thread:condition-broadcast condition)))
                            (session-job-await job 5)
                            (with-lock-held (lock)
                              (loop until finished-p
@@ -272,7 +272,7 @@
                                         "late callbacks cannot revive terminal jobs"))
                       (with-lock-held (lock)
                         (setf release-p t)
-                        (task--condition-broadcast condition))
+                        (sb-thread:condition-broadcast condition))
                       (when job
                         (session-job-cancel job ':test-cleanup)
                         (session-job-await job 5)))))))))

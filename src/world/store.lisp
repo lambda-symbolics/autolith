@@ -1362,6 +1362,19 @@ channel ID and records the legacy ID as its alias."
                                                  :residence identifier :created-at now :updated-at now))))
                        inbox)))))))
 
+(defparameter *task-children-maximum* 32
+  "The most child channels one agent may have.")
+
+(-> world-check-child-capacity (world string) null)
+(defun world-check-child-capacity (world parent)
+  "Refuse creation when PARENT already has its maximum number of children."
+  (let ((count (count-if-not #'channel-inbox-p (world-channel-children world parent))))
+    (when (>= count *task-children-maximum*)
+      (error 'task-error :tool-name "child.spawn"
+                         :message   (format nil "This channel already has ~D children. Send to an existing child or remove one before spawning another."
+                                            *task-children-maximum*))))
+  nil)
+
 (-> world-channel-register
     (configuration string &key (:workspace string) (:parent (option string)) (:title (option string))
                    (:name (option string)) (:settings list) (:subscribe-parent-p boolean)
@@ -1395,48 +1408,55 @@ in the same transaction that registers a new agent."
                                            :key #'participant-kind))))
         (if resident
             (values nil (list existing resident))
-            (let* ((person  (world-human-participant world))
-                   (owner   (if existing
-                                (channel-owner existing)
-                                (or (and parent
-                                         (find ':agent (world-channel-residents world parent)
-                                               :key #'participant-kind))
-                                    person)))
-                   (keeper  (if (stringp owner) owner (participant-identifier owner)))
-                   (channel (or existing
-                                (world--new-channel configuration world
-                                                    :home (list :id identifier :workspace workspace
-                                                                :title title :parent parent)
-                                                    :owner keeper :now now :operation ':register-channel))))
-              (when (world-participant-find world identifier)
-                (error 'world-error :operation ':register-channel :identifier identifier
-                       :message "The channel identifier belongs to another participant."))
-              (unless (world-settings-p settings)
-                (error 'world-error :operation ':register-channel :identifier identifier
-                       :message "The agent settings are not portable."))
-              (let ((agent (make-instance
-                            'participant :identifier identifier :kind ':agent
-                            :name        (if name
-                                             (world-unique-handle world (world-handle-base name))
-                                             (prezdivka:unique-name
-                                              identifier
-                                              (lambda (handle)
-                                                (or (world-participant-named-p world handle)
-                                                    (world-handle-reserved-p handle)))))
-                            :name-source (if name ':explicit ':initial)
-                            :parent keeper :residence identifier :settings settings
-                            :created-at (channel-created-at channel) :updated-at now)))
-                (values (append (unless existing (list (world--channel-record channel)))
-                                (list (world--participant-record agent))
-                                (when subscribe-parent-p
-                                  (let ((keeper (world--require-participant world keeper ':register-channel)))
-                                    (unless (member identifier (participant-subscriptions keeper) :test #'string=)
-                                      (list (world--participant-record
-                                             (world--copy-participant
-                                              keeper :subscriptions (append (participant-subscriptions keeper)
-                                                                            (list identifier))
-                                                     :updated-at    (max now (participant-updated-at keeper)))))))))
-                        (list channel agent))))))))))
+            (progn
+              (when subscribe-parent-p
+                (unless (and parent (null existing) (world-channel-find world parent)
+                             (find ':agent (world-channel-residents world parent) :key #'participant-kind))
+                  (error 'world-error :operation ':register-channel :identifier identifier
+                         :message "Creating a child requires its exact registered parent."))
+                (world-check-child-capacity world parent))
+             (let* ((person  (world-human-participant world))
+                    (owner   (if existing
+                                 (channel-owner existing)
+                                 (or (and parent
+                                          (find ':agent (world-channel-residents world parent)
+                                                :key #'participant-kind))
+                                     person)))
+                    (keeper  (if (stringp owner) owner (participant-identifier owner)))
+                    (channel (or existing
+                                 (world--new-channel configuration world
+                                                     :home (list :id identifier :workspace workspace
+                                                                 :title title :parent parent)
+                                                     :owner keeper :now now :operation ':register-channel))))
+               (when (world-participant-find world identifier)
+                 (error 'world-error :operation ':register-channel :identifier identifier
+                        :message "The channel identifier belongs to another participant."))
+               (unless (world-settings-p settings)
+                 (error 'world-error :operation ':register-channel :identifier identifier
+                        :message "The agent settings are not portable."))
+               (let ((agent (make-instance
+                             'participant :identifier identifier :kind ':agent
+                             :name        (if name
+                                              (world-unique-handle world (world-handle-base name))
+                                              (prezdivka:unique-name
+                                               identifier
+                                               (lambda (handle)
+                                                 (or (world-participant-named-p world handle)
+                                                     (world-handle-reserved-p handle)))))
+                             :name-source (if name ':explicit ':initial)
+                             :parent keeper :residence identifier :settings settings
+                             :created-at (channel-created-at channel) :updated-at now)))
+                 (values (append (unless existing (list (world--channel-record channel)))
+                                 (list (world--participant-record agent))
+                                 (when subscribe-parent-p
+                                   (let ((keeper (world--require-participant world keeper ':register-channel)))
+                                     (unless (member identifier (participant-subscriptions keeper) :test #'string=)
+                                       (list (world--participant-record
+                                              (world--copy-participant
+                                               keeper :subscriptions (append (participant-subscriptions keeper)
+                                                                             (list identifier))
+                                                      :updated-at    (max now (participant-updated-at keeper)))))))))
+                         (list channel agent)))))))))))
 
 (-> world-register-conversation (configuration conversation &key (:subscribe-parent-p boolean)) (option participant))
 (defun world-register-conversation (configuration conversation &key subscribe-parent-p)

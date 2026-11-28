@@ -2045,14 +2045,12 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 
 (-> application-set-hurry-up (application boolean) null)
 (defun application-set-hurry-up (application enabled-p)
-  "Apply ENABLED-P to APPLICATION's prompt and child-agent runtime."
+  "Apply ENABLED-P to APPLICATION's prompt and agent."
   (setf (application-hurry-up-p application) enabled-p)
   (let ((agent (and (slot-boundp application 'agent)
                     (application-agent application))))
     (when (typep agent 'agent)
       (setf (agent-hurry-up-p agent) enabled-p)))
-  (when-let ((orchestrator (application--task-orchestrator application)))
-    (task-orchestrator-set-hurry-up orchestrator enabled-p))
   (let ((ui (and (slot-boundp application 'ui)
                  (application-ui application))))
     (when (typep ui 'terminal-ui)

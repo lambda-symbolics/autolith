@@ -108,9 +108,9 @@
                               (list
                                (agent-test-result "usage-response"
                                                   (if failure-p
-                                                      (list (agent-test-call :call-id "usage-call"
+                                                      (list (agent-test-call :call-id   "usage-call"
                                                                              :namespace "job"
-                                                                             :name "list"
+                                                                             :name      "list"
                                                                              :arguments "{}"))
                                                       (list (agent-test-message "usage-response")))
                                                   :usage (json-object "input_tokens" 13

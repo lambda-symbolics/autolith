@@ -100,16 +100,11 @@
     (application-client--job-row snapshot :identifier identifier
                                  :job                 (and (typep found 'session-job) found))))
 
-(-> application-client--job-transcript-path (application t) (option pathname))
-(defun application-client--job-transcript-path (application job)
-  "Return the owned child's durable transcript identity, including during execution."
+(-> application-client--job-transcript-path (t) (option pathname))
+(defun application-client--job-transcript-path (job)
+  "Return the owned job's recorded transcript identity, when present."
   (let* ((record (if (consp job) (second job) (getf (session-job-snapshot job) :result)))
-         (path   (or (getf record :conversation-file)
-                     (when (typep job 'task-job)
-                       (merge-pathnames
-                        (make-pathname :name (task-job-execution-identifier job) :type "sexp")
-                        (task--artifact-root
-                         (application-configuration application) job))))))
+         (path   (getf record :conversation-file)))
     (when (and path (conversation-storage-occupied-p (pathname path)))
       (pathname path))))
 
@@ -139,10 +134,10 @@ returning NIL stops projection but not counting. Return total, start and next."
                    (setf total end)))))
     (values total (min offset total) (min next total))))
 
-(-> application-client--job-window (application t &key (:offset integer) (:limit integer)) list)
-(defun application-client--job-window (application job &key offset limit)
+(-> application-client--job-window (t &key (:offset integer) (:limit integer)) list)
+(defun application-client--job-window (job &key offset limit)
   "Render readable records while retaining only the requested character range."
-  (let ((path   (application-client--job-transcript-path application job))
+  (let ((path   (application-client--job-transcript-path job))
         (stream (make-string-output-stream)))
     (labels ((map-text (conversation emit)
                "Emit readable spans with character extents."
@@ -201,17 +196,7 @@ returning NIL stops projection but not counting. Return total, start and next."
        (let ((window-limit (or limit 4096)))
          (unless (and (<= 0 offset) (<= 1 window-limit *application-client-job-transcript-limit*))
            (error 'application-client-unavailable :reason "Invalid transcript window."))
-         (application-client--job-window application job
-                                          :offset offset :limit window-limit))))))
-
-(-> application-client-job-send (application string string) list)
-(defun application-client-job-send (application identifier text)
-  "Queue owned child steering text and return its native admission status."
-  (let ((job (application-client--find-job application identifier "job-send")))
-    (unless (typep job 'task-job)
-      (error 'application-client-unavailable :reason "Only child jobs accept steering."))
-    (multiple-value-bind (entry reason) (task-job-enqueue-steering job text)
-      (list :accepted (not (null entry)) :reason reason))))
+         (application-client--job-window job :offset offset :limit window-limit))))))
 
 (-> application-client-job-cancel (application string) list)
 (defun application-client-job-cancel (application identifier)

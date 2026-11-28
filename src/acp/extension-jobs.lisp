@@ -8,6 +8,7 @@
 (defmethod application-client--job-structured-window
            ((application application) job &key offset limit)
   "Count the transcript once, retaining only byte-bounded requested ACP candidates."
+  (declare (ignore application))
   (let ((candidates (make-array 0 :adjustable t :fill-pointer 0)))
     (labels ((page (updates &key start next total)
                "Build the exact response value for an admitted prefix."
@@ -21,7 +22,7 @@
                (utf8-string-length (agentcomms:json-encode value))))
       (multiple-value-bind (total start next)
           (application-client--transcript-page
-           (application-client--job-transcript-path application job)
+            (application-client--job-transcript-path job)
            :offset offset :limit limit
            :mapper    (lambda (conversation emit)
                         (acp-replay--map-records

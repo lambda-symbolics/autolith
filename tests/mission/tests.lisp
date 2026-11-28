@@ -451,6 +451,65 @@
                             (null (conversation-record-entry application record)))
                        "the durable successful result retains mission details without a transcript body"))))))
 
+(-> mission-test--hosted-child-admission () null)
+(defun mission-test--hosted-child-admission ()
+  "Check hosted child pending state and refusal of a later turn."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (parent      (application-conversation application))
+           (child       (conversation-create configuration :parent-identifier (conversation-identifier parent)))
+           (child-app   (mission-test--application configuration))
+           (server      (make-instance 'world-server :configuration configuration))
+           (host        (make-instance 'world-host :application child-app)))
+      (setf (application-conversation child-app) child
+            (application-world-server application) server)
+      (application-mission-start application (mission-test--specification))
+      (mission-context-bind-child parent child)
+      (let* ((context  (mission-context-find parent))
+             (child-id (conversation-identifier child))
+             (other-id (conversation-identifier (conversation-create configuration)))
+             (delivery (make-instance 'world-delivery :identifier "pending1" :time 1
+                                                      :sender "sender" :sender-name "sender"
+                                                      :sender-kind ':agent :source (conversation-identifier parent)
+                                                      :target child-id :text "pending" :kind ':post)))
+        (test-assert (and (null (world-server--find-host server child-id))
+                          (null (world-inbox-deliveries configuration child-id)))
+                     "the outbox check has no host or inbox work to mask it")
+        (world-outbox-write configuration "pending1" (list (cons other-id delivery)))
+        (test-assert (not (mission--children-pending-p context))
+                     "an unrelated pending copy does not block this mission")
+        (test-call-with-function-replacements
+         (list (list 'world-outbox-pending (lambda (&rest arguments)
+                                             (declare (ignore arguments))
+                                             (error "Synthetic observation failure"))))
+         (lambda ()
+           (test-assert (mission--children-pending-p context)
+                        "an outbox observation failure blocks verification")))
+        (world-outbox-write configuration "pending1" (list (cons child-id delivery)))
+        (test-assert (mission--children-pending-p context)
+                     "a pending copy for the exact bound child blocks verification")
+        (application-mission-accept application "delivery" "Accepted for the test")
+        (test-call-with-function-replacements
+         (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
+         (lambda () (application-mission-verify application)))
+        (test-assert (eq ':active (getf (application-goal application) :status))
+                     "verification waits for the bound child's pending copy"))
+      (uiop:delete-file-if-exists (world-outbox-pathname configuration "pending1"))
+      (setf (world-server-hosts server) (list host))
+      (test-assert (mission--children-pending-p (mission-context-find parent))
+                   "a starting bound child prevents verification")
+      (setf (world-host-failure host) (make-condition 'simple-error :format-control "failed"))
+      (test-assert (mission--children-pending-p (mission-context-find parent))
+                   "an observed failed child prevents verification")
+      (application-mission-stop application ':cancelled "Stopped before late child work")
+      (let ((agent (make-instance 'agent :configuration configuration :conversation child
+                                         :provider      (application-provider application)
+                                         :tool-registry (application-tool-registry application))))
+        (test-assert (handler-case (progn (agent-run-user-turn agent "late") nil)
+                       (mission-error (condition) (eq ':cancelled (mission-error-reason condition))))
+                     "a bound child cannot start a turn after mission cancellation"))))
+  nil)
+
 (-> test-mission-accounting () null)
 (defun test-mission-accounting ()
   "Exercise exact shared accounting across primary, inherited and nested inference."
@@ -461,9 +520,17 @@
            (provider     (application-provider application)))
       (application-mission-start application (mission-test--specification :turns 4))
       (provider-stream-turn provider conversation :tool-namespaces #() :event-callback #'identity)
-      (let ((child (conversation-create configuration)))
+      (let ((child (conversation-create configuration :parent-identifier (conversation-identifier conversation))))
         (mission-context-bind-child conversation child)
-        (provider-stream-turn provider child :tool-namespaces #() :event-callback #'identity))
+        (conversation-append-user-message child "Review the mission")
+        (let ((rehydrated (conversation-load (conversation-pathname child))))
+          (test-assert (mission-context-child-p (mission-context-find conversation) rehydrated)
+                       "a reloaded child retains its exact mission binding")
+          (let ((impostor (conversation-load (conversation-pathname child))))
+            (setf (slot-value impostor 'parent-identifier) "different-parent")
+            (test-assert (null (mission-context-find impostor))
+                         "a mismatched recorded parent cannot claim the child's mission"))
+          (provider-stream-turn provider rehydrated :tool-namespaces #() :event-callback #'identity)))
       (test-assert (string= "done" (infer "one bounded inference" :provider provider :configuration configuration))
                    "direct recursive inference returns its value")
       (test-assert (getf (first (rlm-map '("nested frame") :provider provider :configuration configuration
@@ -476,7 +543,9 @@
                          (progn (provider-stream-turn provider conversation :tool-namespaces #() :event-callback #'identity) nil)
                        (mission-error (condition) (eq (mission-error-reason condition) ':exhausted)))
                      "exhaustion rejects the next inference before invoking the provider")
-        (test-assert (eq ':exhausted (getf goal :status)) "exhaustion is a durable terminal transition")))))
+        (test-assert (eq ':exhausted (getf goal :status)) "exhaustion is a durable terminal transition"))))
+  (mission-test--hosted-child-admission)
+  nil)
 
 (-> test-mission-unknown-usage-and-recovery () null)
 (defun test-mission-unknown-usage-and-recovery ()
@@ -842,80 +911,41 @@
 
 (-> test-mission-queued-child-authority () null)
 (defun test-mission-queued-child-authority ()
-  "Capture child authority at admission and cancel queued work without moving budgets."
+  "Refuse old primary and child authority after mission replacement."
   (with-test-configuration (configuration)
-    (let* ((application  (mission-test--application configuration))
-           (orchestrator (task-orchestrator-create))
-           (definition   (list))
-           (entry
-            (list :detached t :item
-                  (append
-                   (list :name "child" :task "Check admission")
-                   definition)))
-           (submit       (symbol-function 'job-pool-submit-batch)))
-      (unwind-protect
-          (test-call-with-function-replacements
-           (list
-            (list 'job-pool-submit-batch
-                  (lambda (pool entries)
-                    (funcall submit pool
-                             (mapcar (lambda (entry) (list* :inline-only-p t entry))
-                                     entries)))))
-           (lambda ()
-             (application-mission-start application (mission-test--specification))
-             (let* ((context
-                     (mission-context-find (application-conversation application)))
-                    (job
-                     (first
-                      (task-orchestrator-start-jobs orchestrator
-                                                    (application-agent application)
-                                                    (list entry)))))
-               (test-assert (eq context (task-job-mission-context job))
-                            "queued children retain admitted mission identity")
-               (mission-context-bind context (application-agent application))
-               (application-mission-start application (mission-test--specification))
-               (test-assert
-                (handler-case (progn (mission-task-job-run job) nil)
-                              (mission-error (condition)
-                               (eq ':replaced (mission-error-reason condition))))
-                "replaced mission authority is refused before child startup")
-               (test-assert (mission-agent-terminal-p (application-agent application))
-                            "the replaced primary turn stops under its admitted mission")
-               (test-assert
-                (eq context (mission--agent-context (application-agent application)))
-                "new delegated work cannot acquire replacement authority from an old turn")
-               (test-assert
-                (handler-case
-                 (progn
-                  (provider-stream-turn (application-provider application)
-                                        (application-conversation application)
-                                        :tool-namespaces #() :event-callback #'identity)
-                  nil)
-                 (mission-error (condition)
-                  (eq ':replaced (mission-error-reason condition))))
-                "an old primary request cannot charge the replacement mission")
-               (let ((inherited (configuration-copy configuration)))
-                 (mission-context-inherit configuration inherited)
-                 (test-assert (eq context (mission-context-find inherited))
-                              "recursive work retains the engaged turn's exact mission"))
-               (test-assert (zerop (getf (application-goal application) :turns-used))
-                            "old primary and child work cannot charge a new mission")
-               (with-lock-held (*mission-contexts-lock*)
-                 (remhash (application-agent application) *mission-contexts*)))
-             (tool-registry-bind-runtime (application-tool-registry application)
-                                         'task-orchestrator orchestrator)
-             (let ((job
-                    (first
-                     (task-orchestrator-start-jobs orchestrator
-                                                   (application-agent application)
-                                                   (list entry)))))
-               (application-mission-stop application ':cancelled
-                                         "Operator cancelled queued work")
-               (test-assert (nth-value 1 (task-job-await job 5))
-                            "queued mission cancellation finishes publication")
-               (test-assert (job-terminal-p job)
-                            "explicit mission cancellation publishes queued child termination"))))
-        (task-orchestrator-close orchestrator)))))
+    (let* ((application (mission-test--application configuration))
+           (parent      (application-conversation application))
+           (child       (conversation-create configuration :parent-identifier (conversation-identifier parent)))
+           (agent       (make-instance 'agent :configuration configuration :conversation child
+                                             :provider      (application-provider application)
+                                             :tool-registry (application-tool-registry application))))
+      (application-mission-start application (mission-test--specification))
+      (let ((context (mission-context-find parent)))
+        (mission-context-bind-child parent child)
+        (mission-context-bind context (application-agent application))
+        (application-mission-start application (mission-test--specification))
+        (test-assert (handler-case (progn (agent-run-user-turn agent "old child") nil)
+                       (mission-error (condition) (eq ':replaced (mission-error-reason condition))))
+                     "a child admitted under a replaced mission cannot start")
+        (test-assert (mission-agent-terminal-p (application-agent application))
+                     "the replaced primary turn stops under its admitted mission")
+        (test-assert (eq context (mission--agent-context (application-agent application)))
+                     "old delegated work cannot acquire replacement authority")
+        (test-assert (handler-case
+                         (progn (provider-stream-turn (application-provider application) parent
+                                                      :tool-namespaces #() :event-callback #'identity)
+                                nil)
+                       (mission-error (condition) (eq ':replaced (mission-error-reason condition))))
+                     "an old primary request cannot charge the replacement mission")
+        (let ((inherited (configuration-copy configuration)))
+          (mission-context-inherit configuration inherited)
+          (test-assert (eq context (mission-context-find inherited))
+                       "recursive work retains the engaged turn's exact mission"))
+        (test-assert (zerop (getf (application-goal application) :turns-used))
+                     "old primary and child work cannot charge a new mission")
+        (with-lock-held (*mission-contexts-lock*)
+          (remhash (application-agent application) *mission-contexts*)))))
+  nil)
 
 (-> test-mission-inline-parent-cancellation () null)
 (defun test-mission-inline-parent-cancellation ()

@@ -504,6 +504,9 @@
                                  (application-conversation application) 100))))
         (unwind-protect
             (progn
+              (let ((finished (job-completion-tests--start parent runtime)))
+                (test-assert (job-terminal-p finished)
+                             "a published outcome is already terminal"))
              (hold-job parent)
              (hold-job parent :policy ':notify)
              (hold-job
@@ -511,29 +514,9 @@
                              (conversation-create configuration) :provider
                              (application-provider application) :tool-registry
                              (application-tool-registry application)))
-             ;; Keep a genuine detached child queued, without starting another model.
-             (let ((submit (symbol-function 'job-pool-submit-batch)))
-               (test-call-with-function-replacements
-                (list
-                 (list 'job-pool-submit-batch
-                       (lambda (pool entries)
-                         (funcall submit pool
-                                  (mapcar (lambda (entry) (list* :inline-only-p t entry))
-                                          entries)))))
-                (lambda ()
-                  (task-orchestrator-start-jobs runtime parent
-                                                (list
-                                                 (list :detached t :item
-                                                       (append
-                                                        (list :name "yield-child" :agent
-                                                              "yield-fixture" :task
-                                                              "Wait")
-                                                        (list))))))))
-             (let ((finished (job-completion-tests--start parent runtime)))
-               (test-assert (job-terminal-p finished)
-                            "a published outcome is already terminal"))
+             (hold-job parent)
              (test-assert (= 2 (application-job-completions-awaited-count application))
-                          "only the owned continue tool and child are unfinished wakeups")
+                          "only the two owned continue jobs are unfinished wakeups")
              (recording-terminal-reset terminal)
              (application-run-message application "Wait for asynchronous work.")
              (let* ((record (first (yield-records)))

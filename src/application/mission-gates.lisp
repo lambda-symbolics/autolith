@@ -284,6 +284,38 @@ satisfied by an accepted explicit negation."
       (mission--record context))
     (null stale)))
 
+(-> mission--children-pending-p (mission-context) boolean)
+(defun mission--children-pending-p (context)
+  "Check exact bound children in delivery order, failing closed on observation errors."
+  (let* ((application   (mission-context-application context))
+         (configuration (application-configuration application))
+         (identifiers   (with-lock-held (*mission-contexts-lock*)
+                          (loop for identity being the hash-values of (mission-context-children context)
+                                collect (first identity)))))
+    (if (null identifiers)
+        nil
+        (handler-case
+            (not (null
+                  (let ((server (application-world-server application)))
+                    (or (null server)
+                        (some (lambda (send)
+                                (some (lambda (pair) (member (first pair) identifiers :test #'equal))
+                                      (world-outbox-pending configuration send)))
+                              (world-outbox-identifiers configuration))
+                        (some (lambda (identifier)
+                                (world-inbox-deliveries configuration identifier))
+                              identifiers)
+                        (some (lambda (identifier)
+                                (when-let ((host (world-server--find-host server identifier)))
+                                  (or (world-host-failure host)
+                                      (world-host-exit-reason host)
+                                      (world-server--host-busy-p host)
+                                      (when-let ((controller (application-input-controller
+                                                              (world-host-application host))))
+                                        (application-input-controller-busy-p controller)))))
+                              identifiers)))))
+          (error () t)))))
+
 (-> application-mission-verify (application &key (:final-text (option string))) null)
 (defun application-mission-verify (application &key final-text)
   "Verify the mission against its configured acceptance policy.
@@ -314,14 +346,8 @@ Only a final assistant message can supply the completion marker."
            (mission--record context))
           ((not (getf goal :model-complete-p))
            (return-from application-mission-verify nil))))
-      (let* ((tool-context (application-tool-context application))
-             (runtime      (tool-context-execution-runtime tool-context))
-             (live-jobs    (and (typep runtime 'task-orchestrator)
-                                (remove-if-not
-                                 (lambda (job)
-                                   (and (eq context (mission-context-find job)) (not (job-terminal-p job))))
-                                 (task-orchestrator-list-visible-jobs runtime (application-agent application))))))
-        (when (or live-jobs (mission-context-jobs context))
+      (let ((tool-context (application-tool-context application)))
+        (when (or (mission--children-pending-p context) (mission-context-jobs context))
           (mission--evidence context ':pending-work "Delegated work is still live; collect its terminal result before verification.")
           (mission--record context)
           (return-from application-mission-verify nil))
@@ -332,6 +358,10 @@ Only a final assistant message can supply the completion marker."
         ;; Authorized edits therefore cannot land between the last digest and
         ;; the terminal status, while invalidation remains serialized by the
         ;; request lock held above.
+        (when (mission--children-pending-p context)
+          (mission--evidence context ':pending-work "Child work appeared during verification.")
+          (mission--record context)
+          (return-from application-mission-verify nil))
         (with-recursive-lock-held (*workspace-file-mutation-lock*)
           (with-recursive-lock-held ((mission-context-lock context))
             (when (or (plusp (getf goal :requests-outstanding 0))

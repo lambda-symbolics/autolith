@@ -217,7 +217,6 @@ Clicking the rendered call's header inserts it into the composer.")
    (world-turn-progress
     :initform      nil
     :accessor      application-world-turn-progress
-    :type          (option task-progress)
     :documentation "Normalized hosted turn progress, guarded by the task presentation lock.")
    (world-child-activities
     :initform      nil
@@ -519,12 +518,8 @@ An explicit model selection for this launch overrides the recorded selection."
             (:aborted
              ':idle)))
          (title
-          (etypecase job
-            (task-job
-             (or (job-name job) "Child agent"))
-            (tool-execution-job
-             (or (tool-execution-job-description job)
-                 (tool-execution-job-tool-name job)))))
+          (or (tool-execution-job-description job)
+              (tool-execution-job-tool-name job)))
          (id
           (concatenate 'string "jobs/"
                        (remove #\- (session-job-execution-identifier job)))))
@@ -560,27 +555,14 @@ An explicit model selection for this launch overrides the recorded selection."
                    (conversation-title (application-conversation application)))))))
   nil)
 
-(-> application--present-child-activities (application terminal-ui list) null)
-(defun application--present-child-activities (application ui activities)
-  "Combine spawned jobs and child-channel turns under the task presentation lock."
-  (let ((tasks (remove-if-not (lambda (activity) (eq (getf activity :type) ':task)) activities)))
-    (terminal-ui-set-agent-activities
-     ui (append tasks
-                (remove-if (lambda (activity)
-                             (find (getf activity :channel) tasks :test #'equal
-                                   :key                                 (lambda (task) (getf task :channel))))
-                           (application-world-child-activities application)))))
-  nil)
-
 (-> application--live-job-activities (application task-orchestrator) list)
 (defun application--live-job-activities (application orchestrator)
   "Return live rows visible in APPLICATION's current conversation."
   (let ((conversation (and (slot-boundp application 'conversation)
-                           (application-conversation application)))
-        (agent        (and (slot-boundp application 'agent) (application-agent application))))
-    (task-orchestrator-live-activities
-     orchestrator :viewer agent
-                  :owner  (when conversation (conversation-identifier conversation)))))
+                           (application-conversation application))))
+    (when conversation
+      (task-orchestrator-live-activities
+       orchestrator :owner (conversation-identifier conversation)))))
 
 (-> application-set-world-child-activities (application list) null)
 (defun application-set-world-child-activities (application activities)
@@ -590,10 +572,7 @@ An explicit model selection for this launch overrides the recorded selection."
       (unless (equal activities (application-world-child-activities application))
         (setf (application-world-child-activities application) activities
               changed-p t)
-        (let ((runtime (application-task-presentation-orchestrator application)))
-          (application--present-child-activities
-           application (application-ui application)
-           (when runtime (application--live-job-activities application runtime))))))
+        (terminal-ui-set-agent-activities (application-ui application) activities)))
     (when changed-p
       (application--wake-input-controller application)))
   nil)
@@ -608,12 +587,8 @@ An explicit model selection for this launch overrides the recorded selection."
     (let ((ui (and (slot-boundp application 'ui)
                    (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (let ((activities (application--live-job-activities application orchestrator)))
-          (application--present-child-activities application ui activities)
-          (terminal-ui-set-command-activities
-           ui (remove-if-not (lambda (activity)
-                               (eq (getf activity :type) ':tool))
-                             activities)))
+        (terminal-ui-set-command-activities
+         ui (application--live-job-activities application orchestrator))
         (let* ((conversation (and (slot-boundp application 'conversation)
                                   (application-conversation application)))
                (owner        (and conversation (conversation-identifier conversation)))
@@ -644,23 +619,6 @@ An explicit model selection for this launch overrides the recorded selection."
   (application--wake-input-controller application)
   nil)
 
-(-> application--present-task-response
-    (application task-orchestrator &key (:listener function) (:payload list))
-    null)
-(defun application--present-task-response
-    (application orchestrator &key listener payload)
-  "Present one response from APPLICATION's exact current task LISTENER."
-  (with-lock-held ((application-task-presentation-lock application))
-    (when (and (eq orchestrator
-                   (application-task-presentation-orchestrator application))
-               (eq listener
-                   (application-task-presentation-listener application)))
-      (multiple-value-bind (entry markdown)
-          (application--child-response-entry application payload)
-        (when entry
-          (application-present application entry :metadata (list :markdown markdown))))))
-  nil)
-
 (-> application--disconnect-task-presentation-locked (application) null)
 (defun application--disconnect-task-presentation-locked (application)
   "Disconnect the task observer and clear its UI rows and protocol records."
@@ -673,7 +631,6 @@ An explicit model selection for this launch overrides the recorded selection."
     (let ((ui (and (slot-boundp application 'ui)
                    (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (application--present-child-activities application ui nil)
         (terminal-ui-clear-command-activities ui)
         (terminal-ui-report-job-statuses ui nil))))
   nil)
@@ -697,21 +654,11 @@ An explicit model selection for this launch overrides the recorded selection."
         (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
     (let ((orchestrator (application--task-orchestrator application)))
       (when orchestrator
-        (task-orchestrator-set-hurry-up orchestrator (application-hurry-up-p application))
-        (let ((listener nil))
-          (setf listener
-                (lambda (channel payload)
-                  (case channel
-                    (:task-subagent-lifecycle
-                     (application-world-sync-child application payload)
-                     (application--refresh-task-presentation application orchestrator))
-                    ((:task-subagent-progress
-                      :tool-execution-lifecycle :tool-execution-progress)
-                     (application--refresh-task-presentation application orchestrator))
-                    (:task-subagent-verbal-response
-                     (application--present-task-response
-                      application orchestrator :listener listener
-                                               :payload  payload)))))
+        (let ((listener (lambda (channel payload)
+                          (declare (ignore payload))
+                          (case channel
+                            ((:tool-execution-lifecycle :tool-execution-progress)
+                             (application--refresh-task-presentation application orchestrator))))))
           (setf (application-task-presentation-orchestrator application)
                 orchestrator
                 (application-task-presentation-listener application)
@@ -2267,30 +2214,6 @@ A confirmed deletion may hand off to the inbox, retiring the previous runtime."
   "Return the styled entry and portable source for the user's message."
   (application--render-message
    application text (application--message-header application :role ':user :timestamp timestamp)))
-
-(-> application--child-response-entry (application list) (values (option list) (option list)))
-(defun application--child-response-entry (application payload)
-  "Return one canonical primary-window entry for a portable child response."
-  (let* ((child-name     (getf payload :child-name))
-         (text           (getf payload :text))
-         (timestamp      (getf payload :time))
-         (safe-child-name
-           (and (stringp child-name)
-                (sanitize-text child-name :single-line-p t)))
-         (timestamp-text (application--timestamp-text timestamp)))
-    (when (and (non-empty-string-p safe-child-name)
-               (stringp text)
-               (plusp
-                (length
-                 (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-               timestamp-text)
-      (application--render-message
-       application text
-       (list (terminal-span ':brand "● autolith [")
-             (terminal-span ':child-name safe-child-name)
-             (terminal-span ':brand "] ")
-             (terminal-span ':dim timestamp-text)
-             (terminal-span ':plain (string #\Newline)))))))
 
 (-> application--transcript-header
     (string (option string) (integer 1) &key (:style terminal-style)) list)

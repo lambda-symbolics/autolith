@@ -305,6 +305,7 @@
                                           (:file "task/storage")
                                           (:file "world/removal")
                                           (:file "task/children")
+                                          (:file "world/children")
                                           (:file "agent/context-rules")
                                           (:file "agent/saved-context-rules")
                                           (:file "terminal/protocol")

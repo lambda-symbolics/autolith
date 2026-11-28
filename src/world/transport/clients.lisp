@@ -430,8 +430,6 @@ whatever would change the channel."
          (list :result (apply #'application-client-run application :job arguments)))
         (:job-transcript
          (list :result (apply #'application-client-run application :job-transcript arguments)))
-        (:job-send
-         (list :result (apply #'application-client-run application :job-send arguments)))
         (:job-cancel
          (list :result (apply #'application-client-run application :job-cancel arguments)))
         (:resource

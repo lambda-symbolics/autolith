@@ -53,15 +53,13 @@
 
 (-> mission--settle-inference
     (mission-context (option (integer 1)) (option integer) &key (:allowance (option list)) (:failure t)
-     (:originating-child (option task-job))) null)
+     (:originating-child (option string))) null)
 (defun mission--settle-inference (context reservation tokens &key allowance failure originating-child)
   "Release RESERVATION once, charging measured usage or an exact child's allowance."
   (with-recursive-lock-held ((mission-context-request-lock context))
     (with-recursive-lock-held ((mission-context-lock context))
       (let* ((goal      (mission-context-goal context))
-             (child     (and originating-child
-                             (eq (task-job-mission-context originating-child) context)
-                             originating-child))
+             (child     originating-child)
              (bounded-p (and child (not (integerp tokens))
                              (typep reservation '(integer 1)))))
         (dolist (limit (remove nil (list goal allowance)))
@@ -105,22 +103,20 @@
   nil)
 
 (-> mission--account-inference
-    (mission-context function function &key (:allowance (option list))) t)
-(defun mission--account-inference (context function usage-function &key allowance)
+    (mission-context function function &key (:allowance (option list))
+     (:originating-child (option string))) t)
+(defun mission--account-inference (context function usage-function &key allowance originating-child)
   "Reserve allowances, execute without mission locks, then settle exactly once.
 
 ALLOWANCE optionally charges the same request to an independent reviewer policy.
+ORIGINATING-CHILD is the identifier of a child explicitly bound to CONTEXT.
 Provider-reported billable usage includes input tokens. Output allocations do not
 bound total provider billing or retry exposure. Preserve all provider return values.
 A request refused before invoking FUNCTION or at its first local context-admission
 boundary has known zero usage. After entry into an admitted provider request, an
 exact child's missing usage charges its finite admitted allocation once and retains
 child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
-  (let ((originating-child
-          (and (typep *mission-admitted-operation* 'task-job)
-               (eq (task-job-mission-context *mission-admitted-operation*) context)
-               *mission-admitted-operation*))
-        (reservation     nil)
+  (let ((reservation     nil)
         (reserved-p      nil)
         (dispatched-p    nil)
         (admission-state (list :pending))

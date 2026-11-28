@@ -148,8 +148,8 @@
   (:documentation "A model-driven conversation loop with namespaced Common Lisp tools."))
 
 (defvar *mission-admitted-operation* nil
-  "The admitted child task-job continued by this thread, or NIL for new work.
-Every thread hop must carry the same identity; its loss refuses quarantined work.")
+  "The exact mission-bound conversation of the admitted child turn, or NIL for new work.
+Every thread hop must carry the identity to continue quarantined work.")
 
 (defparameter *agent-restricted-maximum-tool-rounds* 4
   "Maximum executed tool rounds within one restricted agent turn.")

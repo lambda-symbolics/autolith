@@ -29,12 +29,6 @@
         while end
         do (setf start (1+ end))))
 
-(-> task--alist-value (keyword list) (values t boolean))
-(defun task--alist-value (key pairs)
-  "Return KEY's value and presence flag from ordered PAIRS."
-  (let ((pair (assoc key pairs :test #'eq)))
-    (values (and pair (rest pair)) (and pair t))))
-
 (-> task--unique-list-p (list &key (:test function)) boolean)
 (defun task--unique-list-p (values &key (test #'equal))
   "Return true when VALUES has no duplicate elements under TEST."
@@ -43,11 +37,6 @@
 
 
 ;;;; -- Structured Output Adapters --
-
-(-> task-output--json-number-p (t) boolean)
-(defun task-output--json-number-p (value)
-  "Check numeric values at task-result boundaries."
-  (cl-llm-provider-api:output-json-number-p value))
 
 (-> task-output-schema-normalize (t &key (:source keyword)) list)
 (defun task-output-schema-normalize (schema &key (source ':programmatic))

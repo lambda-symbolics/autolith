@@ -1806,18 +1806,13 @@
 (defun test-world-agent-children ()
   "Test an agent's children are the channels nested in its own, counted once, and its channel lists them."
   (with-test-configuration (configuration)
-    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
-      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent
-                                       "broot11" :name "helper" :created-at 1500)
-      (let ((agent
-             (agent-create :configuration configuration :provider
-                           (make-instance 'model-provider) :conversation root
-                           :tool-registry (make-instance 'tool-registry) :worker nil))
-            (orchestrator (task-tests--orchestrator)))
-        (unwind-protect
-            (test-assert (equal (task-agent-children orchestrator agent) '("bkid11"))
-                         "the child's nested channel is the agent's one child")
-          (task-orchestrator-close orchestrator)))))
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent
+                                    "broot11" :name "helper" :created-at 1500)
+    (test-assert (equal (mapcar #'channel-identifier
+                               (world-channel-children (world-load configuration) "broot11"))
+                        '("bkid11"))
+                 "The nested channel is the agent's one child."))
   nil)
 
 (-> test-world-child-lifecycle () null)

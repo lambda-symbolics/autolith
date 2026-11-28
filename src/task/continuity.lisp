@@ -6,23 +6,6 @@
   ()
   (:documentation "A continuity decision lacks authority or a safe recovery path."))
 
-(defclass task-continuity-context (tool-context)
-  ((child-item
-    :initarg       :child-item
-    :reader        task-continuity-context-child-item
-    :type          list
-    :documentation "The persisted assignment whose execution options are restored."))
-  (:documentation "A trusted recovery invocation with its original child execution options."))
-
-(defmethod task-context-spawn-items ((context task-continuity-context) arguments)
-  "Restore direct execution options through ordinary child admission and tool dispatch."
-  (let* ((item    (task-continuity-context-child-item context))
-         (options (loop for key in '(:tools :models :reasoning-effort)
-                        for tail = (member key item)
-                        when tail
-                          append (list key (copy-tree (second tail))))))
-    (mapcar (lambda (normalized) (append options normalized)) (call-next-method))))
-
 (defparameter *task-continuity-maximum-octets* (* 1024 1024)
   "The maximum portable continuity record size.")
 
@@ -48,29 +31,17 @@
                              :code ':storage-limit))
     (snapshot-write-text path text :require-absent require-absent)))
 
-(-> task-continuity--owner-executions (session-job agent) list)
-(defun task-continuity--owner-executions (job parent)
-  "Capture durable ancestor identities rather than replay-prone friendly names."
-  (let ((parent-job (and (typep parent 'task-child-agent) (task-child-agent-job parent)))
-        (jobs       (task-orchestrator-list-jobs (session-job-orchestrator job))))
-    (loop for identifier in (job-owner-identifiers job)
-          for owner = (or (and parent-job (equal identifier (job-identifier parent-job)) parent-job)
-                          (find identifier jobs :key #'job-identifier :test #'equal))
-          when owner collect (session-job-execution-identifier owner))))
-
 (-> task-continuity-record-job (session-job agent) pathname)
 (defun task-continuity-record-job (job parent)
-  "Persist JOB's identity and specification before its first side effect.
+  "Persist JOB's identity before its first side effect.
 
-Tool closures are deliberately not serialized. Task replay needs a separate
-explicit safety declaration; admission alone grants no replay authority."
-  (let* ((configuration    (agent-configuration parent))
-         (root             (task--artifact-group-root
-                            configuration (session-job-root-conversation-identifier job)))
-         (owner-executions (task-continuity--owner-executions job parent))
-         (path             (merge-pathnames
-                            (format nil "~A/continuity.sexp"
-                                    (session-job-execution-identifier job)) root)))
+Tool closures are not serialized and cannot be replayed."
+  (let* ((configuration (agent-configuration parent))
+         (root          (task--artifact-group-root
+                         configuration (session-job-completion-owner-conversation job)))
+         (path          (merge-pathnames
+                         (format nil "~A/continuity.sexp"
+                                 (session-job-execution-identifier job)) root)))
     (with-lock-held ((task-orchestrator-artifact-lock
                       (session-job-orchestrator job)))
       (unless (probe-file path)
@@ -83,8 +54,8 @@ explicit safety declaration; admission alone grants no replay authority."
          (list :version 1 :job-id (session-job-identifier job)
                :execution-id           (session-job-execution-identifier job)
                :root-conversation      (session-job-root-conversation-identifier job)
-               :owners                 (copy-list (job-owner-identifiers job))
-               :owner-execution-ids    owner-executions
+                :owners                nil
+                :owner-execution-ids   nil
                :parent-call-id         (session-job-parent-call-id job)
                 :completion-owner-conversation
                 (session-job-completion-owner-conversation job)
@@ -94,46 +65,54 @@ explicit safety declaration; admission alone grants no replay authority."
                 :completion-mission-id (session-job-completion-mission-id job)
                 :detached-p            (session-job-detached-p job)
                :created-at             (get-universal-time)
-               :kind                   (if (typep job 'task-job) ':task ':tool)
-                :tool                  (when (typep job 'tool-execution-job)
-                                         (tool-execution-job-tool-name job))
-               :specification          (when (typep job 'task-job)
-                                         (copy-tree (task-job-item job))))
+                :kind                  ':tool
+                :tool                  (tool-execution-job-tool-name job))
          :require-absent t)))
     path))
 
 (-> task-continuity--visible-p (list agent) boolean)
 (defun task-continuity--visible-p (record viewer)
-  "Apply ordinary conversation and descendant ownership to durable RECORD."
-  (and (equal (getf record :root-conversation)
-              (task-parent-root-conversation-identifier viewer))
-       (or (not (typep viewer 'task-child-agent))
-           (member (session-job-execution-identifier (task-child-agent-job viewer))
-                   (getf record :owner-execution-ids) :test #'equal))
+  "Require RECORD's exact recorded completion owner to match VIEWER's channel."
+  (and (equal (getf record :completion-owner-conversation)
+              (conversation-identifier (agent-conversation viewer)))
        t))
+
+(-> task-continuity--artifact-owners (agent) list)
+(defun task-continuity--artifact-owners (viewer)
+  "Return VIEWER's channel and its registered ancestors for legacy artifact lookup."
+  (let* ((configuration (agent-configuration viewer))
+         (world         (world-load configuration))
+         (identifier    (conversation-identifier (agent-conversation viewer)))
+         (seen          (make-hash-table :test #'equal))
+         (owners        nil))
+    (loop while (and identifier (not (gethash identifier seen)))
+          do (setf (gethash identifier seen) t)
+             (push identifier owners)
+             (let ((channel (world-channel-find world identifier)))
+               (setf identifier (and channel (channel-parent channel)))))
+    (nreverse owners)))
 
 (-> task-continuity-map-records (agent function &key (:execution-ids list)) null)
 (defun task-continuity-map-records (viewer function &key (execution-ids nil indexed-p))
-  "Call FUNCTION once per owned continuity entry visible to VIEWER.
+  "Call FUNCTION for owned records in this channel and registered legacy ancestors.
 
-If EXECUTION-IDS is supplied, only the listed executions are scanned.
-Return NIL."
-  (let* ((root        (task--artifact-group-root
-                       (agent-configuration viewer) (task-parent-root-conversation-identifier viewer)))
-         (directories (if indexed-p
-                          (mapcar (lambda (identifier)
-                                    (merge-pathnames (format nil "~A/" identifier) root))
-                                  execution-ids)
-                          (when (uiop:directory-exists-p root)
-                            (uiop:subdirectories root)))))
-    (dolist (directory directories)
-      (dolist (entry (task-continuity-directory-entries viewer directory))
-        (funcall function entry))))
+If EXECUTION-IDS is supplied, only the listed executions are scanned. Return NIL."
+  (dolist (owner (task-continuity--artifact-owners viewer))
+    (let* ((root        (task--artifact-group-root (agent-configuration viewer) owner))
+           (directories (if indexed-p
+                            (mapcar (lambda (identifier)
+                                      (merge-pathnames (format nil "~A/" identifier) root))
+                                    execution-ids)
+                            (when (uiop:directory-exists-p root)
+                              (uiop:subdirectories root)))))
+      (dolist (directory directories)
+        (dolist (entry (task-continuity-directory-entries viewer directory))
+          (funcall function entry)))))
   nil)
 
 (-> task-continuity-records (agent) list)
 (defun task-continuity-records (viewer)
-  "Return owned durable records or bounded diagnostics from existing task storage."
+  "Return owned durable records from existing task storage."
   (let ((records nil))
     (task-continuity-map-records viewer (lambda (entry) (push entry records)))
     (nreverse records)))
@@ -143,22 +122,10 @@ Return NIL."
   "Return the owned durable record or bounded diagnostic of one job DIRECTORY.
 
 The result is a list of at most one entry, so callers can append scans."
-  (let ((root-id     (task-parent-root-conversation-identifier viewer))
-        (path        (merge-pathnames "continuity.sexp" directory))
-        (result-path (merge-pathnames "result.sexp" directory)))
-    (when (or (probe-file path)
-              (and (not (typep viewer 'task-child-agent)) (probe-file result-path)))
+  (let ((path (merge-pathnames "continuity.sexp" directory)))
+    (when (probe-file path)
       (handler-case
-          (let* ((old-result (and (not (probe-file path))
-                                  (task--read-result-artifact result-path)))
-                 (record
-                   (if old-result
-                       (list :version 1 :kind ':task
-                             :execution-id (first (last (pathname-directory directory)))
-                             :job-id       (or (getf old-result :id)
-                                               (first (last (pathname-directory directory))))
-                             :root-conversation root-id :owners nil)
-                       (task-continuity--read path))))
+          (let ((record (task-continuity--read path)))
             (unless (and (eql 1 (getf record :version))
                          (member (getf record :kind) '(:task :tool))
                          (every #'non-empty-string-p
@@ -182,11 +149,9 @@ The result is a list of at most one entry, so callers can append scans."
                   (task-continuity--fail "Invalid persisted worker checkpoint."))))
             (when (task-continuity--visible-p record viewer)
               (list (list :record record :path (namestring path)))))
-        (error (condition)
-          (unless (typep viewer 'task-child-agent)
-            (list (list :path  (namestring path)
-                        :error (bounded-string (princ-to-string condition)
-                                               :limit 500)))))))))
+        (error ()
+          ;; A malformed record has no authenticated owner, even in an ancestor.
+          nil)))))
 
 (-> task-continuity--find (agent string) list)
 (defun task-continuity--find (viewer identifier)
@@ -307,11 +272,6 @@ The result is a list of at most one entry, so callers can append scans."
               ':dead-needing-decision)
              ((task-continuity--checkpoint-image record (agent-configuration viewer))
               ':reconstructible-checkpoint)
-             ((and (eq (getf record :kind) :task)
-                   (getf record :specification)
-                   (not (getf (getf record :specification) :isolation))
-                   (non-empty-string-p (getf record :restart-safety)))
-              ':safe-restartable-specification)
              (t
               ':dead-needing-decision))
            :job-id (getf record :job-id) :execution-id (getf record :execution-id)
@@ -333,7 +293,7 @@ The result is a list of at most one entry, so callers can append scans."
            :result                        (task-continuity--result-summary
                                            (or result (getf terminal :result)) (if result result-path terminal-path))
            :assignment                    (bounded-string (or (getf (getf record :specification) :task) "")
-                                                          :limit *task-retained-assignment-limit*)
+                                                          :limit 1000)
            :restart-safety                (getf record :restart-safety)
            :checkpoint                    (getf record :checkpoint)
            :owner-execution-ids           (getf record :owner-execution-ids)
@@ -369,49 +329,34 @@ The result is a list of at most one entry, so callers can append scans."
      viewer (lambda (entry) (push (task-continuity-classify entry viewer orchestrator) rows)))
     (nreverse rows)))
 
-(-> task-continuity-declare
-    (agent task-orchestrator string &key (:safety (option string))
-     (:image (option string)) (:repl (option string))) list)
-(defun task-continuity-declare (viewer orchestrator identifier &key safety image repl)
-  "Explicitly declare restart safety or associate a compatible immutable checkpoint.
-
-A primary conversation owner must make this declaration. SAFETY documents why
-repeating the task's external effects is safe; it is an assertion, not a test."
-  (when (typep viewer 'task-child-agent)
+(-> task-continuity-declare (agent task-orchestrator string &key (:image string) (:repl string)) list)
+(defun task-continuity-declare (viewer orchestrator identifier &key image repl)
+  "Associate a compatible worker checkpoint with the owned job."
+  (when (conversation-parent-identifier (agent-conversation viewer))
     (task-continuity--fail "Only the primary owner may grant recovery authority." :code ':authority))
-  (unless (or (non-empty-string-p safety)
-              (and (non-empty-string-p image) (non-empty-string-p repl)))
-    (task-continuity--fail "Supply a safety rationale or both image and REPL."))
-  (let* ((entry  (task-continuity--find viewer identifier))
-         (path   (pathname (getf entry :path)))
-         (record (copy-tree (getf entry :record))))
-    (when safety
-      (unless (eq (getf record :kind) :task)
-        (task-continuity--fail "An opaque tool closure cannot be restarted."))
-      (setf (getf record :restart-safety) (bounded-string safety :limit 4000)))
-    (when image
-      (setf (getf record :checkpoint) (list :image image :repl repl))
-      (unless (task-continuity--checkpoint-image record (agent-configuration viewer))
-        (task-continuity--fail "The saved worker image is missing or incompatible.")))
+  (unless (and (non-empty-string-p image) (non-empty-string-p repl))
+    (task-continuity--fail "Supply both image and REPL."))
+  (let* ((entry      (task-continuity--find viewer identifier))
+         (path       (pathname (getf entry :path)))
+         (record     (copy-tree (getf entry :record)))
+         (checkpoint (list :image image :repl repl)))
+    (setf (getf record :checkpoint) checkpoint)
+    (unless (task-continuity--checkpoint-image record (agent-configuration viewer))
+      (task-continuity--fail "The saved worker image is missing or incompatible."))
     (with-lock-held ((task-orchestrator-artifact-lock orchestrator))
       (when (probe-file (merge-pathnames "revive.sexp"
-                                       (uiop:pathname-directory-pathname path)))
+                                        (uiop:pathname-directory-pathname path)))
         (task-continuity--fail "A consumed recovery declaration cannot be changed."))
-      ;; Re-read under the writer lock so concurrent spills cannot lose grants.
-      (let ((fresh (task-continuity--read path)))
-        (when safety
-          (setf (getf fresh :restart-safety) (getf record :restart-safety)))
-        (when image
-          (setf (getf fresh :checkpoint) (getf record :checkpoint)))
-        (setf record fresh)
-        (task-continuity--write path record)))
+      (setf record (task-continuity--read path)
+            (getf record :checkpoint) checkpoint)
+      (task-continuity--write path record))
     (task-continuity-classify (list :record record :path (namestring path))
                               viewer orchestrator)))
 
 (-> task-continuity-dispatch
-    (tool-context string string &key (:arguments json-object) (:child-item list))
+    (tool-context string string &key (:arguments json-object))
     (values tool-result string))
-(defun task-continuity-dispatch (context namespace name &key arguments child-item)
+(defun task-continuity-dispatch (context namespace name &key arguments)
   "Dispatch a normal registered operation with correlated durable action records."
   (let* ((registry     (tool-context-registry context))
          (tool         (tool-registry-find registry namespace name))
@@ -436,12 +381,12 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                         :arguments           (json-encode arguments)))
     (let* ((nested-context
              (make-instance
-              'task-continuity-context :child-item child-item
-              :configuration                       (tool-context-configuration context)
+              'tool-context
+              :configuration    (tool-context-configuration context)
               :conversation conversation :worker (tool-context-worker context)
               :registry registry :agent (tool-context-agent context)
               :observer observer :call-id call-id
-              :mutation-checker                    (tool-context-mutation-checker context)
+              :mutation-checker (tool-context-mutation-checker context)
               :command-authorization-function
               (tool-context-command-authorization-function context)
               :tool-authorization-function
@@ -471,7 +416,7 @@ require a new human decision rather than an automatic second attempt."
          (directory      (uiop:pathname-directory-pathname (getf entry :path)))
          (classification (getf (task-continuity-classify entry viewer orchestrator)
                                :classification)))
-    (unless (and authorized-p (not (typep viewer 'task-child-agent)))
+    (unless (and authorized-p (not (resource-context-child-agent-p context)))
       (task-continuity--fail "Recovery requires explicit primary-owner authority." :code ':authority))
     (when (eq classification :live-owned-detached)
       (task-continuity--write
@@ -482,31 +427,20 @@ require a new human decision rather than an automatic second attempt."
       (return-from task-continuity-revive
         (task-continuity-dispatch context "job" "get"
                                   :arguments (json-object "id" (getf record :job-id)))))
-    (unless (member classification '(:safe-restartable-specification
-                                     :reconstructible-checkpoint))
+    (unless (eq classification :reconstructible-checkpoint)
       (task-continuity--fail "This job has no unconsumed safe recovery pathway."))
     (with-lock-held ((task-orchestrator-artifact-lock orchestrator))
       (task-continuity--write
        (merge-pathnames "revive.sexp" directory)
-       (list :decision          (if (eq classification :reconstructible-checkpoint)
-                                    ':reconstruct ':restart)
-             :at (get-universal-time) :execution-id (getf record :execution-id)
-             :root-conversation (getf record :root-conversation))
+       (list :decision         ':reconstruct
+            :at (get-universal-time) :execution-id (getf record :execution-id)
+            :root-conversation (getf record :root-conversation))
        :require-absent t))
-    (let ((checkpoint (getf record :checkpoint))
-          (spec       (getf record :specification)))
+    (let ((checkpoint (getf record :checkpoint)))
       (multiple-value-bind (result dispatch-call-id)
-          (if (eq classification :reconstructible-checkpoint)
-              (task-continuity-dispatch
-               context "lisp" "start"
-               :arguments (json-object "image" (getf checkpoint :image) "repl" (getf checkpoint :repl)))
-              (task-continuity-dispatch
-               context "child" "spawn"
-               :child-item spec
-               :arguments  (let ((arguments (json-object "task" (getf spec :task))))
-                             (when (getf spec :context)
-                               (setf (gethash "context" arguments) (getf spec :context)))
-                             arguments)))
+          (task-continuity-dispatch
+           context "lisp" "start"
+           :arguments (json-object "image" (getf checkpoint :image) "repl" (getf checkpoint :repl)))
         (task-continuity--write
          (merge-pathnames "revive-result.sexp" directory)
          (list :success-p         (tool-result-success-p result)
@@ -527,7 +461,7 @@ require a new human decision rather than an automatic second attempt."
 (-> task-continuity-abandon (agent task-orchestrator string) list)
 (defun task-continuity-abandon (viewer orchestrator identifier)
   "Record an explicit abandon decision for dead owned work."
-  (when (typep viewer 'task-child-agent)
+  (when (conversation-parent-identifier (agent-conversation viewer))
     (task-continuity--fail "Only the primary owner may abandon durable work." :code ':authority))
   (let* ((entry          (task-continuity--find viewer identifier))
          (classification (task-continuity-classify entry viewer orchestrator)))
@@ -538,24 +472,6 @@ require a new human decision rather than an automatic second attempt."
                       (uiop:pathname-directory-pathname (getf entry :path)))
      (list :decision ':abandon :at (get-universal-time)) :require-absent t)
     (task-continuity-classify entry viewer orchestrator)))
-
-(-> task-continuity-note-activity (task-job keyword list) null)
-(defun task-continuity-note-activity (job status details)
-  "Persist bounded child activity counters after a normal observer event."
-  (let* ((parent       (task-job-parent-agent job))
-         (progress     (task-progress-snapshot job))
-         (path         (merge-pathnames "activity.sexp"
-                                       (task--artifact-root (agent-configuration parent) job)))
-         (orchestrator (session-job-orchestrator job)))
-    (with-lock-held ((task-orchestrator-artifact-lock orchestrator))
-      (let* ((old   (and (probe-file path) (task-continuity--read path)))
-             (count (+ (or (getf old :tool-count) 0)
-                       (if (eq status :tool-call-completed) 1 0))))
-        (task-continuity--write
-         path (list :tool-count count :updated-at (get-universal-time)
-                    :latest-activity status :tool (getf details :tool)
-                    :progress progress)))))
-  nil)
 
 (-> task-continuity-record-terminal (session-job agent list &key (:state keyword)) null)
 (defun task-continuity-record-terminal (job parent result &key state)
@@ -571,42 +487,6 @@ require a new human decision rather than an automatic second attempt."
     (task-continuity--write target (list :state state :result result
                                     :ended-at (get-universal-time)) :require-absent t))
   nil)
-
-
-;;;; -- Durable Overflow Producer Grants --
-
-(-> task-continuity--overflow-path (task-child-agent) pathname)
-(defun task-continuity--overflow-path (agent)
-  "Select only AGENT's trusted execution record in private task storage."
-  (let* ((job           (task-child-agent-job agent))
-         (configuration (agent-configuration agent))
-         (execution     (session-job-execution-identifier job)))
-    (unless (shell-log--component-p execution)
-      (task-continuity--fail "Invalid overflow producer identity." :code ':authority))
-    (task--safe-owner-path
-     configuration
-     (merge-pathnames (format nil "~A/continuity.sexp" execution)
-                      (task--artifact-group-root configuration (session-job-root-conversation-identifier job))))))
-
-(-> task-continuity--overflow-record (task-child-agent pathname) list)
-(defun task-continuity--overflow-record (agent path)
-  "Read a producer record only if every durable owner identity matches AGENT."
-  (let ((record (task-continuity--read path))
-        (job    (task-child-agent-job agent)))
-    (unless (and (eq (getf record :kind) :task)
-                 (equal (getf record :job-id) (job-identifier job))
-                 (equal (getf record :execution-id) (session-job-execution-identifier job))
-                 (equal (getf record :root-conversation) (session-job-root-conversation-identifier job)))
-      (task-continuity--fail "Overflow producer record belongs to another execution." :code ':authority))
-    record))
-
-(defmethod agent-record-overflow-context ((agent task-child-agent) digest)
-  "Atomically add an actual spill to this exact producer's durable set."
-  (with-lock-held ((task-orchestrator-artifact-lock (task-child-agent-orchestrator agent)))
-    (let* ((path   (task-continuity--overflow-path agent))
-           (record (task-continuity--overflow-record agent path)))
-      (pushnew digest (getf record :overflow-context-digests) :test #'equal)
-      (task-continuity--write path record))))
 
 (defmethod resource-tool-edit :before
     ((resource workspace-file-resource) (tool resource-edit-tool)

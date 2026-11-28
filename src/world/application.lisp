@@ -26,27 +26,6 @@
         (warn 'world-session-warning :pathname (configuration-world-path configuration) :cause cause))))
   nil)
 
-(-> application-world-sync-child (application list) null)
-(defun application-world-sync-child (application event)
-  "Assign the registered child participant to the task named by lifecycle EVENT."
-  (let ((execution (getf event :execution))
-        (runtime   (application--task-orchestrator application)))
-    (when (and runtime (stringp execution))
-      (let* ((job   (find (getf event :id) (task-orchestrator-list-jobs runtime)
-                          :test #'equal :key #'job-identifier))
-             (state (and job (task-job-participant-state job))))
-        (when state
-          (handler-case
-              (let* ((world (world-load (application-configuration application)))
-                     (agent (world-participant-find world execution)))
-                (when (and agent (equal execution (participant-residence agent)))
-                  (setf (participant-state-identity state) agent)))
-            (error (cause)
-              (warn 'world-session-warning
-                    :pathname (configuration-world-path (application-configuration application))
-                    :cause    cause)))))))
-  nil)
-
 
 ;;;; -- Channel Delivery --
 
@@ -514,6 +493,20 @@ cannot be read counts as present: the world never blocks a session."
            :operation ':turn))
   nil)
 
+(defclass world-child-turn-progress ()
+  ((started-at :initform (get-internal-real-time) :reader world-child-turn-progress-started-at
+               :documentation "The start of this hosted turn in internal real time.")
+   (request-count :initform 0 :accessor world-child-turn-progress-request-count
+                  :documentation "The provider requests started in this turn.")
+   (current-tool :initform nil :accessor world-child-turn-progress-current-tool
+                 :documentation "The name of the current tool, or NIL.")
+   (tool-started-at :initform nil :accessor world-child-turn-progress-tool-started-at
+                    :documentation "The start of the current tool, or NIL.")
+   (recent-tools :initform      (make-deque :maximum-count *terminal-agent-activity-recent-tool-limit*)
+                 :reader        world-child-turn-progress-recent-tools
+                 :documentation "The names of recent tools in completion order."))
+  (:documentation "Progress of an ordinary child turn, protected by the presentation lock."))
+
 (-> application-world-note-child-turn (application keyword) null)
 (defun application-world-note-child-turn (application kind)
   "Reset hosted turn progress and refresh its parent's activity rows."
@@ -522,10 +515,7 @@ cannot be read counts as present: the world never blocks a session."
       (let ((active-p (application-world--agent-turn-active-p application)))
         (with-lock-held ((application-task-presentation-lock application))
           (setf (application-world-turn-progress application)
-                (when active-p
-                  (let ((progress (make-instance 'task-progress)))
-                    (setf (task-progress-started-at progress) (get-internal-real-time))
-                    progress)))))
+                (when active-p (make-instance 'world-child-turn-progress)))))
       (world-server-note-child-activities server)))
   nil)
 
@@ -533,13 +523,24 @@ cannot be read counts as present: the world never blocks a session."
 (defun application-world-note-child-progress (application status details)
   "Record a hosted agent's observer event and schedule a parent activity refresh."
   (let ((server (application-world-server application)))
-    (when (and server (member status '(:provider-request-started :provider-request-completed
-                                       :tool-call-started :tool-call-completed)))
+    (when (and server (member status '(:provider-request-started :tool-call-started :tool-call-completed)))
       (with-lock-held ((application-task-presentation-lock application))
         (when-let ((progress (application-world-turn-progress application)))
-          (with-lock-held ((task-progress-lock progress))
-            (task-progress--note-status-locked progress :status status :details details
-                                                      :now (get-internal-real-time)))))
+          (case status
+            (:provider-request-started
+             (setf (world-child-turn-progress-request-count progress)
+                   (or (getf details :request-number)
+                       (1+ (world-child-turn-progress-request-count progress)))))
+            (:tool-call-started
+             (let ((tool (getf details :tool)))
+               (setf (world-child-turn-progress-current-tool progress) tool
+                     (world-child-turn-progress-tool-started-at progress)
+                     (when tool (get-internal-real-time)))))
+            (:tool-call-completed
+             (when-let ((tool (getf details :tool)))
+               (deque-push-back (world-child-turn-progress-recent-tools progress) tool))
+             (setf (world-child-turn-progress-current-tool progress) nil
+                   (world-child-turn-progress-tool-started-at progress) nil)))))
       (world-server-note-child-activities server)))
   nil)
 
@@ -548,8 +549,14 @@ cannot be read counts as present: the world never blocks a session."
   "Snapshot a hosted turn's request count and bounded chronological tool trace."
   (with-lock-held ((application-task-presentation-lock application))
     (when-let ((progress (application-world-turn-progress application)))
-      (with-lock-held ((task-progress-lock progress))
-        (task-progress--snapshot-locked progress (get-internal-real-time))))))
+      (let ((now             (get-internal-real-time))
+            (tool-started-at (world-child-turn-progress-tool-started-at progress)))
+        (list :request-count (world-child-turn-progress-request-count progress)
+              :current-tool  (world-child-turn-progress-current-tool progress)
+              :current-tool-duration-ms
+              (when tool-started-at (task--milliseconds-between tool-started-at now))
+              :recent-tools  (coerce (deque->vector (world-child-turn-progress-recent-tools progress)) 'list)
+              :duration-ms   (task--milliseconds-between (world-child-turn-progress-started-at progress) now))))))
 
 (-> application-world--agent-turn-active-p (application) boolean)
 (defun application-world--agent-turn-active-p (application)

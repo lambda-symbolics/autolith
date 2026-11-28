@@ -1018,53 +1018,16 @@ structural discriminator as a readable heading instead."
        (application--task-run-summary-text context)
        width)))))
 
-(-> application--task-run-compact-item-rows
-    (application list)
-    list)
-(defun application--task-run-compact-item-rows (application items)
-  "Return concise aligned rows for normalized presentation ITEMS."
-  (let* ((values
-          (loop for item in items
-                collect (list (princ-to-string (getf item :index))
-                              (or (getf item :name) "(unnamed)")
-                              (case (getf item :mode)
-                                (:detached
-                                 "detached")
-                                (otherwise
-                                 ""))
-                              (application--task-run-summary-text (getf item :task)))))
-         (columns (application--transcript-columns application))
-         (widths
-          (termdown:column-widths values (max 0 (- columns 3)) :gap-width 2
-                                  :minimum-widths                         '(1 4 0 4)))
-         (styles  '(:dim :agent-name :dim :plain)))
-    (loop for item in items
-          for row-values in values
-          append (append
-                  (list
-                   (loop for value in row-values
-                         for width in widths
-                         for style in styles
-                         for first-p = t then nil
-                         append (append
-                                 (unless first-p (list (terminal-span ':plain "  ")))
-                                 (list
-                                  (terminal-span style
-                                                 (application--fit-ellipsized value
-                                                                              width))))))
-                  (when (getf item :context)
-                    (list
-                     (application--task-run-compact-context-row application
-                                                                (getf item
-                                                                      :context))))))))
-
-(-> application--task-run-rows
-    (application json-object)
-    list)
+(-> application--task-run-rows (application json-object) list)
 (defun application--task-run-rows (application arguments)
-  "Lay out the same normalized descriptions used to execute child.spawn."
+  "Show one child name, message, and optional context."
   (handler-case
-      (application--task-run-compact-item-rows application (task-normalize-arguments arguments))
+      (let ((item (task-normalize-arguments arguments)))
+        (append (list (list (terminal-span ':agent-name (or (getf item :name) "(unnamed)"))
+                            (terminal-span ':plain "  ")
+                            (terminal-span ':plain (application--task-run-summary-text (getf item :task)))))
+                (when (getf item :context)
+                  (list (application--task-run-compact-context-row application (getf item :context))))))
     (tool-error (condition)
       (list (application--tool-section-row
              (format nil "invalid task request: ~A" condition))))))
@@ -1727,8 +1690,8 @@ lists, independently of the producer's transport limits."
                     (return-from invalid (values nil nil))))))
         (when (consp details)
           (let ((tagged-p (member (first details)
-                                  '(:task-run :job-list :job-get :job-wait
-                                    :job-cancel :job-send :mission :mcp-content))))
+                                  '(:child-spawn :task-run :job-list :job-get
+                                    :job-cancel :mission :mcp-content))))
             (when (or tagged-p
                       (member (first details)
                               '(:job :continuity-list :classification :job-id :execution-id)))
@@ -1864,8 +1827,8 @@ The same projection is used for retained tool details and inspector snapshots."
     (or (and (consp details) (eq (first details) ':tool-execution))
         (and (application--tool-result-success-p record)
              (not (null (member (getf properties :tool)
-                                '("shell.run" "task.run" "task.agents" "job.list"
-                                  "job.get" "job.wait" "job.cancel" "job.send" "job.continuity")
+                                '("shell.run" "child.spawn" "task.run" "task.agents" "job.list"
+                                  "job.get" "job.cancel" "job.send" "job.continuity")
                                 :test #'equal)))))))
 
 (-> application--generic-tool-result-entry (application list) list)

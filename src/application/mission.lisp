@@ -28,6 +28,8 @@
    (request-lock :initform      (make-recursive-lock "Mission requests")
                  :reader        mission-context-request-lock
                  :documentation "Serializes provider admission and settlement.")
+   (children :initform (make-hash-table :test #'equal) :reader mission-context-children
+             :documentation "Explicit child conversation identities bound during this mission's lifetime.")
    (threads :initform (make-hash-table :test #'eq) :reader mission-context-threads
             :documentation "Thread identities for safe sibling cancellation.")
    (jobs :initform nil :accessor mission-context-jobs
@@ -87,7 +89,14 @@
 (defun mission-context-find (identity)
   "Return the mission context registered for IDENTITY."
   (with-lock-held (*mission-contexts-lock*)
-    (gethash identity *mission-contexts*)))
+    (or (gethash identity *mission-contexts*)
+        (when (typep identity 'conversation)
+          (loop for context being the hash-values of *mission-contexts*
+                thereis (when (equal (gethash (conversation-pathname identity)
+                                             (mission-context-children context))
+                                     (list (conversation-identifier identity)
+                                           (conversation-parent-identifier identity)))
+                          context))))))
 
 (-> mission-context-inherit (t t) null)
 (defun mission-context-inherit (parent child)
@@ -103,10 +112,28 @@
       (mission-context-bind context child)))
   nil)
 
-(-> mission-context-bind-child (conversation conversation) null)
-(defun mission-context-bind-child (parent child)
-  "Associate CHILD with the mission captured by PARENT before delivery."
-  (mission-context-inherit parent child))
+(-> mission-context-bind-child (conversation conversation &key (:context (option mission-context))) null)
+(defun mission-context-bind-child (parent child &key (context (mission-context-find parent)))
+  "Associate CHILD with the exact CONTEXT captured by PARENT before delivery."
+  (when context
+    (unless (equal (conversation-parent-identifier child) (conversation-identifier parent))
+      (mission--reject ':authority "Child conversation does not belong to the requesting parent."))
+    (with-recursive-lock-held ((mission-context-request-lock context))
+      (mission--admit context :inference-p nil :new-work-p t)
+      (mission-context-bind context child)
+      (with-lock-held (*mission-contexts-lock*)
+        (setf (gethash (conversation-pathname child) (mission-context-children context))
+              (list (conversation-identifier child) (conversation-identifier parent))))))
+  nil)
+
+(-> mission-context-child-p (mission-context conversation) boolean)
+(defun mission-context-child-p (context conversation)
+  "Return true only for an explicitly bound exact child of CONTEXT."
+  (with-lock-held (*mission-contexts-lock*)
+    (not (null (equal (gethash (conversation-pathname conversation)
+                               (mission-context-children context))
+                      (list (conversation-identifier conversation)
+                            (conversation-parent-identifier conversation)))))))
 
 (-> mission--ensure-reservations (list) null)
 (defun mission--ensure-reservations (allowance)
@@ -149,49 +176,27 @@
   nil)
 
 (-> mission--attribute-child-unknown
-    (mission-context task-job &key (:reservation (option (integer 1)))) null)
+    (mission-context string &key (:reservation (option (integer 1)))) null)
 (defun mission--attribute-child-unknown (context child &key reservation)
   "Audit one logical UNKNOWN and optional reservation charge under the mission lock."
   (let ((goal (mission-context-goal context)))
     (dolist (key '(:unknown-usage-by-child :reservation-charges-by-child))
       (unless (nth-value 2 (get-properties goal (list key)))
         (nconc goal (list key nil))))
-    (let ((entry (assoc (job-identifier child) (getf goal :unknown-usage-by-child)
+    (let ((entry (assoc child (getf goal :unknown-usage-by-child)
                         :test #'equal)))
       (if entry
           (incf (rest entry))
-          (push (cons (job-identifier child) 1) (getf goal :unknown-usage-by-child))))
+          (push (cons child 1) (getf goal :unknown-usage-by-child))))
     (when reservation
-      (let ((entry (assoc (job-identifier child) (getf goal :reservation-charges-by-child)
+      (let ((entry (assoc child (getf goal :reservation-charges-by-child)
                           :test #'equal)))
         (unless entry
-          (setf entry (cons (job-identifier child) (list :requests 0 :tokens 0)))
+          (setf entry (cons child (list :requests 0 :tokens 0)))
           (push entry (getf goal :reservation-charges-by-child)))
         (incf (getf (rest entry) :requests))
         (incf (getf (rest entry) :tokens) reservation))))
   nil)
-
-(-> mission-task-job-accounting-summary (task-job) list)
-(defun mission-task-job-accounting-summary (child)
-  "Read consistent child audit counters; reservation charges are included in tokens used."
-  (let ((context (task-job-mission-context child)))
-    (flet ((summary (goal)
-             (let ((charge (rest (assoc (job-identifier child)
-                                        (getf goal :reservation-charges-by-child) :test #'equal))))
-               (list :unknown-usage
-                     (or (rest (assoc (job-identifier child)
-                                      (getf goal :unknown-usage-by-child) :test #'equal)) 0)
-                     :reservation-charged-tokens  (getf charge :tokens 0)
-                     :reservation-charge-requests (getf charge :requests 0)))))
-      (if context
-          (with-recursive-lock-held ((mission-context-lock context))
-            (summary (mission-context-goal context)))
-          (summary nil)))))
-
-(-> mission-task-job-unknown-usage (task-job) unsigned-byte)
-(defun mission-task-job-unknown-usage (child)
-  "Read CHILD's durable unknown-usage count, including requests settled against reservations."
-  (getf (mission-task-job-accounting-summary child) :unknown-usage))
 
 (-> mission--present-terminal-notice (mission-context keyword t) null)
 (defun mission--present-terminal-notice (context status evidence)
@@ -245,19 +250,17 @@
       (* 1000 (- deadline (get-universal-time))))))
 
 (-> mission--operation-draining-p (mission-context t) boolean)
-(defun mission--operation-draining-p (context job)
-  "Recognize a live, uncancelled admitted child of this exact quarantined mission."
+(defun mission--operation-draining-p (context agent)
+  "Recognize an admitted child turn of this exact quarantined mission."
   (with-recursive-lock-held ((mission-context-lock context))
     (let ((goal (mission-context-goal context)))
       (not (null
             (and (mission-context-draining-p context)
                  (eq (getf goal :status) ':blocked)
                  (eq goal (application-goal (mission-context-application context)))
-                 (typep job 'task-job)
-                 (eq (task-job-mission-context job) context)
-                 (not (job-terminal-p job))
-                 (not (job-cancellation-requested-p job))
-                 (not (task-job--cancelled-ancestor-reason job))))))))
+                 (typep agent 'agent)
+                 (eq (mission-context-find agent) context)
+                 (mission-context-child-p context (agent-conversation agent))))))))
 
 (-> mission--admit (mission-context &key (:inference-p boolean) (:new-work-p boolean)) null)
 (defun mission--admit (context &key (inference-p t) new-work-p)
@@ -318,10 +321,7 @@ preserving the calling thread's provider bindings and authorization callbacks."
              ;; Register before releasing state so cancellation cannot miss this job.
              (mission--admit context :inference-p nil)
              (push job (mission-context-jobs context))
-             (setf (gethash job (mission-context-threads context)) (current-thread))
-             (when (and (typep *mission-admitted-operation* 'task-job)
-                        (job-cancellation-requested-p *mission-admitted-operation*))
-               (job-cancel job :reason (job-cancellation-reason *mission-admitted-operation*))))
+            (setf (gethash job (mission-context-threads context)) (current-thread)))
            (job-run-inline job)
            (let ((snapshot (job-await job)))
             (cond
@@ -453,12 +453,6 @@ FINAL-MARKER-P selects the unbudgeted completion policy used by (goal)."
     (mission--transition context status evidence)
     (dolist (job (copy-list (mission-context-jobs context)))
       (job-cancel job :reason status)))
-  (let ((context (mission-context-find (application-conversation application)))
-        (runtime (tool-registry-runtime-binding (application-tool-registry application) 'task-orchestrator)))
-    (when (and (typep runtime 'task-orchestrator) (application-agent application))
-      (dolist (job (task-orchestrator-list-visible-jobs runtime (application-agent application)))
-        (when (and (eq context (mission-context-find job)) (not (job-terminal-p job)))
-          (session-job-cancel job status)))))
   nil)
 
 (-> application-mission-resume (application) null)
@@ -534,9 +528,7 @@ A quarantined child with live admitted identity may finish its bounded task."
           (or (not (eq (mission-context-goal context)
                        (application-goal (mission-context-application context))))
               (and (not (eq (getf (mission-context-goal context) :status) ':active))
-                   (not (and (typep agent 'task-child-agent)
-                             (mission--operation-draining-p
-                              context (task-child-agent-job agent)))))))
+                   (not (mission--operation-draining-p context agent)))))
      context)))
 
 (-> mission--stopped-tool-result ((option mission-context)) tool-result)
@@ -616,10 +608,8 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
          :completion-policy completion-policy
          :operation-function
          (lambda ()
-           (let ((*mission-admitted-operation*
-                   (and (typep parent 'task-child-agent)
-                        (let ((job (task-child-agent-job parent)))
-                          (and (eq (task-job-mission-context job) context) job)))))
+            (let ((*mission-admitted-operation*
+                    (and (eq (mission-context-find parent) context) parent)))
              (mission--admit context :inference-p nil)
              (mission--supervise context (format nil "Mission ~A" tool-name) operation-function)))))))
 
@@ -636,10 +626,15 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
   (declare (ignore content))
   (let ((context  (mission-context-find (agent-conversation agent)))
         (previous (mission-context-find agent)))
+    (when (and context (mission-context-child-p context (agent-conversation agent)))
+      (with-recursive-lock-held ((mission-context-request-lock context))
+        (mission--admit context :inference-p nil :new-work-p t)))
     (when (and context (eq (getf (mission-context-goal context) :status) ':active))
       (with-lock-held (*mission-contexts-lock*)
         (setf (gethash agent *mission-contexts*) context)))
-    (unwind-protect (call-next-method)
+    (unwind-protect
+         (let ((*mission-admitted-operation* (and context (eq (mission-context-find agent) context) agent)))
+           (call-next-method))
       (with-lock-held (*mission-contexts-lock*)
         (if previous
             (setf (gethash agent *mission-contexts*) previous)
@@ -720,17 +715,6 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
       (or (mission-context-find agent)
           (let ((context (mission-context-find (agent-conversation agent))))
             (and context (mission--request-owned-p context (agent-conversation agent)) context)))))
-
-(-> mission-task-job-run (task-job) t)
-(defun mission-task-job-run (job)
-  "Run a child using the exact mission and absolute deadline captured at admission."
-  (let ((context (task-job-mission-context job)))
-    (if context
-        (progn
-          (mission--admit context :inference-p nil :new-work-p t)
-          (let ((*mission-admitted-operation* job))
-            (mission--supervise context "Mission child" (lambda () (task-job--run job)))))
-        (task-job--run job))))
 
 (defmethod initialize-instance :after ((job session-job) &key mission-context &allow-other-keys)
   "Capture exact mission identity before a session job can enter its worker queue."

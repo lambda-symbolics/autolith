@@ -4,24 +4,25 @@
 
 (-> test-job-completion-policy-normalization () null)
 (defun test-job-completion-policy-normalization ()
-  "Test policy defaults, explicit selections, and invalid selections."
+  "Test generic completion-policy defaults, selections, and rejection."
   (dolist (case '((nil :continue) ("notify" :notify) ("continue" :continue)))
     (destructuring-bind (value expected) case
-      (let ((arguments (json-object "task" "Return one result.")))
+      (let ((arguments (json-object)))
         (when value
           (setf (gethash "completion-policy" arguments) value))
         (test-assert
-         (eq expected (getf (first (task-normalize-arguments arguments))
-                            :completion-policy))
-         "flat task policy is normalized to a keyword"))))
+         (eq expected
+             (tool-completion-policy-argument arguments :tool-name "test.policy"))
+         "completion policy is normalized to a keyword"))))
   (dolist (value '("poll" "CONTINUE" "" 1 t nil :notify))
-    (let ((arguments (json-object "task" "Invalid policy."
-                                  "completion-policy" value)))
+    (let ((arguments (json-object "completion-policy" value)))
       (test-assert
        (handler-case
-           (progn (task-normalize-arguments arguments) nil)
+           (progn
+             (tool-completion-policy-argument arguments :tool-name "test.policy")
+             nil)
          (tool-error () t))
-       "invalid policy is rejected at the task input boundary")))
+       "invalid policy is rejected at the tool input boundary")))
   nil)
 
 (-> test-job-completion-policy-schema-invocation () null)
@@ -47,11 +48,7 @@
                                  :tool-name (tool-canonical-name tool))
                                 '(:notify :continue))
                                "advertised completion selections are executable")))))))
-           (test-assert (plusp count) "async schemas are exercised")
-           (let ((properties (json-get (task-run-parameters-schema) "properties")))
-             (test-assert
-              (gethash "completion-policy" properties)
-              "child.spawn exposes the detached completion policy")))
+           (test-assert (plusp count) "async schemas are exercised"))
       (tool-registry-close-runtime-state registry)))
   nil)
 
@@ -61,8 +58,7 @@
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
-         (orchestrator
-           (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+         (orchestrator  (tool-registry-runtime-binding registry 'task-orchestrator))
          (primary       (task-tests--primary-agent configuration "policy-primary" registry))
          (context
            (make-instance 'tool-context
@@ -132,12 +128,12 @@
                     (job        (handoff-job result)))
                (test-assert (eq ':notify (session-job-completion-policy job))
                             "shell execution transports completion policy")
-               (test-assert (search "use job.wait" (tool-result-content result))
-                            "without a controller wakeup the handoff says to wait for the result")
+               (test-assert (search "use job.get" (tool-result-content result))
+                            "without a controller wakeup the handoff directs explicit result lookup")
                (session-job-await job 5))
              (task-completion-connect primary (lambda ()))
              (unwind-protect
-                  (dolist (case '(("continue" "wakes you as new input; do not poll")
+                  (dolist (case '(("continue" "wakes you as new input. Continue independent work or end your turn")
                                   ("notify" "arrives with your next turn; do not poll")))
                     (destructuring-bind (policy expected) case
                       (let ((result
@@ -171,7 +167,7 @@
                        "grace-expired jobs default to automatic continuation"))
                  (with-lock-held ((task-test-blocking-tool-lock barrier))
                    (setf (task-test-blocking-tool-released-p barrier) t)
-                   (task--condition-broadcast
+                   (sb-thread:condition-broadcast
                     (task-test-blocking-tool-condition-variable barrier))))))
         (ignore-errors (task-orchestrator-close orchestrator))
         (ignore-errors (tool-registry-close-runtime-state registry))

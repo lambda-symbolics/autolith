@@ -14,11 +14,10 @@
    "properties"
    (json-object
     "action" (json-object "type" "string" "enum"
-                          #("list" "get" "allow-restart" "checkpoint" "revive" "abandon"))
+                           #("list" "get" "checkpoint" "revive" "abandon"))
     "id" (task-job-identifier-property)
     "offset" (json-object "type" "integer" "minimum" 0)
     "limit" (json-object "type" "integer" "minimum" 1 "maximum" 100)
-    "safety" (json-object "type" "string" "maxLength" 4000)
     "image" (json-object "type" "string")
     "repl" (json-object "type" "string")
     "authorize" (json-object "type" "boolean"))
@@ -83,12 +82,6 @@ Offsets refer to execution-ID order in the current inventory, not a snapshot."
               ((equal action "get")
                (task-continuity-classify
                 (task-continuity--find viewer identifier) viewer orchestrator))
-              ((equal action "allow-restart")
-               (unless (eq t (tool-argument arguments "authorize"))
-                 (task-continuity--fail "Safety declaration requires explicit authority." :code ':authority))
-               (task-continuity-declare
-                viewer orchestrator identifier
-                :safety (tool-argument arguments "safety" :required t)))
               ((equal action "checkpoint")
                (unless (eq t (tool-argument arguments "authorize"))
                  (task-continuity--fail "Checkpoint declaration requires explicit authority." :code ':authority))

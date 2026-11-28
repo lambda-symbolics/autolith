@@ -1183,7 +1183,7 @@
                               old-registry)
                              (eq
                               (job-pool-lifecycle-state
-                               (task-orchestrator-pool old-orchestrator))
+                               (task-orchestrator-execution-pool old-orchestrator))
                               ':open)
                              (application-task-presentation-listener
                               application)
@@ -1245,7 +1245,7 @@
                                 (not new-registry-closed-p)
                                 (eq
                                  (job-pool-lifecycle-state
-                                  (task-orchestrator-pool new-orchestrator))
+                                  (task-orchestrator-execution-pool new-orchestrator))
                                  ':open)
                                 (application-task-presentation-listener
                                  application))

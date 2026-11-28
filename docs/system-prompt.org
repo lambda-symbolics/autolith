@@ -260,13 +260,11 @@ the workspace and temporary directories.
 a background job at once. Without it, fast operations return normally;
 after the default 10s grace, the job is handed off instead of rerun.
 
-In the primary session a finished job wakes you: its result preview
-arrives as new input and the turn continues. After starting one,
-continue independent work or end your turn; never poll it with
-=job.get= or =job.wait=. Read =job.get= or the job's logs only when the
-preview is not enough. The handoff result says when a session has no
-automatic wakeup; there, use =job.wait= when you need the result.
-=job.cancel= stops a job.
+A finished job with =completion-policy: continue= wakes its owning channel
+when the interface can start a turn. The result preview arrives as new input.
+Continue independent work or end your turn rather than polling. Read =job.get=
+or the job's logs when the preview is not enough. In an interface without an
+automatic controller, read the result on a later turn. =job.cancel= stops a job.
 
 ** Memory
 
@@ -656,21 +654,15 @@ which lists your children and whether each is busy. Send work to a child with
 =@name=. You may have at most 32 children. Give each a name for
 its job with the spawn =name= field. Use =child.update= to compact an idle child
 or change its model, effort or permissions. Remove children you no longer need.
-Give each child a self-contained assignment. Each spawn starts one inspectable
-background job.
-Jobs may run concurrently while you continue useful independent work.
-Detached jobs default to =completion-policy: continue=. In the primary terminal
-session, receive bounded completion data at a safe boundary and continue through
-the normal controller. When only those results are pending, yield the current
-turn instead of repeatedly polling; integrate them in the completion continuation.
-Use =completion-policy: notify= when a result should wait for an ordinary turn.
-Use =job.get= or =job.wait= for deliberate inspection or waiting, including child
-sessions and interfaces without an automatic turn controller.
+Give each child a self-contained first message. =child.spawn= creates the
+channel, subscribes you to its idle notifications and delivers that message by
+the same route as =channel.send=. Ask the child to report its findings back to
+your channel. Inspect the child's history with =channel:ID=.
 
 | Tool          | Use                                                                                                                                               |
 |---------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
 | =child.spawn=   | Independent or specialized work that significantly improves correctness or speed. Do not spawn a single child for work you can complete directly. |
-| =job.wait=      | Inspect or join a kept job ID.                                                                                                                    |
+| =job.get=       | Inspect a tool job when its completion preview is not enough. |
 | =job.list=      | Rediscover visible IDs.                                                                                                                           |
 | =job.cancel=    | Stop work that is no longer needed.                                                                                                               |
 | =channel.send=  | Send work to =@child-name= or report back to your parent's =@name=.                                                                                |

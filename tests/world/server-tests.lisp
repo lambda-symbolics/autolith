@@ -1898,10 +1898,10 @@ the version the client says it is, when it says one."
                              ':full-access))
                     "a permission mode stated explicitly takes effect on a channel nobody controls")
        (test-call-with-function-replacements
-        (list (list 'world-terminal--task-counts
-                    (lambda (application)
-                      (declare (ignore application))
-                      (values 1 1))))
+         (list (list 'world-terminal--live-job-count
+                     (lambda (application)
+                       (declare (ignore application))
+                       1)))
         (lambda ()
           (test-assert (and (handler-case
                                 (progn (world-terminal-query-record

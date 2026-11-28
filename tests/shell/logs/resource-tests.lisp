@@ -8,6 +8,15 @@
   (make-instance 'tool-context :configuration configuration :worker nil
                  :conversation (conversation-create configuration :identifier identifier)))
 
+(-> shell-log-tests--job (task-orchestrator string string &key (:detached-p boolean)) tool-execution-job)
+(defun shell-log-tests--job (orchestrator identifier owner &key detached-p)
+  "Create an ordinary shell execution owned by OWNER."
+  (make-instance 'tool-execution-job :identifier identifier :index 1 :payload nil :pool nil
+                 :owner-identifiers nil :root-identifier owner :orchestrator orchestrator
+                 :execution-identifier (make-identifier) :tool-name "shell.run"
+                 :summary "Shell capture fixture" :detached-p detached-p
+                 :completion-owner-conversation owner))
+
 (-> shell-log-tests--capture (shell-log-artifact vector &optional keyword) t)
 (defun shell-log-tests--capture (artifact bytes &optional (stream ':output))
   "Write exact fixture octets and return closed generic capture evidence."
@@ -78,8 +87,7 @@
            (*shell-log-capture-byte-limit* 32)
            (context                        (shell-log-tests--context configuration "shell-inventory"))
            (orchestrator                   (task-orchestrator-create))
-           (job                            (task-tests--make-job orchestrator :identifier "inventory-job"
-                                                                 :root-identifier         "shell-inventory"))
+           (job                            (shell-log-tests--job orchestrator "inventory-job" "shell-inventory"))
            (latest                         nil)
            (base-time                      (get-universal-time)))
       (unwind-protect
@@ -108,8 +116,7 @@
                (test-assert (< (length (utf8-string-to-octets (task--write-readable-sexp metadata)))
                                (* 64 1024))
                             "Public shell metadata fits below the tool metadata bound"))
-             (let* ((missing-job (task-tests--make-job orchestrator :identifier "missing-job"
-                                                       :root-identifier         "shell-inventory"))
+             (let* ((missing-job (shell-log-tests--job orchestrator "missing-job" "shell-inventory"))
                     (artifact    (shell-log-allocate context :job missing-job)))
                (shell-log-tests--finish artifact (utf8-string-to-octets "x"))
                (platform-delete-file *platform* (shell-log--manifest-path
@@ -123,24 +130,23 @@
 
 (-> shell-log-tests--reference-handoff () null)
 (defun shell-log-tests--reference-handoff ()
-  "Share one exact retained reference across task and session boundaries."
+  "Share one exact retained reference across independent conversations."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (orchestrator                   (task-orchestrator-create))
-           (job
-            (task-tests--make-job orchestrator :identifier "current-child"
-                                  :root-identifier         "shell-receiver"))
-           (producer-job
-            (task-tests--make-job orchestrator :identifier "producer-child"
-                                  :root-identifier         "shell-producer"))
-           (registry
-            (task-child-tool-registry
-             (make-default-tool-registry :configuration configuration)
-             :orchestrator orchestrator))
-           (child                          (task-tests--child-viewer configuration job :registry registry))
+           (registry                       (make-default-tool-registry :configuration configuration))
+           (child
+             (make-instance 'agent
+                            :configuration configuration
+                            :provider      (make-instance 'model-provider)
+                            :conversation  (conversation-create configuration :identifier "shell-receiver")
+                            :tool-registry registry
+                            :worker        nil))
            (producer
-            (task-tests--child-viewer configuration producer-job :registry registry))
+             (make-instance 'agent
+                            :configuration configuration
+                            :conversation  (conversation-create configuration :identifier "shell-producer")))
            (context
             (make-instance 'tool-context :configuration configuration :agent producer
                            :worker nil :conversation (agent-conversation producer)))
@@ -184,11 +190,11 @@
                          (search "returned bytes: 4" (tool-result-content range))
                          (search (format nil "Content:~%diag")
                                  (tool-result-content range)))
-                    "A child reads a bounded byte window using a reference shared by another task")
+                    "A conversation reads a bounded byte window from a shared reference")
                    (test-assert
                     (and (tool-result-success-p query)
                          (search "7: shared diagnostics" (tool-result-content query)))
-                    "A child searches the shared reference by byte offset")
+                    "A conversation searches the shared reference by byte offset")
                    (let ((restricted-range
                           (read-log reference
                            (json-object "byte-offset" 7 "byte-count" 4) :restricted-p t))
@@ -222,8 +228,7 @@
            (publication                      (make-instance 'shell-log-publication :configuration configuration))
            (*shell-log-publications*         (list publication))
            (orchestrator                     (task-orchestrator-create))
-           (job                              (task-tests--make-job orchestrator :identifier "sync-proof-job"
-                                                                   :root-identifier "shell-sync-proof" :detached-p nil)))
+           (job                              (shell-log-tests--job orchestrator "sync-proof-job" "shell-sync-proof")))
       (unwind-protect
            (progn
              (setf (slot-value job 'completion-owner-conversation) "shell-sync-proof"
@@ -354,7 +359,7 @@
 
 (-> test-shell-log-child-delivery () null)
 (defun test-shell-log-child-delivery ()
-  "Prune child captures only after delivery in the child's private transcript."
+  "Prune captures only after delivery in the exact owner's transcript."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
@@ -362,16 +367,12 @@
            (publication                    (make-instance 'shell-log-publication :configuration configuration))
            (*shell-log-publications*       (list publication))
            (orchestrator                   (task-orchestrator-create))
-           (child-job                      (task-tests--make-job orchestrator :identifier "child-owner"
-                                                                  :root-identifier        root))
-           (owner                          (task-job-execution-identifier child-job))
-           (child                          (conversation-create configuration :identifier owner
-                                                                :storage-root             (task--artifact-root configuration child-job)))
-           (unrelated                      (conversation-create configuration :identifier owner))
+           (owner                          root)
+           (child                          (conversation-create configuration :identifier owner))
+           (unrelated                      (conversation-create configuration :identifier "shell-foreign-delivery"))
            (context                        (make-instance 'tool-context :configuration configuration
                                                                        :conversation child :worker nil))
-           (job                            (task-tests--make-job orchestrator :identifier "child-command"
-                                                                  :root-identifier root :detached-p nil)))
+           (job                            (shell-log-tests--job orchestrator "child-command" owner)))
       (unwind-protect
            (progn
              (conversation-append-user-message child "Run one command.")
@@ -388,24 +389,24 @@
                     (*shell-log-retention-byte-limit* 43))
                (conversation-append-record unrelated receipt)
                (test-assert (not (shell-log--sync-delivered-p configuration metadata))
-                            "A same-ID primary transcript is not exact child delivery")
+                            "A foreign transcript is not exact owner delivery")
                (let ((replacement (handler-case (shell-log-allocate context)
                                     (shell-log-error () nil))))
                  (when replacement (shell-log-release-artifact replacement))
                  (test-assert (null replacement)
-                              "A same-ID primary transcript cannot acknowledge a child capture"))
+                              "A foreign transcript cannot acknowledge the capture"))
                (test-assert (probe-file capture)
-                            "Undelivered child output remains available under quota pressure")
+                            "Undelivered output remains available under quota pressure")
                (conversation-append-record child receipt)
                (test-assert (shell-log--sync-delivered-p configuration metadata)
-                            "The private child transcript acknowledges the exact synchronous capture")
+                            "The exact owner transcript acknowledges the synchronous capture")
                (shell-log--finish-publication publication)
                (let ((replacement (shell-log-allocate context)))
                  (unwind-protect
                       (test-assert
                        (and (eq ':pruned (getf (shell-log--read-manifest configuration directory) :state))
                             (not (probe-file capture)))
-                       "The exact child transcript permits quota pruning of delivered output")
+                       "The exact owner transcript permits quota pruning of delivered output")
                    (shell-log-release-artifact replacement)))))
         (shell-log--finish-publication publication)
         (task-orchestrator-close orchestrator))))
@@ -421,8 +422,7 @@
            (context                          (shell-log-tests--context configuration "shell-preflight"))
            (orchestrator                     (task-orchestrator-create))
            (*tool-execution-current-job*
-             (task-tests--make-job orchestrator :identifier "preflight-job"
-                                  :root-identifier "shell-preflight" :detached-p nil)))
+             (shell-log-tests--job orchestrator "preflight-job" "shell-preflight")))
       (unwind-protect
            (let ((original (fdefinition 'shell-log--prune))
                  (enabled  nil))
@@ -1031,8 +1031,7 @@
 (-> shell-log-tests--receipt-capture (configuration task-orchestrator conversation &key (:root string)) shell-log-artifact)
 (defun shell-log-tests--receipt-capture (configuration orchestrator conversation &key root)
   "Publish one admitted detached closed capture owned by CONVERSATION."
-  (let* ((job     (task-tests--make-job orchestrator :identifier "receipt-capture"
-                                     :root-identifier root :detached-p t))
+  (let* ((job     (shell-log-tests--job orchestrator "receipt-capture" root :detached-p t))
          (context (make-instance 'tool-context :configuration configuration :worker nil
                                 :conversation conversation)))
     (setf (slot-value job 'completion-owner-conversation) (conversation-identifier conversation))
@@ -1052,45 +1051,30 @@
 
 (-> test-shell-log-receipt-owners () null)
 (defun test-shell-log-receipt-owners ()
-  "Recognize late root, child and nested-child receipts, never foreign authority."
+  "Recognize an exact owner's late receipt, never foreign authority."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (runtime                        (task-orchestrator-create))
-           (root                           (conversation-create configuration :identifier "receipt-root"))
-           (root-agent                     (make-instance 'agent :configuration configuration :conversation root))
-           (foreign                        (conversation-create configuration :identifier "receipt-foreign"))
-           (parent                         root-agent))
+           (owner                          (conversation-create configuration :identifier "receipt-owner"))
+           (foreign                        (conversation-create configuration :identifier "receipt-foreign")))
       (unwind-protect
-           (dotimes (depth 3)
-             (let* ((job          (and (plusp depth)
-                                       (task-tests--make-job runtime :identifier "receipt-child"
-                                         :root-identifier "receipt-root" :parent-agent parent)))
-                    (owner        (if job (task-job-execution-identifier job) "receipt-root"))
-                    (conversation (if job
-                                      (conversation-create configuration :identifier owner
-                                        :storage-root                                (task--artifact-root configuration job)) root))
-                    (artifact     (shell-log-tests--receipt-capture configuration runtime conversation :root "receipt-root"))
-                    (receipt      (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id))))
-               (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
-                            "unknown completion stays protected")
-               (shell-log-tests--receipt-append foreign receipt)
-               (when job
-                 (shell-log-tests--receipt-append (conversation-create configuration :identifier owner) receipt))
-               (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
-                            "foreign transcript including same-ID primary is not authority")
-               (shell-log-tests--receipt-append conversation "completion:wrong-execution")
-               (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
-                            "wrong execution receipt is not delivery")
-               (shell-log-tests--receipt-append conversation receipt)
-               (test-assert (shell-log-tests--receipt-prunable configuration artifact)
-                            "exact late receipt permits closed capture pruning at every depth")
-               (setf (getf (shell-log-artifact-metadata artifact) :state) :active)
-               (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
-                            "delivery never overrides active state")
-               (when job
-                 (setf parent (make-instance 'task-child-agent :configuration configuration
-                                            :conversation conversation :job job :depth depth)))))
+           (let* ((artifact (shell-log-tests--receipt-capture configuration runtime owner :root "receipt-owner"))
+                  (receipt  (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id))))
+             (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
+                          "Unknown completion stays protected")
+             (shell-log-tests--receipt-append foreign receipt)
+             (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
+                          "A foreign transcript is not authority")
+             (shell-log-tests--receipt-append owner "completion:wrong-execution")
+             (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
+                          "A wrong execution receipt is not delivery")
+             (shell-log-tests--receipt-append owner receipt)
+             (test-assert (shell-log-tests--receipt-prunable configuration artifact)
+                          "The exact late receipt permits closed capture pruning")
+             (setf (getf (shell-log-artifact-metadata artifact) :state) :active)
+             (test-assert (not (shell-log-tests--receipt-prunable configuration artifact))
+                          "Delivery never overrides active state"))
         (task-orchestrator-close runtime))))
   nil)
 
@@ -1241,19 +1225,16 @@
 
 (-> test-shell-log-receipt-pressure () null)
 (defun test-shell-log-receipt-pressure ()
-  "Prune verified root/child receipts under pressure, retaining an unknown capture."
+  "Prune verified receipts under pressure, retaining an unknown capture."
   (with-test-configuration (configuration)
     (let* ((*shell-log-capture-byte-limit* 32)
            (runtime                        (task-orchestrator-create))
-           (root                           (conversation-create configuration :identifier "pressure-root"))
-           (child-job                      (task-tests--make-job runtime :identifier "pressure-child" :root-identifier "pressure-root"))
-           (child                          (conversation-create configuration :identifier (task-job-execution-identifier child-job)
-                                                                :storage-root             (task--artifact-root configuration child-job))))
+           (root                           (conversation-create configuration :identifier "pressure-root")))
       (unwind-protect
            (let* ((unknown (shell-log-tests--receipt-capture configuration runtime root :root "pressure-root"))
                   (first   (shell-log-tests--receipt-capture configuration runtime root :root "pressure-root"))
-                  (second  (shell-log-tests--receipt-capture configuration runtime child :root "pressure-root")))
-             (dolist (pair (list (cons first root) (cons second child)))
+                  (second  (shell-log-tests--receipt-capture configuration runtime root :root "pressure-root")))
+             (dolist (pair (list (cons first root) (cons second root)))
                (shell-log-tests--receipt-append (rest pair)
                  (task-completion--receipt (getf (shell-log-artifact-metadata (first pair)) :execution-id))))
              (let ((*shell-log-retention-byte-limit* 33))
@@ -1387,24 +1368,20 @@
 
 (-> shell-log-tests--sync-details-case
     (string &key (:path keyword) (:shape keyword) (:mismatch (option keyword))
-     (:status keyword) (:child-p boolean)) null)
+     (:status keyword)) null)
 (defun shell-log-tests--sync-details-case (name &key (path ':tool) (shape ':tagged) mismatch
-                                                    (status ':ok) child-p)
+                                                    (status ':ok))
   "Persist incompatible details before an exact receipt, checking eligibility only."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (root                           "sync-details-root")
-           (owner                          (if child-p "sync-details-child" root))
-           (conversation                   (conversation-create configuration :identifier owner
-                                             :storage-root                                (and child-p
-                                                                                           (merge-pathnames "sync-details-child/"
-                                                                                             (task--artifact-group-root configuration root)))))
+           (owner                          root)
+           (conversation                   (conversation-create configuration :identifier owner))
            (context                        (make-instance 'tool-context :configuration configuration
                                              :conversation conversation :worker nil))
            (runtime                        (task-orchestrator-create))
-           (job                            (task-tests--make-job runtime :identifier "details-command"
-                                             :root-identifier root :detached-p nil)))
+           (job                            (shell-log-tests--job runtime "details-command" root)))
       (unwind-protect
            (progn
              (setf (slot-value job 'completion-owner-conversation) owner
@@ -1507,20 +1484,18 @@
 (-> test-shell-log-sync-details-identities () null)
 (defun test-shell-log-sync-details-identities ()
   "Keep exact identity and lifecycle protection after skipping tagged details."
-  (dolist (child-p '(nil t))
-    (dolist (path '(:tool :goal))
-      (shell-log-tests--sync-details-case (format nil "~A/~A/exact" child-p path)
-                                         :path path :child-p child-p
-                                         :status (if (eq path ':tool) ':ok ':passed))
-      (dolist (mismatch '(:no-receipt :owner :header :execution :artifact :log-active :active :detached))
-        (shell-log-tests--sync-details-case (format nil "~A/~A/~A" child-p path mismatch)
-                                           :path path :mismatch mismatch :child-p child-p
-                                           :status (if (eq path ':tool) ':ok ':passed)))
-      (shell-log-tests--sync-details-case (format nil "~A/~A/nonterminal" child-p path)
-                                         :path path :mismatch ':status :status ':running :child-p child-p))
-    (shell-log-tests--sync-details-case "wrong call" :mismatch ':call :child-p child-p)
-    (shell-log-tests--sync-details-case "goal cannot acknowledge call" :path ':goal :status ':passed
-                                       :mismatch ':goal-call :child-p child-p))
+  (dolist (path '(:tool :goal))
+    (shell-log-tests--sync-details-case (format nil "~A/exact" path)
+                                       :path path :status (if (eq path ':tool) ':ok ':passed))
+    (dolist (mismatch '(:no-receipt :owner :header :execution :artifact :log-active :active :detached))
+      (shell-log-tests--sync-details-case (format nil "~A/~A" path mismatch)
+                                         :path path :mismatch mismatch
+                                         :status (if (eq path ':tool) ':ok ':passed)))
+    (shell-log-tests--sync-details-case (format nil "~A/nonterminal" path)
+                                       :path path :mismatch ':status :status ':running))
+  (shell-log-tests--sync-details-case "wrong call" :mismatch ':call)
+  (shell-log-tests--sync-details-case "goal cannot acknowledge call" :path ':goal :status ':passed
+                                     :mismatch ':goal-call)
   nil)
 
 
@@ -1533,6 +1508,32 @@
     (shell-log--prunable-p configuration directory
                           (shell-log--read-manifest configuration directory :measure-p nil))))
 
+(-> shell-log-tests--legacy-owner-root (configuration string string) pathname)
+(defun shell-log-tests--legacy-owner-root (configuration root owner)
+  "Return the historical private transcript directory for OWNER."
+  (merge-pathnames (format nil "~A/" owner)
+                   (task--artifact-group-root configuration root)))
+
+(-> shell-log-tests--publish-legacy-terminal (shell-log-artifact session-job agent) null)
+(defun shell-log-tests--publish-legacy-terminal (artifact job parent)
+  "Materialize the historical root-group location of an authenticated terminal."
+  (let* ((configuration (agent-configuration parent))
+         (metadata      (shell-log-artifact-metadata artifact))
+         (execution     (session-job-execution-identifier job))
+         (source        (merge-pathnames (format nil "~A/" execution)
+                         (task--artifact-group-root configuration
+                          (session-job-completion-owner-conversation job))))
+         (destination   (merge-pathnames (format nil "~A/" execution)
+                         (task--artifact-group-root configuration (getf metadata :root-conversation)))))
+    (task-continuity-record-terminal
+     job parent (list :shell-logs (list (shell-log--public-metadata metadata))) :state ':completed)
+    (dolist (name '("continuity.sexp" "terminal.sexp"))
+      (uiop:copy-file (merge-pathnames name source) (merge-pathnames name destination)))
+    (with-shell-log-lock (configuration)
+      (test-assert (shell-log--publication-pending-p configuration metadata)
+                   "Historical terminal has exact pending delivery authority")))
+  nil)
+
 (-> shell-log-tests--owner-removal
     (function &key (:backfill-p boolean) (:around-removal (option function))) null)
 (defun shell-log-tests--owner-removal (check &key backfill-p around-removal)
@@ -1541,38 +1542,40 @@
     (let* ((*shell-log-active*             (make-hash-table :test #'equal))
            (*shell-log-capture-byte-limit* 32)
            (runtime                        (task-orchestrator-create))
-           (root                           (conversation-create configuration :identifier "removal-root"))
-           (parent                         (make-instance 'agent :configuration configuration :conversation root))
+           (root                           (conversation-create configuration :identifier "Rmv1234"))
            (jobs                           nil)
            (captures                       nil))
       (unwind-protect
            (flet ((child (identifier)
-                    (let ((job (task-tests--make-job runtime :identifier identifier
-                                 :root-identifier "removal-root" :parent-agent parent)))
+                    (let ((job (shell-log-tests--job runtime identifier "Rmv1234")))
                       (setf (slot-value job 'execution-identifier) identifier)
                       job)))
-             (dolist (identifier '("000Owner" "001Control"))
-               (let* ((job     (child identifier))
-                      (owner   (conversation-create configuration :identifier identifier
-                                 :storage-root                                (task--artifact-root configuration job)))
-                      (context (make-instance 'tool-context :configuration configuration
-                                 :worker nil :conversation owner)))
+             (dolist (identifier '("Abc1234" "Def5678"))
+                (let* ((job     (child identifier))
+                       (owner   (conversation-create configuration :identifier   identifier
+                                                                   :storage-root (shell-log-tests--legacy-owner-root
+                                                                                  configuration "Rmv1234" identifier)))
+                       (context (make-instance 'tool-context :configuration configuration
+                                                            :worker        nil :conversation root)))
                  (conversation-append-user-message owner "Capture fixture output.")
+                 (world-register-conversation configuration owner)
                  (push job jobs)
-                 (dolist (detached (if (equal identifier "000Owner") '(nil t) '(t)))
-                   (let ((command (task-tests--make-job runtime :identifier "command"
-                                    :root-identifier "removal-root" :detached-p detached)))
+                 (dolist (detached (if (equal identifier "Abc1234") '(nil t) '(t)))
+                   (let ((command (shell-log-tests--job runtime "command" "Rmv1234"
+                                                       :detached-p detached)))
                      (setf (slot-value command 'completion-owner-conversation) identifier
                            (slot-value command 'parent-call-id) "removal-call")
-                     (let* ((publisher (and detached (shell-log-tests--admit configuration command owner)))
+                     (let* ((publisher (and detached (shell-log-tests--admit configuration command root)))
                             (artifact  (shell-log-allocate context :job command)))
+                       (setf (getf (shell-log-artifact-metadata artifact) :completion-owner-conversation)
+                             identifier)
                        (shell-log-tests--finish artifact #(65))
-                       (when publisher (shell-log-tests--publish-terminal artifact command publisher))
-                       (unless (equal identifier "000Owner")
+                       (when publisher (shell-log-tests--publish-legacy-terminal artifact command publisher))
+                       (unless (equal identifier "Abc1234")
                          (setf (getf (shell-log-artifact-metadata artifact) :created-at)
                                (- (get-universal-time) *shell-log-retention-age* 1))
                          (shell-log--write-manifest artifact))
-                       (when (equal identifier "000Owner")
+                       (when (equal identifier "Abc1234")
                          (if detached
                              (shell-log-tests--receipt-append owner
                                (task-completion--receipt (session-job-execution-identifier command)))
@@ -1595,7 +1598,7 @@
              (when backfill-p
                (dolist (job jobs)
                  (let* ((owner    (session-job-execution-identifier job))
-                        (identity (shell-log--owner-identity configuration "removal-root" owner))
+                        (identity (shell-log--owner-identity configuration "Rmv1234" owner))
                         (receipts (merge-pathnames "shell-delivery/"
                                    (conversation-storage-directory-pathname identity))))
                    (platform-delete-directory-tree *platform* receipts
@@ -1604,13 +1607,14 @@
                                   configuration (shell-log-artifact-metadata (first captures))))
                             "Pre-index rotated child evidence needs backfill to establish exact delivery"))
              (flet ((remove-owners ()
-                      (dolist (job jobs)
-                        (task-child-delete-storage configuration (list (session-job-execution-identifier job))))))
+                       (channel-remove configuration (mapcar #'session-job-execution-identifier jobs))))
                (if around-removal
                    (funcall around-removal configuration root #'remove-owners)
                    (remove-owners)))
              (dolist (job jobs)
-               (test-assert (not (probe-file (task--artifact-root configuration job)))
+                (test-assert (not (probe-file (shell-log-tests--legacy-owner-root
+                                               configuration "Rmv1234"
+                                               (session-job-execution-identifier job))))
                             "Explicit removal deleted each original owner"))
              (test-assert
               (every (lambda (capture)
@@ -1686,16 +1690,24 @@
            (runtime                        (task-orchestrator-create))
            (root                           (conversation-create configuration :identifier "mark-root"))
            (parent                         (make-instance 'agent :configuration configuration :conversation root))
-           (job                            (task-tests--make-job runtime :identifier "owner"
-                                               :root-identifier "mark-root" :parent-agent parent)))
+           (job                            (shell-log-tests--job runtime "owner" "mark-root")))
       (setf (slot-value job 'execution-identifier) "000Owner")
       (unwind-protect
-           (let* ((owner    (conversation-create configuration :identifier "000Owner"
-                              :storage-root                                (task--artifact-root configuration job)))
-                  (artifact (shell-log-tests--receipt-capture configuration runtime owner :root "mark-root")))
-             (shell-log-tests--receipt-append owner
-               (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id)))
-             (funcall function configuration runtime parent job owner artifact))
+           (let* ((owner   (conversation-create configuration :identifier    "000Owner"
+                                                               :storage-root (shell-log-tests--legacy-owner-root
+                                                                              configuration "mark-root" "000Owner")))
+                  (command (shell-log-tests--job runtime "legacy-capture" "mark-root" :detached-p t))
+                  (context (make-instance 'tool-context :configuration configuration :worker nil :conversation root)))
+              (conversation-append-user-message owner "Historical owner fixture.")
+              (setf (slot-value command 'completion-owner-conversation) "000Owner")
+              (let* ((publisher (shell-log-tests--admit configuration command root))
+                     (artifact  (shell-log-allocate context :job command)))
+                (setf (getf (shell-log-artifact-metadata artifact) :completion-owner-conversation) "000Owner")
+                (shell-log-tests--finish artifact #(65))
+                (shell-log-tests--publish-legacy-terminal artifact command publisher)
+                (shell-log-tests--receipt-append owner
+                  (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id)))
+                (funcall function configuration runtime parent job owner artifact)))
         (task-orchestrator-close runtime))))
   nil)
 
@@ -1751,8 +1763,8 @@
   (dolist (failure '(:write :read :enumeration :path :size :delete))
     (shell-log-tests--owner-fixture
      (lambda (configuration runtime parent job owner artifact)
-       (declare (ignore runtime parent owner))
-       (let* ((owner-root      (task--artifact-root configuration job))
+       (declare (ignore runtime parent job owner))
+       (let* ((owner-root      (shell-log-tests--legacy-owner-root configuration "mark-root" "000Owner"))
               (original-delete (symbol-function 'platform-delete-directory-tree))
               (original-write  (symbol-function 'shell-log--write-manifest))
               (original-path   (symbol-function 'shell-log--safe-path))
@@ -1789,7 +1801,10 @@
                       (t
                        (error "Injected pre-delete ~A failure." failure))))))
           (lambda ()
-            (handler-case (task-child-delete-storage configuration (list "000Owner"))
+            (handler-case
+                (shell-log-persist-owner-delivery
+                 configuration "mark-root" (list "000Owner")
+                 :delete-function (lambda () (platform-delete-directory-tree *platform* owner-root :validate t)))
               (error (condition)
                 (setf signalled condition)))))
          (test-assert signalled (format nil "Failed ~A handoff signals to the remover" failure))
@@ -1798,7 +1813,9 @@
                       "Failure never destroys existing positive delivery authority")
          (test-assert (eq (eq failure :delete) (shell-log-tests--marked-p configuration artifact))
                       "Only post-mark deletion failure leaves a positive mark")
-         (task-child-delete-storage configuration (list "000Owner"))
+         (shell-log-persist-owner-delivery
+          configuration "mark-root" (list "000Owner")
+          :delete-function (lambda () (platform-delete-directory-tree *platform* owner-root :validate t)))
          (test-assert (not (probe-file owner-root)) "A retried removal completes")
          (test-assert (shell-log-tests--marked-p configuration artifact)
                       "Successful retry preserves authority outside the deleted owner")))))
@@ -1806,69 +1823,14 @@
 
 (-> test-shell-log-owner-delivery-boundaries () null)
 (defun test-shell-log-owner-delivery-boundaries ()
-  "Require exact child or nested-child authority, excluding foreign and root storage."
-  (with-test-configuration (configuration)
-    (let* ((*shell-log-active*             (make-hash-table :test #'equal))
-           (*shell-log-capture-byte-limit* 32)
-           (runtime                        (task-orchestrator-create))
-           (root                           (conversation-create configuration :identifier "boundary-root"))
-           (parent                         (make-instance 'agent :configuration configuration :conversation root))
-           (foreign                        (conversation-create configuration :identifier "foreign-root"))
-           (owners                         nil))
-      (unwind-protect
-           (progn
-             (let ((capture (shell-log-tests--receipt-capture configuration runtime root :root "boundary-root")))
-               (shell-log-tests--receipt-append root
-                 (task-completion--receipt (getf (shell-log-artifact-metadata capture) :execution-id)))
-               (test-assert (handler-case
-                                (progn (shell-log-persist-owner-delivery configuration
-                                         "boundary-root" (list "boundary-root")) nil)
-                              (shell-log-error () t))
-                            "Primary owner cannot be treated as a deleted child")
-               (test-assert (shell-log-tests--disk-prunable configuration capture)
-                            "Root capture still uses its ordinary durable delivery reader")
-               (test-assert (not (shell-log-tests--marked-p configuration capture))
-                            "Unrelated root authority is not eagerly marked"))
-             (dotimes (depth 2)
-               (let* ((job          (task-tests--make-job runtime :identifier "nested-owner"
-                                     :root-identifier "boundary-root" :parent-agent parent))
-                      (owner        (task-job-execution-identifier job))
-                      (conversation (conversation-create configuration :identifier owner
-                                      :storage-root                                (task--artifact-root configuration job)))
-                      (capture      (shell-log-tests--receipt-capture configuration runtime conversation
-                                      :root "boundary-root"))
-                      (metadata     (shell-log-artifact-metadata capture))
-                      (receipt      (task-completion--receipt (getf metadata :execution-id))))
-                 (shell-log-tests--receipt-append foreign receipt)
-                 (shell-log-tests--receipt-append
-                  (conversation-create configuration :identifier owner) receipt)
-                 (shell-log-tests--receipt-append conversation "completion:wrong")
-                 (shell-log-persist-owner-delivery configuration "boundary-root" (list owner))
-                 (test-assert (not (shell-log-tests--marked-p configuration capture))
-                              "Foreign root, same-ID primary and wrong receipt cannot grant a mark")
-                 (shell-log-tests--receipt-append conversation receipt)
-                 (shell-log-persist-owner-delivery configuration "boundary-root" (list owner))
-                 (test-assert (shell-log-tests--marked-p configuration capture)
-                              "Exact durable child or nested-child receipt grants authority")
-                 (push (list owner (task--artifact-root configuration job) capture) owners)
-                 (setf parent (make-instance 'task-child-agent :configuration configuration
-                                            :conversation conversation :job job :depth (1+ depth)))))
-             ;; Remove the nested child first, then its ancestor, as child removal does.
-             (loop for (owner directory capture) in owners
-                   do (task-child-delete-storage configuration (list owner))
-                      (test-assert (not (probe-file directory))
-                                   "Explicit removal deletes each marked nested owner")
-                      (test-assert (conversation-storage-active-pathname
-                                    (merge-pathnames (make-pathname :name owner :type "sexp")
-                                                     (configuration-conversation-root configuration)))
-                                   "Child removal preserves a same-ID primary conversation")
-                      (test-assert (and (shell-log-tests--marked-p configuration capture)
-                                        (shell-log-tests--disk-prunable configuration capture))
-                                   "Marked authority survives its nested owner's removal")))
-        (task-orchestrator-close runtime))))
+  "Reject root-as-child and mismatched physical or logical capture identities."
   (shell-log-tests--owner-fixture
    (lambda (configuration runtime parent job owner artifact)
      (declare (ignore runtime parent job owner))
+     (test-assert (handler-case
+                      (progn (shell-log-persist-owner-delivery configuration "mark-root" (list "mark-root")) nil)
+                    (shell-log-error () t))
+                  "Primary owner cannot be treated as a deleted child")
      (dolist (key '(:root-conversation :execution-id :artifact-id))
        (let* ((original (copy-tree (shell-log-artifact-metadata artifact)))
               (bad      (copy-tree original)))
@@ -1893,29 +1855,22 @@
 (-> test-shell-log-owner-delivery-tagged-details () null)
 (defun test-shell-log-owner-delivery-tagged-details ()
   "Persist exact owner delivery after skipping incompatible tagged details."
-  (with-test-configuration (configuration)
-    (let* ((*shell-log-active*             (make-hash-table :test #'equal))
-           (*shell-log-capture-byte-limit* 32)
-           (runtime                        (task-orchestrator-create))
-           (owner                          (conversation-create configuration :identifier "tagged-details"
-                                             :storage-root                                (merge-pathnames "tagged-details/"
-                                                                                           (task--artifact-group-root configuration "tagged-details-root")))))
-      (unwind-protect
-           (let* ((artifact (shell-log-tests--receipt-capture configuration runtime owner :root "tagged-details-root"))
-                  (metadata (shell-log-artifact-metadata artifact)))
-             (setf (getf metadata :detached-p) nil (getf metadata :parent-call-id) nil)
-             (shell-log--write-manifest artifact)
-             (conversation-append-record owner
-               (list :tool-result :status :ok :details '(:task-agents :offset 0)))
-             (conversation-append-record owner
-               (list :goal :gates (list (list :status  :passed
-                                         :tool-details (list :shell-logs (list (shell-log--public-metadata metadata)))))))
-             (test-assert (shell-log--sync-delivered-p configuration metadata)
-                          "Tagged details do not hide a later exact synchronous receipt")
-             (shell-log-persist-owner-delivery configuration "tagged-details-root" (list "tagged-details"))
-             (test-assert (shell-log-tests--marked-p configuration artifact)
-                          "Exact synchronous delivery persists before owner removal"))
-        (task-orchestrator-close runtime))))
+  (shell-log-tests--owner-fixture
+   (lambda (configuration runtime parent job owner artifact)
+     (declare (ignore runtime parent job))
+     (let ((metadata (shell-log-artifact-metadata artifact)))
+       (setf (getf metadata :detached-p) nil (getf metadata :parent-call-id) nil)
+       (shell-log--write-manifest artifact)
+       (conversation-append-record owner
+         (list :tool-result :status :ok :details '(:task-agents :offset 0)))
+       (conversation-append-record owner
+         (list :goal :gates (list (list :status      :passed
+                                       :tool-details (list :shell-logs (list (shell-log--public-metadata metadata)))))))
+       (test-assert (shell-log--sync-delivered-p configuration metadata)
+                    "Tagged details do not hide a later exact synchronous receipt")
+       (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
+       (test-assert (shell-log-tests--marked-p configuration artifact)
+                    "Exact synchronous delivery persists before owner removal"))))
   nil)
 
 (-> test-shell-log-owner-delivery-leases () null)
@@ -1984,7 +1939,7 @@
   "Serialize the owner removal handoff, a second marker and quota inspection."
   (shell-log-tests--owner-fixture
    (lambda (configuration runtime parent job owner artifact)
-     (declare (ignore runtime parent owner))
+     (declare (ignore runtime parent job owner))
      (let* ((entered      (sb-thread:make-semaphore))
             (resume       (sb-thread:make-semaphore))
             (started      (sb-thread:make-semaphore))
@@ -2017,7 +1972,14 @@
                             :name "owner removal fixture") threads)))
             (unwind-protect
                  (progn
-                   (start (lambda () (task-child-delete-storage configuration (list "000Owner"))))
+                   (start (lambda ()
+                            (shell-log-persist-owner-delivery
+                             configuration "mark-root" (list "000Owner")
+                             :delete-function
+                             (lambda ()
+                               (platform-delete-directory-tree
+                                *platform* (shell-log-tests--legacy-owner-root configuration "mark-root" "000Owner")
+                                :validate t)))))
                    (unless (sb-thread:wait-on-semaphore entered :timeout 10)
                      (error "Removal did not reach mark publication."))
                    (start (lambda ()
@@ -2037,7 +1999,8 @@
                        (error "Removal interleaving failed to complete.")))
                    (test-assert (null failures) "Controlled concurrent operations complete without error")
                    (test-assert (= writes 1) "Concurrent retries publish one monotonic mark")
-                   (test-assert (not (probe-file (task--artifact-root configuration job)))
+                   (test-assert (not (probe-file (shell-log-tests--legacy-owner-root
+                                                  configuration "mark-root" "000Owner")))
                                 "Explicit removal deletes the owner after successful publication")
                    (test-assert (shell-log-tests--marked-p configuration artifact)
                                 "Serialized prune observes fresh durable authority"))
@@ -2220,7 +2183,7 @@
 (defun shell-log-tests--allocation-removal-race
     (configuration root remove &key during-index-p)
   "Schedule actual owner removal before the index lock or during a historical batch."
-  (let* ((identity         (shell-log--owner-identity configuration "removal-root" "000Owner"))
+  (let* ((identity         (shell-log--owner-identity configuration "Rmv1234" "Abc1234"))
          (owner-directory  (uiop:pathname-directory-pathname identity))
          (source-lock      (conversation-picker-source-lock-pathname identity))
          (context          (make-instance 'tool-context :configuration configuration

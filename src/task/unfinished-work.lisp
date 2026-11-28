@@ -241,7 +241,7 @@ to LIMIT. Agents without a configured conversation return an empty snapshot."
           (dolist (entry (task-unfinished-work--entries nil live root))
             (unless (gethash (getf (getf entry :record) :execution-id) seen)
               (add-entry entry))))
-        (when (and runtime (not (typep agent 'task-child-agent)))
+        (when runtime
           (task-unfinished-work--index-settle
            runtime path :examined examined
            :kept                  (mapcar (lambda (row) (getf row :execution-id)) rows)))

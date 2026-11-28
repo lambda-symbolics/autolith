@@ -900,7 +900,6 @@
                        "no candidate bypasses final context admission")))))
   nil)
 
-
 (-> test-context-admission-mission-handoff-reasons () null)
 (defun test-context-admission-mission-handoff-reasons ()
   "Keep cancellation and deadline supervisor failures despite retained refusal proof."

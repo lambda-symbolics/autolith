@@ -11,7 +11,13 @@
 (define-condition task-worktree-error (task-error) ()
   (:documentation "An isolated task could not satisfy its authority or lifecycle contract."))
 
-(defclass task-worktree-tool (task-orchestrator-tool)
+(define-condition task-worktree-authority-error (task-worktree-error) ()
+  (:documentation "Git execution was denied by the caller's command policy."))
+
+(defvar *task-worktree-authority-denial* nil
+  "Dynamically bound cell retaining a denial until library unwinding completes.")
+
+(defclass task-worktree-tool (tool)
   ()
   (:documentation "Explicit parent inspection, integration and owned cleanup."))
 
@@ -81,8 +87,13 @@
     (let* ((directory (uiop:ensure-directory-pathname directory))
            (command   (format nil "child.worktree Git argv ~S" argv))
            (decision  (funcall authorize command directory)))
-      (unless (member decision '(:sandboxed :full-access))
-        (task-worktree--error "Worktree Git command was denied." :code ':authority))
+        (unless (member decision '(:sandboxed :full-access))
+          (let ((condition (make-condition 'task-worktree-authority-error
+                                           :message "Worktree Git command was denied."
+                                           :code ':authority :tool-name "child.worktree")))
+            (when *task-worktree-authority-denial*
+              (setf (first *task-worktree-authority-denial*) condition))
+            (error condition)))
       (labels ((run (policy environment)
                  (handler-bind
                      ((cl-exec-sandbox:sandbox-process-cleanup-error
@@ -153,25 +164,63 @@
     (cl-worktree:ownership-error (condition)
       (task-worktree--error (cl-worktree:failure-detail condition)))))
 
+(-> task-worktree--owner (string string) string)
+(defun task-worktree--owner (parent-identifier child-identifier)
+  "Return the durable owner of a child checkout."
+  (format nil "~A/~A" (conversation-identifier-validate-path-component parent-identifier)
+          (conversation-identifier-normalize child-identifier)))
+
+(-> task-worktree--metadata-path (configuration string string) pathname)
+(defun task-worktree--metadata-path (configuration parent-identifier child-identifier)
+  "Return the private sidecar path for a child conversation."
+  (declare (ignore parent-identifier))
+  (merge-pathnames
+   (format nil "task-worktrees/children/~A/worktree.sexp"
+           (conversation-identifier-normalize child-identifier))
+   (config :data-root configuration)))
+
+(-> task-worktree--read-metadata (configuration string string) (option list))
+(defun task-worktree--read-metadata (configuration parent-identifier child-identifier)
+  "Read and verify the child's durable checkout sidecar, when present."
+  (let ((path (task-worktree--metadata-path configuration parent-identifier child-identifier)))
+    (when (probe-file path)
+      (let ((metadata (snapshot-read path :grammar       (task--result-grammar)
+                                         :maximum-octets *task-worktree-artifact-limit*)))
+        (unless (and (equal (getf metadata :owner)
+                            (task-worktree--owner parent-identifier child-identifier))
+                     (equal (getf metadata :metadata-path) (namestring path)))
+          (task-worktree--error "Worktree metadata owner or path does not match the child."))
+        metadata))))
+
+(-> task-worktree--removed-metadata (configuration string) (option list))
+(defun task-worktree--removed-metadata (configuration child-identifier)
+  "Resolve a deleted child's sidecar without depending on its removed world node."
+  (let ((path (task-worktree--metadata-path configuration "" child-identifier)))
+    (when (probe-file path)
+      (let* ((metadata  (snapshot-read path :grammar        (task--result-grammar)
+                                            :maximum-octets *task-worktree-artifact-limit*))
+             (owner     (getf metadata :owner))
+             (separator (and (stringp owner) (position #\/ owner))))
+        (unless separator
+          (task-worktree--error "Worktree metadata has an invalid owner."))
+        (task-worktree--read-metadata configuration (subseq owner 0 separator) child-identifier)))))
+
 (-> task-worktree-command-writable-roots (tool-context) list)
 (defun task-worktree-command-writable-roots (context)
-  "Return shell write scopes for the exact isolated checkout owned by CONTEXT."
-  (let* ((agent     (tool-context-agent context))
-         (job       (and (typep agent 'task-child-agent) (task-child-agent-job agent)))
-         (metadata  (and job (getf (task-job-item job) :worktree)))
-         (workspace (config :working-directory (tool-context-configuration context))))
+  "Return write scopes only for the checkout owned by this conversation."
+  (let* ((conversation  (tool-context-conversation context))
+         (parent        (conversation-parent-identifier conversation))
+         (configuration (tool-context-configuration context))
+         (metadata      (and parent (conversation-identifier-path-fragment
+                                     (conversation-identifier conversation))
+                             (task-worktree--read-metadata
+                              configuration parent (conversation-identifier conversation))))
+         (workspace     (config :working-directory configuration)))
     (when metadata
-      (unless (and (equal (getf metadata :owner) (task-worktree--owner job))
-                   (equal (platform-truename *platform* workspace)
-                          (platform-truename *platform* (getf metadata :path))))
+      (unless (equal (platform-truename *platform* workspace)
+                     (platform-truename *platform* (getf metadata :path)))
         (task-worktree--error "Shell workspace does not match the child's owned checkout."))
       (cons workspace (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
-
-(-> task-worktree--owner (task-job) string)
-(defun task-worktree--owner (job)
-  "Return a durable conversation-qualified child execution owner."
-  (format nil "~A/~A" (task-job-root-conversation-identifier job)
-          (task-job-execution-identifier job)))
 
 (-> task-worktree--metadata (cl-worktree:worktree (member :patch :commit-range) string) list)
 (defun task-worktree--metadata (handle kind metadata-path)
@@ -183,9 +232,6 @@
         :baseline    (cl-worktree:worktree-baseline handle)
         :artifact-kind kind :metadata-path metadata-path
         :setup-state (cl-worktree:worktree-state handle)))
-
-(defvar *task-worktree-cleanup-job* nil
-  "Task owning the Git command currently being executed.")
 
 (defvar *task-worktree-cleanups* nil
   "Native Git cleanup ownership retained beyond task terminal publication.")
@@ -199,12 +245,7 @@
   "Accept native ownership before the Git caller unwinds."
   (sb-sys:without-interrupts
     (with-lock-held (*task-worktree-cleanup-lock*)
-      (push (list :job       *task-worktree-cleanup-job*
-                  :source    (pathname
-                              (or (and *task-worktree-cleanup-job*
-                                       (getf (getf (task-job-item *task-worktree-cleanup-job*) :worktree)
-                                             :source))
-                                  source))
+      (push (list :source    (pathname source)
                   :condition condition
                   :owner     (cl-exec-sandbox:sandbox-process-cleanup-error-owner condition))
             *task-worktree-cleanups*)))
@@ -215,23 +256,22 @@
   "Advance the library's cleanup owner once without waiting for native work."
   (eq ':pending (cl-exec-sandbox:sandbox-cleanup-poll (getf record :owner))))
 
-(-> task-worktree-cleanup-snapshot (&key (:job (option task-job)) (:source t)) list)
-(defun task-worktree-cleanup-snapshot (&key job source)
+(-> task-worktree-cleanup-snapshot (&key (:source t)) list)
+(defun task-worktree-cleanup-snapshot (&key source)
   "Return portable native cleanup ownership without waiting for any live thread."
   (with-lock-held (*task-worktree-cleanup-lock*)
     (setf *task-worktree-cleanups*
           (delete-if-not #'task-worktree--cleanup-pending-p *task-worktree-cleanups*))
     (loop for record in *task-worktree-cleanups*
           for condition = (getf record :condition)
-          when (and (or (null job) (eq job (getf record :job)))
-                    (or (null source)
-                        (equal (handler-case
-                                   (uiop:ensure-directory-pathname (platform-truename *platform* source))
-                                 (error () (uiop:ensure-directory-pathname source)))
-                               (handler-case
-                                   (uiop:ensure-directory-pathname
-                                    (platform-truename *platform* (getf record :source)))
-                                 (error () (uiop:ensure-directory-pathname (getf record :source)))))))
+          when (or (null source)
+                   (equal (handler-case
+                              (uiop:ensure-directory-pathname (platform-truename *platform* source))
+                            (error () (uiop:ensure-directory-pathname source)))
+                          (handler-case
+                              (uiop:ensure-directory-pathname
+                               (platform-truename *platform* (getf record :source)))
+                           (error () (uiop:ensure-directory-pathname (getf record :source))))))
             collect
             (append (list :source    (namestring (getf record :source))
                           :condition (princ-to-string condition))
@@ -248,42 +288,45 @@
                           :code ':cleanup-pending))
   nil)
 
-(-> task-worktree-configuration (task-job configuration) configuration)
-(defun task-worktree-configuration (job configuration)
-  "Create JOB's requested detached workspace before opening its child session.
-Registry records survive cancellation between Git creation and metadata publication.
-The source is never reset or stashed, and child cleanup is always explicit."
-  (let ((policy (getf (task-job-item job) :isolation)))
-    (let ((*task-worktree-cleanup-job* job))
-     (unless policy (return-from task-worktree-configuration configuration))
-     (with-lock-held (*task-worktree-lock*)
-       (let* ((source        (config :working-directory configuration))
-              (owner         (task-worktree--owner job))
-              (path          (merge-pathnames
-                              (format nil "task-worktrees/checkouts/~A/workspace/"
-                                      (task-job-execution-identifier job))
-                              (config :data-root configuration)))
-              (container     (uiop:pathname-parent-directory-pathname path))
-              (metadata-path (merge-pathnames "worktree.sexp" (task--artifact-root configuration job)))
-              (manager       (task-worktree--manager
-                              configuration (task-job-command-authorization-function job)
-                              :cancel-function (lambda () (job-cancellation-requested-p job))
-                              :writable-roots  (cons container (task-worktree--git-admin-roots source)))))
-         (ensure-directories-exist (merge-pathnames "probe" container))
-         (labels ((publish (handle)
-                    ;; Only transfer durable ownership with interrupts suppressed.
-                    ;; All Git commands and checkout work run with interrupts enabled.
-                    (sb-sys:without-interrupts
-                      (let ((metadata (task-worktree--metadata handle (getf policy :artifact-kind)
-                                                              (namestring metadata-path))))
-                        (setf (getf (task-job-item job) :worktree) metadata)
-                        (snapshot-write metadata-path metadata)))))
-           (let ((handle (cl-worktree:create-worktree
+(-> task-worktree-configuration
+    (string string configuration &key (:isolation list) (:authorize (option function))
+            (:cancel-function (option function)))
+    (values configuration (option list)))
+(defun task-worktree-configuration (parent-identifier child-identifier configuration
+                                    &key isolation authorize cancel-function)
+  "Create the child's detached checkout and publish its durable sidecar.
+Return the child configuration and the sidecar metadata as two values."
+  (unless isolation
+    (return-from task-worktree-configuration (values configuration nil)))
+  (unless authorize
+    (task-worktree--error "Worktree creation requires command authorization." :code ':authority))
+  (with-lock-held (*task-worktree-lock*)
+    (let* ((source        (config :working-directory configuration))
+           (owner         (task-worktree--owner parent-identifier child-identifier))
+           (path          (merge-pathnames
+                           (format nil "task-worktrees/checkouts/~A/workspace/"
+                                   (conversation-identifier-normalize child-identifier))
+                           (config :data-root configuration)))
+           (container     (uiop:pathname-parent-directory-pathname path))
+           (metadata-path (task-worktree--metadata-path configuration parent-identifier child-identifier))
+           (manager       (task-worktree--manager
+                           configuration authorize :cancel-function cancel-function
+                           :writable-roots                          (cons container (task-worktree--git-admin-roots source)))))
+      (ensure-directories-exist (merge-pathnames "probe" container))
+      (labels ((publish (handle)
+                 (sb-sys:without-interrupts
+                   (snapshot-write metadata-path
+                                   (task-worktree--metadata handle (getf isolation :artifact-kind)
+                                                            (namestring metadata-path))))))
+        (let* ((handle   (cl-worktree:create-worktree
                           manager :source source :path path :owner owner
-                          :baseline (getf policy :baseline) :dirty-policy (getf policy :dirty-policy)
-                          :reserved-function #'publish)))
-             (publish handle)
-             (configuration-copy configuration :working-directory (cl-worktree:worktree-path handle)))))))))
+                          :baseline (getf isolation :baseline) :dirty-policy (getf isolation :dirty-policy)
+                          :reserved-function #'publish))
+               (metadata (task-worktree--metadata handle (getf isolation :artifact-kind)
+                                                   (namestring metadata-path))))
+          (publish handle)
+          (values (configuration-copy configuration :working-directory (cl-worktree:worktree-path handle))
+                  metadata))))))
 
 (-> task-worktree--find-handle (cl-worktree:manager list) cl-worktree:worktree)
 (defun task-worktree--find-handle (manager metadata)
@@ -320,42 +363,6 @@ identifies a readable secured artifact."
       (task-worktree--error "The complete engineering artifact exceeds its storage limit."))
     (snapshot-write-text path text :require-absent require-absent)))
 
-(-> task-worktree-finalize-result (task-job list) list)
-(defun task-worktree-finalize-result (job result)
-  "Attach ownership and publish artifacts for uncancelled terminal results.
-Cancelled tasks retain an explicit pending artifact for parent extraction without
-waiting for Git or the lifecycle lock during terminal publication."
-  (let ((metadata (getf (task-job-item job) :worktree)))
-    (unless metadata (return-from task-worktree-finalize-result result))
-    (setf (getf result :worktree) metadata
-          (getf result :worktree-artifact-state) ':pending)
-    (when (or (member (getf result :status) '(:cancelled :aborted :timeout))
-              (job-cancellation-requested-p job))
-      (setf (getf result :worktree-artifact-state) ':pending)
-      (return-from task-worktree-finalize-result result))
-    (handler-case
-        (with-lock-held (*task-worktree-lock*)
-          (let* ((configuration (agent-configuration (task-job-parent-agent job)))
-                 (manager       (task-worktree--manager
-                                 configuration (task-job-command-authorization-function job)
-                                 :cancel-function (lambda () (job-cancellation-requested-p job))
-                                 :writable-roots
-                                 (cons (pathname (getf metadata :path))
-                                       (task-worktree--git-admin-roots
-                                        (pathname (getf metadata :source))))))
-                 (artifact      (task-worktree--extract manager metadata))
-                 (path          (merge-pathnames "worktree-artifact.sexp" (task--artifact-root configuration job))))
-            (task-worktree--write-artifact path artifact :require-absent t)
-            (setf (getf result :worktree-artifact-path) (namestring path)
-                  (getf result :worktree-artifact-state) ':ready)))
-      (error (condition)
-        (setf (getf result :worktree-error) (princ-to-string condition))
-        (setf (getf result :worktree-artifact-state) ':pending)
-        (when (eq (getf result :status) ':success)
-          (setf (getf result :status) ':failed
-                (getf result :error) (format nil "Worktree artifact extraction failed: ~A" condition)))))
-    result))
-
 (-> task-worktree--read-artifact (list) cl-worktree:artifact)
 (defun task-worktree--read-artifact (metadata)
   "Read and validate the durable artifact at the fixed metadata sibling path."
@@ -371,25 +378,13 @@ waiting for Git or the lifecycle lock during terminal publication."
       (task-worktree--error "Engineering artifact provenance does not match the task."))
     artifact))
 
-(-> task-worktree--visible-metadata (task-worktree-tool tool-context string) list)
-(defun task-worktree--visible-metadata (tool context identifier)
-  "Resolve terminal metadata through existing job visibility or durable task lookup."
-  (let* ((viewer (tool-context-agent context))
-         (job    (task-orchestrator-visible-job-named
-                  (task-orchestrator-tool-orchestrator tool) viewer identifier))
-         (result (if job (getf (session-job-snapshot job) :result)
-                     (task--durable-job-result viewer identifier "child.worktree"))))
-    (cond
-      ((and job (null result))
-       (task-worktree--error
-        (format nil "Task ~A is still running; inspect its worktree once job.wait reports it finished."
-                identifier)))
-      ((null result)
-       (task-worktree--error "No visible terminal isolated task has that identifier; use the job ID or execution ID child.spawn reported."))
-      ((null (getf result :worktree))
-       (task-worktree--error
-        (format nil "Task ~A did not run in an isolated worktree, so it has none to inspect." identifier))))
-    (getf result :worktree)))
+(-> task-worktree--visible-metadata (tool-context string) list)
+(defun task-worktree--visible-metadata (context identifier)
+  "Resolve the durable sidecar of a verified child channel."
+  (or (task-worktree--read-metadata
+       (tool-context-configuration context)
+       (conversation-identifier (tool-context-conversation context)) identifier)
+      (task-worktree--error "The child has no isolated worktree metadata.")))
 
 (-> task-worktree--owned-discovery (cl-worktree:manager tool-context pathname) (values list list))
 (defun task-worktree--owned-discovery (manager context source)
@@ -402,10 +397,17 @@ waiting for Git or the lifecycle lock during terminal publication."
         (values (remove-if #'foreign-p (set-difference owned absent :test #'eq))
                 (remove-if #'foreign-p absent))))))
 
+(defmethod tool-execute :around ((tool task-worktree-tool) (context tool-context) arguments)
+  "Preserve the typed authorization denial after library unwinding and cleanup."
+  (declare (ignore tool context arguments))
+  (let ((*task-worktree-authority-denial* (list nil)))
+    (handler-case (call-next-method)
+      (cl-worktree:worktree-error (condition)
+        (error (or (first *task-worktree-authority-denial*) condition))))))
+
 (defmethod tool-execute ((tool task-worktree-tool) (context tool-context) arguments)
   "Inspect or deliberately integrate an isolated child's artifact, or clean its owned checkout."
-  (when (typep (tool-context-agent context) 'task-child-agent)
-    (task-worktree--error "Worktree integration and cleanup belong to the primary parent." :code ':authority))
+  (declare (ignore tool))
   (task--validate-tool-arguments arguments '("action" "id" "source" "target" "discardDirty")
                                  "child.worktree")
   (let* ((action        (tool-argument arguments "action" :required t))
@@ -438,26 +440,36 @@ waiting for Git or the lifecycle lock during terminal publication."
                                       (find id absent :key #'cl-worktree:worktree-id :test #'equal)))))
                    (unless handle
                      (task-worktree--error "No owned orphan has that worktree ID."))
-                   (when (some (lambda (job)
-                                 (and (typep job 'task-job)
-                                      (not (job-terminal-p job))
-                                      (equal (task-worktree--owner job)
-                                             (cl-worktree:worktree-owner handle))))
-                               (task-orchestrator-list-visible-jobs
-                                (task-orchestrator-tool-orchestrator tool)
-                                (tool-context-agent context)))
-                     (task-worktree--error "The checkout belongs to a live task; cancel and join it before cleanup."))
-                   (let ((cleanup-manager
-                           (task-worktree--manager
-                            configuration authorize
-                            :writable-roots
-                            (cons (uiop:pathname-parent-directory-pathname
-                                   (cl-worktree:worktree-path handle))
-                                  (task-worktree--git-admin-roots source)))))
-                     (list :removed (cl-worktree:cleanup-worktree
-                                     cleanup-manager handle :owner (cl-worktree:worktree-owner handle)
-                                     :discard-dirty                (tool-boolean-argument arguments "discardDirty"
-                                                                                         :tool-name "child.worktree"))))))
+                   (let* ((owner     (cl-worktree:worktree-owner handle))
+                          (separator (position #\/ owner :from-end t))
+                          (child     (and separator (subseq owner (1+ separator))))
+                          (lease     (and child (conversation-identifier-path-fragment child)
+                                          (handler-case (conversation-lease-acquire configuration child)
+                                            (conversation-in-use ()
+                                              (task-worktree--error "The checkout owner is busy."))))))
+                     (unless lease
+                       (task-worktree--error "Cannot safely lease this orphan's owner."))
+                     (unwind-protect
+                          (progn
+                            (when (find child
+                                        (world-channel-children
+                                         (world-load configuration)
+                                         (conversation-identifier (tool-context-conversation context)))
+                                        :key #'channel-identifier :test #'equal)
+                              (task-worktree--error "The checkout belongs to an existing child; use cleanup by child ID."))
+                            (let ((cleanup-manager
+                                    (task-worktree--manager
+                                     configuration authorize
+                                     :writable-roots
+                                     (cons (uiop:pathname-parent-directory-pathname
+                                            (cl-worktree:worktree-path handle))
+                                           (task-worktree--git-admin-roots source)))))
+                              (list :removed (cl-worktree:cleanup-worktree
+                                              cleanup-manager handle :owner owner
+                                              :discard-dirty                (tool-boolean-argument
+                                                                             arguments "discardDirty"
+                                                                             :tool-name "child.worktree")))))
+                       (conversation-lease-release lease)))))
                 ((member action '("conflicts" "abort") :test #'equal)
                  (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
                                                     :tool-name "child.worktree")))
@@ -465,54 +477,61 @@ waiting for Git or the lifecycle lock during terminal publication."
                        (list :aborted (cl-worktree:abort-integration manager target))
                        (list :conflicts (cl-worktree:integration-conflicts manager target)))))
                 (t
-                 (let* ((identifier (tool-argument arguments "id" :required t))
-                        (metadata   (task-worktree--visible-metadata tool context identifier))
-                        (manager
-                          (task-worktree--manager
-                           configuration authorize
-                           :writable-roots
-                           (append writable-roots
-                                   (list (uiop:pathname-parent-directory-pathname
-                                          (pathname (getf metadata :path))))
-                                   (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
-                   (cond
-                     ((and (equal action "inspect")
-                           (task-worktree-cleanup-snapshot :source (getf metadata :source)))
-                      (list :identity metadata :artifact-state ':pending
-                            :cleanup (task-worktree-cleanup-snapshot :source (getf metadata :source))))
-                     ((equal action "cleanup")
-                      (list :removed
-                            (cl-worktree:cleanup-worktree
-                             manager (task-worktree--find-handle manager metadata)
-                             :owner         (getf metadata :owner)
-                             :discard-dirty (tool-boolean-argument arguments "discardDirty"
-                                                                  :tool-name "child.worktree"))))
-                     ((equal action "extract")
-                      (let* ((artifact (task-worktree--extract manager metadata))
-                             (path     (merge-pathnames "worktree-artifact.sexp"
-                                                        (pathname (getf metadata :metadata-path)))))
-                        (task-worktree--write-artifact path artifact)
-                        (list :artifact-path (namestring path) :baseline (cl-worktree:artifact-baseline artifact)
-                              :paths (cl-worktree:artifact-paths artifact))))
-                     ((member action '("inspect" "check" "apply" "commits") :test #'equal)
-                      (let ((artifact (task-worktree--read-artifact metadata)))
-                        (if (equal action "inspect")
-                            (list :identity metadata :kind (cl-worktree:artifact-kind artifact)
-                                  :tip (cl-worktree:artifact-tip artifact) :paths (cl-worktree:artifact-paths artifact)
-                                  :artifact-path (namestring (merge-pathnames "worktree-artifact.sexp"
-                                                                           (pathname (getf metadata :metadata-path)))))
-                            (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
-                                                               :tool-name "child.worktree")))
-                              (list :integrated
-                                    (cond
-                                      ((equal action "check")
-                                       (cl-worktree:check-patch manager target (cl-worktree:artifact-patch artifact)))
-                                      ((equal action "apply")
-                                       (cl-worktree:apply-patch manager target (cl-worktree:artifact-patch artifact)))
-                                      (t
-                                       (cl-worktree:apply-commit-range manager target artifact))))))))
-                     (t
-                      (task-worktree--error "Unknown child.worktree action."))))))))
+                 (let* ((identifier (task-child--find context (tool-argument arguments "id" :required t)
+                                                      "child.worktree"))
+                        (answer     nil))
+                   (task-child--call-with-lease
+                    context identifier
+                    (lambda ()
+                      (setf answer
+                            (let* ((metadata (task-worktree--visible-metadata context identifier))
+                                   (manager
+                                     (task-worktree--manager
+                                      configuration authorize
+                                      :writable-roots
+                                      (append writable-roots
+                                              (list (uiop:pathname-parent-directory-pathname
+                                                     (pathname (getf metadata :path))))
+                                              (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
+                             (cond
+                               ((and (equal action "inspect")
+                                     (task-worktree-cleanup-snapshot :source (getf metadata :source)))
+                                (list :identity metadata :artifact-state ':pending
+                                      :cleanup (task-worktree-cleanup-snapshot :source (getf metadata :source))))
+                               ((equal action "cleanup")
+                                (let ((handle        (task-worktree--find-handle manager metadata))
+                                      (discard-dirty (tool-boolean-argument arguments "discardDirty"
+                                                                            :tool-name "child.worktree")))
+                                  (setf (getf metadata :discarding) t)
+                                  (snapshot-write (pathname (getf metadata :metadata-path)) metadata)
+                                  (list :removed
+                                        (cl-worktree:cleanup-worktree manager handle
+                                                                      :owner         (getf metadata :owner)
+                                                                      :discard-dirty discard-dirty))))
+                               ((member action '("extract" "inspect") :test #'equal)
+                                (let* ((artifact (task-worktree--extract manager metadata))
+                                       (path     (merge-pathnames "worktree-artifact.sexp"
+                                                                  (pathname (getf metadata :metadata-path)))))
+                                  (task-worktree--write-artifact path artifact)
+                                  (list :identity metadata :kind (cl-worktree:artifact-kind artifact)
+                                        :tip (cl-worktree:artifact-tip artifact) :paths (cl-worktree:artifact-paths artifact)
+                                        :artifact-path (namestring path))))
+                               ((member action '("check" "apply" "commits") :test #'equal)
+                                (let ((artifact (task-worktree--read-artifact metadata)))
+                                     (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
+                                                                        :tool-name "child.worktree")))
+                                       (list :integrated
+                                             (cond
+                                               ((equal action "check")
+                                                (cl-worktree:check-patch manager target (cl-worktree:artifact-patch artifact)))
+                                               ((equal action "apply")
+                                                (cl-worktree:apply-patch manager target (cl-worktree:artifact-patch artifact)))
+                                               (t
+                                                (cl-worktree:apply-commit-range manager target artifact)))))))
+                               (t
+                                (task-worktree--error "Unknown child.worktree action."))))))
+                    :tool-name "child.worktree")
+                   answer)))))
         (task-tool-result (bounded-string (task--write-readable-sexp answer :pretty-p t)
                                           :limit *task-tool-content-limit*) answer)))))
 
@@ -536,43 +555,93 @@ Legacy checkouts directly beneath checkouts/ never authorize deleting their pare
       (t
        (task-worktree--error "Checkout is outside its dedicated task container." :code ':ownership)))))
 
-(-> task-worktree-discard (configuration string &key (:pathname (option pathname))) null)
-(defun task-worktree-discard (configuration channel &key pathname)
-  "Discard a removed child's verified checkout without widening legacy cleanup."
+(-> task-worktree--discard-completed-p
+    (configuration cl-worktree:manager list &key (:authorize function)) boolean)
+(defun task-worktree--discard-completed-p (configuration manager metadata &key authorize)
+  "Verify a journaled discard has no remaining checkout, registration or owner record."
+  (let* ((source (pathname (getf metadata :source)))
+         (path   (getf metadata :path))
+         (trees  (cl-worktree:discover-worktrees manager :source source)))
+    (when (or (probe-file path)
+              (find (getf metadata :id) trees :key #'cl-worktree:worktree-id :test #'equal)
+              (find path trees :key #'cl-worktree:worktree-path :test #'equal))
+      (return-from task-worktree--discard-completed-p nil))
+    (multiple-value-bind (output error-output status)
+        (funcall (task-worktree--runner configuration authorize)
+                 '("git" "worktree" "list" "--porcelain" "-z") :directory source)
+      (unless (zerop status)
+        (task-worktree--error (format nil "Cannot verify worktree removal: ~A" error-output)))
+      (let ((entry (concatenate 'string "worktree " (string-right-trim '(#\/ #\\) path))))
+        (not (member entry (uiop:split-string output :separator (list #\Null)) :test #'equal))))))
+
+(-> task-worktree-discard (configuration string &key (:pathname (option pathname))
+                                         (:parent-identifier (option string))
+                                         (:authorize (option function))) null)
+(defun task-worktree-discard (configuration channel
+                              &key pathname parent-identifier
+                                (authorize (constantly ':full-access)))
+  "Discard a removed child's verified checkout without widening legacy cleanup.
+PARENT-IDENTIFIER identifies a child whose spawn failed before world publication.
+AUTHORIZE governs Git cleanup, defaulting to trusted channel-removal authority."
+  (unless authorize
+    (task-worktree--error "Worktree cleanup requires command authorization." :code ':authority))
   (let* ((pathname (or pathname
                        (conversation-task-pathname-for-id configuration channel)))
          (record   (and pathname
                         (merge-pathnames "worktree.sexp" (uiop:pathname-directory-pathname pathname))))
-         (metadata (and record (probe-file record) (snapshot-read record))))
+         (node     (world-channel-find (world-load configuration) channel))
+         (parent   (or parent-identifier (and node (channel-parent node))))
+         (metadata (or (and (conversation-identifier-path-fragment channel)
+                            (if parent
+                                (task-worktree--read-metadata configuration parent channel)
+                                (task-worktree--removed-metadata configuration channel)))
+                       (and record (probe-file record) (snapshot-read record)))))
     (when metadata
       (with-lock-held (*task-worktree-lock*)
         (let* ((checkout     (pathname (getf metadata :path)))
                (cleanup-root (task-worktree--cleanup-root configuration checkout))
+               (sidecar      (and (conversation-identifier-path-fragment channel)
+                                  (task-worktree--metadata-path configuration "" channel)))
+               (modern-p     (and sidecar (equal (getf metadata :metadata-path) (namestring sidecar))))
                (manager      (task-worktree--manager
-                              configuration (constantly ':full-access)
+                              configuration authorize
                               :writable-roots (cons cleanup-root
                                                     (task-worktree--git-admin-roots
-                                                     (pathname (getf metadata :source)))))))
-          (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
-                                        :owner (getf metadata :owner) :discard-dirty t)
+                                                     (pathname (getf metadata :source))))))
+               (handle       (handler-case (task-worktree--find-handle manager metadata)
+                               (task-worktree-error (condition)
+                                 (unless (and modern-p (getf metadata :discarding)
+                                               (task-worktree--discard-completed-p
+                                                configuration manager metadata :authorize authorize))
+                                   (error condition))
+                                 nil))))
+          (when handle
+            (when modern-p
+              (setf (getf metadata :discarding) t)
+              (snapshot-write sidecar metadata))
+            (unless (cl-worktree:cleanup-worktree manager handle
+                                                  :owner (getf metadata :owner) :discard-dirty t)
+              (task-worktree--error "Worktree cleanup was retained." :code ':cleanup-pending)))
           (platform-delete-directory-tree *platform* cleanup-root
-                                          :validate t :if-does-not-exist ':ignore)))))
+                                          :validate t :if-does-not-exist ':ignore)
+          (when (and modern-p (probe-file sidecar))
+            (delete-file sidecar))))))
   nil)
 
-(-> task-worktree-register-tool (tool-registry task-orchestrator) tool-registry)
-(defun task-worktree-register-tool (registry orchestrator)
+(-> task-worktree-register-tool (tool-registry) tool-registry)
+(defun task-worktree-register-tool (registry)
   "Register the primary parent's explicit engineering artifact lifecycle operation."
   (tool-registry-register
    registry
    (make-instance
-    'task-worktree-tool :orchestrator orchestrator :namespace "child" :name "worktree"
+    'task-worktree-tool :namespace "child" :name "worktree"
     :description "Inspect/extract isolated task artifacts, explicitly check/apply patches or commits to an authorized target, inspect/abort conflicts, discover owned orphans, or explicitly clean owned checkouts. No automatic parent integration or dirty cleanup."
     :parameters
     (tool-object-schema
      (json-object
       "action" (json-object "type" "string" "enum"
                             (json-array "inspect" "extract" "check" "apply" "commits" "conflicts" "abort" "discover" "cleanup" "cleanup-orphan"))
-      "id" (tool-string-property "Visible terminal job ID, durable execution ID, or discovery worktree ID for cleanup-orphan.")
+      "id" (tool-string-property "Child name or channel ID, or discovery worktree ID for cleanup-orphan.")
       "source" (tool-string-property "Repository to scan for owned orphan recovery; defaults to workspace.")
       "target" (tool-string-property "Explicit repository integration target.")
       "discardDirty" (tool-boolean-property "Explicitly discard this owned checkout's edits during cleanup."))

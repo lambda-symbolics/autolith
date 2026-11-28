@@ -11,7 +11,6 @@
       (:jobs application-client-jobs :server)
       (:job application-client-job :server)
       (:job-transcript application-client-job-transcript :server)
-      (:job-send application-client-job-send :server)
       (:job-cancel application-client-job-cancel :server)
       (:resource application-client-resource :server))
   "Native shared channel commands and their application handlers.")

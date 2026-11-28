@@ -10,30 +10,19 @@
            (registry
             (task-augment-tool-registry
              (make-default-tool-registry :configuration configuration)))
-           (provider      (make-instance 'task-test-provider :mode ':concurrent))
-           (parent
-            (agent-create :configuration configuration :provider provider :tool-registry
-                          registry :worker nil))
-           (run-tool      (tool-registry-find registry "child" "spawn"))
-           (orchestrator  (task-run-tool-orchestrator run-tool))
-           (definition    nil)
-           (job
-            (task-tests--make-job orchestrator :identifier "orphan" :parent-agent parent
-                                  :detached-p t :item
-                                  (append (list :task "Return the result.")
-                                          definition)))
+           (parent        (task-tests--primary-agent configuration "continuity-owner" registry))
+           (owner         (conversation-identifier (agent-conversation parent)))
+           (orchestrator  (tool-registry-runtime-binding registry 'task-orchestrator))
+           (job           (make-instance 'tool-execution-job :identifier "orphan" :execution-identifier "orphan"
+                                         :name "shell.run" :summary "Orphan fixture" :index 1 :owner-identifiers nil
+                                         :orchestrator orchestrator :pool (task-orchestrator-execution-pool orchestrator)
+                                         :payload nil :root-identifier owner :completion-owner-conversation owner
+                                         :tool-name "shell.run" :detached-p t))
            (context
             (make-instance 'tool-context :configuration configuration :agent parent
                            :registry registry :worker nil :conversation
                            (agent-conversation parent) :call-id "continuity-test"))
            (path          (task-continuity-record-job job parent)))
-      (unless (tool-registry-find registry "job" "continuity")
-        (tool-registry-register registry
-                                (make-instance 'task-continuity-tool :namespace "job"
-                                               :name "continuity" :description
-                                               "Test continuity decisions." :parameters
-                                               (task-continuity-parameters) :orchestrator
-                                               orchestrator)))
       (unwind-protect (funcall function parent orchestrator context job path)
         (task-orchestrator-close orchestrator)))))
 
@@ -49,18 +38,15 @@
   "Classify lost work, safe declarations, missing checkpoints and abandonment."
   (task-continuity-tests--fixture
    (lambda (parent orchestrator context job path)
-     (declare (ignore context))
      (let ((execution (session-job-execution-identifier job)))
        (test-assert
         (eq :dead-needing-decision
             (getf (first (task-continuity-inventory parent orchestrator)) :classification))
         "An opaque unfinished task needs a decision")
-       (task-continuity-declare parent orchestrator execution
-                                :safety "Read-only test fixture; no external effects.")
        (test-assert
-        (eq :safe-restartable-specification
-            (getf (first (task-continuity-inventory parent orchestrator)) :classification))
-        "An explicit safe specification survives a reread")
+        (task-continuity-tests--refused-p
+         (lambda () (task-continuity-revive context orchestrator execution :authorized-p t)))
+        "An opaque tool job cannot be replayed")
        (test-assert
         (equal execution (getf (task-continuity--read path) :execution-id))
         "Durable identity links the original execution")
@@ -84,62 +70,6 @@
   (task-continuity-tests--paging)
   nil)
 
-(-> test-task-continuity-revive () null)
-(defun test-task-continuity-revive ()
-  "Revive a stored task through actual child execution once, with explicit authority."
-  (task-continuity-tests--fixture
-   (lambda (parent orchestrator context job path)
-     (let ((execution (session-job-execution-identifier job)))
-       (task-continuity-declare parent orchestrator execution
-                                :safety "Deterministic read-only provider fixture.")
-       (test-assert
-        (task-continuity-tests--refused-p
-         (lambda () (task-continuity-revive context orchestrator execution)) :code ':authority)
-        "Replay requires a fresh explicit authorization")
-       (test-assert
-        (not (probe-file (merge-pathnames "revive.sexp"
-                                          (uiop:pathname-directory-pathname path))))
-        "An unauthorized attempt does not claim replay")
-       (let* ((result  (task-continuity-revive context orchestrator execution :authorized-p t))
-              (revived (first (task-orchestrator-list-jobs orchestrator))))
-         (test-assert (tool-result-success-p result) "The ordinary child.spawn pathway admits recovery")
-         (test-assert revived "Recovery creates a real supervised child")
-         (multiple-value-bind (snapshot terminal-p) (task-job-await revived 10)
-           (test-assert (and terminal-p (eq :success (getf (getf snapshot :result) :status)))
-                        (format nil "Recovered child yields successfully: ~S" snapshot)))
-         (test-assert
-          (not (equal execution (session-job-execution-identifier revived)))
-          "A restarted execution receives a fresh identity")
-         (let* ((row      (task-continuity-classify
-                           (task-continuity--find parent execution) parent orchestrator))
-                (recovery (getf row :recovery-result))
-                (link     (first (getf recovery :new-executions))))
-           (test-assert (and (eq :restart (getf row :decision))
-                             (eq :dispatched (getf row :recovery-outcome)))
-                        "Inventory exposes the durable recovery decision and dispatch outcome")
-           (test-assert (and (equal execution (getf recovery :execution-id))
-                             (equal (session-job-execution-identifier revived)
-                                    (getf link :execution-id))
-                             (equal (session-job-parent-call-id revived)
-                                    (getf recovery :dispatch-call-id)))
-                        "Recovery links original execution, correlated dispatch and new execution")
-           (let ((fresh (task-orchestrator-create)))
-             (unwind-protect
-                  (test-assert
-                   (equal recovery
-                          (getf (task-continuity-classify
-                                 (task-continuity--find parent execution) parent fresh)
-                                :recovery-result))
-                   "Recovery linkage survives without the original live job pool")
-               (task-orchestrator-close fresh))))
-         (test-assert
-          (task-continuity-tests--refused-p
-           (lambda () (task-continuity-revive context orchestrator execution :authorized-p t)))
-          "A consumed claim prevents duplicate side effects")
-         (test-assert (= 1 (length (task-orchestrator-list-jobs orchestrator)))
-                      "Duplicate recovery admits no additional child")))))
-  nil)
-
 (-> test-task-continuity-ownership () null)
 (defun test-task-continuity-ownership ()
   "Reject foreign owners and child replay authority; preserve owned live attachment."
@@ -150,14 +80,18 @@
             (other         (agent-create :configuration configuration
                                          :provider      (make-instance 'model-provider)
                                          :tool-registry (agent-tool-registry parent) :worker nil))
-            (child         (task-tests--child-viewer configuration job))
+            (child         (agent-create :configuration configuration :provider (make-instance 'model-provider)
+                                         :worker nil :tool-registry (agent-tool-registry parent)
+                                         :conversation (conversation-create configuration :identifier "continuity-child"
+                                                                             :parent-identifier       "continuity-owner")))
             (execution     (session-job-execution-identifier job)))
        (test-assert (null (task-continuity-records other)) "Another conversation has no durable ownership")
        (test-assert (null (task-continuity-records child)) "A child cannot inspect its parent or siblings")
        (test-assert
         (task-continuity-tests--refused-p
-         (lambda () (task-continuity-declare child orchestrator execution :safety "read-only")) :code ':authority)
-        "Children cannot grant replay authority")
+          (lambda () (task-continuity-declare child orchestrator execution :image "image" :repl "recovery"))
+          :code ':authority)
+        "Children cannot grant checkpoint recovery authority")
        (test-assert
         (task-continuity-tests--refused-p
          (lambda () (task-continuity-abandon child orchestrator execution)) :code ':authority)
@@ -168,19 +102,23 @@
            (lambda () (task-continuity-dispatch context "resource" "read"
                                                 :arguments (json-object "uri" "workspace:file"))) :code ':authority)
           "A withheld recovery capability is an authority refusal"))
-       (with-lock-held ((cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
-         (setf (gethash (job-identifier job)
-                        (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))) job))
-       (test-assert
-        (eq :live-owned-detached
-            (getf (first (task-continuity-inventory parent orchestrator)) :classification))
-        "Actual live ownership dominates orphan classification")
-       (test-assert
-        (tool-result-success-p
-         (task-continuity-revive context orchestrator execution :authorized-p t))
-        "Owned attachment returns ordinary job.get rather than replaying")
-       (test-assert (= 1 (length (task-orchestrator-list-jobs orchestrator)))
-                    "Reattachment does not duplicate execution"))))
+       (let ((pool (task-orchestrator-execution-pool orchestrator)))
+         (unwind-protect
+              (progn
+                (with-lock-held ((cl-jobpond::job-pool--lock pool))
+                  (setf (gethash (job-identifier job) (cl-jobpond::job-pool--jobs pool)) job))
+                (test-assert
+                 (eq :live-owned-detached
+                     (getf (first (task-continuity-inventory parent orchestrator)) :classification))
+                 "Actual live ownership dominates orphan classification")
+                (test-assert
+                 (tool-result-success-p
+                  (task-continuity-revive context orchestrator execution :authorized-p t))
+                 "Owned attachment returns ordinary job.get rather than replaying")
+                (test-assert (= 1 (length (task-orchestrator-list-jobs orchestrator)))
+                             "Reattachment does not duplicate execution"))
+           (with-lock-held ((cl-jobpond::job-pool--lock pool))
+             (remhash (job-identifier job) (cl-jobpond::job-pool--jobs pool))))))))
   nil)
 
 (-> task-continuity-tests--paging () null)
@@ -198,8 +136,9 @@
              for target = (merge-pathnames (format nil "~A/continuity.sexp" execution) root)
              for copy = (copy-tree record)
              do (setf (getf copy :execution-id) execution
-                      (getf copy :job-id) execution
-                      (getf (getf copy :specification) :task) body)
+                        (getf copy :job-id) (copy-seq execution)
+                        (getf copy :kind) ':task
+                        (getf copy :specification) (list :task body))
                 (ensure-directories-exist target)
                 (task-continuity--write target copy))
        (task-continuity--write (merge-pathnames "result.sexp" (uiop:pathname-directory-pathname path))
@@ -256,318 +195,45 @@
             "Invalid page bounds fail before enumeration"))))))
   nil)
 
-
-;;;; -- Producer-Owned Overflow Contexts --
-
-(defclass child-overflow-test-tool (tool) ()
-  (:documentation "Return caller-selected text through the real result spill path."))
-
-(defmethod tool-execute ((tool child-overflow-test-tool)
-                         (context tool-context) (arguments hash-table))
-  "Emit the complete test payload using ordinary tool result bounding."
-  (declare (ignore tool context))
-  (tool-success (gethash "text" arguments)))
-
-(-> child-overflow-tests--call (tool-context string string &key (:arguments hash-table)) tool-result)
-(defun child-overflow-tests--call (context namespace name &key (arguments (json-object)))
-  "Dispatch a real tool call with CONTEXT's authority."
-  (tool-registry-execute-call
-   (tool-context-registry context)
-   (json-object "namespace" namespace "name" name "arguments" (json-encode arguments)) context))
-
-(-> child-overflow-tests--emit (tool-context string) string)
-(defun child-overflow-tests--emit (context text)
-  "Run an oversized producer and extract its emitted resource URI."
-  (let* ((result  (child-overflow-tests--call context "test" "overflow-owned"
-                                               :arguments (json-object "text" text)))
-         (content (tool-result-content result))
-         (start   (search "context:" content)))
-    (test-assert (and (tool-result-success-p result) start (< (length content) (length text)))
-                 "An actual oversized child tool result emits a bounded context reference")
-    (assert start)
-    (subseq content start (+ start 72))))
-
-(-> child-overflow-tests--read (tool-context string) tool-result)
-(defun child-overflow-tests--read (context uri)
-  "Read the payload tail through the public resource tool boundary."
-  (child-overflow-tests--call context "resource" "read"
-                              :arguments (json-object "uri" uri "start-line" 695 "line-count" 10)))
-
-(-> test-child-overflow-context-ownership () null)
-(defun test-child-overflow-context-ownership ()
-  "Read actual tool spills across task agents without weakening explicit resource limits."
-  (task-continuity-tests--fixture
-   (lambda (parent orchestrator primary job path)
-     (let* ((configuration (agent-configuration parent))
-            (registry      (tool-context-registry primary))
-            (sibling
-             (task-tests--make-job orchestrator :identifier "sibling" :parent-agent
-                                   parent :item
-                                   (append (list :task "Sibling")
-                                           (task-job-item job))))
-            (text          (tool-tests--overflow-text)))
-       (task-continuity-record-job sibling parent)
-       (tool-registry-register registry
-                               (make-instance 'child-overflow-test-tool :namespace "test"
-                                              :name "overflow-owned" :description
-                                              "Emit a large test payload." :parameters
-                                              (json-object "type" "object" "required"
-                                                           '("text") "properties"
-                                                           (json-object "text"
-                                                                        (json-object
-                                                                         "type"
-                                                                         "string"))
-                                                           "additionalProperties"
-                                                           (json-false))))
-       (labels ((child-context (owner)
-                  (let* ((child-tools
-                          (task-child-tool-registry registry :orchestrator
-                                                    (session-job-orchestrator owner)))
-                         (child
-                          (task-tests--child-viewer configuration owner :registry
-                                                    child-tools)))
-                    (make-instance 'tool-context :configuration configuration :agent
-                                   child :registry child-tools :worker nil :conversation
-                                   (agent-conversation child))))
-
-                (readable-p (context uri)
-                  (let ((result (child-overflow-tests--read context uri)))
-                    (unless (tool-result-success-p result)
-                      (format t "Overflow read denied: ~S ~A~%"
-                              (tool-result-error-code result)
-                              (tool-result-content result)))
-                    (and (tool-result-success-p result)
-                         (search "overflow line 700" (tool-result-content result)) t)))
-
-                (denied-p (context uri)
-                  (let ((result (child-overflow-tests--read context uri)))
-                    (and (not (tool-result-success-p result))
-                         (eq ':access-denied (tool-result-error-code result))))))
-         (let* ((producer (child-context job))
-                (other    (child-context sibling))
-                (uri      (child-overflow-tests--emit producer text)))
-           (test-assert (readable-p producer uri)
-                        "The producing child can read its actual emitted tail")
-           (test-assert (readable-p other uri)
-                        "A sibling can read a shared context URI before emitting it")
-           (let* ((nested-parent (tool-context-agent producer))
-                  (nested-job
-                   (task-tests--make-job orchestrator :identifier "nested" :parent-agent
-                                         nested-parent :root-identifier
-                                         (session-job-root-conversation-identifier job)
-                                         :owner-identifiers (list (job-identifier job))
-                                         :item
-                                         (append (list :task "Nested")
-                                                 (task-job-item job)))))
-             (task-continuity-record-job nested-job nested-parent)
-             (test-assert (readable-p (child-context nested-job) uri)
-                          "A nested child can read the context by digest"))
-           (let ((index
-                  (child-overflow-tests--call other "resource" "read" :arguments
-                                              (json-object "uri" "context:index"))))
-             (test-assert
-              (and (tool-result-success-p index)
-                   (search (subseq uri 8) (tool-result-content index)))
-              "A task child can discover a sibling's context in the index"))
-           (dolist
-               (invalid (list "context:not-a-digest" (format nil "context:~64,'0X" 0)))
-             (test-assert
-              (not (tool-result-success-p (child-overflow-tests--read producer invalid)))
-              "Malformed and absent context digests do not resolve"))
-           (let ((parent-uri
-                  (child-overflow-tests--emit primary
-                                              (concatenate 'string text "parent"))))
-             (test-assert (readable-p producer parent-uri)
-                          "A task child can read the parent's spill")
-             (test-assert (readable-p primary parent-uri)
-                          "The primary can read its own spill"))
-           (test-assert (string= uri (child-overflow-tests--emit other text))
-                        "Identical payloads deduplicate")
-           (test-assert (readable-p primary uri) "The primary can read a child spill")
-           (let ((*resource-readable-schemes* '("workspace")))
-             (test-assert
-              (and (denied-p producer uri) (denied-p producer "context:index"))
-              "An explicit scheme restriction denies both forms of context read"))
-           (let ((gate (make-lock "Concurrent overflow emission")) (threads nil))
-             (with-lock-held (gate)
-               (dolist (suffix '("concurrent-a" "concurrent-b"))
-                 (let ((payload (concatenate 'string text suffix)))
-                   (push
-                    (make-thread
-                     (lambda ()
-                       (with-lock-held (gate)
-                         nil)
-                       (child-overflow-tests--call producer "test" "overflow-owned"
-                                                   :arguments
-                                                   (json-object "text" payload))))
-                    threads))))
-             (dolist (thread threads)
-               (let* ((result  (join-thread thread))
-                      (content (tool-result-content result))
-                      (start   (search "context:" content)))
-                 (test-assert (and (tool-result-success-p result) start)
-                              "Concurrent real tool emissions each produce a context reference")
-                 (when start
-                   (test-assert (readable-p producer (subseq content start (+ start 72)))
-                                "Both concurrently emitted contexts can be read")))))
-           (test-assert
-            (tool-result-success-p
-             (child-overflow-tests--call primary "resource" "read" :arguments
-                                         (json-object "uri" "context:index")))
-            "The primary retains index access")
-           (task-continuity-declare parent orchestrator
-                                    (session-job-execution-identifier job) :safety
-                                    "Deterministic overflow fixture.")
-           (test-assert (readable-p producer uri)
-                        "Recovery declarations do not hide stored context")
-           (let* ((target  (format nil "workspace:~A" (namestring path)))
-                  (observation
-                   (child-overflow-tests--call producer "resource" "read" :arguments
-                                               (json-object "uri" target)))
-                  (content (tool-result-content observation))
-                  (marker  "Revision: ")
-                  (start
-                   (+ (or (search marker content) (error "Missing edit observation"))
-                      (length marker)))
-                  (revision
-                   (subseq content start (position #\Newline content :start start)))
-                  (edit
-                   (child-overflow-tests--call producer "resource" "edit" :arguments
-                                               (json-object "uri" target "base-revision"
-                                                            revision "operations"
-                                                            (vector
-                                                             (json-object "op"
-                                                                          "replace-lines"
-                                                                          "start-line" 1
-                                                                          "end-line" 1
-                                                                          "content"
-                                                                          "(:overflow-context-digests (fabricated))"))))))
-             (test-assert
-              (and (not (tool-result-success-p edit))
-                   (eq ':access-denied (tool-result-error-code edit)))
-              "A task child cannot edit private continuity records"))
-           (let ((record (task-continuity--read path)) (fresh (task-orchestrator-create)))
-             (unwind-protect
-                 (let ((reconstructed
-                        (make-instance 'task-job :pool (task-orchestrator-pool fresh)
-                                       :identifier (job-identifier job) :index 1 :name
-                                       "restored" :payload nil :owner-identifiers
-                                       (job-owner-identifiers job) :root-identifier
-                                       (session-job-root-conversation-identifier job)
-                                       :body-function  #'task-job--run
-                                       :maximum-runtime-milliseconds 0 :orchestrator
-                                       fresh :execution-identifier
-                                       (session-job-execution-identifier job) :item
-                                       (append (task-job-item job) (task-job-item job))
-                                       :parent-agent   parent)))
-                   (remf record :overflow-context-digests)
-                   (task-continuity--write path record)
-                   (test-assert (readable-p (child-context reconstructed) uri)
-                                "An older execution record needs no producer metadata to read a context"))
-               (task-orchestrator-close fresh))))))))
+(-> test-task-continuity-channel-owner () null)
+(defun test-task-continuity-channel-owner ()
+  "Read durable tool results only for their exact recorded channel owner."
+  (with-test-configuration (configuration root)
+    (let* ((configuration (configuration-copy configuration :working-directory root))
+           (registry      (task-augment-tool-registry
+                           (make-default-tool-registry :configuration configuration)))
+           (viewer        (agent-create :configuration configuration
+                                        :provider      (make-instance 'task-test-provider)
+                                        :tool-registry registry :worker nil))
+           (owner         (conversation-identifier (agent-conversation viewer)))
+           (directory     (merge-pathnames "owned-execution/"
+                                           (task--artifact-group-root configuration owner)))
+           (path          (merge-pathnames "continuity.sexp" directory))
+           (record        (list :version 1 :kind ':tool :job-id "exec:123"
+                                :execution-id "owned-execution" :root-conversation owner
+                                :completion-owner-conversation owner :owners nil))
+           (logs          (list (list :captures (list (list :reference "shell-log:owner/execution/log/output"))))))
+      (let* ((child   (conversation-create configuration
+                                           :identifier        "guard-child"
+                                           :parent-identifier owner))
+             (context (make-instance 'tool-context :configuration configuration
+                                                   :conversation  child)))
+        (test-assert (resource-context-child-agent-p context)
+                     "Hosted child conversations retain private continuity edit restrictions"))
+      (ensure-directories-exist path)
+      (task-continuity--write path record)
+      (task-continuity--write (merge-pathnames "terminal.sexp" directory)
+                              (list :state  ':completed
+                                    :result (list :status ':success :content "done" :shell-logs logs)))
+      (multiple-value-bind (result result-path identity state)
+          (task--durable-job-result viewer "owned-execution" "job.get")
+        (test-assert (and (equal "done" (getf result :content))
+                          (equal logs (getf result :shell-logs))
+                          (equal owner (getf identity :completion-owner-conversation))
+                          (eq state :completed) result-path)
+                     "Owned tool result, state and shell logs survive durable lookup"))
+      (setf (getf record :completion-owner-conversation) "foreign-channel")
+      (task-continuity--write path record)
+      (test-assert (null (task--durable-job-result viewer "owned-execution" "job.get"))
+                   "A foreign recorded owner cannot be read from this channel's storage")))
   nil)
-
-(-> test-child-overflow-continuity-capacity () null)
-(defun test-child-overflow-continuity-capacity ()
-  "Refuse a real spill before UTF-8 growth can destroy earlier durable grants."
-  (task-continuity-tests--fixture
-   (lambda (parent orchestrator primary job path)
-     (let* ((configuration (agent-configuration parent))
-            (registry      (tool-context-registry primary))
-            (text          (tool-tests--overflow-text)))
-       (tool-registry-register registry
-                               (make-instance 'child-overflow-test-tool :namespace "test"
-                                              :name "overflow-owned" :description
-                                              "Emit a large test payload." :parameters
-                                              (json-object "type" "object" "required"
-                                                           '("text") "properties"
-                                                           (json-object "text"
-                                                                        (json-object
-                                                                         "type"
-                                                                         "string"))
-                                                           "additionalProperties"
-                                                           (json-false))))
-       (let* ((child-tools
-               (task-child-tool-registry registry :orchestrator orchestrator))
-              (child  (task-tests--child-viewer configuration job :registry child-tools))
-              (producer
-               (make-instance 'tool-context :configuration configuration :agent child
-                              :registry child-tools :worker nil :conversation
-                              (agent-conversation child)))
-              (uri    (child-overflow-tests--emit producer text))
-              (record (task-continuity--read path)))
-         ;; Seed trusted near-capacity state, not thousands of actual emissions.
-         (setf (getf record :overflow-context-digests)
-               (append (getf record :overflow-context-digests)
-                       (loop for index below 15500
-                             collect (format nil "~64,'0X" index)))
-               (getf record :restart-safety) "Earlier recovery declaration."
-               (getf record :capacity-padding)
-               (make-string 128 :initial-element #\GREEK_SMALL_LETTER_LAMDA))
-         (let* ((initial (format nil "~A~%" (task--write-readable-sexp record)))
-                (padding
-                 (- *task-continuity-maximum-octets* 20
-                    (length (utf8-string-to-octets initial)))))
-           (assert (plusp padding))
-           (setf (getf record :capacity-padding)
-                 (concatenate 'string (getf record :capacity-padding)
-                              (make-string padding :initial-element #\x))))
-         (task-continuity--write path record)
-         (let* ((before      (uiop/stream:read-file-string path :external-format :utf-8))
-                (next-text   (concatenate 'string text "capacity crossing"))
-                (next-digest
-                 (rlm-context-object-digest
-                  (rlm-context-intern configuration next-text)))
-                (prospective (copy-tree record)))
-           (push next-digest (getf prospective :overflow-context-digests))
-           (let ((serialized (format nil "~A~%" (task--write-readable-sexp prospective))))
-             (test-assert
-              (and (<= (length serialized) *task-continuity-maximum-octets*)
-                   (> (length (utf8-string-to-octets serialized))
-                      *task-continuity-maximum-octets*))
-              "The next grant crosses the real octet bound but not a character bound"))
-           (test-assert (equal record (task-continuity--read path))
-                        "Seeded metadata is valid under the production bounded reader")
-           (test-assert (tool-result-success-p (child-overflow-tests--read producer uri))
-                        "Earlier actual emission is publicly readable before capacity rejection")
-           (let ((result
-                  (child-overflow-tests--call producer "test" "overflow-owned" :arguments
-                                              (json-object "text" next-text))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (not (search "context:" (tool-result-content result))))
-              "The bounded spill fallback returns no unusable resource URI"))
-           (test-assert
-            (string= before (uiop/stream:read-file-string path :external-format :utf-8))
-            "Rejected grant publication preserves the exact previous UTF-8 file")
-           (test-assert
-            (handler-case (equal record (task-continuity--read path)) (error nil nil))
-            "Earlier grants and recovery metadata remain readable and intact")
-           (test-assert (tool-result-success-p (child-overflow-tests--read producer uri))
-                        "Earlier emission remains publicly readable after the rejected append")
-           (test-assert
-            (not
-             (member next-digest
-                     (getf (task-continuity--read path) :overflow-context-digests) :test
-                     #'equal))
-            "The rejected emission's digest was not published in the continuity record")
-           (test-assert
-            (task-continuity-tests--refused-p
-             (lambda ()
-               (task-continuity-declare parent orchestrator
-                                        (session-job-execution-identifier job) :safety
-                                        (make-string 200 :initial-element #\s)))
-             :code :storage-limit)
-            "Recovery declarations share the safe capacity refusal")
-           (test-assert
-            (string= before (uiop/stream:read-file-string path :external-format :utf-8))
-            "Rejected recovery metadata preserves the previous record")
-           (let* ((result
-                   (child-overflow-tests--call producer "test" "overflow-owned"
-                                               :arguments (json-object "text" text)))
-                  (content (tool-result-content result)))
-             (test-assert (and (tool-result-success-p result) (search uri content))
-                          "Re-emitting an existing digest needs no additional capacity"))
-           (test-assert
-            (string= before (uiop/stream:read-file-string path :external-format :utf-8))
-            "A duplicate grant does not change earlier metadata")))))))

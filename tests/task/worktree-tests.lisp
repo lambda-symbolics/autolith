@@ -27,56 +27,44 @@
     (test-assert (zerop status) (format nil "Git ~S: ~A" arguments error-output))
     output))
 
-(-> task-worktree-tests--fixture (function &optional t) t)
-(defun task-worktree-tests--fixture (function &optional ignored)
-  "Call FUNCTION with a disposable real repository, parent, job and operation tool."
-  (declare (ignore ignored))
+(-> task-worktree-tests--fixture (function) t)
+(defun task-worktree-tests--fixture (function)
+  "Call FUNCTION with a real repository and an exact parent channel."
   (with-test-configuration (initial root)
-    (let* ((source       (merge-pathnames "source/" root))
-           (configuration
-            (progn
-             (ensure-directories-exist (merge-pathnames "probe" source))
-             (configuration-copy initial :working-directory source)))
-           (orchestrator (task-orchestrator-create))
-           (parent       (task-tests--primary-agent configuration "worktree-fixture"))
-           (definition   (list))
-           (job
-            (task-tests--make-job orchestrator :identifier "isolated-task" :parent-agent
-                                  parent :item
-                                  (append
-                                   (list :task "Modify one tracked file." :isolation
-                                         (task-worktree-normalize-options (json-object)))
-                                   definition)))
-           (registry     (make-instance 'tool-registry))
-           (context
-            (make-instance 'tool-context :configuration configuration :worker nil :agent
-                           parent :conversation (agent-conversation parent)
-                           :command-authorization-function
-                           #'task-worktree-tests--authorize)))
-      (unwind-protect
-          (progn
-           (setf (task-job-command-authorization-function job)
-                 #'task-worktree-tests--authorize)
-           (task-worktree-register-tool registry orchestrator)
-           (task-worktree-tests--git configuration source '("init"))
-           (task-worktree-tests--git configuration source
-                                     '("config" "user.name" "Fixture"))
-           (task-worktree-tests--git configuration source
-                                     '("config" "user.email" "fixture@example.invalid"))
-           (test-write-text (merge-pathnames "file" source) "baseline")
-           (task-worktree-tests--git configuration source '("add" "file"))
-           (task-worktree-tests--git configuration source '("commit" "-m" "baseline"))
-           (funcall function configuration source parent job
-                    (tool-registry-find registry "child" "worktree") context))
-        (task-orchestrator-close orchestrator)))))
+    (let* ((source        (merge-pathnames "source/" root))
+           (configuration (configuration-copy initial :working-directory source))
+           (registry      (task-worktree-register-tool (make-instance 'tool-registry)))
+           (parent        (task-tests--primary-agent configuration "Par2134" registry))
+           (context       (make-instance 'tool-context :configuration configuration :worker nil
+                                                      :agent parent :conversation (agent-conversation parent)
+                                                      :command-authorization-function #'task-worktree-tests--authorize)))
+      (ensure-directories-exist source)
+      (conversation-append-user-message (agent-conversation parent) "Prepare the isolated worktree.")
+      (task-worktree-tests--git configuration source '("init"))
+      (task-worktree-tests--git configuration source '("config" "user.name" "Fixture"))
+      (task-worktree-tests--git configuration source '("config" "user.email" "fixture@example.invalid"))
+      (test-write-text (merge-pathnames "file" source) "baseline")
+      (task-worktree-tests--git configuration source '("add" "file"))
+      (task-worktree-tests--git configuration source '("commit" "-m" "baseline"))
+      (funcall function configuration source parent "Chi2134"
+               (tool-registry-find registry "child" "worktree") context))))
 
-(-> task-worktree-tests--publish (task-job keyword) list)
-(defun task-worktree-tests--publish (job status)
-  "Finalize a terminal child and publish its real durable task result."
-  (let ((result (task-worktree-finalize-result
-                 job (list :status status :id (job-identifier job)))))
-    (task--write-result-artifact job result)
-    result))
+(-> task-worktree-tests--prepare
+    (configuration agent string &key (:options hash-table) (:authorize function)
+                                (:register-p boolean))
+    (values configuration list))
+(defun task-worktree-tests--prepare (configuration parent identifier
+                                     &key (options (json-object))
+                                      (authorize #'task-worktree-tests--authorize) (register-p t))
+  "Prepare a checkout and optionally register its idle child without sending work."
+  (multiple-value-bind (child metadata)
+      (task-worktree-configuration (conversation-identifier (agent-conversation parent))
+                                   identifier configuration
+                                   :isolation (task-worktree-normalize-options options)
+                                   :authorize authorize)
+    (when register-p
+      (world-child-create parent :identifier identifier :configuration child))
+    (values child metadata)))
 
 (-> task-worktree-tests--call (task-worktree-tool tool-context hash-table) list)
 (defun task-worktree-tests--call (tool context arguments)
@@ -183,298 +171,177 @@
 
 (-> test-task-worktree-isolation () null)
 (defun test-task-worktree-isolation ()
-  "Test real isolated checkout identity, dirty policy and owned recovery."
+  "Check dirty policy, durable channel ownership and unpublished-child cleanup."
   (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore parent))
+   (lambda (configuration source parent id tool context)
      (test-write-text (merge-pathnames "file" source) "parent dirty")
-     (test-assert (handler-case (progn (task-worktree-configuration job configuration) nil)
-                    (cl-worktree:dirty-workspace () t)) "Dirty source is rejected without mutation.")
-     (setf (getf (task-job-item job) :isolation)
-           (task-worktree-normalize-options (json-object "dirtyPolicy" "ignore")))
-     (let* ((child    (task-worktree-configuration job configuration))
-            (path     (config :working-directory child))
-            (metadata (getf (task-job-item job) :worktree)))
-       (test-assert (not (equal path source)) "Child has a distinct workspace.")
-       (test-assert (equal metadata (snapshot-read (getf metadata :metadata-path)))
-                    "Identity is durable before child execution.")
-       (let ((discovery (task-worktree-tests--call tool context
-                                                 (json-object "action" "discover" "source" (namestring source)))))
-         (test-assert (= 1 (length (getf discovery :active))) "Discovery returns the owned checkout."))
-       (task-worktree-tests--call tool context
-                                 (json-object "action" "cleanup-orphan" "source" (namestring source)
-                                              "id" (getf metadata :id)))
-       (test-assert (not (probe-file path)) "Orphan cleanup removes only the recorded checkout."))))
+     (test-assert (handler-case
+                      (progn (task-worktree-tests--prepare configuration parent id :register-p nil) nil)
+                    (cl-worktree:dirty-workspace () t))
+                  "Default dirty policy refuses checkout without mutation.")
+     (multiple-value-bind (child metadata)
+         (task-worktree-tests--prepare configuration parent id :register-p nil
+                                             :options                      (json-object "dirtyPolicy" "ignore"))
+       (let ((parent-id (conversation-identifier (agent-conversation parent)))
+             (path      (config :working-directory child)))
+         (test-assert (not (equal path source)) "Child has a distinct workspace.")
+         (test-assert (equal metadata (task-worktree--read-metadata configuration parent-id id))
+                      "The exact parent and child identify the durable sidecar.")
+         (test-assert (handler-case
+                          (null (task-worktree--read-metadata configuration "Par2135" id))
+                        (task-worktree-error () t))
+                      "A different parent cannot read the sidecar.")
+         (test-assert (= 1 (length (getf (task-worktree-tests--call
+                                          tool context (json-object "action" "discover" "source" (namestring source)))
+                                         :active)))
+                      "Discovery returns the caller's checkout.")
+         (test-assert (handler-case
+                          (progn (task-worktree-discard configuration id :parent-identifier parent-id
+                                                                         :authorize         (constantly ':deny)) nil)
+                        (task-worktree-error () t)
+                        (cl-worktree:worktree-error () t))
+                      "An unauthorized rollback cannot remove the checkout.")
+         (test-assert (probe-file path) "Denied rollback preserves the checkout.")
+         (let ((cleanup (fdefinition 'cl-worktree:cleanup-worktree)))
+           (test-call-with-function-replacements
+            (list (list 'cl-worktree:cleanup-worktree
+                        (lambda (&rest arguments)
+                          (when (apply cleanup arguments)
+                            (error 'job-aborted :message "Interrupted after Git removal.")))))
+            (lambda ()
+              (test-assert (handler-case
+                               (progn (task-worktree-discard configuration id :parent-identifier parent-id) nil)
+                             (job-aborted () t))
+                           "The simulated interruption follows successful Git removal."))))
+         (test-assert (not (probe-file path)) "Git removed the checkout before interruption.")
+         (test-assert (probe-file (getf metadata :metadata-path)) "The interrupted discard retains its receipt.")
+         (task-worktree-discard configuration id :parent-identifier parent-id)
+         (test-assert (not (probe-file (getf metadata :metadata-path))) "Verified retry retires the receipt.")
+         (test-assert (equal "parent dirty" (uiop:read-file-string (merge-pathnames "file" source)))
+                      "Discard preserves the source changes.")))))
   nil)
 
 (-> test-task-worktree-artifacts () null)
 (defun test-task-worktree-artifacts ()
-  "Test terminal patch persistence, explicit application and cleanup authority."
+  "Extract, check, apply and retain an explicitly secured patch."
   (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore parent))
-     (let* ((child (task-worktree-configuration job configuration))
-            (path  (config :working-directory child)))
-       (test-write-text (merge-pathnames "file" path) "child edits")
-       (let* ((result   (task-worktree-tests--publish job ':success))
-              (id       (task-job-execution-identifier job))
-              (artifact (task-worktree--read-artifact (getf result :worktree))))
-         (test-assert (eq ':success (getf result :status)) "A terminal artifact was extracted.")
-         (let ((*task-worktree-artifact-limit* 32)
-               (too-large-path                 (merge-pathnames "too-large.sexp" (task--artifact-root configuration job))))
+   (lambda (configuration source parent id tool context)
+     (multiple-value-bind (child metadata) (task-worktree-tests--prepare configuration parent id)
+       (let ((path (config :working-directory child)))
+         (test-write-text (merge-pathnames "file" path) "child edits")
+         (let* ((result         (task-worktree-tests--call tool context (json-object "action" "extract" "id" id)))
+                (artifact       (task-worktree--read-artifact metadata))
+                (too-large-path (merge-pathnames "too-large.sexp" (pathname (getf result :artifact-path)))))
+           (let ((*task-worktree-artifact-limit* 32))
+             (test-assert (handler-case
+                              (progn (task-worktree--write-artifact too-large-path artifact) nil)
+                            (task-worktree-error () t))
+                          "Incomplete size-limited artifacts are refused.")
+             (test-assert (not (probe-file too-large-path)) "Refused artifacts are never published."))
            (test-assert (handler-case
-                           (progn (task-worktree--write-artifact too-large-path artifact) nil)
-                         (task-worktree-error () t)) "Incomplete size-limited artifacts are refused.")
-           (test-assert (not (probe-file too-large-path)) "Refused artifacts are never published."))
-         (test-assert (equal "baseline" (uiop:read-file-string (merge-pathnames "file" source)))
-                      "Extraction never integrates into the parent.")
-         (test-assert (getf (task-worktree-tests--call tool context (json-object "action" "inspect" "id" id))
-                           :artifact-path) "The durable execution ID supports inspection.")
-         (test-assert (handler-case
-                         (progn (task-worktree-tests--call tool context
-                                                          (json-object "action" "cleanup" "id" id)) nil)
-                       (cl-worktree:dirty-workspace () t)) "Cleanup refuses uncommitted child edits.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "check" "id" id "target" (namestring source)))
-         (test-assert (equal "baseline" (uiop:read-file-string (merge-pathnames "file" source)))
-                      "Applicability checks do not modify the parent.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "apply" "id" id "target" (namestring source)))
-         (test-assert (equal "child edits" (uiop:read-file-string (merge-pathnames "file" source)))
-                      "Explicit integration applies the durable patch.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "cleanup" "id" id "discardDirty" t))
-         (test-assert (not (probe-file path)) "Explicit cleanup releases the owned worktree.")
-         (test-assert (equal '("file") (cl-worktree:artifact-paths
-                                        (task-worktree--read-artifact (getf result :worktree))))
-                      "The secured patch is usable after checkout removal.")))))
+                            (progn (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id)) nil)
+                          (cl-worktree:dirty-workspace () t))
+                        "Cleanup refuses uncommitted child edits.")
+           (task-worktree-tests--call tool context (json-object "action" "check" "id" id "target" (namestring source)))
+           (test-assert (equal "baseline" (uiop:read-file-string (merge-pathnames "file" source)))
+                        "Extraction and applicability checks do not modify the parent.")
+           (task-worktree-tests--call tool context (json-object "action" "apply" "id" id "target" (namestring source)))
+           (test-assert (equal "child edits" (uiop:read-file-string (merge-pathnames "file" source)))
+                        "Explicit integration applies the durable patch.")
+           (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id "discardDirty" t))
+           (test-assert (not (probe-file path)) "Cleanup releases the owned checkout.")
+           (test-assert (equal '("file") (cl-worktree:artifact-paths (task-worktree--read-artifact metadata)))
+                        "The secured patch is usable after checkout removal.")
+           (test-assert (= 1 (channel-remove configuration (list id))) "Channel removal finishes after explicit cleanup.")
+           (test-assert (not (probe-file (getf metadata :metadata-path))) "Channel removal retires its worktree sidecar."))))))
   nil)
 
 (-> test-task-worktree-authority () null)
 (defun test-task-worktree-authority ()
-  "Test denied creation, sanitized Git selectors and conversation ownership."
+  "Exercise denied Git creation, selector sanitation and exact child ownership."
   (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore parent))
-     (setf (task-job-command-authorization-function job)
-           (lambda (command directory) (declare (ignore command directory)) ':deny))
-     (test-assert
-      (handler-case (progn (task-worktree-configuration job configuration) nil)
-                    (cl-worktree:worktree-error nil t) (task-worktree-error nil t))
-      "Creation needs command authorization.")
-     (setf (task-job-command-authorization-function job)
-           #'task-worktree-tests--authorize)
+   (lambda (configuration source parent id tool context)
+     (test-assert (handler-case
+                      (progn (task-worktree-tests--prepare configuration parent id
+                                                          :authorize (constantly ':deny)) nil)
+                    (cl-worktree:worktree-error () t)
+                    (task-worktree-error () t))
+                  "Checkout creation requires command authorization.")
      (with-test-environment (("GIT_DIR" "/nonexistent-selector")
                              ("GIT_WORK_TREE" "/nonexistent-workspace")
                              ("GIT_INDEX_FILE" "/nonexistent-index")
                              ("GIT_COMMON_DIR" "/nonexistent-common")
                              ("GIT_OBJECT_DIRECTORY" "/nonexistent-objects")
-                             ("GIT_ALTERNATE_OBJECT_DIRECTORIES"
-                              "/nonexistent-alternates")
+                             ("GIT_ALTERNATE_OBJECT_DIRECTORIES" "/nonexistent-alternates")
                              ("GIT_NAMESPACE" "wrong-namespace")
                              ("GIT_CONFIG_PARAMETERS" "malformed")
                              ("GIT_CONFIG_COUNT" "1") ("GIT_CONFIG_KEY_0" "core.bare")
                              ("GIT_CONFIG_VALUE_0" "true"))
-       (let* ((child    (task-worktree-configuration job configuration))
-              (path     (config :working-directory child))
-              (metadata (getf (task-job-item job) :worktree))
-              (other
-               (cl-worktree:create-worktree
-                (task-worktree--manager configuration #'task-worktree-tests--authorize)
-                :source source :path
-                (merge-pathnames "unrelated/" (test-configuration-root configuration))
-                :baseline "HEAD" :owner "other-conversation/task")))
-         (test-assert (probe-file (merge-pathnames "file" path))
-                      "Inherited Git selectors cannot redirect checkout.")
-         (test-assert (equal "/nonexistent-selector" (uiop/os:getenv "GIT_DIR"))
-                      "Runner sanitation does not alter process-global environment.")
-         (test-assert
-          (handler-case
-           (progn
-            (task-worktree-tests--call tool context
-                                       (json-object "action" "cleanup-orphan" "source"
-                                                    (namestring source) "id"
-                                                    (cl-worktree:worktree-id other)))
-            nil)
-           (task-worktree-error nil t))
-          "A different conversation's checkout cannot be cleaned.")
-         (test-assert (probe-file (cl-worktree:worktree-path other))
-                      "Unrelated worktree is preserved.")
-         (task-worktree-tests--call tool context
-                                    (json-object "action" "cleanup-orphan" "source"
-                                                 (namestring source) "id"
-                                                 (getf metadata :id)))
-         (cl-worktree:cleanup-worktree
-          (task-worktree--manager configuration #'task-worktree-tests--authorize) other
-          :owner "other-conversation/task")))))
-  (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (let ((live
-            (task-tests--register-job (task-orchestrator-tool-orchestrator tool) parent
-                                      (task-job-item job) :name "live-isolation")))
-       (setf (getf (task-job-item live) :isolation)
-             (task-worktree-normalize-options (json-object))
-             (task-job-command-authorization-function live)
-             #'task-worktree-tests--authorize)
-       (let* ((child    (task-worktree-configuration live configuration))
-              (metadata (getf (task-job-item live) :worktree)))
-         (test-assert
-          (handler-case
-           (progn
-            (task-worktree-tests--call tool context
-                                       (json-object "action" "cleanup-orphan" "source"
-                                                    (namestring source) "id"
-                                                    (getf metadata :id) "discardDirty"
-                                                    t))
-            nil)
-           (task-worktree-error nil t))
-          "Owned orphan cleanup refuses a live task's checkout.")
-         (test-assert (probe-file (config :working-directory child))
-                      "The live child's workspace is preserved.")
-         (task-tests--publish-terminal live ':aborted (list :status ':aborted))
-         (task-worktree-tests--call tool context
-                                    (json-object "action" "cleanup" "id"
-                                                 (job-identifier live)))))))
+       (multiple-value-bind (child metadata) (task-worktree-tests--prepare configuration parent id)
+         (let* ((path    (config :working-directory child))
+                (manager (task-worktree--manager configuration #'task-worktree-tests--authorize))
+                (other   (cl-worktree:create-worktree
+                          manager :source source :baseline "HEAD" :owner "other-conversation/task"
+                                  :path (merge-pathnames "unrelated/" (test-configuration-root configuration)))))
+           (test-assert (probe-file (merge-pathnames "file" path)) "Inherited Git selectors cannot redirect checkout.")
+           (test-assert (equal "/nonexistent-selector" (uiop/os:getenv "GIT_DIR"))
+                        "Runner sanitation does not alter the process environment.")
+           (dolist (worktree-id (list (getf metadata :id) (cl-worktree:worktree-id other)))
+             (test-assert (handler-case
+                              (progn (task-worktree-tests--call
+                                      tool context (json-object "action" "cleanup-orphan" "source" (namestring source)
+                                                                 "id" worktree-id "discardDirty" t)) nil)
+                            (task-worktree-error () t))
+                          "Orphan cleanup refuses existing children and foreign checkouts."))
+           (let ((lease (conversation-lease-acquire configuration id)))
+             (unwind-protect
+                  (test-assert (handler-case
+                                   (progn (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id)) nil)
+                                 (task-error () t))
+                               "Cleanup cannot race the child's active lease.")
+               (conversation-lease-release lease)))
+           (test-assert (and (probe-file path) (probe-file (cl-worktree:worktree-path other)))
+                        "Refused cleanup preserves both checkouts.")
+           (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id))
+           (cl-worktree:cleanup-worktree manager other :owner "other-conversation/task"))))))
   nil)
 
 (-> test-task-worktree-interruption () null)
 (defun test-task-worktree-interruption ()
-  "Test interrupted terminal states and extraction failure retention."
+  "Preserve edits after failed extraction and scope legacy checkout deletion."
   (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore source parent))
-     (let* ((child (task-worktree-configuration job configuration))
-            (path  (config :working-directory child)))
-       (test-write-text (merge-pathnames "file" path) "interrupted edits")
-       (let ((result (task-worktree-tests--publish job ':aborted)))
-         (test-assert (eq ':aborted (getf result :status)) "Cancellation is not reclassified as success.")
-         (test-assert (eq ':pending (getf result :worktree-artifact-state))
-                      "Cancelled publication retains a pending artifact.")
-         (test-assert (null (getf result :worktree-artifact-path))
-                      "Cancelled publication does not extract synchronously.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "extract" "id" (task-job-execution-identifier job)))
-         (test-assert (equal '("file") (cl-worktree:artifact-paths
-                                        (task-worktree--read-artifact (getf result :worktree))))
-                      "The parent explicitly recovers cancelled edits.")
-         (test-assert (probe-file path) "Cancellation never cleans the checkout automatically.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "cleanup" "id" (task-job-execution-identifier job)
-                                                "discardDirty" t))))))
-  (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore source parent))
-     (let* ((child (task-worktree-configuration job configuration))
-            (path  (config :working-directory child)))
-       (test-write-text (merge-pathnames "untracked" path) "new file")
-       (let ((result (task-worktree-tests--publish job ':success)))
-         (test-assert (eq ':failed (getf result :status)) "Missing complete artifact downgrades child success.")
-         (test-assert (getf result :worktree-error) "Extraction error is inspectable.")
-         (test-assert (probe-file path) "Failed extraction preserves child work.")
+   (lambda (configuration source parent id tool context)
+     (multiple-value-bind (child metadata) (task-worktree-tests--prepare configuration parent id)
+       (let* ((path             (config :working-directory child))
+              (legacy-path      (merge-pathnames "task-worktrees/checkouts/legacy-task/"
+                                                 (config :data-root configuration)))
+              (manager          (task-worktree--manager configuration #'task-worktree-tests--authorize))
+              (legacy           (cl-worktree:create-worktree manager :source source :path legacy-path
+                                                                    :owner "legacy-owner" :baseline "HEAD"))
+              (legacy-directory (merge-pathnames "legacy-result/" (config :data-root configuration)))
+              (record           (merge-pathnames "worktree.sexp" legacy-directory)))
+         (ensure-directories-exist record)
+         (snapshot-write record (task-worktree--metadata legacy ':patch (namestring record)))
+         (task-worktree-discard configuration "legacy-task"
+                                :pathname (merge-pathnames "conversation.sexp" legacy-directory))
+         (test-assert (not (probe-file legacy-path)) "Discard removes the verified legacy checkout.")
+         (test-assert (probe-file (merge-pathnames "file" path)) "Legacy discard preserves the sibling checkout.")
+         (test-assert (handler-case
+                          (progn (task-worktree--cleanup-root configuration
+                                  (merge-pathnames "task-worktrees/checkouts/" (config :data-root configuration))) nil)
+                        (task-worktree-error () t))
+                      "The shared checkouts root cannot become a deletion scope.")
+         (test-write-text (merge-pathnames "untracked" path) "new file")
+         (test-assert (handler-case
+                          (progn (task-worktree-tests--call tool context (json-object "action" "extract" "id" id)) nil)
+                        (cl-worktree:worktree-error () t))
+                      "Extraction refuses an incomplete patch.")
+         (test-assert (probe-file (merge-pathnames "untracked" path)) "Failed extraction preserves child work.")
          (task-worktree-tests--git configuration path '("add" "untracked"))
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "extract" "id" (task-job-execution-identifier job)))
-         (test-assert (equal '("untracked") (cl-worktree:artifact-paths
-                                             (task-worktree--read-artifact (getf result :worktree))))
-                      "Parent can explicitly recover the artifact after repair.")
-         (task-worktree-tests--call tool context
-                                   (json-object "action" "cleanup" "id" (task-job-execution-identifier job)
-                                                "discardDirty" t))))))
-  (dolist (pause-after-add-p '(nil t))
-    (task-worktree-tests--fixture
-     (lambda (configuration source parent job tool context)
-       (declare (ignore source parent))
-       (let ((entered (sb-thread:make-semaphore))
-             (release (sb-thread:make-semaphore))
-             (outcome nil)
-             (thread  nil)
-             (runner  (fdefinition 'run-sandboxed)))
-         (flet ((pause ()
-                  (sb-thread:signal-semaphore entered)
-                  (sb-thread:wait-on-semaphore release)))
-           (unwind-protect
-                (progn
-                  (if pause-after-add-p
-                      (setf (fdefinition 'run-sandboxed)
-                            (lambda (program arguments &rest options)
-                              (multiple-value-prog1 (apply runner program arguments options)
-                                (when (and (member "worktree" arguments :test #'equal)
-                                           (member "add" arguments :test #'equal))
-                                  (pause)))))
-                      (setf (task-job-command-authorization-function job)
-                            (lambda (command directory)
-                              (declare (ignore directory))
-                              (when (search "\"worktree\" \"add\"" command) (pause))
-                              ':full-access)))
-                  (setf thread
-                        (sb-thread:make-thread
-                         (lambda ()
-                           (setf outcome
-                                 (handler-case
-                                     (progn (task-worktree-configuration job configuration) ':completed)
-                                   (job-aborted () ':aborted)
-                                   (error (condition) (princ-to-string condition)))))
-                         :name "worktree setup cancellation"))
-                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
-                               "Setup reached the selected side of Git creation.")
-                  (sb-thread:interrupt-thread
-                   thread (lambda ()
-                            (error 'job-aborted :identifier (job-identifier job)
-                                               :reason ':test-cancel :message "Interrupted creation.")))
-                  (sb-thread:join-thread thread :timeout 2 :default nil)
-                  (test-assert (eq ':aborted outcome)
-                               "Setup unwinds before the slow operation is released.")
-                  (setf (fdefinition 'run-sandboxed) runner
-                        (task-job-command-authorization-function job) #'task-worktree-tests--authorize)
-                  (let* ((metadata (getf (task-job-item job) :worktree))
-                         (result   (with-lock-held (*task-worktree-lock*)
-                                     (task-worktree-tests--publish job ':aborted))))
-                    (test-assert metadata "Setup reserves task ownership before Git mutation.")
-                    (test-assert (probe-file (getf metadata :metadata-path))
-                                 "Interrupted setup has durable provenance.")
-                    (test-assert (eq ':pending (getf result :worktree-artifact-state))
-                                 "Cancelled publication needs no lifecycle lock or Git extraction.")
-                    (when pause-after-add-p
-                      (task-worktree-tests--call
-                       tool context (json-object "action" "extract" "id" (task-job-execution-identifier job)))
-                      (test-assert (task-worktree--read-artifact metadata)
-                                   "The reserved checkout can be recovered after Git creation."))
-                    (task-worktree-tests--call
-                     tool context (json-object "action" "cleanup" "id" (task-job-execution-identifier job)))))
-             (setf (fdefinition 'run-sandboxed) runner)
-             (sb-thread:signal-semaphore release)
-             (when (and thread (sb-thread:thread-alive-p thread))
-               (sb-thread:terminate-thread thread)
-               (sb-thread:join-thread thread :timeout 30 :default nil))))))))
-  (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore parent tool context))
-     (let* ((child       (task-worktree-configuration job configuration))
-            (sibling     (config :working-directory child))
-            (legacy-path (merge-pathnames "task-worktrees/checkouts/legacy-task/"
-                                          (config :data-root configuration)))
-            (manager     (task-worktree--manager configuration #'task-worktree-tests--authorize))
-            (legacy      (cl-worktree:create-worktree manager :source source :path legacy-path
-                                                             :owner "legacy-owner" :baseline "HEAD"))
-            (record-root (merge-pathnames "legacy-result/" (config :data-root configuration)))
-            (record      (merge-pathnames "worktree.sexp" record-root)))
-       (ensure-directories-exist record)
-       (snapshot-write record (task-worktree--metadata legacy ':patch (namestring record)))
-       (task-worktree-discard configuration "legacy-task"
-                              :pathname (merge-pathnames "conversation.sexp" record-root))
-       (test-assert (not (probe-file legacy-path)) "Discard removes the verified legacy checkout.")
-       (test-assert (probe-file sibling) "Legacy discard preserves a real sibling checkout.")
-       (test-assert (equal "baseline" (uiop:read-file-string (merge-pathnames "file" sibling)))
-                    "Sibling working files survive legacy cleanup.")
-       (test-assert (handler-case
-                        (progn (task-worktree--cleanup-root configuration
-                                (merge-pathnames "task-worktrees/checkouts/" (config :data-root configuration))) nil)
-                      (task-worktree-error () t))
-                    "The shared checkouts root cannot become a deletion scope.")
-       (task-worktree-discard configuration (task-job-execution-identifier job)
-                              :pathname (merge-pathnames "conversation.sexp"
-                                                        (task--artifact-root configuration job)))
-       (test-assert (not (probe-file sibling)) "Modern discard removes its dedicated container."))))
+         (task-worktree-tests--call tool context (json-object "action" "extract" "id" id))
+         (test-assert (equal '("untracked") (cl-worktree:artifact-paths (task-worktree--read-artifact metadata)))
+                      "The parent can extract again after staging the change.")
+         (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id "discardDirty" t))))))
   (with-test-fixture (':posix-shell "Cancel a running Git subprocess")
     (with-test-configuration (configuration root)
       (dolist (authorize (list #'task-worktree-tests--authorize #'task-worktree-tests--sandboxed))
@@ -499,21 +366,16 @@
 (defun test-task-worktree-conflicts ()
   "Test durable commit-range integration, conflict inspection and explicit abort."
   (task-worktree-tests--fixture
-   (lambda (configuration source parent job tool context)
-     (declare (ignore parent))
-     (setf (getf (task-job-item job) :isolation)
-           (task-worktree-normalize-options (json-object "artifactKind" "commit-range")))
-     (let* ((child (task-worktree-configuration job configuration))
-            (path  (config :working-directory child)))
-       (test-write-text (merge-pathnames "file" path) "child commit")
-       (task-worktree-tests--git configuration path '("add" "file"))
-       (task-worktree-tests--git configuration path '("commit" "-m" "child"))
-       (let ((result (task-worktree-tests--publish job ':success))
-             (id     (task-job-execution-identifier job)))
-          (test-assert (getf result :worktree-artifact-path)
-                       (format nil "Commit-range extraction succeeds: ~S" result))
-         (test-assert (eq ':commit-range (cl-worktree:artifact-kind
-                                             (task-worktree--read-artifact (getf result :worktree))))
+   (lambda (configuration source parent id tool context)
+     (multiple-value-bind (child metadata)
+         (task-worktree-tests--prepare configuration parent id :options (json-object "artifactKind" "commit-range"))
+       (let ((path (config :working-directory child)))
+         (test-write-text (merge-pathnames "file" path) "child commit")
+         (task-worktree-tests--git configuration path '("add" "file"))
+         (task-worktree-tests--git configuration path '("commit" "-m" "child"))
+         (let ((result (task-worktree-tests--call tool context (json-object "action" "extract" "id" id))))
+           (test-assert (getf result :artifact-path) "Commit-range extraction succeeds."))
+         (test-assert (eq ':commit-range (cl-worktree:artifact-kind (task-worktree--read-artifact metadata)))
                       "Selected artifact retains committed engineering changes.")
          (test-write-text (merge-pathnames "file" source) "parent commit")
          (task-worktree-tests--git configuration source '("add" "file"))
@@ -542,7 +404,7 @@
     (return-from test-task-worktree-sandboxed-authorization nil))
   (dolist (linked-p '(nil t))
     (task-worktree-tests--fixture
-     (lambda (configuration source parent job tool context)
+     (lambda (configuration source parent id tool context)
        (declare (ignore context))
        (when linked-p
          (let ((linked (merge-pathnames "../linked/" source)))
@@ -553,20 +415,14 @@
                  configuration
                    (configuration-copy configuration :working-directory source)
                  (agent-configuration parent) configuration)))
-       (setf (task-job-command-authorization-function job)
-             #'task-worktree-tests--sandboxed
-             (getf (task-job-item job) :isolation)
-             (task-worktree-normalize-options
-              (json-object "artifactKind" "commit-range")))
-       (let* ((child        (task-worktree-configuration job configuration))
+       (let* ((child        (task-worktree-tests--prepare configuration parent id
+                                                         :options   (json-object "artifactKind" "commit-range")
+                                                         :authorize #'task-worktree-tests--sandboxed))
               (path         (config :working-directory child))
-              (conversation (conversation-create child))
-              (agent
-               (make-instance 'task-child-agent :configuration child :conversation
-                              conversation :provider (agent-provider parent)
-                              :tool-registry (agent-tool-registry parent) :worker nil
-                              :identity (task-job-identity job) :depth 1 :orchestrator
-                              (task-job-orchestrator job) :job job))
+              (conversation (conversation-load-by-id child id))
+              (agent        (agent-create :configuration child :conversation conversation
+                                          :provider (agent-provider parent)
+                                          :tool-registry (agent-tool-registry parent) :worker nil))
               (child-context
                (make-instance 'tool-context :configuration child :worker nil :agent agent
                               :conversation conversation :command-authorization-function
@@ -619,129 +475,72 @@
             nil)
            (task-worktree-error nil t))
           "Denied authorization prevents the Git operation.")
-         (let* ((result     (task-worktree-tests--publish job ':success))
-                (identifier (task-job-execution-identifier job)))
-           (test-assert (getf result :worktree-artifact-path)
-                        (format nil
-                                "Sandboxed extraction retains the commit artifact: ~S"
-                                result))
+         (let ((result (task-worktree-tests--call tool parent-context (json-object "action" "extract" "id" id))))
+           (test-assert (getf result :artifact-path) "Sandboxed extraction retains the commit artifact.")
            (task-worktree-tests--call tool parent-context
-                                      (json-object "action" "commits" "id" identifier
+                                      (json-object "action" "commits" "id" id
                                                    "target" (namestring source)))
            (test-assert
             (equal "isolated commit"
                    (uiop/stream:read-file-string (merge-pathnames "file" source)))
             "Sandboxed integration applies the isolated commit to the authorized target.")
            (task-worktree-tests--call tool parent-context
-                                      (json-object "action" "cleanup" "id" identifier))
+                                      (json-object "action" "cleanup" "id" id))
            (test-assert (not (probe-file path))
                         "Sandboxed cleanup removes only the owned checkout."))))))
   nil)
 
 (-> test-task-worktree-native-cleanup-ownership () null)
 (defun test-task-worktree-native-cleanup-ownership ()
-  "Keep cancelled Git cleanup inspectable and exclude recovery until all owners stop."
+  "Refuse worktree recovery while native or capture cleanup still owns Git."
   (dolist (mode '(:native :retry :readers))
     (task-worktree-tests--fixture
-     (lambda (configuration source parent job tool context)
-       (let* ((entered (sb-thread:make-semaphore))
-              (release (sb-thread:make-semaphore))
-              (owner   (make-thread
-                        (lambda ()
-                          (sb-sys:without-interrupts
-                            (sb-thread:wait-on-semaphore release))
-                          t)
-                        :name "held Git cleanup owner"))
-              (condition
-                (make-condition
-                 'cl-exec-sandbox:sandbox-process-cleanup-error
-                 :message "Held native cleanup" :command '("git" "worktree" "add")
-                 :process nil :alive-p (not (eq mode ':readers)) :termination-timeout 0.01
-                 :cleanup-thread  (when (eq mode ':native) owner)
-                 :cleanup-retry   (lambda () (unless (eq mode ':readers) owner))
-                 :cleanup-readers (when (eq mode ':readers) (list owner))))
-              (runner  (fdefinition 'run-sandboxed))
-              (setup   nil)
-              (outcome nil))
+     (lambda (configuration source parent id tool context)
+       (declare (ignore tool context))
+       (let* ((release   (sb-thread:make-semaphore))
+              (owner     (make-thread (lambda () (sb-thread:wait-on-semaphore release) t)
+                                      :name "held Git cleanup owner"))
+              (condition (make-condition
+                          'cl-exec-sandbox:sandbox-process-cleanup-error
+                          :message "Held native cleanup" :command '("git" "worktree" "add")
+                          :process nil :alive-p (not (eq mode ':readers)) :termination-timeout 0.01
+                          :cleanup-thread  (when (eq mode ':native) owner)
+                          :cleanup-retry   (lambda () (when (eq mode ':retry) owner))
+                          :cleanup-readers (when (eq mode ':readers) (list owner))))
+              (parent-id (conversation-identifier (agent-conversation parent)))
+              (runner    (fdefinition 'run-sandboxed)))
          (unwind-protect
               (progn
-                (setf (fdefinition 'run-sandboxed)
-                      (lambda (program arguments &rest options)
-                        (multiple-value-prog1 (apply runner program arguments options)
-                          (when (and (member "worktree" arguments :test #'equal)
-                                     (member "add" arguments :test #'equal))
-                            (handler-case
-                                (progn
-                                  (sb-thread:signal-semaphore entered)
-                                  ;; Exercise cancellation at readiness without a scheduling race.
-                                  (when (eq mode ':native)
-                                    (error 'job-aborted :identifier (job-identifier job)
-                                                       :reason      ':test-cancel
-                                                       :message     "Cancel Git setup at readiness."))
-                                  (loop (sleep 0.01)))
-                              (job-aborted () (error condition)))))))
-                (setf setup
-                      (make-thread
-                       (lambda ()
-                         (setf outcome
-                               (handler-case (task-worktree-configuration job configuration)
-                                (error (caught) caught))))
-                       :name "cancelled Git setup"))
-                (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
-                             "Git add completed while its native cleanup owner is held.")
-                (unless (eq mode ':native)
-                  (sb-thread:interrupt-thread
-                   setup (lambda ()
-                           (error 'job-aborted :identifier (job-identifier job)
-                                              :reason ':test-cancel :message "Cancel Git setup."))))
-                (sb-thread:join-thread setup :timeout 2 :default nil)
-                (test-assert (typep outcome 'cl-worktree:worktree-error)
-                             "The setup caller unwinds promptly through the Git library boundary.")
-                (setf (fdefinition 'run-sandboxed) runner)
-                (let* ((result     (task-worktree-tests--publish job ':aborted))
-                       (metadata   (getf result :worktree))
-                       (identifier (task-job-execution-identifier job))
-                       (record     (pathname (getf metadata :metadata-path))))
-                  (test-assert (eq ':pending (getf result :worktree-artifact-state))
-                               "Cancellation publishes a pending artifact before native cleanup settles.")
-                  (test-assert
-                   (getf (session-job-native-record job (task-job-snapshot job) parent) :cleanup-worktree)
-                   "Task inspection retains native thread, retry and capture ownership.")
-                  (test-assert
-                   (getf (task-worktree-tests--call
-                          tool context (json-object "action" "inspect" "id" identifier)) :cleanup)
-                   "Worktree inspection works before an artifact exists.")
-                  (dolist (action '("extract" "cleanup"))
-                    (test-assert
-                     (handler-case
-                         (progn (task-worktree-tests--call
-                                 tool context (json-object "action" action "id" identifier
-                                                           "discardDirty" t))
-                                nil)
-                       (task-worktree-error () t))
-                     "Recovery and explicit cleanup refuse to race the held Git owner."))
-                  (test-assert
-                   (handler-case
-                       (progn (task-worktree-discard configuration identifier :pathname record) nil)
-                     (task-worktree-error () t))
-                   "Child discard cannot delete a checkout with pending native ownership.")
-                  (test-assert (probe-file (getf metadata :path)) "Refusal preserves the checkout.")
+                (test-call-with-function-replacements
+                 (list (list 'run-sandboxed
+                             (lambda (program arguments &rest options)
+                               (multiple-value-prog1 (apply runner program arguments options)
+                                 (when (and (member "worktree" arguments :test #'equal)
+                                            (member "add" arguments :test #'equal))
+                                   (error condition))))))
+                 (lambda ()
+                   (test-assert (handler-case
+                                    (progn (task-worktree-tests--prepare configuration parent id :register-p nil) nil)
+                                  (cl-worktree:worktree-error () t))
+                                "Git reports incomplete cleanup after checkout creation.")))
+                (let* ((metadata (task-worktree--read-metadata configuration parent-id id))
+                       (path     (getf metadata :path)))
+                  (test-assert (task-worktree-cleanup-snapshot :source source)
+                               "Cleanup retains the outstanding Git owner.")
+                  (test-assert (handler-case
+                                   (progn (task-worktree-discard configuration id :parent-identifier parent-id) nil)
+                                 (task-worktree-error () t)
+                                 (cl-worktree:worktree-error () t))
+                               "Discard cannot race an outstanding Git owner.")
+                  (test-assert (probe-file path) "Refusal preserves the checkout.")
                   (sb-thread:signal-semaphore release)
                   (join-thread owner)
-                  (test-assert (null (getf (task-job-snapshot job) :cleanup-worktree))
-                               "Inspection retires cleanup only after native and capture owners settle.")
-                  (task-worktree-tests--call tool context
-                                            (json-object "action" "extract" "id" identifier))
-                  (test-assert (task-worktree--read-artifact metadata)
-                               "Extraction succeeds after the held owner exits.")
-                  (task-worktree-discard configuration identifier :pathname record)
-                  (test-assert (not (probe-file (getf metadata :path)))
-                               "Discard succeeds after cleanup settles.")
-                  (test-assert (probe-file (merge-pathnames "file" source))
-                               "Discard preserves the source repository.")))
-           (setf (fdefinition 'run-sandboxed) runner)
+                  (test-assert (not (task-worktree-cleanup-snapshot :source source))
+                               "Inspection retires settled cleanup.")
+                  (task-worktree-discard configuration id :parent-identifier parent-id)
+                  (test-assert (not (probe-file path)) "Discard succeeds after cleanup settles.")
+                  (test-assert (probe-file (merge-pathnames "file" source)) "Discard preserves the repository.")))
            (sb-thread:signal-semaphore release)
-           (when setup (sb-thread:join-thread setup :timeout 5 :default nil))
            (when (thread-alive-p owner) (join-thread owner))
            (task-worktree-cleanup-snapshot))))))
   nil)

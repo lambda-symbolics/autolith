@@ -226,11 +226,11 @@ Ambiguous or parked targets select nothing."
 
 (-> world-terminal--status-activity-text (list) string)
 (defun world-terminal--status-activity-text (status)
-  "Return STATUS's compact queue and child activity summary."
+  "Return STATUS's compact queue and job activity summary."
   (format nil "q:~D s:~D jobs:~D"
           (getf (rest status) :queued-input-count)
           (getf (rest status) :steering-input-count)
-          (getf (rest status) :task-live-count)))
+          (getf (rest status) :job-live-count 0)))
 
 (-> world-terminal--status-timestamp-text (timestamp) string)
 (defun world-terminal--status-timestamp-text (timestamp)

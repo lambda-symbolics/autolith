@@ -174,7 +174,7 @@
 
 (-> task-child--permission-mode (tool-context) (member :ask :auto :sandboxed :full-access))
 (defun task-child--permission-mode (context)
-  "Return the caller's live or inherited permission mode, with a saved-mode fallback."
+  "Return this channel's live permission mode, with a saved-mode fallback."
   (declare (special *active-application*))
   (let* ((configuration (tool-context-configuration context))
          (conversation  (tool-context-conversation context))
@@ -190,14 +190,7 @@
                      (when server
                        (when-let ((host (world-server--find-host server identifier)))
                          (world-host-application host)))))))
-      (let ((application
-              (or (owner (conversation-identifier conversation))
-                  (loop for agent = (tool-context-agent context)
-                          then (and (typep agent 'task-child-agent)
-                                    (task-job-parent-agent (task-child-agent-job agent)))
-                        for application = (and agent (owner (conversation-identifier (agent-conversation agent))))
-                        while agent
-                        when application return application))))
+      (let ((application (owner (conversation-identifier conversation))))
         (or (and application (application-permission-mode application))
             (permissions-channel-mode configuration (conversation-pathname conversation)
                                       (conversation-created-at conversation))

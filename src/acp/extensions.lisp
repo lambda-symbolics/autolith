@@ -217,8 +217,6 @@
            (agentcomms:acp-invalid-params "Transcript output must be text or structured."))
          (list (identifier) :output (if (string= output "text") ':text ':structured)
                :offset (or (field "offset" ':integer) 0) :limit (field "limit" ':integer))))
-      (:job-send
-       (list (identifier) (field "text" ':string t)))
       (:job-cancel
        (list (identifier)))
       (:resource
@@ -256,7 +254,6 @@
     ("_autolith/jobs" :jobs :server)
     ("_autolith/job" :job :server)
     ("_autolith/job-transcript" :job-transcript :server)
-    ("_autolith/job-send" :job-send :server)
     ("_autolith/job-cancel" :job-cancel :server)
     ("_autolith/resource" :resource :server)
     ("_autolith/steer" acp-extension-steer :client)

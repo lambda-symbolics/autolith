@@ -47,18 +47,12 @@
                     :tool-name "child.spawn"))
   nil)
 
-(-> task--normalize-item
-    (t &key (:shared-context (option string)) (:top-completion-policy keyword))
-    list)
-(defun task--normalize-item
-       (object &key shared-context (top-completion-policy ':continue))
-  "Validate and normalize one flat task OBJECT."
+(-> task--normalize-item (t) list)
+(defun task--normalize-item (object)
+  "Validate and normalize one child channel request."
   (unless (json-object-p object)
-    (error 'task-error :message "Every tasks item must be a JSON object." :tool-name
-           "child.spawn"))
-  (task--validate-json-fields object
-                              '("name" "task" "context" "isolation" "completion-policy")
-                              "a task item")
+    (error 'task-error :message "child.spawn requires an object." :tool-name "child.spawn"))
+  (task--validate-json-fields object '("name" "task" "context" "isolation") "child.spawn")
   (let ((task    (task--repair-prose (json-get object "task")))
         (name    (json-get object "name"))
         (context (task--repair-prose (json-get object "context"))))
@@ -76,27 +70,15 @@
     (when (and (nth-value 1 (gethash "context" object)) (not (stringp context)))
       (error 'task-error :message "A supplied task context must be a string." :tool-name
              "child.spawn"))
-    (list :name name :task task :context (task--combine-context shared-context context)
-          :isolation (task-worktree-normalize-options (json-get object "isolation"))
-          :completion-policy
-          (tool-completion-policy-argument object :tool-name "child.spawn" :default
-                                           top-completion-policy))))
+    (list :name      name
+          :task      task
+          :context   context
+          :isolation (task-worktree-normalize-options (json-get object "isolation")))))
 
 (-> task-normalize-arguments (hash-table) list)
 (defun task-normalize-arguments (arguments)
-  "Return the validated single child description shared by execution and presentation."
-  (task--validate-json-fields arguments
-                              '("name" "task" "context" "isolation" "completion-policy")
-                              "the top-level call")
-  (list (append (task--normalize-item arguments) (list :index 1 :mode ':detached))))
-
-(-> task--admit-items (agent task-orchestrator list) list)
-(defun task--admit-items (parent orchestrator items)
-  "Admit generic assignments subject to structural nesting depth."
-  (unless (< (task-parent-depth parent) (task-orchestrator-maximum-depth orchestrator))
-    (error 'task-error :message "The current child depth does not permit nested delegation."
-                      :code ':authority :tool-name "child.spawn"))
-  (mapcar (lambda (item) (list :item item :detached (eq (getf item :mode) ':detached))) items))
+  "Return the validated child description shared by execution and presentation."
+  (task--normalize-item arguments))
 
 (-> task-tool-result
     (t t &key (:success-p t) (:code (option keyword)) (:denied-p t))
@@ -404,8 +386,8 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
                                                   artifact-available-p)
                      :artifact artifact))))
     (append
-     (list :id (getf snapshot :job-id) :execution-id (getf snapshot :execution-id) :type
-           :task :state state :detached (and (getf snapshot :detached) t) :owner
+     (list :id (or (getf result :id) (getf snapshot :job-id)) :execution-id (getf snapshot :execution-id)
+           :type :task :state state :detached (and (getf snapshot :detached) t) :owner
            (getf snapshot :owner) :completion-policy (getf snapshot :completion-policy)
            :result result-record :cleanup-descendants
            (getf snapshot :cleanup-descendants) :cleanup-worktree
@@ -429,26 +411,6 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
 (defgeneric session-job-native-record
     (job snapshot viewer &key preview-limit include-progress-p)
   (:documentation "Return one bounded native inspection record for session JOB."))
-
-(defmethod session-job-native-record
-    ((job task-job) snapshot viewer
-     &key (preview-limit 0) include-progress-p)
-  "Return task JOB's artifact-aware native inspection record."
-  (let* ((root
-           (task--artifact-group-root
-            (agent-configuration viewer)
-            (task-job-root-conversation-identifier job)))
-         (artifact-path
-           (namestring
-            (merge-pathnames
-             (format nil "~A/result.sexp"
-                     (task-job-execution-identifier job))
-             root))))
-    (task--job-native-record
-     snapshot
-     :artifact-path      artifact-path
-     :preview-limit      preview-limit
-     :include-progress-p include-progress-p)))
 
 (defmethod session-job-native-record
     ((job tool-execution-job) snapshot viewer
@@ -484,40 +446,23 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
        (list :progress
              (list :duration-ms (getf progress :duration-ms)))))))
 
-(-> task--task-run-native-form
-    (list list &key (:duration-milliseconds integer)
-                    (:artifact-root string)
-                    (:success-p boolean))
-    (values list string))
-(defun task--task-run-native-form
-    (jobs snapshots &key duration-milliseconds artifact-root success-p)
-  "Fit every admitted JOB into one fair bounded native child.spawn manifest."
-  (loop with preview-limit = *task-result-preview-limit*
-        for records =
-          (loop for job in jobs
-                for snapshot in snapshots
-                collect
-                (task--job-native-record
-                 snapshot
-                 :artifact-path
-                 (format nil "~A/result.sexp"
-                         (task-job-execution-identifier job))
-                 :preview-limit preview-limit))
-        for form =
-          (list :task-run
-                :succeeded-p (and success-p t)
-                :total-duration-ms duration-milliseconds
-                :artifact-root     artifact-root
-                :results           records)
-        for content = (task--write-readable-sexp form :pretty-p t)
-        when (<= (length content) *task-tool-content-limit*)
-          return (values form content)
-        when (zerop preview-limit)
-          do (error 'task-error
-                    :message
-                    "The mandatory child.spawn manifest exceeds its native result bound."
-                    :tool-name "child.spawn")
-        do (setf preview-limit (floor preview-limit 2))))
+(-> task--durable-tool-native-record (list pathname integer) list)
+(defun task--durable-tool-native-record (snapshot artifact-path preview-limit)
+  "Project a durable tool SNAPSHOT with bounded content and retained shell logs."
+  (let ((result (getf snapshot :result)))
+    (list :id (getf snapshot :job-id) :execution-id (getf snapshot :execution-id)
+          :type ':tool :tool (getf snapshot :tool) :state (getf snapshot :state)
+          :detached (getf snapshot :detached) :shell-logs (getf result :shell-logs)
+          :result (list :status      (getf result :status)
+                        :content     (task--artifact-field (getf result :content) :content
+                                                           :preview-limit preview-limit
+                                                           :artifact-available-p t)
+                        :details     (task--artifact-field (getf result :details) :details
+                                                           :preview-limit preview-limit
+                                                           :artifact-available-p t)
+                        :shell-logs  (getf result :shell-logs)
+                        :duration-ms (getf result :duration-ms)
+                        :artifact    (namestring artifact-path)))))
 
 (-> task--job-native-form
     ((option session-job) list agent &key (:preview-limit integer)
@@ -532,11 +477,15 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
           (append (copy-list (getf snapshot :result))
                   (list :output-path (namestring artifact-path)))))
   (loop for limit = preview-limit then (floor limit 2)
-        for record = (if job
-                         (session-job-native-record job snapshot viewer
-                                                    :preview-limit limit :include-progress-p t)
-                         (task--job-native-record snapshot :artifact-path (namestring artifact-path)
-                                                          :preview-limit  limit))
+        for record = (cond
+                       (job
+                        (session-job-native-record job snapshot viewer
+                                                   :preview-limit limit :include-progress-p t))
+                       ((eq (getf snapshot :type) :tool)
+                        (task--durable-tool-native-record snapshot artifact-path limit))
+                       (t
+                        (task--job-native-record snapshot :artifact-path (namestring artifact-path)
+                                                          :preview-limit limit)))
         for form = (if wrapper (funcall wrapper record) (list :job record))
         for content = (task--write-readable-sexp form :pretty-p t)
         when (<= (length content) *task-tool-content-limit*)
@@ -544,40 +493,49 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
         when (zerop limit)
           do (error 'task-error
                     :message   "The mandatory job snapshot exceeds its native result bound."
-                    :tool-name (if artifact-path "job.get" "job.wait"))))
+                    :tool-name "job.get")))
 
 (-> task--durable-job-result
     (agent string string)
-    (values (option list) (option pathname)))
+    (values (option list) (option pathname) (option list) (option keyword)))
 (defun task--durable-job-result (viewer identifier tool-name)
-  "Return VIEWER's durable task result named by execution IDENTIFIER.
+  "Return an owned durable result and its identity and terminal state.
 
-Only the current primary conversation's artifact root is searched."
-  (when (typep viewer 'task-child-agent)
-    (return-from task--durable-job-result (values nil nil)))
-  (let* ((fragment (task--identifier-fragment identifier))
-         (root
-           (task--artifact-group-root
-            (agent-configuration viewer)
-            (conversation-identifier (agent-conversation viewer))))
-         (path
-           (and fragment
-                (merge-pathnames
-                 (format nil "~A/result.sexp" fragment)
-                 root))))
-    (unless (and path (probe-file path))
-      (return-from task--durable-job-result (values nil nil)))
-    (handler-case
-        (values (task--read-result-artifact path) path)
-      (task-error (condition)
-        (error condition))
-      (error (condition)
-        (error 'task-error
-               :message   (format nil
-                                  "Could not read durable job result ~A: ~A"
-                                  identifier condition)
-               :tool-name tool-name
-               :task-id   identifier)))))
+Legacy ancestor storage is read only after the continuity record authenticates
+VIEWER's exact channel. Ambiguous identifiers are refused."
+  (let ((match nil))
+    (task-continuity-map-records
+     viewer
+     (lambda (entry)
+       (let ((record (getf entry :record)))
+         (when (and record (or (equal identifier (getf record :job-id))
+                               (equal identifier (getf record :execution-id))))
+           (when match
+             (error 'task-error :message "Ambiguous durable job; use its execution ID."
+                                :tool-name tool-name :task-id identifier))
+           (setf match entry)))))
+    (unless match
+      (return-from task--durable-job-result (values nil nil nil nil)))
+    (let* ((directory     (uiop:pathname-directory-pathname (getf match :path)))
+           (result-path   (merge-pathnames "result.sexp" directory))
+           (terminal-path (merge-pathnames "terminal.sexp" directory)))
+      (handler-case
+          (cond
+            ((probe-file terminal-path)
+             (let ((terminal (task-continuity--read terminal-path)))
+               (values (getf terminal :result) terminal-path (getf match :record)
+                       (getf terminal :state))))
+            ((probe-file result-path)
+             (values (task--read-result-artifact result-path) result-path
+                     (getf match :record) nil))
+            (t
+             (values nil nil nil nil)))
+        (task-error (condition)
+          (error condition))
+        (error (condition)
+          (error 'task-error :message (format nil "Could not read durable job result ~A: ~A"
+                                              identifier condition)
+                             :tool-name tool-name :task-id identifier))))))
 
 (-> task-query-job
     (task-orchestrator agent &key (:identifier string) (:tool-name string)
@@ -587,8 +545,8 @@ Only the current primary conversation's artifact root is searched."
        (orchestrator viewer &key identifier tool-name (execution-alias-p t))
   "Return a canonical snapshot, retained job and durable result pathname.
 
-Live jobs take precedence. Durable lookup uses only VIEWER's primary artifact
-root. EXECUTION-ALIAS-P also accepts a live job's execution identifier. Missing
+Live jobs take precedence. Durable lookup requires VIEWER's exact ownership.
+EXECUTION-ALIAS-P also accepts a live job's execution identifier. Missing
 jobs return three NIL values; each frontend owns its error and presentation."
   (if-let ((job
             (if execution-alias-p
@@ -597,19 +555,20 @@ jobs return three NIL values; each frontend owns its error and presentation."
                       (task-orchestrator-list-visible-jobs orchestrator viewer) :key
                       #'session-job-identifier :test #'string=))))
     (values (session-job-snapshot job) job nil)
-    (multiple-value-bind (result path)
+    (multiple-value-bind (result path identity terminal-state)
         (task--durable-job-result viewer identifier tool-name)
       (values
        (when result
-         (list :job-id (or (getf result :id) identifier) :execution-id identifier
-               :parent-id (getf result :parent-id) :tool (getf result :tool) :state
-               (case (getf result :status)
-                 (:success
-                  ':completed)
-                 (:aborted
-                  ':aborted)
-                 (otherwise
-                  ':failed))
+         (list :job-id (getf identity :job-id) :execution-id (getf identity :execution-id)
+               :type (getf identity :kind) :parent-id (getf result :parent-id)
+               :tool (or (getf result :tool) (getf identity :tool)) :state
+               (or terminal-state (case (getf result :status)
+                                   (:success
+                                    ':completed)
+                                   (:aborted
+                                    ':aborted)
+                                   (otherwise
+                                    ':failed)))
                :detached (and (getf result :detached) t) :progress
                (list :duration-ms (getf result :duration-ms) :usage (getf result :usage))
                :result result))
@@ -650,13 +609,13 @@ poll a job whose completion will wake it."
   (let ((identifier (session-job-identifier job)))
     (cond
       ((not (task-completion-wakeup-connected-p viewer))
-       (format nil "Job ~A runs in the background. Continue independent work, then use job.wait when you need its result."
+       (format nil "Job ~A runs in the background. This interface has no automatic wakeup; use job.get when you need its result."
                identifier))
       ((eq (session-job-completion-policy job) ':notify)
        (format nil "Job ~A runs in the background. Its completion notice arrives with your next turn; do not poll it."
                identifier))
       (t
-       (format nil "Job ~A runs in the background. When it finishes, its result preview wakes you as new input; do not poll it with job.get or job.wait. Continue independent work or end your turn."
+       (format nil "Job ~A runs in the background. When it finishes, its result preview wakes you as new input. Continue independent work or end your turn."
                identifier)))))
 
 (defmethod tool-execution-invoke
@@ -739,48 +698,64 @@ poll a job whose completion will wake it."
                       :tool-name "job.list"
                       :message   "One job summary exceeds the native result bound."))
 
-(defgeneric task-context-spawn-items (context arguments)
-  (:documentation "Normalize child assignments with the originating execution context."))
-
-(defmethod task-context-spawn-items ((context tool-context) arguments)
-  "Normalize the ordinary model-visible child assignment."
-  (declare (ignore context))
-  (task-normalize-arguments arguments))
-
 (defmethod tool-execute ((tool task-run-tool) (context tool-context) arguments)
-  "Validate, admit, and detach one child agent."
+  "Create an owned child channel, then send its first message normally."
+  (declare (ignore tool))
   (let ((parent (tool-context-agent context)))
     (unless (typep parent 'agent)
-      (error 'task-error :message
-             "child.spawn requires an executing parent agent context." :tool-name
-             "child.spawn"))
-    (let* ((orchestrator (task-orchestrator-refresh (task-run-tool-orchestrator tool)))
-           (items        (task-context-spawn-items context arguments))
-           (resolved     (task--admit-items parent orchestrator items))
-           (jobs
-            (task-orchestrator-start-jobs orchestrator parent resolved :parent-call-id
-                                          (tool-context-call-id context)
-                                          :command-authorization-function
-                                          (tool-context-command-authorization-function
-                                           context)
-                                          :tool-authorization-function
-                                          (tool-context-tool-authorization-function
-                                           context)))
-           (snapshots    (mapcar #'task-job-snapshot jobs))
-           (duration
-            (if jobs
-                (task--milliseconds-between (reduce #'min jobs :key #'job-created-at)
-                                            (get-internal-real-time))
-                0))
-           (artifact-root
-            (namestring
-             (task--artifact-group-root (agent-configuration parent)
-                                        (task-parent-root-conversation-identifier
-                                         parent)))))
-      (multiple-value-bind (form content)
-          (task--task-run-native-form jobs snapshots :duration-milliseconds duration
-                                      :artifact-root artifact-root :success-p t)
-        (task-tool-result content form)))))
+      (error 'task-error :tool-name "child.spawn" :message "child.spawn requires an executing agent."))
+    (let* ((item          (task-normalize-arguments arguments))
+           (configuration (agent-configuration parent))
+           (origin        (agent-conversation parent))
+           (mission       (mission-context-find origin))
+           (parent-id     (conversation-identifier origin))
+           (identifier    (conversation-identifier-generate (configuration-conversation-root configuration)))
+           (isolation     (getf item :isolation))
+           (authorize     (and isolation (lambda (command directory)
+                                           (tool-context-authorize-command context command directory))))
+           (job           *tool-execution-current-job*)
+           (child         nil)
+           (metadata      nil))
+      (world-child-check-admission parent)
+      (let ((lease (conversation-lease-acquire configuration identifier)))
+        (unwind-protect
+             (unwind-protect
+                  (progn
+                    (when isolation
+                      (multiple-value-setq (configuration metadata)
+                        (task-worktree-configuration
+                         parent-id identifier configuration :isolation isolation :authorize authorize
+                         :cancel-function (and job (lambda () (job-cancellation-requested-p job))))))
+                    (setf child (world-child-create parent :name            (getf item :name)
+                                                           :identifier      identifier
+                                                           :configuration   configuration
+                                                           :permission-mode (task-child--permission-mode context)
+                                                           :lease           lease)))
+               (when (and isolation (null child))
+                 (handler-case
+                     (unless (world-channel-find (world-load configuration) identifier)
+                       (task-worktree-discard configuration identifier :parent-identifier parent-id
+                                                                       :authorize         authorize))
+                   (error (cause)
+                     (warn 'world-session-warning :pathname (configuration-world-path configuration)
+                                                  :cause    cause)))))
+          (conversation-lease-release lease)))
+      (let* ((text        (format nil "~A~@[~2%~A~]~@[~2%~A~]"
+                                  (getf item :task) (getf item :context)
+                                  (when metadata
+                                    "Use this child's isolated worktree. Stage new files before reporting back so the parent can inspect the complete patch.")))
+             (receipt     (if mission
+                              (with-recursive-lock-held ((mission-context-request-lock mission))
+                                (mission-context-bind-child origin child :context mission)
+                                (world-child-send parent child text))
+                              (world-child-send parent child text)))
+             (world       (world-load configuration))
+             (resident    (find ':agent (world-channel-residents world identifier) :key #'participant-kind))
+             (handle      (and resident (participant-name resident)))
+             (delivered-p (not (null (member identifier (getf receipt :channels) :test #'string=))))
+             (form        (list :child-spawn :channel identifier :name handle :message-id (getf receipt :id)
+                                             :delivery (if delivered-p ':delivered ':pending))))
+        (task-tool-result (task--write-readable-sexp form :pretty-p t) form)))))
 
 (defmethod tool-execute ((tool task-job-tool) (context tool-context) arguments)
   "Execute the job operation named by TOOL."
@@ -841,69 +816,22 @@ poll a job whose completion will wake it."
                  :wrapper       (lambda (record)
                                   (list :job-get :durable-p (null job) :job record)))
               (task-tool-result content form)))))
-      ((:wait :cancel)
-       (task--validate-tool-arguments
-        arguments
-        (if (eq operation ':wait)
-            '("id" "timeout-seconds")
-            '("id"))
-        (tool-canonical-name tool))
-       (let* ((identifier
-                (task--validate-job-identifier
-                 (tool-argument arguments "id" :required t)
-                 (tool-canonical-name tool)))
-              (job (task-orchestrator-find-visible-job
-                    orchestrator
-                    identifier
-                    :viewer    viewer
-                    :tool-name (tool-canonical-name tool))))
-         (if (eq operation ':cancel)
-             (multiple-value-bind (accepted-p cancelled-descendants)
-                 (session-job-cancel job :user)
-               (let ((snapshot (session-job-snapshot job)))
-                 (multiple-value-bind (form content)
-                     (task--job-native-form
-                      job snapshot viewer
-                      :wrapper
-                      (lambda (record)
-                        (list :job-cancel
-                              :id identifier
-                              :accepted-p            (and accepted-p t)
-                              :reason                ':user
-                              :cancelled-descendants cancelled-descendants
-                              :job                   record)))
-                   (task-tool-result content form))))
-             (let ((timeout (or (tool-argument arguments "timeout-seconds")
-                                0)))
-               (unless (and (integerp timeout)
-                            (<= 0 timeout *task-job-wait-maximum-seconds*))
-                 (error 'task-error
-                        :message
-                        (format nil
-                                "job.wait timeout-seconds must be an integer from 0 to ~D."
-                                *task-job-wait-maximum-seconds*)
-                        :tool-name "job.wait"))
-               (when (and (plusp timeout)
-                          (typep viewer 'task-child-agent)
-                          (typep job 'task-job))
-                 (handler-case
-                     (make-thread
-                      (lambda () (job-run-inline job))
-                      :name (format nil "Autolith job.wait ~A" identifier))
-                   (error ()
-                     nil)))
-               (multiple-value-bind (snapshot terminal-p)
-                   (session-job-await job timeout)
-                 (multiple-value-bind (form content)
-                     (task--job-native-form
-                      job snapshot viewer
-                      :wrapper
-                      (lambda (record)
-                        (list :job-wait
-                              :timeout-seconds timeout
-                              :terminal-p terminal-p
-                              :job        record)))
-                   (task-tool-result content form)))))))
+      (:cancel
+       (let ((tool-name (tool-canonical-name tool)))
+         (task--validate-tool-arguments arguments '("id") tool-name)
+         (let* ((identifier (task--validate-job-identifier
+                             (tool-argument arguments "id" :required t) tool-name))
+                (job        (task-orchestrator-find-visible-job
+                             orchestrator identifier :viewer viewer :tool-name tool-name)))
+           (multiple-value-bind (accepted-p cancelled-descendants) (session-job-cancel job :user)
+             (multiple-value-bind (form content)
+                 (task--job-native-form
+                  job (session-job-snapshot job) viewer
+                  :wrapper (lambda (record)
+                             (list :job-cancel :id identifier :accepted-p (and accepted-p t)
+                                               :reason ':user :cancelled-descendants cancelled-descendants
+                                               :job record)))
+               (task-tool-result content form))))))
       (t
        (error 'task-error :message
               (format nil "Unknown job operation ~(~A~)." operation) :tool-name
@@ -916,9 +844,8 @@ poll a job whose completion will wake it."
    (json-object "name" (tool-string-property "Optional stable child name.") "task"
                 (tool-string-property "Self-contained child assignment.") "context"
                 (tool-string-property "Optional background for this child.") "isolation"
-                (task-worktree-options-schema) "completion-policy"
-                (tool-completion-policy-property))
-   nil))
+                  (task-worktree-options-schema))
+   '("task")))
 
 (-> task-augment-tool-registry (tool-registry) tool-registry)
 (defun task-augment-tool-registry (registry)
@@ -928,7 +855,7 @@ poll a job whose completion will wake it."
   (tool-registry-describe-namespace registry "child"
                                     "Spawn and manage your child agents.")
   (tool-registry-describe-namespace registry "job"
-                                    "Inspection, waiting, cancellation, and durable result lookup for jobs.")
+                                    "Inspect, cancel, and recover jobs owned by this channel.")
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
           (tool-object-schema (json-object "id" (task-job-identifier-property)) '("id")))
@@ -945,30 +872,18 @@ poll a job whose completion will wake it."
     (tool-registry-register registry
                             (make-instance 'task-run-tool :orchestrator orchestrator
                                            :namespace "child" :name "spawn" :description
-                                            "Start a detached child agent with an assignment and optional name and context."
+                                            "Create a persistent child channel and send its first message. You are subscribed to the child."
                                            :parameters                  (task-run-parameters-schema)))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator orchestrator
                                            :namespace "job" :name "list" :description
-                                           "List child and tool execution jobs in this session."
+                                           "List this channel's tool execution jobs."
                                            :parameters                  job-list-schema))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator orchestrator
                                            :namespace "job" :name "get" :description
                                            "Inspect one live session job or a completed task result persisted for the current primary conversation."
                                            :parameters                  identifier-schema))
-    (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator orchestrator
-                                           :namespace "job" :name "wait" :description
-                                           "Wait up to a bounded timeout for one session job and return its current or terminal result."
-                                           :parameters
-                                           (tool-object-schema
-                                            (json-object "id"
-                                                         (task-job-identifier-property)
-                                                         "timeout-seconds"
-                                                         (tool-integer-property
-                                                          "Maximum wait in seconds; defaults to 0."))
-                                            '("id"))))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator orchestrator
                                            :namespace "job" :name "cancel" :description
@@ -980,6 +895,6 @@ poll a job whose completion will wake it."
                                            "continuity" :description
                                            "Classify owned durable jobs and explicitly reattach, reconstruct, safely restart, or abandon unfinished work. Recovery requires primary-owner authorization and a durable replay claim."
                                            :parameters (task-continuity-parameters)))
-    (task-worktree-register-tool registry orchestrator)
+    (task-worktree-register-tool registry)
     (task-children-register-tools registry orchestrator)
     registry))

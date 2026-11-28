@@ -1476,10 +1476,7 @@ running keeps the mode it started under."
 (-> world-host-jobs-live-p (world-host) boolean)
 (defun world-host-jobs-live-p (host)
   "Return true while HOST owns a child or session job."
-  (multiple-value-bind (children active-children session-jobs)
-      (world-terminal--task-counts (world-host-application host))
-    (declare (ignore active-children))
-    (or (plusp children) (plusp (or session-jobs 0)))))
+  (plusp (world-terminal--live-job-count (world-host-application host))))
 
 (-> world-server--permission-mode (world-server t) keyword)
 (defun world-server--permission-mode (server value)

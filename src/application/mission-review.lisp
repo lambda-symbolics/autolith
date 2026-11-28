@@ -39,7 +39,9 @@
   (let ((checkpoint (with-lock-held (*mission-review-lock*)
                       (gethash conversation *mission-review-conversations*))))
     (mission--account-inference context function usage-function
-                                :allowance (and checkpoint (getf checkpoint :policy)))))
+                                :allowance         (and checkpoint (getf checkpoint :policy))
+                                :originating-child (and (mission-context-child-p context conversation)
+                                                        (conversation-identifier conversation)))))
 
 (-> mission-review--context (application) mission-context)
 (defun mission-review--context (application)
@@ -130,34 +132,34 @@ across changed snapshots and is not reset by retries or restarts."
     (unless (typep parent 'agent)
       (mission--reject ':review-authority "Mission review requires an executing agent."))
     (let* ((parent-configuration (agent-configuration parent))
-           (model (or (find-if (lambda (candidate)
-                                 (member candidate *supported-models* :test #'string=))
-                               (getf policy :models))
-                      (config :model parent-configuration)))
-           (configuration (configuration-copy parent-configuration :model model))
-           (conversation (conversation-create configuration))
-           (provider (provider-with-configuration (agent-provider parent) configuration))
-           (reviewer (agent-create :configuration configuration :provider provider
-                                   :conversation conversation
-                                   :tool-registry (agent-tool-registry parent)
-                                   :worker (tool-context-worker tool-context)))
-           (output (make-string-output-stream))
-           (observer (callback-agent-observer-create
-                      :text-callback (lambda (text) (write-string text output))
-                      :command-authorization-callback
-                      (tool-context-command-authorization-function tool-context)
-                      :tool-authorization-callback
-                      (tool-context-tool-authorization-function tool-context))))
+           (model                (or (find-if (lambda (candidate)
+                                                (member candidate *supported-models* :test #'string=))
+                                              (getf policy :models))
+                                     (config :model parent-configuration)))
+           (configuration        (configuration-copy parent-configuration :model model))
+           (conversation         (conversation-create configuration))
+           (provider             (provider-with-configuration (agent-provider parent) configuration))
+           (reviewer             (agent-create :configuration configuration :provider provider
+                                               :conversation  conversation
+                                               :tool-registry (agent-tool-registry parent)
+                                               :worker        (tool-context-worker tool-context)))
+           (output               (make-string-output-stream))
+           (observer             (callback-agent-observer-create
+                                  :text-callback (lambda (text) (write-string text output))
+                                  :command-authorization-callback
+                                  (tool-context-command-authorization-function tool-context)
+                                  :tool-authorization-callback
+                                  (tool-context-tool-authorization-function tool-context))))
       (mission-context-bind context conversation)
       (mission-review-bind-checkpoint (list :policy policy :run run) conversation)
       (with-recursive-lock-held ((mission-context-lock context))
         (setf (getf run :job-id) (conversation-identifier conversation))
         (mission--record context))
-      (let* ((prompt (format nil "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary.~2%~A" background))
-             (result (mission--supervise context "Mission review"
-                        (lambda ()
-                          (agent-run-user-turn reviewer prompt :observer observer :automatic-p t))))
-             (text (provider-result-assistant-text result))
+      (let* ((prompt   (format nil "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary.~2%~A" background))
+             (result   (mission--supervise context "Mission review"
+                          (lambda ()
+                            (agent-run-user-turn reviewer prompt :observer observer :automatic-p t))))
+             (text     (provider-result-assistant-text result))
              (streamed (get-output-stream-string output)))
         (list :status (if (agent-turn-complete-p reviewer result) ':success ':failed)
               :output (if (non-empty-string-p text) text streamed))))))

@@ -314,7 +314,7 @@
     (unwind-protect
          (progn
            (setf application
-                 (application-create configuration :permission-mode permission-mode
+                 (application-create configuration :permission-mode  permission-mode
                                      :ignore-saved-permission-mode-p t))
            (let* ((agent    (application-agent application))
                   (trace-id (conversation-identifier (application-conversation application)))
@@ -351,11 +351,12 @@
                  (application-turn-cancelled (condition)
                    (values ':cancelled nil trace-id (usage-summary) ':cancelled
                            (princ-to-string condition)))
-                 (provider-error (condition)
-                   (values ':failed nil trace-id (usage-summary) ':provider-failure
-                           (princ-to-string condition)))
                  (error (condition)
-                   (values ':failed nil trace-id (usage-summary) ':child-failure
+                   (values ':failed nil trace-id (usage-summary)
+                           (if (member (telemetry--condition-error-type condition)
+                                       '(:provider :authentication :rate-limit :transport))
+                               ':provider-failure
+                               ':child-failure)
                            (princ-to-string condition)))))))
       (run-job--close-application application))))
 

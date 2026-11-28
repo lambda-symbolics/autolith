@@ -801,11 +801,8 @@ capture."
    (* *shell-log-capture-byte-limit* (if merge-output-p 1 2))
    (lambda ()
     (let* ((configuration        (tool-context-configuration context))
-           (agent                (tool-context-agent context))
-           (parent-job           (and (typep agent 'task-child-agent) (task-child-agent-job agent)))
            (root                 (if job (session-job-root-conversation-identifier job)
-                                     (if agent (task-parent-root-conversation-identifier agent)
-                                         (conversation-identifier (tool-context-conversation context)))))
+                                     (conversation-identifier (tool-context-conversation context))))
            (execution            (if job (session-job-execution-identifier job) (daemon-random-token)))
            (identifier           (daemon-random-token))
            (reservation          (* *shell-log-capture-byte-limit* (if merge-output-p 1 2)))
@@ -836,13 +833,6 @@ capture."
                                               :job-id             (and job (session-job-identifier job))
                                               :parent-call-id     (and job (session-job-parent-call-id job))
                                               :detached-p         (and job (session-job-detached-p job))
-                                              :owner-execution-ids
-                                              (remove-duplicates
-                                               (append (when parent-job
-                                                         (list (session-job-execution-identifier parent-job)))
-                                                       (when (and job agent)
-                                                         (task-continuity--owner-executions job agent)))
-                                               :test #'equal)
                                               :completion-owner-conversation
                                               (and job (session-job-completion-owner-conversation job))
                                               :merge-output-p     merge-output-p

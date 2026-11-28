@@ -243,10 +243,10 @@ This also works for a bare variable. Input such as =?text= or =??= is plain text
 ? (progn (sleep 10) (values :finished 42))
 #+END_SRC
 
-Use the printed =exec:N= ID to inspect, wait for, or cancel that job:
-=(job.get :id "exec:1")=, =(job.wait :id "exec:1")=, or
-=(job.cancel :id "exec:1")=. Replace =exec:1= with the ID you received. Click
-the printed cancellation form to insert it at the prompt.
+Use the printed =exec:N= ID to inspect or cancel that job:
+=(job.get :id "exec:1")= or =(job.cancel :id "exec:1")=. Replace =exec:1=
+with the ID you received. Click the printed cancellation form to insert it at
+the prompt.
 The result and captured output go to the original conversation even if you
 switch channels. Background Lisp uses EOF for input and reports errors without
 an interactive restart picker. Submitting a form this way does not start a model
@@ -1904,9 +1904,11 @@ Run the optional checks with =(asdf:test-system "autolith/debug/tests")=.
 
 ** Child agents
 
-Use =child.spawn= to start a child with a self-contained assignment and an
-optional name and context. Children use the parent's model and configured tools.
-Children use medium reasoning effort. Codex Fast mode is not inherited.
+Use =child.spawn= to create a channel and send a self-contained first message
+with an optional name and context. The first turn uses ordinary channel delivery.
+You are automatically subscribed to the child's idle notifications. Children
+start with the parent's model and configured tools, medium reasoning effort,
+and Codex Fast mode off.
 
 Reuse a child by sending work to its channel. An agent can have up to 32
 children. Read =channel:current= to see which are busy. Use =child.rename=
@@ -1940,20 +1942,19 @@ cannot be reopened from leftover history.
 
 ** Completion-driven turns
 
-Set =completion-policy= on asynchronous tools or =child.spawn=. The same
-policy applies if a synchronous call outlasts the blocking grace period.
-Batch items inherit the outer policy unless they specify their own.
+Set =completion-policy= on an asynchronous tool. The same policy applies if
+a synchronous call outlasts the blocking grace period.
 
-- =continue= is the default. In a primary terminal or ACP session, idle
-  completions in a one-second window share one automatic turn. If a turn is
-  busy, results arrive at the next safe request boundary.
+- =continue= is the default. In a terminal or ACP channel with an input
+  controller, idle completions in a one-second window share one automatic turn.
+  If a turn is busy, results arrive at the next safe request boundary.
 - With =notify=, results arrive on the next ordinary turn. Interfaces without
   an input controller also deliver results on ordinary turns.
 
 Continue independent work while jobs run. Yield the turn if all you need is
 the results. An empty reply shows a yield notice that counts the unfinished
-jobs eligible to wake the conversation. Use =job.get= to inspect a result or
-=job.wait= if you need to wait explicitly.
+jobs eligible to wake the conversation. Use =job.get= to inspect a result when
+the completion preview is not enough.
 
 A goal or mission waits for eligible job results before resuming automatic
 continuations. Only the conversation that owns the work gets a wakeup.
@@ -1963,9 +1964,9 @@ missions, and spent budgets can prevent automatic turns.
 
 ** Task inspection and continuity
 
-Use =(tell "CHILD" "text")= to steer a running child at its next safe
-boundary. Use =job.continuity= with =action= set to =list= or =get= to see
-which retained jobs are live, complete, recoverable or need a decision.
+Use =channel.send= or =(tell "CHILD" "text")= to message a child. Use
+=job.continuity= with =action= set to =list= or =get= to see which jobs your
+channel owns and which are live, complete, recoverable or need a decision.
 Lists default to 20 records (maximum 100). Pass =offset= to page and read
 =:total=, =:next-offset= and =:more-p= from the result.
 
@@ -1973,13 +1974,11 @@ To recover interrupted work:
 
 1. Inspect the retained job and its effects. Use a visible job ID or durable
    execution ID in =id=.
-2. To permit a restart, the primary owner calls =allow-restart= with a
-   =safety= rationale about repeating external effects and =authorize: true=.
-   For a saved worker, use =checkpoint= with a compatible =image=, target
-   =repl= and =authorize: true=.
+2. For a saved worker, the primary owner uses =checkpoint= with a compatible
+   =image=, target =repl= and =authorize: true=.
 3. Use =revive= or =abandon= with the ID and =authorize: true=. Revival can
-   reattach live work, start the saved worker or dispatch a new child from a
-   retained safe shared-workspace task specification.
+   reattach live work or start a saved worker. Send a new channel message to
+   retry an old child assignment after inspecting its effects.
 
 Autolith records the decision before dispatch and links the executions. If
 revival fails or is interrupted, inspect the uncertain outcome before trying
@@ -1997,15 +1996,13 @@ checkout. Omit it for a shared workspace. Use these fields:
   uncommitted tracked changes. Use =commit-range= for a clean checkout whose
   history descends from the baseline.
 
-*Stage new files* before yielding. The terminal result identifies the artifact
-for integration, including on abort. If extraction fails, Autolith retains
-the checkout and reports =:worktree-error=.
+*Stage new files* before reporting back. The parent can extract an artifact from
+the checkout once the child is idle.
 
 Use =child.worktree= with an explicit =action=:
 
 - =inspect= reports provenance, touched paths and the artifact path. Use
-  =extract= to retry extraction after repairing a checkout. Pass the terminal
-  job or durable execution ID as =id=.
+  =extract= to write the artifact. Pass the child channel ID as =id=.
 - =check= checks patch applicability. Use =apply= to patch the clean target
   or =commits= to cherry-pick the range. Pass =id= and an explicit =target=.
 - =conflicts= shows unmerged paths. Use =abort= to abort an interrupted
@@ -2020,12 +2017,8 @@ The sandbox can write the isolated checkout and its Git administrative
 directories. Integration requires authorization for the target. Worktree
 isolation prevents accidental overlap. It does not confine hostile code.
 
-The default pool admits eight concurrent children. Set
-=AUTOLITH_TASK_MAX_CONCURRENCY= to raise this up to 32. Set
-=AUTOLITH_TASK_MAX_DEPTH= to change the default depth of three below a
-primary agent. Child jobs have a one-hour wall-clock deadline by default.
-Set =AUTOLITH_TASK_MAX_RUNTIME_MS= to change it in milliseconds or use zero
-to disable it.
+Set =AUTOLITH_TASK_MAX_DEPTH= to change the default channel depth of three
+below a primary agent.
 
 ** Reusable shell sessions
 
@@ -2388,7 +2381,7 @@ and a bounded =report= on failure. Unknown measurements are JSON null.
 | =conversations= | Page durable conversations using =limit= and =cursor=; optionally filter =cwd= |
 | =jobs=, =job= | Page owned jobs or inspect one =jobId= |
 | =job-transcript= | Read =jobId= with =offset=, =limit= and =output= (=text= or =structured=) |
-| =job-send=, =job-cancel= | Send =text= to or cancel an owned =jobId= |
+| =job-cancel= | Cancel an owned tool execution identified by =jobId= |
 | =resource= | Read bounded =workspace:= lines or =shell-log:= bytes from =uri= |
 
 Prefix these suffixes with =_autolith/=. Catalog operations expose admission and

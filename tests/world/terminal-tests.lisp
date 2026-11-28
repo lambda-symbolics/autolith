@@ -1013,7 +1013,7 @@ Each transcript event takes a line of its own."
          (status
           (list :world-terminal-status :session-id (identifier-from-seed timestamp 0) :pid
                 41234 :terminal-client-pid 51234 :state ':idle :created-at timestamp :conversation-display-id
-                "n-ew1234" :queued-input-count 0 :steering-input-count 0 :task-live-count
+                "n-ew1234" :queued-input-count 0 :steering-input-count 0 :job-live-count
                 0 :cwd "/tmp/example"))
          (titled-status (append status (list :conversation-title "Named local session")))
          (plain-output
@@ -1147,23 +1147,19 @@ Each transcript event takes a line of its own."
                  (string= (getf (rest status) :conversation-title)
                           "Named world-terminal session")
                  (getf (rest status) :idle-p) (getf (rest status) :waiting-for-input-p)
-                 (zerop (getf (rest status) :task-live-count)))
+                 (zerop (getf (rest status) :job-live-count)))
             "new world-terminal endpoints publish their active conversation identity")
-           (dolist (case '((0 0 :idle t) (1 0 :working nil) (0 1 :working nil)))
-             (destructuring-bind (children executions expected-state idle-p) case
-               (test-call-with-function-replacements
-                (list (list 'world-terminal--task-counts
-                            (lambda (owner)
-                              (declare (ignore owner))
-                              (values children 0 (+ children executions)))))
-                (lambda ()
-                  (let ((properties (rest (world-terminal-status-snapshot session))))
-                    (test-assert
-                     (and (eq (getf properties :state) expected-state)
-                          (eq (getf properties :idle-p) idle-p)
-                          (getf properties :waiting-for-input-p)
-                          (= (getf properties :job-live-count) (+ children executions)))
-                     "status distinguishes truly idle channels from unfinished child or tool jobs"))))))
+           (test-call-with-function-replacements
+            (list (list 'world-terminal--live-job-count
+                        (lambda (owner) (declare (ignore owner)) 1)))
+            (lambda ()
+              (let ((properties (rest (world-terminal-status-snapshot session))))
+                (test-assert
+                 (and (eq (getf properties :state) ':working)
+                      (not (getf properties :idle-p))
+                      (getf properties :waiting-for-input-p)
+                      (= 1 (getf properties :job-live-count)))
+                 "a channel waiting for a background job is working"))))
            (test-assert
             (eq
              (first

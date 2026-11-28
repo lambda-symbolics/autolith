@@ -112,7 +112,7 @@ Only tools declared by exact name enter the host bridge."
    :allowed-atom-predicate
    (lambda (value)
      (or (null value) (eq value t) (keywordp value) (stringp value)
-         (task-output--json-number-p value)))))
+         (cl-llm-provider-api:output-json-number-p value)))))
 
 (-> executable-skill--check-directory (pathname platform-file-status) null)
 (defun executable-skill--check-directory (directory expected)

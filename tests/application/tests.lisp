@@ -2184,7 +2184,7 @@
                            "invalid or non-handoff metadata uses the ordinary output renderer"))))))
          (with-lock-held (lock)
            (setf released-p t)
-           (task--condition-broadcast gate))))))
+           (sb-thread:condition-broadcast gate))))))
   nil)
 
 (-> test-transcript-entries () null)
@@ -6113,10 +6113,10 @@
                      new-orchestrator
                      (not (eq old-orchestrator new-orchestrator))
                      (eq
-                      (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
+                      (job-pool-lifecycle-state (task-orchestrator-execution-pool old-orchestrator))
                       ':closed)
                      (eq
-                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
+                      (job-pool-lifecycle-state (task-orchestrator-execution-pool new-orchestrator))
                       ':open))
                 "conversation switching retires and replaces task runtimes")
                (tool-registry-close-runtime-state new-registry)
@@ -6456,11 +6456,11 @@
                    workspace-orchestrator
                    (not (eq old-orchestrator workspace-orchestrator))
                    (eq
-                    (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
+                    (job-pool-lifecycle-state (task-orchestrator-execution-pool old-orchestrator))
                     ':closed)
                    (eq
                     (job-pool-lifecycle-state
-                     (task-orchestrator-pool workspace-orchestrator))
+                     (task-orchestrator-execution-pool workspace-orchestrator))
                     ':open))
               "a workspace switch replaces and restarts task runtimes")
              (let ((active-configuration
@@ -6512,7 +6512,7 @@
                  (= workspace-resume-count 1)
                  (eq
                   (job-pool-lifecycle-state
-                   (task-orchestrator-pool workspace-orchestrator))
+                   (task-orchestrator-execution-pool workspace-orchestrator))
                   ':open)
                  (tool-registry-find
                   workspace-registry "transition" "workspace-new"))
@@ -6573,11 +6573,11 @@
                  (and
                   (eq
                    (job-pool-lifecycle-state
-                    (task-orchestrator-pool workspace-orchestrator))
+                    (task-orchestrator-execution-pool workspace-orchestrator))
                    ':closed)
                   (eq
                    (job-pool-lifecycle-state
-                    (task-orchestrator-pool conversation-orchestrator))
+                    (task-orchestrator-execution-pool conversation-orchestrator))
                    ':open)
                   (not
                    (eq workspace-orchestrator
@@ -6698,7 +6698,7 @@
                     (= conversation-close-count active-close-count)
                     (eq
                      (job-pool-lifecycle-state
-                      (task-orchestrator-pool conversation-orchestrator))
+                      (task-orchestrator-execution-pool conversation-orchestrator))
                      ':open)
                     (tool-registry-find
                      conversation-registry
@@ -6847,17 +6847,17 @@
                (and
                 (application-task-presentation-listener application)
                 (eq
-                 (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
+                 (job-pool-lifecycle-state (task-orchestrator-execution-pool old-orchestrator))
                  ':open)
                 (if (eq operation ':working-directory)
                     (and
                      (eq
-                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
+                      (job-pool-lifecycle-state (task-orchestrator-execution-pool new-orchestrator))
                       ':open)
                      (zerop new-close-count))
                     (and
                      (eq
-                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
+                      (job-pool-lifecycle-state (task-orchestrator-execution-pool new-orchestrator))
                       ':closed)
                      (= new-close-count 1))))
                "runtime retirement rollback resumes old tasks and closes new tasks")
@@ -7084,7 +7084,7 @@
                 (let* ((executed-p nil)
                        (probe
                          (job-pool-submit
-                          (task-orchestrator-pool
+                          (task-orchestrator-execution-pool
                            (application--task-orchestrator old-application))
                           (lambda (job)
                             (declare (ignore job))
@@ -7429,7 +7429,7 @@
                       (eq (application-worker application) old-worker)
                       (eq (application-agent application) old-agent)
                       (eq
-                       (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
+                       (job-pool-lifecycle-state (task-orchestrator-execution-pool old-orchestrator))
                        ':open)
                       (application-task-presentation-listener application)
                       (not old-worker-stopped-p))
@@ -7488,11 +7488,11 @@
                         (application-task-presentation-listener application)
                         (eq
                          (job-pool-lifecycle-state
-                          (task-orchestrator-pool old-orchestrator))
+                          (task-orchestrator-execution-pool old-orchestrator))
                          ':open)
                         (eq
                          (job-pool-lifecycle-state
-                          (task-orchestrator-pool new-orchestrator))
+                          (task-orchestrator-execution-pool new-orchestrator))
                          ':closed)
                         (equal
                          mcp-registration-snapshot
@@ -7540,64 +7540,50 @@
 (-> test-application-task-presentation () null)
 (defun test-application-task-presentation ()
   "Test task events drive one reconnectable child-agent terminal projection."
-  (let* ((configuration            (test-configuration))
-         (root                     (test-configuration-root configuration))
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
          (conversation
           (conversation-create configuration :identifier
                                "task-presentation-primary-window"))
-         (registry                 (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool                 (tool-registry-find registry "child" "spawn"))
-         (orchestrator             (task-run-tool-orchestrator run-tool))
-         (clock                    65)
-         (terminal                 (make-instance 'recording-terminal :columns 72 :styled-p t))
-         (ui                       (terminal-ui-create :terminal terminal :clock-function (lambda () clock)))
+         (registry      (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool      (tool-registry-find registry "child" "spawn"))
+         (orchestrator  (task-run-tool-orchestrator run-tool))
+         (clock         65)
+         (terminal      (make-instance 'recording-terminal :columns 72 :styled-p t))
+         (ui            (terminal-ui-create :terminal terminal :clock-function (lambda () clock)))
          (application
           (make-instance 'application :configuration configuration :conversation
-                         conversation :tool-registry registry :ui ui))
-         (primary
-          (task-tests--primary-agent configuration "task-presentation-primary" registry))
-         (definition               (list))
-         (queued                   nil)
-         (running                  nil)
-         (replacement-registry     nil)
-         (replacement-orchestrator nil))
+                          conversation :tool-registry registry :ui ui)))
     (unwind-protect
         (progn
-         (dolist
-             (arguments
-              (list (json-object "task" "Default request")
-                    (json-object "task" "Context request" "context"
-                                 "Background context")))
-           (let* ((item (first (task-normalize-arguments arguments)))
-                  (call
-                   (json-object "type" "function_call" "namespace"
-                                (tool-namespace run-tool) "name" (tool-name run-tool)
-                                "arguments" (json-encode arguments))))
-             (test-assert (eq ':detached (getf item :mode))
-                          "normalized requests describe detached execution")
+         (dolist (arguments
+                  (list (json-object "name" "reviewer" "task" "Default request")
+                        (json-object "name" "reviewer" "task" "Context request"
+                                     "context" "Background context")))
+           (let* ((item (task-normalize-arguments arguments))
+                  (call (json-object "type" "function_call" "namespace"
+                                     (tool-namespace run-tool) "name" (tool-name run-tool)
+                                     "arguments" (json-encode arguments))))
              (dolist (restored-call (list call (json-decode (json-encode call))))
-               (let ((text
-                      (test-terminal-row-text
-                       (response-item-entry application restored-call))))
+               (let ((text (test-terminal-row-text
+                            (response-item-entry application restored-call))))
                  (test-assert
-                  (and (search "detached" text) (search (getf item :task) text)
+                  (and (= 1 (test-substring-count "reviewer" text))
+                       (= 1 (test-substring-count (getf item :task) text))
                        (or (not (getf item :context))
-                           (search (getf item :context) text)))
-                  "live and restored task rows show normalized assignments and context")))))
-         (dolist
-             (arguments
-              (list (json-object "task" "Invalid context" "context" 7)
-                    (json-object "task" "Invalid policy" "completion-policy" "invalid")))
-           (let ((call
-                  (json-object "type" "function_call" "namespace"
-                               (tool-namespace run-tool) "name" (tool-name run-tool)
-                               "arguments" (json-encode arguments))))
-             (dolist (restored-call (list call (json-decode (json-encode call))))
-               (test-assert
-                (search "invalid task request"
-                        (test-terminal-row-text
-                         (response-item-entry application restored-call)))
-                "live and restored presentations use execution's request validation"))))
+                           (= 1 (test-substring-count (getf item :context) text))))
+                  "live and restored child calls show the name and assignment once")))))
+         (let ((call (json-object "type" "function_call" "namespace"
+                                  (tool-namespace run-tool) "name" (tool-name run-tool)
+                                  "arguments" (json-encode
+                                               (json-object "name" "reviewer"
+                                                            "task" "Invalid context"
+                                                            "context" 7)))))
+           (dolist (restored-call (list call (json-decode (json-encode call))))
+             (test-assert
+              (search "invalid task request"
+                      (test-terminal-row-text (response-item-entry application restored-call)))
+              "live and restored presentations use execution's request validation")))
          (application-connect-task-presentation application)
          (application-connect-task-presentation application)
          (test-assert (= (length (task-orchestrator-listeners orchestrator)) 1)
@@ -7642,7 +7628,7 @@
                          (unless first-add-entered-p
                            (setf first-add-entered-p t
                                  block-p t)
-                           (task--condition-broadcast gate-condition)))
+                           (sb-thread:condition-broadcast gate-condition)))
                        (when block-p
                          (with-lock-held (gate-lock)
                            (loop until release-first-add-p
@@ -7670,7 +7656,7 @@
                             (lambda ()
                               (with-lock-held (gate-lock)
                                 (setf second-started-p t)
-                                (task--condition-broadcast gate-condition))
+                                (sb-thread:condition-broadcast gate-condition))
                               (handler-case
                                (application-connect-task-presentation application)
                                (condition (condition)
@@ -7681,7 +7667,7 @@
                            unless (condition-wait gate-condition gate-lock :timeout 2)
                            do (error "Timed out starting the second listener connect."))
                      (setf release-first-add-p t)
-                     (task--condition-broadcast gate-condition))
+                     (sb-thread:condition-broadcast gate-condition))
                    (join-thread first-thread)
                    (setf first-thread nil)
                    (join-thread second-thread)
@@ -7695,167 +7681,15 @@
                       "overlapping reconnects retain one exact active listener")))
                 (with-lock-held (gate-lock)
                   (setf release-first-add-p t)
-                  (task--condition-broadcast gate-condition))
+                  (sb-thread:condition-broadcast gate-condition))
                 (when first-thread (ignore-errors (join-thread first-thread)))
                 (when second-thread (ignore-errors (join-thread second-thread)))))))
-         (setf queued
-                 (task-tests--register-job orchestrator primary definition :name
-                                           "queued-agent")
-               running
-                 (task-tests--register-job orchestrator primary definition :name
-                                           "running-agent"))
-         (with-lock-held ((cl-jobpond::job--lock running))
-           (setf (job-state running) ':running)
-           (task-job--set-progress-state running ':running))
-         (task-progress-note-status running ':tool-call-started
-                                    (list :tool "search.content"))
-         (let* ((progress (task-job-progress running)) (now (get-internal-real-time)))
-           (with-lock-held ((task-progress-lock progress))
-             (setf (task-progress-started-at progress)
-                   (- now (* 65 internal-time-units-per-second))
-                   (task-progress-current-tool-started-at progress)
-                   (- now (* 60 internal-time-units-per-second)))))
-         (task-orchestrator-emit orchestrator ':task-subagent-progress
-                                 (list :id (job-identifier running)))
-         (let ((activities (terminal-ui-agent-activities ui)))
-           (test-assert
-            (and (= (length activities) 2) (eq (getf (first activities) :state) ':queued)
-                 (eq (getf (second activities) :state) ':running)
-                 (string= (getf (second activities) :current-tool) "search.content")
-                 (typep (getf (second activities) :current-tool-duration-ms)
-                        '(integer 60000))
-                 (typep (getf (second activities) :duration-ms) '(integer 65000)))
-            "one progress event projects every queued and running child"))
-         (multiple-value-bind (text display cursor)
-             (terminal-ui--live-content ui clock)
-           (declare (ignore display cursor))
-           (test-assert
-            (and (search "running-agent" text) (search "queued-agent" text)
-                 (search "search.content 01:00" text))
-            "named jobs project their names and render runtime durations"))
-         (task-tests--publish-terminal queued ':completed
-                                       (task-tests--terminal-result queued :status
-                                                                    ':success :output
-                                                                    "queued complete"))
-         (test-assert
-          (equal
-           (mapcar (lambda (activity) (getf activity :id))
-                   (terminal-ui-agent-activities ui))
-           (list (job-identifier running)))
-          "terminal lifecycle events remove only their finished child")
-         (task-tests--publish-terminal running ':completed
-                                       (task-tests--terminal-result running :status
-                                                                    ':success :output
-                                                                    "running complete"))
-         (task-orchestrator-emit orchestrator ':task-subagent-progress
-                                 (list :id (job-identifier running)))
-         (test-assert (null (terminal-ui-agent-activities ui))
-                      "late progress cannot resurrect a terminal child")
-         (let* ((timestamp      (encode-universal-time 0 53 22 10 8 2026))
-                (payload
-                 (list :id "child-1" :execution-id "execution-1" :child-name
-                       "shared-diff-final-review" :steering-id "steering-1" :text
-                       "Use careful context." :time timestamp))
-                (entry          (application--child-response-entry application payload))
-                (records-before
-                 (copy-tree (application-tests--conversation-records conversation)))
-                (stale-listener (application-task-presentation-listener application)))
-           (test-assert
-            (and
-             (find (terminal-span ':child-name "shared-diff-final-review") entry :test
-                   #'equal)
-             (not (application-turn-timestamps-p application)))
-            "child response entries retain semantic child names")
-           (application-connect-task-presentation application)
-           (test-assert
-            (and (= (length (task-orchestrator-listeners orchestrator)) 1)
-                 (not
-                  (eq stale-listener
-                      (application-task-presentation-listener application))))
-            "same-orchestrator reconnection replaces the exact listener")
-           (recording-terminal-reset terminal)
-           (funcall stale-listener ':task-subagent-verbal-response payload)
-           (test-assert (string= (recording-terminal-output terminal) "")
-                        "a snapshotted stale listener cannot present after reconnection")
-           (recording-terminal-reset terminal)
-           (let ((cl-colorist:*color-level* ':indexed))
-             (task-orchestrator-emit orchestrator ':task-subagent-verbal-response
-                                     payload))
-           (let* ((output            (recording-terminal-output terminal))
-                  (plain-output      (cl-colorist:strip-ansi output))
-                  (child-style       (terminal-style-sequence ':child-name t))
-                  (basic-child-style (terminal-style-sequence ':child-name nil)))
-             (test-assert
-              (and
-               (search "● autolith [shared-diff-final-review] 2026-08-10 22:53"
-                       plain-output)
-               (=
-                (test-substring-count "● autolith [shared-diff-final-review]"
-                                      plain-output)
-                1)
-               (search "Use careful context." plain-output) (search child-style output)
-               (string= basic-child-style (terminal-style-sequence ':success nil)))
-              "one child response is presented once with its configured style"))
-           (test-assert
-            (and
-             (equal records-before
-                    (application-tests--conversation-records conversation))
-             (null (conversation-input-items conversation)))
-            "promoted child presentation does not mutate primary conversation state")
-           (application-disconnect-task-presentation application)
-           (recording-terminal-reset terminal)
-           (task-orchestrator-emit orchestrator ':task-subagent-verbal-response payload)
-           (test-assert (string= (recording-terminal-output terminal) "")
-                        "a disconnected orchestrator cannot present child responses")
-           (setf replacement-registry
-                   (task-augment-tool-registry (make-default-tool-registry))
-                 replacement-orchestrator
-                   (task-run-tool-orchestrator
-                    (tool-registry-find replacement-registry "child" "spawn"))
-                 (application-tool-registry application) replacement-registry)
-           (application-connect-task-presentation application)
-           (test-assert
-            (and (zerop (length (task-orchestrator-listeners orchestrator)))
-                 (= (length (task-orchestrator-listeners replacement-orchestrator)) 1))
-            "runtime replacement moves the exact presentation listener")
-           (recording-terminal-reset terminal)
-           (task-orchestrator-emit orchestrator ':task-subagent-verbal-response payload)
-           (test-assert (string= (recording-terminal-output terminal) "")
-                        "the retired orchestrator cannot present after replacement")
-           (let ((replacement-payload
-                  (list :id "child-2" :execution-id "execution-2" :child-name
-                        "replacement-review" :steering-id "steering-2" :text
-                        "Replacement response." :time timestamp)))
-             (let ((cl-colorist:*color-level* ':indexed))
-               (task-orchestrator-emit replacement-orchestrator
-                                       ':task-subagent-verbal-response
-                                       replacement-payload))
-             (let ((plain-output
-                    (cl-colorist:strip-ansi (recording-terminal-output terminal))))
-               (test-assert
-                (and
-                 (search "● autolith [replacement-review] 2026-08-10 22:53" plain-output)
-                 (= (test-substring-count "● autolith [replacement-review]" plain-output)
-                    1)
-                 (not (search "shared-diff-final-review" plain-output)))
-                "only the active orchestrator presents its current child response"))))
          (application-disconnect-task-presentation application)
          (test-assert
           (and (null (application-task-presentation-orchestrator application))
-               (null (application-task-presentation-listener application))
-               (or (null replacement-orchestrator)
-                   (zerop
-                    (length (task-orchestrator-listeners replacement-orchestrator)))))
+               (null (application-task-presentation-listener application)))
           "disconnect removes the exact observer and retained scheduler link"))
       (application-disconnect-task-presentation application)
-      (dolist (job (remove nil (list queued running)))
-        (unless (job-terminal-p job)
-          (task-tests--publish-terminal job ':aborted
-                                        (task-tests--terminal-result job :status
-                                                                     ':aborted :output
-                                                                     "test cleanup"))))
-      (when replacement-registry
-        (ignore-errors (tool-registry-close-runtime-state replacement-registry)))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
                                       ':ignore)))
@@ -8374,8 +8208,7 @@
                                        :tool-registry registry
                                        :agent         agent
                                        :worker        ':unused
-                                       :ui            ui))
-         (orchestrator  (application--task-orchestrator application)))
+                                       :ui            ui)))
     (unwind-protect
          (progn
            (terminal-ui-start ui)
@@ -8387,11 +8220,8 @@
             "(hurry-up) reports status without changing policy")
            (application-run-lisp-input application "(hurry-up t)")
            (test-assert (and (application-hurry-up-p application)
-                             (agent-hurry-up-p agent)
-                             (task-orchestrator-hurry-up-p orchestrator))
-                        "(hurry-up t) synchronizes application, agent, and task state")
-           (test-assert (= (task-orchestrator-maximum-concurrency orchestrator) 2)
-                        "hurry-up caps child concurrency at two")
+                             (agent-hurry-up-p agent))
+                        "(hurry-up t) synchronizes application and agent state")
            (test-assert (terminal-ui-notice ui)
                         "hurry-up presents a transient live notice")
            (application-set-model application "gpt-5.6-luna")
@@ -8402,8 +8232,7 @@
            (application-run-lisp-input application "(hurry-up nil)")
            (test-assert
             (and (not (application-hurry-up-p application))
-                 (not (agent-hurry-up-p (application-agent application)))
-                 (not (task-orchestrator-hurry-up-p orchestrator)))
+                 (not (agent-hurry-up-p (application-agent application))))
             "(hurry-up nil) restores ordinary policy"))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))

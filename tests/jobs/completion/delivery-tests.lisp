@@ -10,7 +10,7 @@
     (let* ((registry (task-augment-tool-registry
                       (make-default-tool-registry :configuration configuration)))
            (parent   (agent-create :configuration configuration
-                                   :provider      (make-instance 'task-test-provider :mode ':concurrent)
+                                   :provider      (make-instance 'task-test-provider)
                                    :tool-registry registry :worker nil))
            (runtime  (task-completion--runtime parent)))
       (conversation-append-user-message (agent-conversation parent) "Start asynchronous work.")
@@ -39,7 +39,7 @@
   (agent-create
    :configuration configuration
    :conversation  (conversation-load (conversation-pathname (agent-conversation parent)))
-   :provider      (make-instance 'task-test-provider :mode ':concurrent)
+   :provider      (make-instance 'task-test-provider)
    :tool-registry (task-augment-tool-registry
                    (make-default-tool-registry :configuration configuration))
    :worker        nil))
@@ -348,40 +348,6 @@
              (task-orchestrator-close (task-completion--runtime fresh))))))))
   nil)
 
-(-> test-job-completion-headless-owner () null)
-(defun test-job-completion-headless-owner ()
-  "Retain a child's detached outcome for authorized inspection without redirecting its owner."
-  (job-completion-tests--fixture
-   (lambda (parent runtime configuration)
-     (let* ((definition (list))
-            (owner-job
-             (task-tests--make-job runtime :identifier "owner" :parent-agent parent :item
-                                   (append (list :task "fixture") definition)))
-            (child
-             (make-instance 'task-child-agent :configuration configuration :conversation
-                            (conversation-create configuration) :provider
-                            (agent-provider parent) :tool-registry
-                            (agent-tool-registry parent) :worker nil :identity nil :depth
-                            1 :orchestrator runtime :job owner-job))
-            (job        (job-completion-tests--start child runtime)))
-       (task-completion-restore parent)
-       (test-assert (null (task-completion-pending parent))
-                    "a grandchild outcome never enters the primary conversation implicitly")
-       (let ((record
-              (find (session-job-execution-identifier job)
-                    (task-continuity-inventory parent runtime) :key
-                    (lambda (entry) (getf entry :execution-id)) :test #'equal)))
-         (test-assert (eq ':inspection-only (getf record :completion-route))
-                      "authorized continuity inspection identifies an inactive conversation route")
-         (test-assert
-          (equal (conversation-identifier (agent-conversation child))
-                 (getf record :completion-owner-conversation))
-          "inspection preserves the exact child owner")
-         (test-assert
-          (and (eq ':continue (getf record :completion-policy)) (getf record :result))
-          "headless completion policy and terminal artifacts remain inspectable")))))
-  nil)
-
 (-> job-completion-tests--held-cancellation (function) null)
 (defun job-completion-tests--held-cancellation (function)
   "Share real held jobs, controller, bounded entry and separate cleanup across cancellation tests."
@@ -414,53 +380,14 @@
                           (wait))))
                   (tool-success "released"))
 
-                (start (&key owners task-p quick-p (policy ':notify))
-                  (let ((job nil))
-                    (let ((submit (symbol-function 'job-pool-submit-batch)))
-                      (test-call-with-function-replacements
-                       (list
-                        (list 'task-parent-owner-identifiers
-                              (lambda (owner) (declare (ignore owner)) owners))
-                        (list 'job-pool-submit-batch
-                              (lambda (pool entries)
-                                (funcall submit pool
-                                         (mapcar
-                                          (lambda (entry)
-                                            (list* :parent-job
-                                                   (find (first owners) jobs :key
-                                                         #'job-identifier :test #'equal)
-                                                   entry))
-                                          entries)))))
-                       (lambda ()
-                         (setf job
-                                 (if task-p
-                                     (first
-                                      (task-orchestrator-start-jobs runtime parent
-                                                                    (list
-                                                                     (list :item
-                                                                           (append
-                                                                            (list :agent
-                                                                                  "held"
-                                                                                  :task
-                                                                                  "held")
-                                                                            (list))
-                                                                           :detached
-                                                                           t))))
-                                     (task-orchestrator-start-execution-job runtime
-                                                                            parent
-                                                                            :tool-name
-                                                                            "cancellation.fixture"
-                                                                            :summary
-                                                                            "held cancellation"
-                                                                            :operation-function
-                                                                            (lambda ()
-                                                                              (hold
-                                                                               quick-p))
-                                                                            :detached-p t
-                                                                            :completion-policy
-                                                                            policy))))))
+                (start (&key quick-p (policy ':notify))
+                  (let ((job (task-orchestrator-start-execution-job
+                              runtime parent :tool-name "cancellation.fixture"
+                              :summary                  "held cancellation"
+                              :operation-function       (lambda () (hold quick-p))
+                              :detached-p t :completion-policy policy)))
                     (push job jobs)
-                    (unless task-p (task-completion-watch job parent))
+                    (task-completion-watch job parent)
                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 5)
                                  "real job body entered")
                     (values job
@@ -469,10 +396,7 @@
                                 (sb-thread:signal-semaphore release))
                               (session-job-await job 5))))))
          (unwind-protect
-             (test-call-with-function-replacements
-              (list
-               (list 'task-job--run (lambda (job) (declare (ignore job)) (hold) nil)))
-              (lambda () (funcall function parent controller #'start)))
+              (funcall function parent controller #'start)
            (dolist (job jobs)
              (declare (ignore job))
              (sb-thread:signal-semaphore release))
@@ -657,80 +581,6 @@
              (setf (application-ui application) fresh)
              (test-assert (and entry (application--present-conversation-record application record))
                           "a new terminal can replay the warning from durable history")))))))
-  nil)
-
-(-> test-job-cancellation-rejected-root-descendants () null)
-(defun test-job-cancellation-rejected-root-descendants ()
-  "Keep exact subtree selection, observations and once-only publication at both sites."
-  (dolist (cross-pool-p '(nil t))
-    (let ((publications (make-hash-table :test #'eq))
-          (lock         (make-lock "cancellation publication counts"))
-          (task-record  (symbol-function 'task-job--terminal-record))
-          (tool-record  (symbol-function 'tool-execution-job--terminal-record)))
-      (flet ((record-publication (job)
-               (with-lock-held (lock)
-                 (incf (gethash job publications 0)))))
-        (test-call-with-function-replacements
-         (list (list 'task-job--terminal-record
-                     (lambda (job &rest arguments)
-                       (record-publication job)
-                       (apply task-record job arguments)))
-               (list 'tool-execution-job--terminal-record
-                     (lambda (job &rest arguments)
-                       (record-publication job)
-                       (apply tool-record job arguments))))
-         (lambda ()
-           (job-completion-tests--held-cancellation
-            (lambda (parent controller start)
-              (declare (ignore controller))
-              (let* ((task-root  (when cross-pool-p (funcall start :task-p t)))
-                     (owners     (when task-root (list (job-identifier task-root))))
-                     (root       (funcall start :owners owners))
-                     (descendant (funcall start :owners (cons (job-identifier root) owners)))
-                     (expected   (sort (mapcar #'session-job-identifier
-                                               (if task-root (list root descendant) (list descendant)))
-                                       #'string<)))
-                (job-cancel root :reason ':native-first :cascade-p nil)
-                (task-cancellation-maintain parent)
-                (let* ((first-record (session-job-cancellation-observation root))
-                       (snapshot     (copy-list first-record)))
-                  (multiple-value-bind (accepted descendants)
-                      (session-job-cancel (or task-root root) ':descendant-accepted)
-                    ;; JOB-CANCEL returns selected live descendants, including
-                    ;; already cancelling jobs, rather than accepted transitions.
-                    (test-assert (and (eq accepted cross-pool-p) (equal descendants expected))
-                                 "the exact linked live subtree is returned"))
-                  (test-assert (and (getf first-record :observed-p)
-                                    (eq first-record (session-job-cancellation-observation root))
-                                    (equal snapshot first-record)
-                                    (eq ':native-first (job-cancellation-reason root)))
-                               "the selected cancelling root preserves its first reason and observation")
-                  (let* ((record   (session-job-cancellation-observation descendant))
-                         (snapshot (copy-list record)))
-                    (test-assert (and record (not (getf record :observed-p))
-                                      (eq ':descendant-accepted (getf record :reason)))
-                                 "the newly accepted descendant records direct origin and reason")
-                    (multiple-value-bind (accepted descendants)
-                        (session-job-cancel (or task-root root) ':duplicate)
-                      (test-assert (and (null accepted) (equal descendants expected)
-                                        (eq record (session-job-cancellation-observation descendant))
-                                        (equal snapshot record)
-                                        (eq ':descendant-accepted (job-cancellation-reason descendant)))
-                                   "reselection changes no accepted transition or observation")))
-                  (let ((notices (task-cancellation-maintain
-                                  parent :now (+ (get-internal-real-time) internal-time-units-per-second))))
-                    (test-assert
-                     (and (find (session-job-identifier descendant) notices
-                                :key (lambda (notice) (getf notice :job-id)) :test #'equal)
-                          (every (lambda (notice)
-                                   (equal (conversation-identifier (agent-conversation parent))
-                                          (getf notice :owner-conversation)))
-                                 notices))
-                     "accepted descendants warn their exact owner")))))))))
-      ;; The held fixture joins every real worker before restoring these hooks.
-      (test-assert (and (= (hash-table-count publications) (if cross-pool-p 3 2))
-                        (loop for count being the hash-values of publications always (= count 1)))
-                   "each selected job publishes through its terminal hook exactly once")))
   nil)
 
 (-> test-job-completion-continuation-selection () null)

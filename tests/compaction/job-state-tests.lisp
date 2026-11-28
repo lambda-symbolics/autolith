@@ -100,60 +100,6 @@
            (task-orchestrator-close (task-completion--runtime fresh)))))))
   nil)
 
-(-> test-compaction-job-state-exact-owner () null)
-(defun test-compaction-job-state-exact-owner ()
-  "Preserve descendant visibility and exact child-conversation receipt authority."
-  (job-completion-tests--fixture
-   (lambda (parent runtime configuration)
-     (let* ((definition (list))
-            (owner-job
-             (task-tests--make-job runtime :identifier "owner" :parent-agent parent :item
-                                   (append (list :task "fixture") definition)))
-            (child
-             (make-instance 'task-child-agent :configuration configuration :conversation
-                            (conversation-create configuration :identifier
-                                                 (task-job-execution-identifier
-                                                  owner-job)
-                                                 :storage-root
-                                                 (task--artifact-root configuration
-                                                                      owner-job))
-                            :provider (agent-provider parent) :tool-registry
-                            (agent-tool-registry parent) :worker nil :identity nil :depth
-                            1 :orchestrator runtime :job owner-job)))
-       (conversation-append-user-message (agent-conversation child) "Child-owned work.")
-       (let* ((primary-job  (job-completion-tests--start parent runtime))
-              (child-job    (job-completion-tests--start child runtime))
-              (identifier   (session-job-execution-identifier child-job))
-              (owner        (conversation-identifier (agent-conversation child)))
-              (primary-view (task-unfinished-work-snapshot parent))
-              (child-row
-               (find identifier (getf primary-view :jobs) :key
-                     (lambda (row) (getf row :execution-id)) :test #'equal)))
-         (declare (ignore primary-job))
-         (test-assert
-          (and child-row (equal owner (getf child-row :owner-conversation))
-               (eq ':other-conversation (getf child-row :delivery)))
-          "the primary may inspect a descendant without becoming its delivery owner")
-         (test-assert (= 1 (getf (task-unfinished-work-snapshot child) :total))
-                      "a child sees its descendant work but not primary-owned siblings")
-         (conversation-append-user-message (agent-conversation parent)
-                                           "A receipt in the wrong owner." :automatic-p t
-                                           :pending-input-identifier
-                                           (task-completion--receipt identifier))
-         (test-assert
-          (find identifier (getf (task-unfinished-work-snapshot parent) :jobs) :key
-                (lambda (row) (getf row :execution-id)) :test #'equal)
-          "a primary receipt cannot acknowledge child-owned results")
-         (task-completion-deliver child)
-         (test-assert
-          (null
-           (find identifier (getf (task-unfinished-work-snapshot parent) :jobs) :key
-                 (lambda (row) (getf row :execution-id)) :test #'equal))
-          "the child's durable receipt filters descendant inspection too")
-         (test-assert (zerop (getf (task-unfinished-work-snapshot child) :total))
-                      "the exact child receipt is authoritative for its own request context")))))
-  nil)
-
 (-> test-compaction-job-state-live-unknown () null)
 (defun test-compaction-job-state-live-unknown ()
   "Expose live and interrupted records without executing, delivering or reviving work."

@@ -1,5 +1,8 @@
 (in-package #:autolith)
 
+(defparameter *terminal-agent-activity-recent-tool-limit* 8
+  "The maximum number of tool names in a child channel's activity row.")
+
 ;;;; -- UI Construction --
 
 (-> terminal-ui--maximum-live-rows (terminal) (integer 1))
@@ -103,7 +106,7 @@ offered only while the typed prefix no longer matches its primary."
                       '(option (integer 0)))
                (listp recent-tools)
                (<= (length recent-tools)
-                   *task-progress-recent-tool-limit*)
+                   *terminal-agent-activity-recent-tool-limit*)
                (every #'stringp recent-tools)
                (typep (getf value :request-count) '(integer 0))
                (typep (getf value :duration-ms) '(option (integer 0)))
