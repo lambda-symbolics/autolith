@@ -83,6 +83,31 @@ Edit-QlotSource 'local-init\qlot-30-cache.lisp' @(
      New = "  #-(or (and sbcl (not win32)) ccl)`n  (declare (ignore stream)))" }
 )
 
+# Supply a heap buffer for archive digests. Ironclad's default 128 KiB
+# dynamic-extent buffer can crash native Windows SBCL during dist generation.
+Edit-QlotSource 'src\utils\distify.lisp' @(
+  @{
+    Name = 'archive digest buffers'
+    Old = @'
+        (with-open-file (in tarball-file :element-type '(unsigned-byte 8))
+          (values (file-length in)
+                  (ironclad:byte-array-to-hex-string
+                    (ironclad:digest-file :md5 tarball-file))
+                  (ironclad:byte-array-to-hex-string
+                    (ironclad:digest-stream :sha1 in))))
+'@
+    New = @'
+        (let ((buffer (make-array (* 128 1024) :element-type '(unsigned-byte 8))))
+          (with-open-file (in tarball-file :element-type '(unsigned-byte 8))
+            (values (file-length in)
+                    (ironclad:byte-array-to-hex-string
+                      (ironclad:digest-file :md5 tarball-file :buffer buffer))
+                    (ironclad:byte-array-to-hex-string
+                      (ironclad:digest-stream :sha1 in :buffer buffer)))))
+'@
+  }
+)
+
 $env:QLOT_NO_CACHE = '1'
 
 & $runtime --install --script (Join-Path $sourceRoot 'script\bootstrap.lisp') @args
