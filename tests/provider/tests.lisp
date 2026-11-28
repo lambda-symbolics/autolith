@@ -420,6 +420,48 @@ a Responses function-call output has."
                        "Chat keeps the shared marker beside one-response exchanges")))))
   nil)
 
+(-> test-provider-cache-versioned-entry () null)
+(defun test-provider-cache-versioned-entry ()
+  "Versioned fingerprints are reused until the owner advances the version."
+  (let* ((owner  (list :versioned-entry-owner))
+         (entry  (json-object "role" "user" "content" "versioned entry"))
+         (first  (provider-cache-prefix--versioned-entry owner entry 3))
+         (second (provider-cache-prefix--versioned-entry owner entry 3)))
+    (test-assert (eq first second)
+                 "an unchanged version reuses the cached fingerprint")
+    (test-assert (equal first (cl-llm-provider-api:provider-request-fingerprint entry))
+                 "a versioned fingerprint matches a direct encoding")
+    (setf (gethash "content" entry) "versioned entry after mutation")
+    (let ((third (provider-cache-prefix--versioned-entry owner entry 4)))
+      (test-assert (not (equal first third))
+                   "an advanced version exposes the mutated content")
+      (test-assert (equal third (cl-llm-provider-api:provider-request-fingerprint entry))
+                   "an advanced version matches a direct encoding"))
+    nil))
+
+(-> test-provider-cache-versioned-entry-algorithm-change () null)
+(defun test-provider-cache-versioned-entry-algorithm-change ()
+  "Versioned fingerprints are invalidated when the encoder changes."
+  (let* ((owner    (list :versioned-entry-algorithm-owner))
+         (entry    (json-object "role" "user" "content" "algorithm change"))
+         (original (provider-cache-prefix--versioned-entry owner entry 5)))
+    (test-assert (equal original (cl-llm-provider-api:provider-request-fingerprint entry))
+                 "the current algorithm populates the versioned cache")
+    (test-call-with-function-replacements
+        (list (list 'cl-llm-provider-api:provider-request-fingerprint
+                    (lambda (value)
+                      (declare (ignore value))
+                      (list "changed algorithm" 1))))
+      (lambda ()
+        (let ((changed (provider-cache-prefix--versioned-entry owner entry 5)))
+          (test-assert (equal changed '("changed algorithm" 1))
+                       "a changed encoder invalidates cached fingerprints")
+          (test-assert (not (equal changed original))
+                       "the old encoder's fingerprint is not reused"))))
+    (test-assert (equal (provider-cache-prefix--versioned-entry owner entry 5) original)
+                 "restoring the encoder invalidates changed-algorithm entries")
+    nil))
+
 (defclass cost-test-provider (subscription-provider)
   ((usage
     :initarg       :usage

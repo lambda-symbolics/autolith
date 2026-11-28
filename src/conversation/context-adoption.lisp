@@ -23,4 +23,6 @@
           (conversation-adopted-participant conversation) (getf properties :participant)
           (conversation-adopted-transition conversation)  (getf properties :transition)
           (conversation-last-total-tokens conversation)   0))
+
+  (conversation--advance-provider-item-generation conversation)
   nil)

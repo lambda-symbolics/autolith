@@ -3570,3 +3570,49 @@ process without releasing the lease, exercising kernel cleanup."
               "replay restores each item's producing family")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-conversation-provider-item-generation () null)
+(defun test-conversation-provider-item-generation ()
+  "The provider item generation advances with every projection installation."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+        (let ((conversation (conversation-create configuration
+                                                :identifier "provider-generation")))
+          (test-assert (plusp (conversation-provider-item-generation conversation))
+                       "construction advances the provider item generation")
+          (let ((initial (conversation-provider-item-generation conversation)))
+            (conversation-append-user-message conversation "first versioned item")
+            (test-assert (> (conversation-provider-item-generation conversation) initial)
+                         "a durable append advances the provider item generation")
+            (let ((appended (conversation-provider-item-generation conversation))
+                  (items    (conversation-input-items conversation)))
+              (setf (conversation-input-items conversation) (reverse items))
+              (test-assert (> (conversation-provider-item-generation conversation) appended)
+                           "projection replacement advances the provider item generation")
+              (let ((replaced             (conversation-provider-item-generation conversation))
+                    (candidate-generation nil))
+                (conversation-append-summary
+                 conversation (make-continuation :intent "versioned checkpoint")
+                 :validate-projection
+                 (lambda (candidate)
+                   (setf candidate-generation
+                         (conversation-provider-item-generation candidate))))
+                (test-assert (> (conversation-provider-item-generation conversation) replaced)
+                             "compaction publication advances the provider item generation")
+                (test-assert (and (integerp candidate-generation)
+                                  (plusp candidate-generation))
+                             "compaction validation sees an advanced candidate generation")
+                (let ((published (conversation-provider-item-generation conversation)))
+                  (conversation--project-record
+                   ':summary conversation (list :content "restored checkpoint"))
+                  (test-assert (> (conversation-provider-item-generation conversation) published)
+                               "summary replay advances the provider item generation")
+                  (let ((restored (conversation-provider-item-generation conversation)))
+                    (conversation--project-record
+                     ':context-adoption conversation
+                     (list :participant "tester" :rows nil))
+                    (test-assert (> (conversation-provider-item-generation conversation) restored)
+                                 "context adoption replay advances the provider item generation")))))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
+    nil))

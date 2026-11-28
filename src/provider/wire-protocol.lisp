@@ -293,10 +293,45 @@ adjacent source items into one message. Do not move items in the sent request."
   "Return true when VALUE is a JSON array."
   (and (vectorp value) (not (stringp value))))
 
+(defvar *provider-cache-prefix-versioned-fingerprints*
+  (make-hash-table :test #'eq :weakness ':key)
+  "Versioned fingerprints keyed by owner identity, then entry identity.")
+
+(defvar *provider-cache-prefix-versioned-fingerprints-lock*
+  (make-recursive-lock "Provider cache prefix versioned fingerprints")
+  "Serializes versioned fingerprint cache lookup and insertion.")
+
+(defvar *provider-cache-prefix-versioned-fingerprints-algorithm*
+  (symbol-function 'cl-llm-provider-api:provider-request-fingerprint)
+  "Fingerprint function whose identity owns cached versioned entries.")
+
 (-> provider-cache-prefix--entry (t) list)
 (defun provider-cache-prefix--entry (value)
   "Return a detached fingerprint without retaining encoded prompt text."
   (cl-llm-provider-api:provider-request-fingerprint value))
+
+(-> provider-cache-prefix--versioned-entry (t t integer) list)
+(defun provider-cache-prefix--versioned-entry (owner value version)
+  "Return VALUE's fingerprint cached under OWNER's VERSION.
+The caller owns VALUE and must advance VERSION whenever VALUE's content changes."
+  (let* ((algorithm (symbol-function 'cl-llm-provider-api:provider-request-fingerprint))
+         (entries
+           (with-recursive-lock-held (*provider-cache-prefix-versioned-fingerprints-lock*)
+             (unless (eq algorithm *provider-cache-prefix-versioned-fingerprints-algorithm*)
+               (clrhash *provider-cache-prefix-versioned-fingerprints*)
+               (setf *provider-cache-prefix-versioned-fingerprints-algorithm* algorithm))
+             (or (gethash owner *provider-cache-prefix-versioned-fingerprints*)
+                 (setf (gethash owner *provider-cache-prefix-versioned-fingerprints*)
+                       (make-hash-table :test #'eq :weakness ':key))))))
+    (multiple-value-bind (cached present-p)
+        (with-recursive-lock-held (*provider-cache-prefix-versioned-fingerprints-lock*)
+          (gethash value entries))
+      (if (and present-p (eql (first cached) version))
+          (rest cached)
+          (let ((fingerprint (funcall algorithm value)))
+            (with-recursive-lock-held (*provider-cache-prefix-versioned-fingerprints-lock*)
+              (setf (gethash value entries) (cons version fingerprint)))
+            fingerprint)))))
 
 
 ;;;; -- Request Tool Filtering --
