@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        qlot-cache: [enabled, disabled]
+        digest-buffer: [default, md5, both]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         env:
           ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-          PROBE_QLOT_CACHE: ${{ matrix.qlot-cache }}
+          PROBE_QLOT_BUFFER: ${{ matrix.digest-buffer }}
         run: |
           $qlotRoot = Join-Path $env:USERPROFILE 'quicklisp\local-projects\qlot'
           & git -C $qlotRoot log -1 --format='%H %s'
@@ -55,11 +55,7 @@ jobs:
 
           $env:AUTOLITH_QLOT_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'autolith-qlot-probe'
           $null = New-Item -ItemType Directory -Path $env:AUTOLITH_QLOT_PROBE_DIR
-          if ($env:PROBE_QLOT_CACHE -eq 'disabled') {
-            $env:QLOT_NO_CACHE = '1'
-          } else {
-            Remove-Item Env:QLOT_NO_CACHE -ErrorAction SilentlyContinue
-          }
+          Remove-Item Env:QLOT_NO_CACHE -ErrorAction SilentlyContinue
           $status = 1
           try {
             & script\check.ps1 --timeout 1800 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'check.log')
@@ -82,7 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qlot-phases-${{ matrix.qlot-cache }}
+          name: qlot-digest-${{ matrix.digest-buffer }}
           path: ${{ runner.temp }}/autolith-qlot-probe/*.log
           if-no-files-found: ignore
           retention-days: 3

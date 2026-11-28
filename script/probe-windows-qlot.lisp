@@ -17,7 +17,7 @@
               (sb-thread:thread-name thread) *qlot-probe-source* phase edge detail)
       (finish-output out))))
 
-(defun qlot-probe-wrap (package name &key detail source-p presenter-p)
+(defun qlot-probe-wrap (package name &key detail source-p presenter-p delegate)
   "Record normal entry and return without altering the wrapped call or its values."
   (let* ((symbol (find-symbol name package))
          (original (fdefinition symbol)))
@@ -29,8 +29,21 @@
                         *qlot-probe-source*))
                   (*qlot-probe-presenter* (or presenter-p *qlot-probe-presenter*)))
               (qlot-probe-mark name "before" (when detail (funcall detail arguments)))
-              (multiple-value-prog1 (apply original arguments)
+              (multiple-value-prog1 (if delegate (apply delegate original arguments) (apply original arguments))
                 (qlot-probe-mark name "after" nil)))))))
+
+(defun qlot-probe-with-digest-buffer (original stream-p digest target &rest keys)
+  "Compare explicitly supplied storage with Ironclad's default dynamic-extent buffer."
+  (let* ((mode (uiop:getenv "PROBE_QLOT_BUFFER"))
+         (replace-p (and (not (getf keys :buffer))
+                         (or (equal mode "both")
+                             (and (not stream-p) (equal mode "md5"))))))
+    (if replace-p
+        (let* ((buffer-size (symbol-value (find-symbol "+BUFFER-SIZE+" "IRONCLAD")))
+               (buffer (make-array buffer-size :element-type '(unsigned-byte 8))))
+          (qlot-probe-mark "digest-buffer" "heap" (list (type-of digest) (length buffer)))
+          (apply original digest target :buffer buffer keys))
+        (apply original digest target keys))))
 
 (qlot-probe-mark "startup" "ready"
                  (list :sbcl (lisp-implementation-version)
@@ -51,8 +64,18 @@
 (qlot-probe-wrap "QLOT/UTILS/DISTIFY" "NORMALIZE-PATHNAME" :detail #'first)
 (qlot-probe-wrap "QLOT/UTILS/ASDF" "DIRECTORY-SYSTEM-FILES" :detail #'first)
 (qlot-probe-wrap "QLOT/UTILS/ASDF" "READ-ASD-FILE" :detail #'first)
-(qlot-probe-wrap "IRONCLAD" "DIGEST-FILE" :detail #'identity)
-(qlot-probe-wrap "IRONCLAD" "DIGEST-STREAM" :detail #'first)
+(qlot-probe-wrap "IRONCLAD" "DIGEST-FILE" :detail (lambda (arguments) (list (type-of (first arguments)) (second arguments)))
+                 :delegate (lambda (original &rest arguments)
+                             (apply #'qlot-probe-with-digest-buffer original nil arguments)))
+(qlot-probe-wrap "IRONCLAD" "DIGEST-STREAM" :detail (lambda (arguments) (type-of (first arguments)))
+                 :delegate (lambda (original &rest arguments)
+                             (apply #'qlot-probe-with-digest-buffer original t arguments)))
+(qlot-probe-wrap "IRONCLAD" "UPDATE-DIGEST-FROM-STREAM"
+                 :detail (lambda (arguments)
+                           (let ((buffer (getf (cddr arguments) :buffer)))
+                             (list (type-of (first arguments)) (and buffer (length buffer))))))
+(qlot-probe-wrap "IRONCLAD" "UPDATE-DIGEST" :detail (lambda (arguments) (type-of (first arguments))))
+(qlot-probe-wrap "IRONCLAD" "PRODUCE-DIGEST" :detail (lambda (arguments) (type-of (first arguments))))
 (qlot-probe-wrap "QLOT/UTILS/TMP" "DELETE-TMP-DIRECTORY" :detail #'first)
 (qlot-probe-wrap "QLOT/SERVER" "MAKE-HANDLER" :detail #'first)
 (qlot-probe-wrap "QLOT/INSTALL" "INSTALL-SOURCE" :source-p t
