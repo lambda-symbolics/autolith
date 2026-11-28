@@ -1,0 +1,30 @@
+diff --git a/script/qlot-delete-directory.ps1 b/script/qlot-delete-directory.ps1
+index 1e5f0ed9..de32b64b 100644
+--- a/script/qlot-delete-directory.ps1
++++ b/script/qlot-delete-directory.ps1
+@@ -35,4 +35,12 @@ $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd([char[]]'\/')
+ if ($fullPath -eq [IO.Path]::GetPathRoot($fullPath).TrimEnd([char[]]'\/')) {
+   throw 'Refusing to remove a filesystem root.'
+ }
++function Write-QlotProbeMarker([string]$Phase) {
++  if ($env:AUTOLITH_QLOT_PROBE_DIR) {
++    $marker = "{0:O} pid={1} {2} {3}`n" -f [DateTime]::UtcNow, $PID, $Phase, $fullPath
++    [IO.File]::AppendAllText((Join-Path $env:AUTOLITH_QLOT_PROBE_DIR "powershell.log"), $marker)
++  }
++}
++Write-QlotProbeMarker "before"
+ Remove-QlotDirectoryEntry $fullPath
++Write-QlotProbeMarker "after"
+diff --git a/script/qlot-install.lisp b/script/qlot-install.lisp
+index 2236b8b2..f5199d48 100644
+--- a/script/qlot-install.lisp
++++ b/script/qlot-install.lisp
+@@ -106,6 +106,8 @@ without following them."
+       (unless (and exclusions (boundp exclusions))
+         (error "The loaded Qlot does not expose its metadata directory exclusions."))
+       (pushnew "test-fixtures" (symbol-value exclusions) :test #'equal)))
++  (when (uiop:getenvp "AUTOLITH_QLOT_PROBE_DIR")
++    (load (merge-pathnames "probe-windows-qlot.lisp" script-directory)))
+   (qlot-install--remove-broken-dists project-root)
+   (let ((qlot-project-root (find-symbol "*PROJECT-ROOT*" "QLOT")))
+     (unless qlot-project-root

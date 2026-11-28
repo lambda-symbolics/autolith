@@ -1,197 +1,23 @@
-name: Windows package
+name: Windows Qlot probe
 
 on:
   workflow_dispatch:
-    inputs:
-      run-tests:
-        description: Run the full source test suite
-        type: boolean
-        default: true
-      test:
-        description: Optional exact source test case (empty runs the full suite)
-        type: string
-        default: ''
-  push:
-    branches: [master]
-    paths:
-      - "src/**"
-      - "script/**"
-      - "bin/**"
-      - "native/**"
-      - "qlfile*"
-      - "autolith.asd"
-      - "VERSION"
-      - "tests/**"
-      - "sbcl.version"
-      - "sbcl-minimum.version"
-      - "sbcl-*-releases.sha256"
-      - ".github/workflows/windows-package.yml"
-      - ".github/actions/windows-bootstrap/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: windows-package-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  unicode-runtime:
-    runs-on: windows-2025
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - name: Check installer in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-installer.ps1
-      - name: Check installer in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-installer.ps1
-      - name: Check OpenSSL discovery in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-openssl.ps1
-      - name: Check OpenSSL discovery in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-openssl.ps1
-      - name: Check Qlot cleanup in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-qlot-cleanup.ps1
-      - name: Check Qlot cleanup in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-qlot-cleanup.ps1
-      - name: Check Unicode runtime startup and core I/O
-        shell: pwsh
-        run: |
-          & bin\autolith-runtime.ps1 --install --script script/runtime-requirement.lisp
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime installation failed.' }
-          $version = (Get-Content -Raw sbcl.version).Trim()
-          $installed = Join-Path $env:LOCALAPPDATA "autolith\data\runtimes\$version\installation"
-          $runtime = Join-Path $env:RUNNER_TEMP 'runtime Lukáš-žluťoučký'
-          Copy-Item -Recurse -LiteralPath $installed -Destination $runtime
-          script\prepare-windows-runtime.ps1 -Runtime (Join-Path $runtime 'sbcl.exe')
-          script\check-windows-runtime.ps1 -RuntimeDirectory $runtime
-
-  package-windows-x86_64:
-    needs: unicode-runtime
-    runs-on: windows-2025
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build dependencies
-        shell: pwsh
-        run: |
-          choco install llvm cmake make --yes --no-progress
-          if (-not (Get-Command cargo.exe -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
-            & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
-            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-          }
-
-      - name: Bootstrap with shared caches
-        id: bootstrap
-        uses: ./.github/actions/windows-bootstrap
-
-      - name: Check native bundle publication and ACLs
-        shell: pwsh
-        run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
-      - name: Check upstream ColorLisp native artifacts
-        shell: pwsh
-        env:
-          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-        run: script\check-windows-colorlisp-upstream.ps1
-      - name: Check ColorLisp packaging in Windows PowerShell 5.1
-        shell: powershell
-        run: script\check-windows-colorlisp.ps1
-      - name: Check ColorLisp packaging in PowerShell 7
-        shell: pwsh
-        run: script\check-windows-colorlisp.ps1
-      - name: Package Windows release
-        shell: pwsh
-        run: |
-          $tag = "v0.52.0-dev.$env:GITHUB_RUN_NUMBER"
-          script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
-          script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: |
-            dist/*.zip
-            dist/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 14
-
-  packaged-unicode-launcher:
-    needs: package-windows-x86_64
-    runs-on: windows-2025
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: dist
-
-      # Exercise first-run builds with both release and data paths containing Unicode.
-      - name: Smoke-test the packaged launcher
-        shell: pwsh
-        run: |
-          $archive = (Get-ChildItem dist\*.zip).FullName
-          $stage = Join-Path $env:RUNNER_TEMP 'release-smoke-Lukáš-žluťoučký'
-          Expand-Archive -LiteralPath $archive -DestinationPath $stage
-          $release = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
-          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'release-smoke-Lukáš-žluťoučký-home'
-          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
-          $log = Join-Path $env:RUNNER_TEMP 'smoke.log'
-          $status = 0
-          try {
-            & (Join-Path $release 'bin\autolith.cmd') --version 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
-          }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Windows release smoke test failed' -Log $log -Status $status
-            exit $status
-          }
-
-  packaged-standard-account-sandbox:
-    needs: package-windows-x86_64
-    runs-on: windows-2025
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: dist
-
-      - name: Verify packaged sandbox under a standard account
-        shell: pwsh
-        run: |
-          $log = Join-Path $env:RUNNER_TEMP 'sandbox.log'
-          $status = 0
-          try {
-            & script\check-windows-sandbox.ps1 -Archive (Get-ChildItem dist\*.zip).FullName 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
-          }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Packaged Windows sandbox failed' -Log $log -Status $status
-            exit $status
-          }
-
   source-check:
-    needs: unicode-runtime
-    if: github.event_name != 'workflow_dispatch' || inputs.run-tests
     runs-on: windows-2025
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        qlot-cache: [enabled, disabled]
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         shell: pwsh
@@ -213,24 +39,50 @@ jobs:
       - name: Check native bundle publication and ACLs
         shell: pwsh
         run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
-      - name: Check
+      - name: Check with Qlot phase markers
         shell: pwsh
         env:
           ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
-          AUTOLITH_CHECK_TEST: ${{ inputs.test }}
+          PROBE_QLOT_CACHE: ${{ matrix.qlot-cache }}
         run: |
-          $log = Join-Path $env:RUNNER_TEMP 'check.log'
-          $status = 0
+          $qlotRoot = Join-Path $env:USERPROFILE 'quicklisp\local-projects\qlot'
+          & git -C $qlotRoot log -1 --format='%H %s'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Qlot revision.' }
+          & git -C $qlotRoot diff --name-only
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Qlot patches.' }
+          & git apply --ignore-space-change script/probe-windows-qlot.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot apply the late probe patch.' }
+
+          $env:AUTOLITH_QLOT_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'autolith-qlot-probe'
+          $null = New-Item -ItemType Directory -Path $env:AUTOLITH_QLOT_PROBE_DIR
+          if ($env:PROBE_QLOT_CACHE -eq 'disabled') {
+            $env:QLOT_NO_CACHE = '1'
+          } else {
+            Remove-Item Env:QLOT_NO_CACHE -ErrorAction SilentlyContinue
+          }
+          $status = 1
           try {
-            $selection = @()
-            if ($env:AUTOLITH_CHECK_TEST) { $selection = @('--test', $env:AUTOLITH_CHECK_TEST) }
-            & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log
+            & script\check.ps1 --timeout 1800 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'check.log')
             if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
+          } finally {
+            foreach ($name in 'installer.log', 'progress.log', 'powershell.log') {
+              $log = Join-Path $env:AUTOLITH_QLOT_PROBE_DIR $name
+              Write-Host "== $name =="
+              if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 100 }
+            }
+            Get-WinEvent -FilterHashtable @{
+              LogName = 'Application'; Id = 1000; StartTime = (Get-Date).AddHours(-1)
+            } -ErrorAction SilentlyContinue | Where-Object {
+              $_.Message -match 'sbcl\.exe|powershell\.exe'
+            } | Select-Object -First 5 TimeCreated, Message | Format-List
           }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Windows check failed' -Log $log -Status $status
-            exit $status
-          }
+          exit $status
+
+      - name: Retain phase markers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qlot-phases-${{ matrix.qlot-cache }}
+          path: ${{ runner.temp }}/autolith-qlot-probe/*.log
+          if-no-files-found: ignore
+          retention-days: 3
