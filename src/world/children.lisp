@@ -34,19 +34,22 @@
       (error 'task-error :tool-name "child.spawn"
                          :message   "Save the parent conversation before creating a child."))
     (let* ((configuration (task-child-configuration configuration nil))
-           (conversation (conversation-create configuration :identifier identifier
-                                                            :parent-identifier parent-id
-                                                            :agent-name name))
-           (child-id     (conversation-identifier conversation))
-           (held-lease   (or lease (conversation-lease-acquire configuration child-id))))
+           (conversation  (conversation-create configuration
+                                               :identifier        identifier
+                                               :parent-identifier parent-id
+                                               :agent-name        name))
+           (child-id      (conversation-identifier conversation))
+           (held-lease    (or lease (conversation-lease-acquire configuration child-id))))
       (unwind-protect
            (progn
              (unless (conversation-lease-matches-p held-lease child-id)
                (error 'task-error :tool-name "child.spawn" :message "The lease does not own this child."))
              (conversation-append-record
-              conversation (list :configuration :model (conversation-model conversation)
-                                                 :model-provider (conversation-model-provider conversation)
-                                                 :reasoning-effort (conversation-reasoning-effort conversation)))
+              conversation
+              (list :configuration
+                    :model            (conversation-model conversation)
+                    :model-provider   (conversation-model-provider conversation)
+                    :reasoning-effort (conversation-reasoning-effort conversation)))
              (permissions-save-channel-mode configuration (conversation-pathname conversation)
                                             (conversation-created-at conversation) :mode mode)
              (when-let ((limit (and inherit-reference-p

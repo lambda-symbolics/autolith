@@ -3001,7 +3001,7 @@ Resize tests drive size changes through COLUMNS and LINES."
   "Create an inert tool job with a stable UUID for status transport tests."
   (make-instance 'tool-execution-job
                  :identifier (format nil "exec:~D" index) :index index
-                 :payload nil :pool nil :root-identifier owner
+                 :name "shell.run" :payload nil :pool nil :root-identifier owner
                  :execution-identifier (format nil "00000000-0000-0000-0000-~12,'0D" index)
                  :tool-name "shell.run" :description "Visible tool"))
 
@@ -3009,19 +3009,19 @@ Resize tests drive size changes through COLUMNS and LINES."
 (defun test-terminal-job-status-records ()
   "Check record paths, lifecycle states, and bounded capacity."
   (let ((job (terminal-tests--status-job 1)))
-      (dolist (case '((:queued :working) (:running :working) (:completed :done)
-                      (:failed :error) (:aborted :idle)))
-        (setf (job-state job) (first case))
-        (multiple-value-bind (report active-p)
-            (application--job-program-status-report job)
-          (let ((text (terminal--program-status-record-text report)))
-            (test-assert
-             (and (string= (getf report :id) "jobs/00000000000000000000000000000001")
-                  (search (format nil ":state=~(~A~)" (second case)) text)
-                  (eq active-p (eq (second case) ':working))
-                  (equal (getf report :title) "Visible tool")
-                  (not (search ":progress=" text)))
-             "job identity, state and short title form one independent record")))))
+    (dolist (case '((:queued :working) (:running :working) (:completed :done)
+                    (:failed :error) (:aborted :idle)))
+      (setf (job-state job) (first case))
+      (multiple-value-bind (report active-p)
+          (application--job-program-status-report job)
+        (let ((text (terminal--program-status-record-text report)))
+          (test-assert
+           (and (string= (getf report :id) "jobs/00000000000000000000000000000001")
+                (search (format nil ":state=~(~A~)" (second case)) text)
+                (eq active-p (eq (second case) ':working))
+                (equal (getf report :title) "Visible tool")
+                (not (search ":progress=" text)))
+           "job identity, state and short title form one independent record")))))
   (let* ((active   (terminal-tests--status-job 1))
          (finished (loop for index from 2 to 70
                          for job = (terminal-tests--status-job index)
